@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix as posixPath } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
 import { runtimeBuildPlatform } from "../../scripts/runtime-build-platform.mjs";
@@ -25,7 +25,7 @@ test("Windows uses provisioned executables without corrupting Path or retaining 
     BuzzODZ_PROFILE: "private",
     Nostr_KEY: "secret",
     Databricks_TOKEN: "secret",
-    Cargo_Target_Dir: "old",
+    Cargo_Target_Dir: "D:\\cargo",
     Cargo_Build_Target: "other-target",
     Cargo_Encoded_Rustflags: "-Copt-level=0",
     Cargo_Profile_Release_Opt_Level: "0",
@@ -45,7 +45,7 @@ test("Windows uses provisioned executables without corrupting Path or retaining 
     Path: inherited.Path,
     SystemRoot: inherited.SystemRoot,
     RUSTUP_TOOLCHAIN: inherited.RUSTUP_TOOLCHAIN,
-    CARGO_TARGET_DIR: "C:\\repo\\target\\agent-runtime-build",
+    CARGO_TARGET_DIR: "D:\\cargo\\agent-runtime-build",
   });
   assert.equal(
     inherited.buzz_private_key,
@@ -54,15 +54,23 @@ test("Windows uses provisioned executables without corrupting Path or retaining 
   );
   const posix = runtimeBuildPlatform("/repo", "linux", {
     PATH: "/usr/bin",
-    CARGO_TARGET_DIR: "old",
+    CARGO_TARGET_DIR: "shared",
     BUZZ_PRIVATE_KEY: "secret",
   });
   assert.equal(posix.cargo, "/repo/bin/cargo");
   assert.equal(posix.rustc, "/repo/bin/rustc");
   assert.deepEqual(posix.env, {
     PATH: "/repo/bin:/usr/bin",
-    CARGO_TARGET_DIR: "/repo/target/agent-runtime-build",
+    // Cargo runs from a temporary source stage, so a relative dir is resolved here.
+    CARGO_TARGET_DIR: posixPath.resolve("shared", "agent-runtime-build"),
   });
+  // Without a shell-wide target or a Git checkout, the build stays in the root.
+  const isolated = runtimeBuildPlatform("/repo", "linux", { PATH: "/usr/bin" });
+  assert.equal(isolated.common, undefined);
+  assert.equal(
+    isolated.env.CARGO_TARGET_DIR,
+    "/repo/target/agent-runtime-build",
+  );
 });
 
 test("candidate version writes an updater-disabled overlay, never changes product identity", (t) => {

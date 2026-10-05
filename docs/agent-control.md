@@ -881,7 +881,10 @@ per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), a
 revision/Goose source and build settings/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Worktrees
 of one clone reuse a verified bundle cached under the Git common directory, keyed
-by the pin, tool list, build arguments and `rustc -vV`. Native build copies them to
+by the pin, tool list, build arguments and `rustc -vV`. They also share one Cargo
+build directory (`agent-runtime-build/` inside an exported `CARGO_TARGET_DIR`,
+otherwise beside that cache), so pin bumps rebuild incrementally; Cargo's lock
+serializes concurrent builds. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
 Startup verifies all six tools, target, both source pins, Goose build settings
 and file hashes. Packaged

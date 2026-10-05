@@ -35,7 +35,8 @@ if (["RUSTFLAGS", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_OPT_LEVEL"].some((key)
 // Lets a test run another worktree's preparation while this build is in flight.
 const during = path.join(fixture, "during-build");
 if (fs.existsSync(during)) require("node:child_process").execFileSync(process.execPath,
-  ["scripts/build-agent-runtime.mjs"], { cwd: fs.readFileSync(during, "utf8"), stdio: "ignore" });
+  ["scripts/build-agent-runtime.mjs"], { cwd: fs.readFileSync(during, "utf8"), stdio: "ignore",
+    env: { ...process.env, CARGO_TARGET_DIR: undefined } });
 // Like Cargo, --target (or a user-level build.target) nests the output by triple.
 const flag = process.argv.indexOf("--target");
 const configured = path.join(fixture, "config-build-target");

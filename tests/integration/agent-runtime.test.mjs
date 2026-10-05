@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
+// Fixture builds must never land in a developer's shell-wide Cargo target.
+delete process.env.CARGO_TARGET_DIR;
+
 test("native library and bundled tools pin the same immutable source", () => {
   const spec = JSON.parse(
     readFileSync(
@@ -163,7 +166,17 @@ test("worktrees of one clone reuse a verified runtime built from identical input
   const built = (root) => existsSync(path.join(root, "build-calls.jsonl"));
   const [one, two] = worktrees;
   const bundle = (root) => path.join(root, "src-tauri/resources/agent-runtime");
-  assert.match(run(one), /Verified inputs staged/);
+  const entries = () =>
+    readdirSync(path.join(common, "buzz-agent-runtime")).filter(
+      (name) => name !== "target",
+    );
+  const target = path.join(common, "buzz-agent-runtime/target");
+  assert.ok(run(one).includes(`Preparing the agent runtime in ${target};`));
+  assert.ok(
+    existsSync(path.join(target, "fixture-target/release/buzz")),
+    "worktrees of one clone share the runtime build directory",
+  );
+  assert.ok(!existsSync(path.join(one, "target")));
   assert.match(run(two), /Verified inputs restored/);
   assert.ok(!built(two), "a matching cached runtime must not invoke Cargo");
   assert.deepEqual(
@@ -171,7 +184,7 @@ test("worktrees of one clone reuse a verified runtime built from identical input
     readFileSync(path.join(bundle(one), "manifest.json"), "utf8"),
   );
   // A corrupt cache entry is rebuilt, never copied into a worktree.
-  const [entry] = readdirSync(path.join(common, "buzz-agent-runtime"));
+  const [entry] = entries();
   writeFileSync(path.join(common, "buzz-agent-runtime", entry, "buzz"), "bad");
   rmSync(bundle(two), { recursive: true });
   assert.match(run(two), /Verified inputs staged/);
@@ -186,7 +199,7 @@ test("worktrees of one clone reuse a verified runtime built from identical input
     JSON.stringify({ ...spec, revision: "0".repeat(40) }),
   );
   assert.match(run(one), /Verified inputs staged/);
-  assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 2);
+  assert.equal(entries().length, 2);
   writeFileSync(
     specPath,
     JSON.stringify({
@@ -195,8 +208,33 @@ test("worktrees of one clone reuse a verified runtime built from identical input
     }),
   );
   assert.match(run(one), /Verified inputs staged/);
-  assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 3);
+  assert.equal(entries().length, 3);
   assert.match(run(one), /Agent runtime ready/);
+});
+
+test("a shell-wide Cargo target hosts the runtime build in its own subdirectory", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const common = path.join(directory, "common");
+  writeFileSync(path.join(directory, "git-common-dir"), common);
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+      // Relative, as a shell may export it; Cargo runs from the source stage.
+      env: { ...process.env, CARGO_TARGET_DIR: "shell-target" },
+    },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const target = path.join(directory, "shell-target/agent-runtime-build");
+  assert.ok(existsSync(path.join(target, "fixture-target/release/buzz")));
+  assert.ok(!existsSync(path.join(common, "buzz-agent-runtime/target")));
+  assert.match(result.stdout, /Verified inputs staged/);
 });
 
 test("a build that finishes after a concurrent publish keeps the published entry", (t) => {
@@ -230,8 +268,9 @@ test("a build that finishes after a concurrent publish keeps the published entry
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   const entries = path.join(common, "buzz-agent-runtime");
-  assert.equal(readdirSync(entries).length, 1, "no leftover staging entries");
-  const [entry] = readdirSync(entries);
+  const published = readdirSync(entries).filter((name) => name !== "target");
+  assert.equal(published.length, 1, "no leftover staging entries");
+  const [entry] = published;
   const tool = (dir) => readFileSync(path.join(dir, "buzz"), "utf8");
   assert.ok(
     tool(path.join(entries, entry)).endsWith(one),

@@ -1,5 +1,5 @@
 // Build only. Never launches the app, authenticates, or reads an old Buzz library.
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   readFile,
@@ -23,7 +23,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
-const { env, cargo, rustc } = runtimeBuildPlatform(root);
+const { env, common, cargo, rustc } = runtimeBuildPlatform(root);
 async function run(command, args, capture = false, cwd = root, childEnv = env) {
   return new Promise((accept, reject) => {
     const child = spawn(command, args, {
@@ -86,16 +86,7 @@ const gooseBuildArgs = [
 ];
 // Worktrees of one clone share finished bundles built from identical inputs.
 function cachedBundle() {
-  let common;
-  try {
-    common = execFileSync(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-  } catch {
-    return undefined;
-  }
+  if (!common) return undefined;
   const key = createHash("sha256")
     .update(JSON.stringify([spec, toolchain, buildArgs, gooseBuildArgs]))
     .digest("hex")
@@ -190,10 +181,10 @@ if (cached) {
   await rm(cache, { recursive: true, force: true });
 }
 console.log(
-  "Preparing the agent runtime; the first build can take several minutes.",
+  `Preparing the agent runtime in ${env.CARGO_TARGET_DIR}; the first build can take several minutes.`,
 );
 // The source is fetched outside the worktree, so this checkout's Cargo config
-// does not reach the build. The target persists in this checkout, so an
+// does not reach the build. The target persists across runs, so an
 // interrupted build resumes; Cargo's lock serializes concurrent builds.
 const stage = await mkdtemp(join(tmpdir(), "buzz-agent-runtime-"));
 for (const signal of ["SIGINT", "SIGTERM"])

@@ -154,7 +154,10 @@ shared `~/.cargo`. Each worktree compiles into its own `target/`, overriding any
 user-level `target-dir`, so its app and bundled resources always match its sources;
 remove stale worktrees (or run `bin/cargo clean` in them) to reclaim that space.
 The pinned agent runtime is built once per clone and reused by worktrees with the
-same pin and toolchain. Native compilation still takes time in each new worktree. Parallel worktrees normally need
+same pin and toolchain. Its Cargo build directory is shared as well, so a pin or
+toolchain change recompiles only what changed: `agent-runtime-build/` inside an
+exported `CARGO_TARGET_DIR`, otherwise `buzz-agent-runtime/target/` in the Git
+common directory. Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;
 ports must be integers from 1 to 65535. Browser dev
