@@ -873,7 +873,8 @@ bin/cargo build -p buzz-foundation
 
 [`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins five Buzz tools
 to the same immutable source revision as the native library, plus an independent
-Goose revision for `goose-acp`. The build script fetches both revisions and uses
+Goose revision for `goose-acp`. The build script fetches both revisions (Goose
+sparsely, without its `documentation/` and `ui/` trees) and uses
 pinned Cargo with locked dependencies: a release build of the Buzz tools and a
 lean Goose build without default features. Builds happen outside the checkout,
 scrub injected Buzz/provider environment and

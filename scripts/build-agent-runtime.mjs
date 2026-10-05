@@ -213,6 +213,8 @@ try {
   const gooseSource = join(stage, "goose");
   await mkdir(gooseSource);
   await run("git", ["init", "--quiet"], false, gooseSource);
+  // Checkout fetches only the blobs the build needs: Goose's documentation and
+  // desktop UI trees (mostly media) are not inputs to any Rust crate.
   await run(
     "git",
     [
@@ -220,9 +222,16 @@ try {
       "--quiet",
       "--depth",
       "1",
+      "--filter=blob:none",
       spec.goose.repository,
       spec.goose.revision,
     ],
+    false,
+    gooseSource,
+  );
+  await run(
+    "git",
+    ["sparse-checkout", "set", "--no-cone", "/*", "!/documentation/", "!/ui/"],
     false,
     gooseSource,
   );

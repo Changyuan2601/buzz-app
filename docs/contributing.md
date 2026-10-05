@@ -157,7 +157,8 @@ The pinned agent runtime is built once per clone and reused by worktrees with th
 same pin and toolchain. Its Cargo build directory is shared as well, so a pin or
 toolchain change recompiles only what changed: `agent-runtime-build/` inside an
 exported `CARGO_TARGET_DIR`, otherwise `buzz-agent-runtime/target/` in the Git
-common directory. Native compilation still takes time in each new worktree. Parallel worktrees normally need
+common directory. Goose is fetched without its documentation and desktop UI
+trees. Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;
 ports must be integers from 1 to 65535. Browser dev

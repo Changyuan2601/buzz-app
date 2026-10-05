@@ -79,6 +79,50 @@ test("runtime preparation builds missing resources, reuses verified files, and r
       .split("\n").length;
   assert.match(run(), /Verified inputs staged/);
   assert.equal(count(), 2);
+  // Both pins are fetched shallowly; Goose skips its documentation and UI trees.
+  const spec = JSON.parse(
+    readFileSync(path.join(directory, "runtime/agent-runtime.json"), "utf8"),
+  );
+  assert.deepEqual(
+    readFileSync(path.join(directory, "git-calls.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)),
+    [
+      ["source", "init", "--quiet"],
+      [
+        "source",
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        spec.repository,
+        spec.revision,
+      ],
+      ["source", "checkout", "--quiet", "--detach", spec.revision],
+      ["goose", "init", "--quiet"],
+      [
+        "goose",
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        "--filter=blob:none",
+        spec.goose.repository,
+        spec.goose.revision,
+      ],
+      [
+        "goose",
+        "sparse-checkout",
+        "set",
+        "--no-cone",
+        "/*",
+        "!/documentation/",
+        "!/ui/",
+      ],
+      ["goose", "checkout", "--quiet", "--detach", spec.goose.revision],
+    ],
+  );
   assert.match(run(), /Agent runtime ready/);
   assert.equal(count(), 2, "warm preparation must not invoke Cargo");
   const filename =

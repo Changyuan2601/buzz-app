@@ -64,14 +64,20 @@ for (const name of names) fs.writeFileSync(path.join(output,
     "otool",
     'console.log("fixture:\\n\\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)");',
   );
-  // Source fetches succeed offline; a git-common-dir file opts into the shared cache.
+  // Source fetches succeed offline and are recorded by checkout directory; a
+  // git-common-dir file opts into the shared cache.
   tool(
     "git",
     `
 const fs = require("node:fs");
 const path = require("node:path");
-const common = path.join(${JSON.stringify(directory)}, "git-common-dir");
-if (!process.argv.includes("rev-parse")) process.exit(0);
+const fixture = ${JSON.stringify(directory)};
+const common = path.join(fixture, "git-common-dir");
+if (!process.argv.includes("rev-parse")) {
+  fs.appendFileSync(path.join(fixture, "git-calls.jsonl"),
+    JSON.stringify([path.basename(process.cwd()), ...process.argv.slice(2)]) + "\\n");
+  process.exit(0);
+}
 if (!fs.existsSync(common)) process.exit(128);
 console.log(fs.readFileSync(common, "utf8"));
 `,
