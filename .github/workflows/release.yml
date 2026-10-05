@@ -59,6 +59,7 @@ jobs:
         with:
           key: macos-prerelease
           cache-all-crates: true
+          cache-directories: .git/buzz-agent-runtime/target
 
       - name: Set preview version
         id: version

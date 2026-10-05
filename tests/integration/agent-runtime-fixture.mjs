@@ -32,11 +32,20 @@ fs.appendFileSync(path.join(fixture, "build-calls.jsonl"), JSON.stringify(proces
 if (fs.existsSync(path.join(fixture, "fail-build"))) process.exit(17);
 // Shell compiler overrides must not reach a build whose bundle other worktrees reuse.
 if (["RUSTFLAGS", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_OPT_LEVEL"].some((key) => key in process.env)) process.exit(18);
-// Lets a test run another worktree's preparation while this build is in flight.
+// A separate target can publish the same bundle while this build is in flight.
 const during = path.join(fixture, "during-build");
 if (fs.existsSync(during)) require("node:child_process").execFileSync(process.execPath,
   ["scripts/build-agent-runtime.mjs"], { cwd: fs.readFileSync(during, "utf8"), stdio: "ignore",
-    env: { ...process.env, CARGO_TARGET_DIR: undefined } });
+    env: { ...process.env, CARGO_TARGET_DIR: path.join(fs.readFileSync(during, "utf8"), "target") } });
+// Buzz has finished before Goose starts: let a different pin try to overwrite it.
+const contender = path.join(fixture, "during-goose");
+if (process.argv.includes("goose-acp") && fs.existsSync(contender)) {
+  const { cwd, target } = JSON.parse(fs.readFileSync(contender, "utf8"));
+  const result = require("node:child_process").spawnSync(process.execPath,
+    ["scripts/build-agent-runtime.mjs"], { cwd, encoding: "utf8", timeout: 5000,
+      env: { ...process.env, CARGO_TARGET_DIR: target } });
+  fs.writeFileSync(path.join(fixture, "contender-result.json"), JSON.stringify(result));
+}
 // Like Cargo, --target (or a user-level build.target) nests the output by triple.
 const flag = process.argv.indexOf("--target");
 const configured = path.join(fixture, "config-build-target");
@@ -58,6 +67,9 @@ const names = binFlag >= 0 ? [process.argv[binFlag + 1]]
     ? [process.argv[index + 1] === "buzz-cli" ? "buzz" : process.argv[index + 1]] : []);
 for (const name of names) fs.writeFileSync(path.join(output,
   process.platform === "win32" ? name + ".exe" : name), "fixture " + name + " " + fixture, { mode: 0o755 });
+const terminate = path.join(fixture, "terminate-build");
+if (fs.existsSync(terminate)) process.kill(
+  fs.readFileSync(terminate, "utf8") === "compiler" ? process.pid : process.ppid, "SIGTERM");
 `,
   );
   tool(

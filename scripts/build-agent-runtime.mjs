@@ -24,6 +24,7 @@ const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
 const { env, common, cargo, rustc } = runtimeBuildPlatform(root);
+let interrupted = false;
 async function run(command, args, capture = false, cwd = root, childEnv = env) {
   return new Promise((accept, reject) => {
     const child = spawn(command, args, {
@@ -36,11 +37,12 @@ async function run(command, args, capture = false, cwd = root, childEnv = env) {
       output += data;
     });
     child.on("error", reject);
-    child.on("exit", (code) =>
+    child.on("exit", (code, signal) => {
+      if (signal) interrupted = true;
       code === 0
         ? accept(output)
-        : reject(new Error(`Runtime build failed (${code})`)),
-    );
+        : reject(new Error(`Runtime build failed (${signal ?? code})`));
+    });
   });
 }
 const toolchain = await run(rustc, ["-vV"], true);
@@ -180,19 +182,40 @@ if (cached) {
   // build may publish it.
   await rm(cache, { recursive: true, force: true });
 }
-console.log(
-  `Preparing the agent runtime in ${env.CARGO_TARGET_DIR}; the first build can take several minutes.`,
-);
 // The source is fetched outside the worktree, so this checkout's Cargo config
 // does not reach the build. The target persists across runs, so an
-// interrupted build resumes; Cargo's lock serializes concurrent builds.
+// interrupted build resumes. Cargo only locks individual invocations; our lock
+// covers both builds and publication so another pin cannot replace the outputs.
+const lock = join(env.CARGO_TARGET_DIR, ".buzz-build-lock");
+let locked = false;
 const stage = await mkdtemp(join(tmpdir(), "buzz-agent-runtime-"));
 for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => {
+    // Cargo or its descendants may still be writing. Fail closed rather than
+    // releasing ownership before they exit (also safe after an unhandled kill).
+    if (locked) console.error(`Interrupted build leaves its lock at ${lock}`);
     rmSync(stage, { recursive: true, force: true });
     process.exit(1);
   });
 try {
+  await mkdir(env.CARGO_TARGET_DIR, { recursive: true });
+  try {
+    await mkdir(lock);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    throw new Error(
+      `Agent runtime build is locked at ${lock}. Retry after the current build finishes. ` +
+        "If it was terminated, confirm its compilers have exited before removing this lock directory.",
+    );
+  }
+  locked = true;
+  await writeFile(
+    join(lock, "owner"),
+    `PID ${process.pid}\nWorktree ${root}\n`,
+  );
+  console.log(
+    `Preparing the agent runtime in ${env.CARGO_TARGET_DIR}; the first build can take several minutes.`,
+  );
   const source = join(stage, "source");
   await mkdir(source);
   await run("git", ["init", "--quiet"], false, source);
@@ -290,5 +313,8 @@ try {
     }
   }
 } finally {
+  // A killed Cargo can leave compiler descendants alive, just like a killed
+  // parent. Only an ordinary child exit establishes safe lock release.
+  if (locked && !interrupted) await rm(lock, { recursive: true, force: true });
   await rm(stage, { recursive: true, force: true });
 }

@@ -37,8 +37,8 @@ export function runtimeBuildPlatform(
   } catch {
     // Not a Git checkout: no shared bundle cache or target.
   }
-  // Pinned upstream sources and scrubbed settings make one target safe to share
-  // across worktrees; its own subdirectory keeps it apart from app artifacts.
+  // The builder locks this target through publication before sharing it across
+  // worktrees; its own subdirectory keeps it apart from app artifacts.
   env.CARGO_TARGET_DIR = targetDir
     ? path.resolve(targetDir, "agent-runtime-build")
     : common

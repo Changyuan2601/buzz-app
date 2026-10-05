@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import { runtimeBuildPlatform } from "../../scripts/runtime-build-platform.mjs";
+import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const { jobs } = parse(
@@ -76,6 +78,24 @@ function temp(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
+
+test("macOS release cache includes the resolved runtime target", (t) => {
+  const dir = temp(t);
+  runtimeFixture(dir);
+  // actions/checkout makes an ordinary clone, not a linked worktree.
+  writeFileSync(join(dir, "git-common-dir"), join(dir, ".git"));
+  const { env } = runtimeBuildPlatform(dir, "darwin", {
+    PATH: process.env.PATH,
+  });
+  const cache = jobs.build.steps.find((step) =>
+    step.uses?.startsWith("Swatinem/rust-cache@"),
+  );
+  const directories = cache.with["cache-directories"]
+    .trim()
+    .split(/\s+/)
+    .map((directory) => join(dir, directory));
+  assert.ok(directories.includes(env.CARGO_TARGET_DIR));
+});
 
 test("existing platform version generators agree for the same run and attempt", (t) => {
   const dir = temp(t);
