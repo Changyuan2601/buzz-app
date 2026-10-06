@@ -151,7 +151,6 @@ it("signs in and connects the identity natively in a desktop build", async () =>
       ["type", "cli"],
       ["product", "buzz"],
     ]);
-    expect(begin).toMatchObject({ useState: true });
     expect(native.invoke).toHaveBeenCalledWith("oauth_callback_cancel", {
       id: "attempt",
     });

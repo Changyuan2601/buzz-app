@@ -26,7 +26,6 @@ pub(crate) struct OAuthAttempt {
 struct OAuthRequest {
     authorization_url: String,
     callback_path: String,
-    use_state: Option<bool>,
 }
 type CallbackResult = Result<OAuthCallback, String>;
 struct Attempt {
@@ -107,25 +106,19 @@ impl OAuthCallbackHost {
         let listener =
             TcpListener::from_std(listener).map_err(|_| "Could not start the sign-in listener")?;
         let callback = format!("http://{authority}{path}");
+        // Native-owned, single-use CSRF correlation (RFC 8252 §8.9; RFC 9700 §2.1).
+        let mut random = [0; 32];
+        getrandom::fill(&mut random).map_err(|_| "Could not start sign-in")?;
+        let expected_state = URL_SAFE_NO_PAD.encode(random);
         authorization
             .query_pairs_mut()
-            .append_pair("redirect_uri", &callback);
-        // Native-owned, single-use CSRF correlation (RFC 8252 §8.9; RFC 9700 §2.1).
-        // Disabled only for an explicit custom-protocol compatibility exception.
-        let expected_state = if request.use_state.unwrap_or(true) {
-            let mut random = [0; 32];
-            getrandom::fill(&mut random).map_err(|_| "Could not start sign-in")?;
-            let value = URL_SAFE_NO_PAD.encode(random);
-            authorization.query_pairs_mut().append_pair("state", &value);
-            Some(value)
-        } else {
-            None
-        };
+            .append_pair("redirect_uri", &callback)
+            .append_pair("state", &expected_state);
         let (send, receive) = oneshot::channel();
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 Duration::from_secs(600),
-                receive_callback(listener, &authority, &path, expected_state.as_deref()),
+                receive_callback(listener, &authority, &path, &expected_state),
             )
             .await
             .unwrap_or_else(|_| Err("Sign-in timed out. Try again.".into()));
@@ -179,7 +172,6 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
     state: tauri::State<'_, OAuthCallbackHost>,
     authorization_url: String,
     callback_path: String,
-    use_state: Option<bool>,
 ) -> Result<OAuthAttempt, String> {
     // Register and launch inline so reload cleanup cannot overtake a queued begin.
     // Enter the runtime for the Tokio listener; startup does not await anything.
@@ -188,7 +180,6 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
             OAuthRequest {
                 authorization_url,
                 callback_path,
-                use_state,
             },
             |url| {
                 app.opener()
@@ -217,7 +208,7 @@ async fn receive_callback(
     listener: TcpListener,
     authority: &str,
     path: &str,
-    expected_state: Option<&str>,
+    expected_state: &str,
 ) -> CallbackResult {
     loop {
         let (mut stream, _) = listener
@@ -242,7 +233,7 @@ async fn callback(
     stream: &mut TcpStream,
     authority: &str,
     path: &str,
-    expected_state: Option<&str>,
+    expected_state: &str,
 ) -> Option<OAuthCallback> {
     let mut bytes = Vec::new();
     let mut chunk = [0; 1024];
@@ -266,7 +257,7 @@ fn parse_callback(
     bytes: &[u8],
     authority: &str,
     path: &str,
-    expected_state: Option<&str>,
+    expected_state: &str,
 ) -> (u16, &'static str, Option<OAuthCallback>) {
     let invalid = (400, "Invalid callback", None);
     let Ok(text) = std::str::from_utf8(bytes) else {
@@ -307,13 +298,11 @@ fn parse_callback(
         return invalid;
     }
     let fields: Vec<_> = url.query_pairs().into_owned().collect();
-    if let Some(expected) = expected_state {
-        let mut states = fields.iter().filter(|(name, _)| name == "state");
-        if states.next().map(|(_, value)| value.as_str()) != Some(expected)
-            || states.next().is_some()
-        {
-            return invalid;
-        }
+    let mut states = fields.iter().filter(|(name, _)| name == "state");
+    if states.next().map(|(_, value)| value.as_str()) != Some(expected_state)
+        || states.next().is_some()
+    {
+        return invalid;
     }
     if fields.iter().any(|(name, _)| name == "error") {
         return (

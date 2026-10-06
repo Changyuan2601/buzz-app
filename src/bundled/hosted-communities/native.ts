@@ -57,7 +57,6 @@ async function awaitCode(bridge: Native, signal: AbortSignal) {
   const { id } = await command<{ id: string }>(bridge, "oauth_callback_begin", {
     authorizationUrl: login.href,
     callbackPath: `/callback/${crypto.randomUUID().replaceAll("-", "")}`,
-    useState: true,
   });
   const cancel = () =>
     void bridge.invoke("oauth_callback_cancel", { id }).catch(() => {});

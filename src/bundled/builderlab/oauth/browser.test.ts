@@ -53,7 +53,6 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
     account: { subject: "user", email: "a@example.com" },
   });
   const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
-  expect(options).not.toHaveProperty("id");
   const login = new URL(options?.authorizationUrl ?? "");
   expect(login.origin).toBe(origin);
   expect(login.pathname).toBe("/api/goose/v1/auth/login");
@@ -63,7 +62,6 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
     code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
     code_challenge_method: "S256",
   });
-  expect(options).toMatchObject({ useState: true });
   expect(options?.callbackPath).toMatch(/^\/callback\/[0-9a-f-]{36}$/);
   expect(host.request).toHaveBeenNthCalledWith(
     1,

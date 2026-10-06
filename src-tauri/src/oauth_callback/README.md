@@ -1,6 +1,6 @@
 # Browser sign-in and OAuth callbacks
 
-This module owns browser sign-in startup, loopback callbacks, optional OAuth state
+This module owns browser sign-in startup, loopback callbacks, OAuth state
 protection, and the attempt lifecycle. Plugins supply provider-specific
 authorization parameters and callback paths, handle code exchange and account
 verification, and own credentials. Outbound API requests use the host HTTP feature.
@@ -14,13 +14,12 @@ these named arguments:
 const { id, callbackUrl } = await invoke("oauth_callback_begin", {
   authorizationUrl: "https://provider.example/authorize?client_id=buzz&response_type=code",
   callbackPath: "/oauth2redirect/provider",
-  useState: true, // optional; this is the default
 });
 ```
 
 | Command | Contract |
 | --- | --- |
-| `oauth_callback_begin({ authorizationUrl, callbackPath, useState? })` | Validates the request, generates an attempt ID, binds `127.0.0.1` on an ephemeral port, inserts the callback URL as `redirect_uri` and optional state, and launches the external browser through the existing opener. Returns `{ "id": "…", "callbackUrl": "http://127.0.0.1:{port}{path}" }`. Launch failure cleans up before rejecting. |
+| `oauth_callback_begin({ authorizationUrl, callbackPath })` | Validates the request, generates an attempt ID, binds `127.0.0.1` on an ephemeral port, inserts the callback URL as `redirect_uri` and a generated state value, and launches the external browser through the existing opener. Returns `{ "id": "…", "callbackUrl": "http://127.0.0.1:{port}{path}" }`. Launch failure cleans up before rejecting. |
 | `oauth_callback_wait(id)` | Consumes the matching attempt's result once. Resolves with `{ "parameters": [["name", "value"], …] }`, retaining decoded order and duplicates. Valid provider errors resolve with their parameters; transport failure, timeout, or cancellation rejects with a generic message. |
 | `oauth_callback_cancel(id)` | Closes and removes the matching attempt. Safe to repeat; a stale ID does not cancel another attempt. |
 
@@ -42,16 +41,12 @@ can replace its unconsumed result.
 
 ## State protection
 
-By default, native code generates a separate cryptographically random 256-bit,
+Native code generates a separate cryptographically random 256-bit,
 single-use state value and sends it in the authorization URL. Both success and
 provider-error callbacks must contain exactly one matching state. Missing,
 duplicate, or mismatched state receives a generic invalid-callback response and
 leaves the legitimate attempt pending within its original timeout. Callback HTML
 and error messages never expose state or other callback values.
-
-`useState: false` omits state from the authorization URL and disables native state
-validation entirely. This is an explicit custom-protocol compatibility exception,
-not caller-owned state or an automatic fallback.
 
 ## Cleanup contract
 
@@ -74,7 +69,7 @@ browser or cancel separate host HTTP requests.
   `Host` header and the exact selected path. Rejects `Origin` headers and URI
   fragments. Supports query responses, not POST/form responses.
 - Requires one nonempty `code` of at most 4,096 decoded bytes, or an `error`
-  parameter, after any enabled state validation. Preserves state, error details,
+  parameter, after state validation. Preserves state, error details,
   and extension parameters in the returned result. Invalid callbacks leave the
   listener available.
 - Bounds paths to 1,024 bytes, request reads to 8,192 bytes, each connection to
@@ -94,11 +89,10 @@ its own random path.
 
 Success and error query parameters follow the response shape in
 [RFC 6749 §§4.1.2 and 4.1.2.1](https://www.rfc-editor.org/rfc/rfc6749.html#section-4.1.2).
-Default native state protection follows
+Native state protection follows
 [RFC 8252 §8.9](https://www.rfc-editor.org/rfc/rfc8252.html#section-8.9) and the
 state-based CSRF defense in
 [RFC 9700 §2.1](https://www.rfc-editor.org/rfc/rfc9700.html#section-2.1).
-The explicit state-disabled exception does not provide that defense.
 
 This is not a complete OAuth client or a claim of full OAuth conformance. PKCE,
 redirect registration, and provider-specific semantics remain plugin concerns.
