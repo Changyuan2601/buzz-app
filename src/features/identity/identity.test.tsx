@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -676,14 +677,37 @@ it("first launch offers Builderlab, with community URL and QR scanning disabled"
   identity.dispose();
 });
 
-it("Connect with Builderlab runs the plugin sign-in and lands on the connected page", async () => {
-  vi.mocked(invoke).mockResolvedValueOnce(null);
+/** Each placeholder step waits on its own gate so the order is observable. */
+function gatedDelay() {
+  const gates: ReturnType<typeof deferred<void>>[] = [];
+  const delay = vi.fn((_ms: number) => {
+    const gate = deferred<void>();
+    gates.push(gate);
+    return gate.promise;
+  });
+  const release = (index: number) =>
+    act(async () => {
+      const gate = gates[index];
+      if (!gate) throw new Error(`Step ${index} never started waiting`);
+      gate.resolve();
+    });
+  return { delay, release };
+}
+
+it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands on Join a community", async () => {
+  const created = deferred<string>();
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return created.promise;
+    throw new Error("Unexpected command");
+  });
   const released = deferred<Credential>();
   const connect = vi.fn((_signal: AbortSignal) => released.promise);
+  const { delay, release } = gatedDelay();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <Welcome identity={identity} connect={connect}>
+    <Welcome identity={identity} connect={connect} delay={delay}>
       <p>Signed in</p>
     </Welcome>,
   );
@@ -698,16 +722,95 @@ it("Connect with Builderlab runs the plugin sign-in and lands on the connected p
   expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
   await act(async () => released.resolve(credential));
   expect(
-    screen.getByRole("heading", { name: "Connected to Builderlab" }),
+    screen.getByRole("heading", { name: "Setting up Buzz" }),
   ).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Signed in as a@example.com.",
+    "Downloading keys… [TODO]",
   );
   expect(screen.queryByRole("button")).toBeNull();
-  // Builderlab sign-in creates no device key; identity stays missing.
-  expect(identity.snapshot().status).toBe("missing");
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  await release(0);
+  expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
+  expect(invoke).toHaveBeenCalledWith("identity_create", {});
+  await act(async () => created.resolve(viewer));
+  // The key is now ready, but setup keeps the app behind the onboarding screens.
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Uploading keys… [TODO]",
+  );
+  await release(1);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finding communities… [TODO]",
+  );
+  await release(2);
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  const invites = within(screen.getByRole("list", { name: "Pending invites" }));
+  const rows = invites.getAllByRole("listitem");
+  expect(rows).toHaveLength(3);
+  expect(rows[0]).toHaveTextContent("buzz.block.builderlab.xyz");
+  expect(rows[0]).toHaveTextContent("Terms required · 18+ · Coming soon");
+  for (const row of rows) {
+    expect(within(row).getByText("Coming soon")).toBeVisible();
+    expect(within(row).getByRole("button", { name: "Join" })).toBeDisabled();
+  }
+  const url = screen.getByRole("textbox", { name: "Community URL" });
+  expect(url).toBeDisabled();
+  expect(url).toHaveAttribute("placeholder", "Coming soon");
+  for (const name of [
+    "Try joining — Coming soon",
+    "Scan a QR code — Coming soon",
+    "Create a community — Coming soon",
+  ]) {
+    expect(screen.getByRole("button", { name })).toBeDisabled();
+  }
+  expect(delay.mock.calls).toEqual([[2000], [2000], [2000]]);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
+    "identity_create",
+  ]);
+  identity.dispose();
+});
+
+it("a key creation failure stops setup and Back returns to the first-launch screen", async () => {
+  vi.mocked(invoke)
+    .mockResolvedValueOnce(null)
+    .mockRejectedValueOnce("Keychain refused to save the key");
+  const connect = vi.fn().mockResolvedValue(credential);
+  const { delay, release } = gatedDelay();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome identity={identity} connect={connect} delay={delay}>
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Downloading keys… [TODO]",
+  );
+  await release(0);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Keychain refused to save the key",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  // Later placeholder steps never run after the failure.
+  expect(delay).toHaveBeenCalledTimes(1);
+  expect(identity.snapshot().status).toBe("missing");
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(connectButton()).toBeEnabled();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_create",
   ]);
   identity.dispose();
 });

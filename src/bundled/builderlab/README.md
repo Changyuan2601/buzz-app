@@ -108,7 +108,9 @@ agents are not migrated into this type.
   sign-out, and disposal.
   `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
   sign-in before any plugin session exists, using this plugin's bundled native
-  grant; that credential is separate from the Settings session.
+  grant; that credential is separate from the Settings session. A successful
+  first-run sign-in continues into the app-owned setup steps described in
+  [identity](../../../docs/identity.md), which create the device key.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

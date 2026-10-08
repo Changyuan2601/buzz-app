@@ -5,12 +5,25 @@ welcome screen when no human key exists on this device: **Buzz** — "Your peopl
 your agents, your projects — all in one place." — with **Connect with Builderlab**
 as the only enabled action; a community URL field and **Scan a QR code** are shown
 disabled as *Coming soon*. Connect runs the bundled Builderlab plugin's browser
-sign-in under that plugin's own native network grant. Success currently ends on a
-**Connected to Builderlab** page showing the signed-in email; it creates no device
-key, and that credential is not yet shared with Settings → Integrations →
-Builderlab. Failure or cancellation shows the error with **Back** to the welcome
-screen. Denied/unavailable/corrupt storage is not first run and keeps the
-**Retry secure storage access** path.
+sign-in under that plugin's own native network grant; that credential is not yet
+shared with Settings → Integrations → Builderlab. A failed or canceled sign-in
+shows the error with **Back** to the welcome screen.
+
+Success continues to a **Setting up Buzz** page that runs four steps in order,
+showing the current label with a spinner: *Downloading keys*, *Creating keys*,
+*Uploading keys*, *Finding communities*. Only **Creating keys** does real work: it
+generates a Nostr key through the same native create command as the key setup
+screen, so the next launch opens as a returning user. The other three are
+placeholders marked `[TODO]` that wait two seconds each until their backends
+exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finish
+setup** with the error and **Back** to the welcome screen. Setup then lands on
+**Join a community**: three example pending-invite rows showing only what a relay
+publishes before admission — an icon placeholder, the hostname and policy hints
+such as *Terms required* or *18+* — each with a disabled **Join**, plus a disabled
+community URL field, **Try joining**, **Scan a QR code** and **Create a
+community**, all *Coming soon*. The page is the end of first run for now; the
+app itself opens on the next launch. Denied/unavailable/corrupt storage is not
+first run and keeps the **Retry secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an
