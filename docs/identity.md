@@ -19,11 +19,37 @@ exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finis
 setup** with the error and **Back** to the welcome screen. Setup then lands on
 **Join a community**: three example pending-invite rows showing only what a relay
 publishes before admission — an icon placeholder and the hostname — each with a
-disabled **Join**, plus a disabled
-community URL field with its own disabled **Join** beside it, and **Scan a QR
-code** and **Create a community**, both *Coming soon*. The page is the end of first run for now; the
-app itself opens on the next launch. Denied/unavailable/corrupt storage is not
-first run and keeps the **Retry secure storage access** path.
+disabled **Join**, then a **Community URL** field with **Join** beside it, and
+**Scan a QR code** and **Create a community**, both *Coming soon*.
+
+The URL field is live. A typed address may omit its scheme (`relay.example.com`
+is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
+case, while `ws://`/`http://`, credentials, paths, queries and fragments are not
+(`enteredRelayOrigin` in `src/features/communities/destination.ts`). **Join** is
+enabled once the address is valid; Enter submits, and an invalid address shows
+*Please enter a valid community URL* under the field.
+
+Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
+reusable by later flows): the hostname with a spinner and **Cancel**, which
+returns to Join a community with the typed address intact and discards any
+late answer. The page reads the relay's NIP-11 document and `/api/join-policy`
+in parallel through the identity-free native `relay_http` GET path. On success it
+shows only what the relay publishes — the icon if set, the hostname, and *Buzz
+relay v…* when a version is advertised — plus, when the deployment has a join
+policy, *I am 18 years of age or older.* (if age attestation is required) and
+*I agree to the Buzz Terms of Service and Privacy Policy.*, whose links open the
+relay's `/api/join-policy/terms` and `/privacy` pages outside the app. No name,
+description, member count, owner or invite badge is shown: none is knowable
+before joining. **Join** (or **Accept and join** when consent is shown) requires
+every shown box ticked and a join handler; first run passes none, so it is a
+disabled *Coming soon* placeholder — actual joining needs the Communities
+service, which exists only after identity is ready. Failures are classified, not
+echoed: an unreachable relay or an unusable policy answer offers **Retry** and
+**Cancel** (a missing policy counts as "none" only once NIP-11 confirmed a Buzz
+relay); a non-Buzz address or a Buzz relay with no community bound to that host
+offers **Cancel** only. The page is the end of first run for now; the app itself
+opens on the next launch. Denied/unavailable/corrupt storage is not first run and
+keeps the **Retry secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an

@@ -7,6 +7,7 @@ import {
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import { firstRunCredential } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
+import { FindCommunity } from "../communities/FindCommunity";
 import { CircleNotchIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -36,6 +37,9 @@ export function Welcome({
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
   const [setup] = useState(() => createSetup(setupSteps(identity, delay)));
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  // The typed address survives a round trip to the find page and back.
+  const [entered, setEntered] = useState("");
+  const [finding, setFinding] = useState<string>();
   useEffect(
     () => () => {
       if (login.snapshot().status === "pending") login.cancel();
@@ -69,7 +73,21 @@ export function Welcome({
             </Button>
           </>
         ) : progress.status === "done" ? (
-          <JoinCommunity />
+          finding ? (
+            // No onJoin yet: joining needs the Communities service, which app
+            // composition creates only after identity is ready.
+            <FindCommunity
+              url={finding}
+              onCancel={() => setFinding(undefined)}
+              titleId="welcome-title"
+            />
+          ) : (
+            <JoinCommunity
+              url={entered}
+              onUrlChange={setEntered}
+              onFind={setFinding}
+            />
+          )
         ) : progress.status === "running" ? (
           <>
             <h1 id="welcome-title" className="text-title text-primary">

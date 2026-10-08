@@ -758,9 +758,9 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     expect(within(row).getByRole("button", { name: "Join" })).toBeDisabled();
   }
   const url = screen.getByRole("textbox", { name: "Community URL" });
-  expect(url).toBeDisabled();
-  expect(url).toHaveAttribute("placeholder", "Coming soon");
-  // Three row Joins plus the one beside the URL field, all disabled.
+  expect(url).toBeEnabled();
+  expect(url).toHaveValue("");
+  // Three row Joins plus the one beside the still-empty URL field, all disabled.
   const joins = screen.getAllByRole("button", { name: "Join" });
   expect(joins).toHaveLength(4);
   for (const join of joins) expect(join).toBeDisabled();
@@ -775,6 +775,92 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     "identity_restore",
     "identity_create",
   ]);
+  identity.dispose();
+});
+
+it("Join a community checks the typed URL, opens Finding community, and Cancel keeps the URL", async () => {
+  const relayCalls: unknown[] = [];
+  vi.mocked(invoke).mockImplementation((command, args) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    if (command === "relay_http") {
+      relayCalls.push(args);
+      return new Promise(() => {});
+    }
+    throw new Error("Unexpected command");
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={vi.fn().mockResolvedValue(undefined)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await screen.findByRole("heading", { name: "Join a community" });
+  const field = () => screen.getByRole("textbox", { name: "Community URL" });
+  // The page remounts after Cancel, so look the list up each time.
+  const join = () => {
+    const invites = screen.getByRole("list", { name: "Pending invites" });
+    const button = screen
+      .getAllByRole("button", { name: "Join" })
+      .find((candidate) => !invites.contains(candidate));
+    if (!button) throw new Error("Missing the URL field's Join");
+    return button;
+  };
+  expect(join()).toBeDisabled();
+  await user.type(field(), "not a url{Enter}");
+  expect(join()).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Please enter a valid community URL",
+  );
+  expect(field()).toHaveAccessibleDescription(
+    "Please enter a valid community URL",
+  );
+  expect(relayCalls).toEqual([]);
+  await user.clear(field());
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.type(field(), "Relay.Example.com:8443");
+  expect(join()).toBeEnabled();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.getByRole("heading", { name: "Finding community" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "relay.example.com:8443",
+  );
+  // Both unauthenticated reads go to the canonical origin through relay_http.
+  expect(relayCalls).toEqual([
+    {
+      community: "https://relay.example.com:8443",
+      path: "/",
+      method: "GET",
+      body: null,
+    },
+    {
+      community: "https://relay.example.com:8443",
+      path: "/api/join-policy",
+      method: "GET",
+      body: null,
+    },
+  ]);
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(field()).toHaveValue("Relay.Example.com:8443");
+  await user.click(join());
+  expect(
+    screen.getByRole("heading", { name: "Finding community" }),
+  ).toBeVisible();
+  expect(relayCalls).toHaveLength(4);
   identity.dispose();
 });
 
