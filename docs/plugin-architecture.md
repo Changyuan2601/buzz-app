@@ -978,7 +978,7 @@ unambiguous signed person/agent mentions share the inline hover styling. Names i
 ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Channel` components. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -1007,6 +1007,18 @@ Channels, showing a thread is one visit to its channel for unread state, and
 that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
+
+`conversation.ui.Channel({ session, scope, channelId, channelName, messageId?,
+onOpenThread? })` renders the Channels message list (`ChannelTimeline`) and
+composer of one channel, with the same host-owned behavior as `.Thread`. With
+`messageId`, it focuses that top-level message in place. As in Channels and
+Inbox, a reply, or a message outside the loaded window once it settles, opens
+as its thread instead. The view never reads or writes the Channels saved
+scroll position, so it does not move the reader's place there. Reading it marks
+messages read as in Channels: visible rows while the view has focus.
+Messages offer reply and thread controls only when the page passes
+`onOpenThread(messageId, threadRootId)`; the page decides where the thread
+opens, for example with `.Thread`.
 
 ### Composer ownership and mention tools
 

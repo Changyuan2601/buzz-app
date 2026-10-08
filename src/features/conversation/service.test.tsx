@@ -49,6 +49,7 @@ it("registers both surfaces under the injecting plugin scope, removes and replac
       expect(conversation.ui.Composer).toBe(conversation.ui.Composer);
       expect(conversation.ui.Message).toBe(conversation.ui.Message);
       expect(conversation.ui.Thread).toBe(conversation.ui.Thread);
+      expect(conversation.ui.Channel).toBe(conversation.ui.Channel);
       // Plugins get the host's own labels; their output is tested at the owner.
       expect(conversation.format).toEqual({
         itemTimestamp: formatItemTimestamp,
