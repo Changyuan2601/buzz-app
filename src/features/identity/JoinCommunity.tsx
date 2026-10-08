@@ -39,12 +39,14 @@ export function JoinCommunity() {
         ))}
       </ul>
       <div className="flex flex-col gap-3">
-        <Field label="Community URL" disabled>
-          <Input type="url" placeholder="Coming soon" disabled />
-        </Field>
-        <Button size="lg" disabled>
-          Try joining — Coming soon
-        </Button>
+        <div className="flex items-end gap-3">
+          <div className="min-w-0 flex-1">
+            <Field label="Community URL" disabled>
+              <Input type="url" placeholder="Coming soon" disabled />
+            </Field>
+          </div>
+          <Button disabled>Join</Button>
+        </div>
         <Button size="lg" disabled>
           Scan a QR code — Coming soon
         </Button>

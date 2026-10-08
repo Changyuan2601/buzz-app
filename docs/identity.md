@@ -20,8 +20,8 @@ setup** with the error and **Back** to the welcome screen. Setup then lands on
 **Join a community**: three example pending-invite rows showing only what a relay
 publishes before admission — an icon placeholder and the hostname — each with a
 disabled **Join**, plus a disabled
-community URL field, **Try joining**, **Scan a QR code** and **Create a
-community**, all *Coming soon*. The page is the end of first run for now; the
+community URL field with its own disabled **Join** beside it, and **Scan a QR
+code** and **Create a community**, both *Coming soon*. The page is the end of first run for now; the
 app itself opens on the next launch. Denied/unavailable/corrupt storage is not
 first run and keeps the **Retry secure storage access** path.
 

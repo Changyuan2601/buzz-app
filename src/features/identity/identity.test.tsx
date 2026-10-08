@@ -760,8 +760,11 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeDisabled();
   expect(url).toHaveAttribute("placeholder", "Coming soon");
+  // Three row Joins plus the one beside the URL field, all disabled.
+  const joins = screen.getAllByRole("button", { name: "Join" });
+  expect(joins).toHaveLength(4);
+  for (const join of joins) expect(join).toBeDisabled();
   for (const name of [
-    "Try joining — Coming soon",
     "Scan a QR code — Coming soon",
     "Create a community — Coming soon",
   ]) {
