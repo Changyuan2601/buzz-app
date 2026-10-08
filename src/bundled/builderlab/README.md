@@ -106,6 +106,9 @@ agents are not migrated into this type.
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
   sign-out, and disposal.
+  `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
+  sign-in before any plugin session exists, using this plugin's bundled native
+  grant; that credential is separate from the Settings session.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

@@ -21,6 +21,8 @@ import {
 import { IdentitySetup } from "./IdentitySetup";
 import { PrivateKey } from "./PrivateKey";
 import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
+import { Welcome } from "./Welcome";
+import type { Credential } from "../../bundled/builderlab/oauth/browser";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => true),
@@ -30,6 +32,17 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 const viewer = "ab".repeat(32);
 const key = "nsec-fixture-only";
+const credential: Credential = {
+  value: "private-token",
+  account: {
+    subject: "user",
+    email: "a@example.com",
+    canUseRemoteAgents: false,
+  },
+};
+const welcomeHeading = () => screen.getByRole("heading", { name: "Buzz" });
+const connectButton = () =>
+  screen.getByRole("button", { name: "Connect with Builderlab" });
 function titleBar() {
   const header = document.querySelector("header");
   if (!header) throw new Error("Missing native title bar");
@@ -630,6 +643,121 @@ it("retires a browser sign-in that starts after setup is unmounted", async () =>
   identity.dispose();
 });
 
+it("first launch offers Builderlab, with community URL and QR scanning disabled", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  const identity = createIdentity();
+  render(
+    <Welcome identity={identity} connect={vi.fn()}>
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  // The loading state also titles the window "Buzz"; wait for the missing state.
+  expect(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  ).toBeEnabled();
+  expect(welcomeHeading()).toBeVisible();
+  expect(
+    screen.getByText(
+      "Your people, your agents, your projects — all in one place.",
+    ),
+  ).toBeVisible();
+  const url = screen.getByRole("textbox", { name: "Community URL" });
+  expect(url).toBeDisabled();
+  expect(url).toHaveAttribute("placeholder", "Coming soon");
+  expect(
+    screen.getByRole("button", { name: "Scan a QR code — Coming soon" }),
+  ).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: /existing key|new identity/ }),
+  ).toBeNull();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
+  identity.dispose();
+});
+
+it("Connect with Builderlab runs the plugin sign-in and lands on the connected page", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  const released = deferred<Credential>();
+  const connect = vi.fn((_signal: AbortSignal) => released.promise);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome identity={identity} connect={connect}>
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect.mock.calls[0]?.[0]).toBeInstanceOf(AbortSignal);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish sign-in in your browser",
+  );
+  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
+  await act(async () => released.resolve(credential));
+  expect(
+    screen.getByRole("heading", { name: "Connected to Builderlab" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Signed in as a@example.com.",
+  );
+  expect(screen.queryByRole("button")).toBeNull();
+  // Builderlab sign-in creates no device key; identity stays missing.
+  expect(identity.snapshot().status).toBe("missing");
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
+  identity.dispose();
+});
+
+it("a failed or canceled sign-in returns to the first-launch screen", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  const released = deferred<Credential>();
+  let signal: AbortSignal | undefined;
+  const connect = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Browser could not open."))
+    .mockImplementationOnce((current: AbortSignal) => {
+      signal = current;
+      return released.promise;
+    });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome identity={identity} connect={connect}>
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Browser could not open.",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t connect to Builderlab" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.click(connectButton());
+  try {
+    await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+    expect(signal?.aborted).toBe(true);
+    expect(connectButton()).toBeEnabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    await act(async () => released.resolve(credential));
+  }
+  // A canceled attempt's late credential never signs the user in.
+  expect(welcomeHeading()).toBeVisible();
+  expect(connect).toHaveBeenCalledTimes(2);
+  identity.dispose();
+});
+
 it("restore denial does not become first run or generate a replacement", async () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   const startDragging = vi.fn().mockResolvedValue(undefined);
@@ -642,15 +770,15 @@ it("restore denial does not become first run or generate a replacement", async (
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <IdentitySetup identity={identity}>
+    <Welcome identity={identity} connect={vi.fn()}>
       <p>Restored</p>
-    </IdentitySetup>,
+    </Welcome>,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Keychain access was denied",
   );
   expect(
-    screen.queryByRole("button", { name: "Create a new identity" }),
+    screen.queryByRole("button", { name: "Connect with Builderlab" }),
   ).toBeNull();
   fireEvent.mouseDown(titleBar(), {
     button: 0,
@@ -783,7 +911,11 @@ it.each(["Linux x86_64", "Win32"])(
     vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
     vi.mocked(invoke).mockReturnValue(new Promise(() => {}));
     const identity = createIdentity();
-    render(<IdentitySetup identity={identity}>Signed in</IdentitySetup>);
+    render(
+      <Welcome identity={identity} connect={vi.fn()}>
+        Signed in
+      </Welcome>,
+    );
     expect(titleBar()).toHaveAttribute("data-tauri-drag-region", "true");
     expect(screen.getByRole("button", { name: "Close window" })).toBeEnabled();
     identity.dispose();

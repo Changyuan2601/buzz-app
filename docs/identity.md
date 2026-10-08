@@ -1,13 +1,25 @@
 # Packaged human identity and relay access
 
-Native macOS, Windows and Linux without the live development broker offer
-**Create a new identity** or **Use an existing key**. These are alternatives.
-Setup can also offer **Continue with your Buzz identity** when old Buzz is
-installed and **Restore from backup** in builds with backup recovery configured;
-both are described below. Import accepts an nsec,
-validates its checksum and secp256k1 scalar, and persists that exact key before
-adopting its public identity. It never generates a replacement after an import,
-read or write failure. Denied/unavailable/corrupt storage is not first run.
+Native macOS, Windows and Linux without the live development broker open on a
+welcome screen when no human key exists on this device: **Buzz** — "Your people,
+your agents, your projects — all in one place." — with **Connect with Builderlab**
+as the only enabled action; a community URL field and **Scan a QR code** are shown
+disabled as *Coming soon*. Connect runs the bundled Builderlab plugin's browser
+sign-in under that plugin's own native network grant. Success currently ends on a
+**Connected to Builderlab** page showing the signed-in email; it creates no device
+key, and that credential is not yet shared with Settings → Integrations →
+Builderlab. Failure or cancellation shows the error with **Back** to the welcome
+screen. Denied/unavailable/corrupt storage is not first run and keeps the
+**Retry secure storage access** path.
+
+The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
+fixture below still renders it. It offers **Create a new identity** or **Use an
+existing key**. These are alternatives. It can also offer **Continue with your
+Buzz identity** when old Buzz is installed and **Restore from backup** in builds
+with backup recovery configured; both are described below. Import accepts an
+nsec, validates its checksum and secp256k1 scalar, and persists that exact key
+before adopting its public identity. It never generates a replacement after an
+import, read or write failure.
 
 One native owner keeps the key in memory after successful restore. The new
 create-only secure-storage item is service `xyz.block.buzz.desktop.identity` in release
@@ -485,7 +497,8 @@ Use the existing environment-free fixture Vite config:
 bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1547
 ```
 
-Open `/tests/fixtures/identity.html`. It uses mock IPC and an in-memory public
+Open `/tests/fixtures/identity.html`. It renders the key import/create screen
+(not the first-launch welcome) with mock IPC and an in-memory public
 fixture key, not an OS credential store or a relay. Import accepts only the
 displayed fixture key. Reset and simulated restart affect fixture state only. **Never enter a real
 nsec.** Browser exercises prove UI behavior, not secure native persistence.
