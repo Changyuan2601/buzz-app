@@ -4,14 +4,14 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 
 /**
- * Wireframe examples. A relay publishes only its NIP-11 icon and join policy
- * before admission; it hard-codes `name: "Buzz Relay"` and exposes no counts, so
- * rows show the hostname (the client's existing fallback) and policy hints only.
+ * Wireframe examples. A relay publishes only its NIP-11 icon before admission
+ * and hard-codes `name: "Buzz Relay"`, so rows show the hostname (the client's
+ * existing fallback) and nothing else.
  */
-const EXAMPLE_INVITES: ReadonlyArray<{ host: string; hints: string[] }> = [
-  { host: "buzz.block.builderlab.xyz", hints: ["Terms required", "18+"] },
-  { host: "design.builderlab.xyz", hints: ["Terms required"] },
-  { host: "buzz.example.org", hints: [] },
+const EXAMPLE_INVITES = [
+  "buzz.block.builderlab.xyz",
+  "design.builderlab.xyz",
+  "buzz.example.org",
 ];
 
 /** First-run landing after setup. Every action is a disabled placeholder. */
@@ -25,21 +25,15 @@ export function JoinCommunity() {
         aria-label="Pending invites"
         className="m-0 flex list-none flex-col gap-3 p-0"
       >
-        {EXAMPLE_INVITES.map(({ host, hints }) => (
+        {EXAMPLE_INVITES.map((host) => (
           <li
             key={host}
             className="flex items-center gap-3 rounded-lg border border-standard p-3"
           >
             <Avatar alt="" fallback={host} />
-            <div className="min-w-0 flex-1">
-              <p className="m-0 truncate text-label text-primary">{host}</p>
-              <p className="m-0 text-caption text-secondary">
-                {hints.map((hint) => (
-                  <span key={hint}>{hint} · </span>
-                ))}
-                <span>Coming soon</span>
-              </p>
-            </div>
+            <p className="m-0 min-w-0 flex-1 truncate text-label text-primary">
+              {host}
+            </p>
             <Button disabled>Join</Button>
           </li>
         ))}

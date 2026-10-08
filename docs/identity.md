@@ -18,8 +18,8 @@ placeholders marked `[TODO]` that wait two seconds each until their backends
 exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finish
 setup** with the error and **Back** to the welcome screen. Setup then lands on
 **Join a community**: three example pending-invite rows showing only what a relay
-publishes before admission — an icon placeholder, the hostname and policy hints
-such as *Terms required* or *18+* — each with a disabled **Join**, plus a disabled
+publishes before admission — an icon placeholder and the hostname — each with a
+disabled **Join**, plus a disabled
 community URL field, **Try joining**, **Scan a QR code** and **Create a
 community**, all *Coming soon*. The page is the end of first run for now; the
 app itself opens on the next launch. Denied/unavailable/corrupt storage is not

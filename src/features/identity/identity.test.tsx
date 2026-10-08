@@ -752,9 +752,9 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   const rows = invites.getAllByRole("listitem");
   expect(rows).toHaveLength(3);
   expect(rows[0]).toHaveTextContent("buzz.block.builderlab.xyz");
-  expect(rows[0]).toHaveTextContent("Terms required · 18+ · Coming soon");
   for (const row of rows) {
-    expect(within(row).getByText("Coming soon")).toBeVisible();
+    // Rows carry only the hostname: no subtitle, hints or status text.
+    expect(row).not.toHaveTextContent(/Coming soon|Terms|18\+/);
     expect(within(row).getByRole("button", { name: "Join" })).toBeDisabled();
   }
   const url = screen.getByRole("textbox", { name: "Community URL" });
