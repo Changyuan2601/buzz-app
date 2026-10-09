@@ -1,3 +1,4 @@
+import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import {
   fixtureRelayUrl,
   fixtureAliases,
@@ -116,7 +117,7 @@ it("reads legacy preferences through the production session, transport, and boun
         {
           kinds: [30078],
           authors: [viewer.pubkey],
-          "#t": [KIT_TAG],
+          "#t": [KIT_TAG, TEAM_MANIFEST_TAG],
           limit: 500,
         },
       ]);

@@ -38,7 +38,7 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         exact: true,
       }),
     ).toBeVisible();
-    await expect(page.getByText("Create agent", { exact: true })).toBeVisible();
+    await expect(page.getByText("Add agent", { exact: true })).toBeVisible();
     await expect(
       page.getByText("Old Buzz library", { exact: true }),
     ).toHaveCount(0);
@@ -62,12 +62,12 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       Math.abs(name.x + name.width / 2 - avatar.x - avatar.width / 2),
     ).toBeLessThan(1);
     expect(bounds.height).toBeLessThan(300);
-    const add = page.getByRole("button", { name: "Create agent", exact: true });
+    const add = page.getByRole("button", { name: "Add agent", exact: true });
     await expect(add).toHaveAttribute("aria-haspopup", "dialog");
     await add.focus();
     await add.press("Enter");
     const create = page.getByRole("dialog", {
-      name: "Create agent",
+      name: "Add agent",
       exact: true,
     });
     await expect(create.getByLabel("Name", { exact: true })).toBeVisible();

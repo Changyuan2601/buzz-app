@@ -1,5 +1,8 @@
 import meshManifest from "./mesh-compute/manifest.json";
 import * as mesh from "./mesh-compute";
+import voiceNotesManifest from "./voice-notes/manifest.json";
+import * as voiceNotes from "./voice-notes";
+
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -26,14 +29,22 @@ import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import agents2Manifest from "./agents2/manifest.json";
+import * as agents2 from "./agents2";
 import channelsManifest from "./channels/manifest.json";
+import usageManifest from "./channel-usage/manifest.json";
+import * as usage from "./channel-usage";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
+import meManifest from "./me/manifest.json";
+import * as me from "./me";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
+import remindersManifest from "./reminders/manifest.json";
+import * as reminders from "./reminders";
 import projectsManifest from "./projects/manifest.json";
 import * as projects from "./projects";
 import workflowsManifest from "./workflows/manifest.json";
@@ -53,6 +64,16 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     enabledByDefault: false,
+  },
+  {
+    manifest: { ...voiceNotesManifest, apiVersion: 1 },
+    module: voiceNotes,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...meManifest, apiVersion: 1 },
+    module: me,
+    enabledByDefault: true,
   },
   {
     manifest: { ...builderlabManifest, apiVersion: 1 },
@@ -125,6 +146,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...usageManifest, apiVersion: 1 },
+    module: usage,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...githubManifest, apiVersion: 1 },
     module: github,
     enabledByDefault: true,
@@ -140,6 +166,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...remindersManifest, apiVersion: 1 },
+    module: reminders,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...projectsManifest, apiVersion: 1 },
     module: projects,
     enabledByDefault: true,
@@ -147,6 +178,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agentsManifest, apiVersion: 1 },
     module: agents,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...agents2Manifest, apiVersion: 1 },
+    module: agents2,
     enabledByDefault: true,
   },
   {

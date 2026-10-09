@@ -86,6 +86,12 @@ impl Preferences {
             .as_ref()
             .is_some_and(|(selected, _)| selected != viewer)
     }
+    // A revoked lease is not a pristine launch: prior consumers may still need cleanup.
+    pub fn requires_retirement(&self, bound: Option<&str>, community: &str, viewer: &str) -> bool {
+        self.viewer_changed(viewer)
+            || bound.is_some_and(|current| current != community)
+            || (bound.is_none() && self.selected.is_some())
+    }
     pub fn select(&mut self, viewer: String, community: String) {
         self.selected = Some((viewer, community));
     }
@@ -178,6 +184,19 @@ impl Preferences {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn first_selection_preserves_restore_but_revoked_binding_requires_retirement() {
+        let mut prefs = super::Preferences::default();
+        assert!(!prefs.requires_retirement(None, "a", "viewer"));
+        prefs.select("viewer".into(), "a".into());
+        assert!(!prefs.requires_retirement(Some("a"), "a", "viewer"));
+        assert!(prefs.requires_retirement(Some("a"), "b", "viewer"));
+        // Revocation removed the lease, not proof that all old consumers stopped.
+        assert!(prefs.requires_retirement(None, "b", "viewer"));
+        assert!(prefs.requires_retirement(None, "a", "viewer"));
+        assert!(prefs.requires_retirement(Some("a"), "a", "other-viewer"));
+    }
+
     use super::*;
     use buzz_mesh_compute::lifecycle::Phase;
     fn config() -> Config {

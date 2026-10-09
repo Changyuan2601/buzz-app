@@ -71,6 +71,15 @@ export function OutboxStatus({
                 type="button"
                 onClick={async () => {
                   try {
+                    const snapshotReceipt =
+                      item.event.kind === 9 &&
+                      /^snapshot-share:(agent|team):.+$/.test(
+                        item.recovery?.key ?? "",
+                      ) &&
+                      (item.delivery === "accepted" ||
+                        item.delivery === "seen");
+                    if (snapshotReceipt)
+                      await outbox.acknowledge(item.event.id);
                     await outbox.dismiss(item.event.id);
                     setError(undefined);
                   } catch (reason) {

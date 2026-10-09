@@ -28,10 +28,13 @@ export function SharedComputeModelPicker({
   const request = JSON.stringify({
     id,
     expectedRevision: id ? draft.revision : undefined,
-    edit: agentEdit({ ...draft, model: "" }, true),
-    host: "",
-    filter: "",
-    action: "connect",
+    draft: {
+      command: draft.command,
+      args: draft.args,
+      provider: draft.provider,
+      workspace: draft.workspace,
+      environment: draft.environment,
+    },
   });
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit retry.
   useEffect(() => {
@@ -44,8 +47,38 @@ export function SharedComputeModelPicker({
       setBusy(false);
       return () => run.abort();
     }
+    let edit: ReturnType<typeof agentEdit>;
+    const context = JSON.parse(request);
+    try {
+      edit = agentEdit(
+        {
+          ...context.draft,
+          // Discovery applies this edit only to a native clone, never Save.
+          // Saved-agent validation still requires a nonempty name.
+          name: "Model discovery",
+          systemPrompt: "",
+          sessionPolicy: null,
+          model: "",
+        },
+        true,
+      );
+    } catch (failure) {
+      setError((failure as Error).message);
+      setBusy(false);
+      return () => run.abort();
+    }
     void control.models
-      .request(JSON.parse(request), run.signal)
+      .request(
+        {
+          id: context.id,
+          expectedRevision: context.expectedRevision,
+          edit,
+          host: "",
+          filter: "",
+          action: "connect",
+        },
+        run.signal,
+      )
       .then(
         (result) => {
           if (!run.signal.aborted) setCatalog(result);

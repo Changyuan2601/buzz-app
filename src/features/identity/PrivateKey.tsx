@@ -4,7 +4,14 @@ import { Input } from "../../shared/design-system/ui/Input";
 import type { Identity } from "./service";
 
 // Mount only while Profile is active. Late native results must never repopulate a hidden key.
-export function PrivateKey({ identity }: { identity: Identity }) {
+export function PrivateKey({
+  identity,
+  onInteraction,
+}: {
+  identity: Identity;
+  /** Called once the key was revealed or copied, e.g. to gate Sign out. */
+  onInteraction?: () => void;
+}) {
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -49,6 +56,7 @@ export function PrivateKey({ identity }: { identity: Identity }) {
             "Private key copied. Keep it somewhere safe; your clipboard now contains it.",
           );
       } else setSecret(value);
+      if (current === generation.current) onInteraction?.();
     } catch {
       if (current === generation.current) {
         setFailed(true);

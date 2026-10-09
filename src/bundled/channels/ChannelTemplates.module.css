@@ -55,3 +55,31 @@
   overflow-wrap: anywhere;
   text-align: start;
 }
+
+.teamAddLayout {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  gap: var(--space-4);
+}
+.teamAddSidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-y: auto;
+  max-height: 60vh;
+  border-right: 1px solid var(--border-standard);
+  padding-right: var(--space-3);
+}
+.teamAddSidebar > span {
+  padding: var(--space-3);
+}
+@media (max-width: 640px) {
+  .teamAddLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .teamAddSidebar {
+    max-height: 10rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-standard);
+  }
+}

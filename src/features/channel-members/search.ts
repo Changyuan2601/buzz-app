@@ -1,6 +1,7 @@
 import { nip19 } from "nostr-tools";
 import type { RelaySession } from "../relay/session";
 import { foldProfiles } from "../relay/profiles";
+import { matchPerson } from "../search/person-match";
 
 export const MEMBER_SEARCH_PAGE_SIZE = 30;
 
@@ -41,13 +42,8 @@ export async function searchMembers(
       (event) => event.kind === 0 && (!exact || event.pubkey === exact),
     ),
   );
-  const normalized = text.toLowerCase();
-  const score = (name: string) =>
-    name.toLowerCase() === normalized
-      ? 0
-      : name.toLowerCase().startsWith(normalized)
-        ? 1
-        : 2;
+  // The relay matches words; rank its page by the shared name rule.
+  const score = (name: string) => matchPerson(name, text)?.tier ?? 4;
   return {
     people: [...profiles]
       .map(([pubkey, profile]) => ({ pubkey, ...profile }))

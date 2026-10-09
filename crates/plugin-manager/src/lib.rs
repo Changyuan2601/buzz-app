@@ -35,6 +35,10 @@ pub struct HostGrants {
     pub commands: Vec<HostCommand>,
     #[serde(default)]
     pub network_origins: Vec<String>,
+    /// Programs the plugin may start as long-lived processes. Unlike a command,
+    /// a process takes stdin and the caller appends its own arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub processes: Vec<HostProcess>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +53,26 @@ pub struct HostCommand {
     )]
     pub max_output_bytes: Option<u64>,
 }
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostProcess {
+    pub id: String,
+    pub program: String,
+    /// Fixed leading arguments; the caller's arguments follow them.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+fn valid_program(program: &str, args: &[String]) -> bool {
+    !program.is_empty()
+        && program.len() <= 80
+        && program
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && args.len() <= 16
+        && args
+            .iter()
+            .all(|argument| argument.len() <= 1024 && !argument.contains('\0'))
+}
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
         valid_id(&self.id)?;
@@ -59,28 +83,31 @@ impl Manifest {
             return Err("Only page plugin API version 1 is supported".into());
         }
         if let Some(host) = &self.host {
-            if host.commands.len() > 16 || host.network_origins.len() > 16 {
+            if host.commands.len() > 16
+                || host.network_origins.len() > 16
+                || host.processes.len() > 16
+            {
                 return Err("Too many host declarations".into());
             }
             let mut command_ids = std::collections::HashSet::new();
             for command in &host.commands {
                 valid_id(&command.id)?;
                 if !command_ids.insert(&command.id)
-                    || command.program.is_empty()
-                    || command.program.len() > 80
-                    || !command.program.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-                    })
-                    || command.args.len() > 16
+                    || !valid_program(&command.program, &command.args)
                     || command
                         .max_output_bytes
                         .is_some_and(|limit| !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&limit))
-                    || command
-                        .args
-                        .iter()
-                        .any(|argument| argument.len() > 1024 || argument.contains('\0'))
                 {
                     return Err("Invalid host command declaration".into());
+                }
+            }
+            let mut process_ids = std::collections::HashSet::new();
+            for process in &host.processes {
+                valid_id(&process.id)?;
+                if !process_ids.insert(&process.id)
+                    || !valid_program(&process.program, &process.args)
+                {
+                    return Err("Invalid host process declaration".into());
                 }
             }
             let mut origins = std::collections::HashSet::new();
@@ -157,22 +184,36 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("valid bundled Profiles manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/links/manifest.json"))
             .expect("links manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/voice-notes/manifest.json"
+        ))
+        .expect("voice notes manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
             .expect("mentions manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))
             .expect("emoji manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/channels/manifest.json"))
             .expect("channels manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/channel-usage/manifest.json"
+        ))
+        .expect("channel usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/me/manifest.json"))
+            .expect("Me manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
+            .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
+            .expect("agents2 manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -188,6 +229,37 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ))
         .expect("moderation manifest"),
     ]
+}
+/// New bundles must opt in to the default-on policy.
+fn enabled_by_default(id: &str) -> bool {
+    matches!(
+        id,
+        "buzz.channels"
+            | "buzz.feedback"
+            | "buzz.diffs"
+            | "buzz.identity-naming"
+            | "buzz.agent-activity"
+            | "buzz.channel-usage"
+            | "buzz.terminal"
+            | "buzz.profiles"
+            | "buzz.links"
+            | "buzz.mentions"
+            | "buzz.voice-notes"
+            | "buzz.emoji"
+            | "buzz.github"
+            | "buzz.pairing"
+            | "buzz.me"
+            | "buzz.inbox"
+            | "buzz.reminders"
+            | "buzz.projects"
+            | "buzz.agents"
+            | "buzz.agents2"
+            | "buzz.workflows"
+            | "buzz.sessions"
+            | "block.hosted-communities"
+            | "block.builderlab"
+            | "buzz.moderation"
+    )
 }
 fn is_bundled(id: &str) -> bool {
     bundled_manifests().iter().any(|manifest| manifest.id == id)
@@ -496,30 +568,7 @@ impl Manager {
                         .bundled_overrides
                         .get(&manifest.id)
                         .copied()
-                        // New bundles must opt in to the default-on policy.
-                        .unwrap_or(matches!(
-                            manifest.id.as_str(),
-                            "buzz.channels"
-                                | "buzz.feedback"
-                                | "buzz.diffs"
-                                | "buzz.identity-naming"
-                                | "buzz.agent-activity"
-                                | "buzz.terminal"
-                                | "buzz.profiles"
-                                | "buzz.links"
-                                | "buzz.mentions"
-                                | "buzz.emoji"
-                                | "buzz.github"
-                                | "buzz.pairing"
-                                | "buzz.inbox"
-                                | "buzz.projects"
-                                | "buzz.agents"
-                                | "buzz.workflows"
-                                | "buzz.sessions"
-                                | "block.hosted-communities"
-                                | "block.builderlab"
-                                | "buzz.moderation"
-                        ));
+                        .unwrap_or_else(|| enabled_by_default(&manifest.id));
                 PluginInfo {
                     manifest,
                     source: "bundled",
@@ -980,8 +1029,49 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{artifact_from_text, Manager, Manifest, MAX_HOST_COMMAND_OUTPUT_BYTES};
+    use super::{
+        artifact_from_text, bundled_manifests, enabled_by_default, Manager, Manifest,
+        MAX_HOST_COMMAND_OUTPUT_BYTES,
+    };
+    use std::collections::BTreeMap;
     use std::fs;
+
+    #[test]
+    fn native_catalog_matches_desktop_bundles() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/bundled");
+        let index = fs::read_to_string(format!("{root}/index.ts")).unwrap();
+        let mut dirs = BTreeMap::new();
+        for line in index.lines() {
+            if let Some(rest) = line.strip_prefix("import ") {
+                if let Some((name, path)) = rest.split_once(" from \"./") {
+                    if let Some(dir) = path.strip_suffix("/manifest.json\";") {
+                        dirs.insert(name.to_string(), dir.to_string());
+                    }
+                }
+            }
+        }
+        let mut expected = BTreeMap::new();
+        for entry in index.split("manifest: { ...").skip(1) {
+            let name = entry.split(',').next().unwrap();
+            let default = entry
+                .split("enabledByDefault: ")
+                .nth(1)
+                .unwrap()
+                .starts_with("true");
+            let manifest =
+                fs::read_to_string(format!("{root}/{}/manifest.json", dirs[name])).unwrap();
+            let manifest: Manifest = serde_json::from_str(&manifest).unwrap();
+            expected.insert(manifest.id, default);
+        }
+        let native: BTreeMap<String, bool> = bundled_manifests()
+            .into_iter()
+            .map(|manifest| {
+                let default = enabled_by_default(&manifest.id);
+                (manifest.id, default)
+            })
+            .collect();
+        assert_eq!(native, expected);
+    }
 
     #[test]
     fn saved_human_identity_signs_importable_release_without_storage_fallback() {
@@ -1235,6 +1325,32 @@ mod tests {
             .unwrap()
             .push(manifest["host"]["commands"][0].clone());
         assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+
+        let mut processes = manifest.clone();
+        processes["host"]["processes"] = serde_json::json!([
+            {"id":"agent","program":"example-cli"},
+            {"id":"install","program":"bash","args":["-c","echo install"]}
+        ]);
+        assert!(artifact_from_text(&processes.to_string(), "export const x = 1".into()).is_ok());
+        let parsed: Manifest = serde_json::from_value(processes.clone()).unwrap();
+        assert_eq!(
+            parsed.host.as_ref().unwrap().processes[0].args,
+            Vec::<String>::new()
+        );
+        for (field, value) in [
+            ("program", serde_json::json!("/bin/sh")),
+            ("program", serde_json::json!("")),
+            ("id", serde_json::json!("Agent")),
+            ("args", serde_json::json!(["a\0b"])),
+            ("shell", serde_json::json!(true)),
+        ] {
+            let mut invalid = processes.clone();
+            invalid["host"]["processes"][0][field] = value;
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
+        let mut duplicate = processes.clone();
+        duplicate["host"]["processes"][1]["id"] = serde_json::json!("agent");
+        assert!(artifact_from_text(&duplicate.to_string(), "export const x = 1".into()).is_err());
     }
 
     #[test]

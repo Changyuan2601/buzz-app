@@ -352,3 +352,58 @@ async fn installed_pi_connection_test_uses_production_context() {
     let error = test(context(environment), "openai", "").await.unwrap_err();
     assert!(error.contains("rejected the API key"), "{error}");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn saved_tool_path_reaches_catalog_and_connection_test() {
+    use buzz_agent_controller::{AgentEdit, Controller, HarnessEdit};
+    let dir = tempfile::tempdir().unwrap();
+    let tools = dir.path().join("saved tools");
+    std::fs::create_dir(&tools).unwrap();
+    crate::test_executable::write_executable(
+        &tools.join("saved-path-helper"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    for name in ["node", "buzz-pi-acp"] {
+        crate::test_executable::write_executable(&dir.path().join(name), "#!/bin/sh\nexit 0\n");
+    }
+    crate::test_executable::write_executable(
+        &dir.path().join("pi"),
+        r#"#!/bin/sh
+saved-path-helper || exit 1
+read request
+case "$request" in
+ *get_available_models*) printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"openai","id":"gpt"}]}}';;
+ *get_state*)
+ printf '%s\n' '{"id":"selection","type":"response","command":"get_state","success":true,"data":{"model":{"provider":"openai","id":"gpt"}}}'
+ read request
+ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","provider":"openai","model":"gpt","stopReason":"stop","content":[{"type":"text","text":"OK"}]}}';;
+esac
+"#,
+    );
+    let context = || {
+        Controller::draft_pi_model_context(AgentEdit {
+            name: "Saved PATH fixture".into(),
+            picture: None,
+            system_prompt: String::new(),
+            session_policy: Some(None),
+            workspace: dir.path().display().to_string(),
+            harness: HarnessEdit {
+                command: dir.path().join("buzz-pi-acp").display().to_string(),
+                args: vec![],
+                model: String::new(),
+                provider: String::new(),
+                databricks: None,
+            },
+            environment: [("PATH".into(), Some(tools.display().to_string()))]
+                .into_iter()
+                .collect(),
+        })
+        .unwrap()
+    };
+    assert_eq!(fetch(context()).await.unwrap(), ["openai/gpt"]);
+    assert_eq!(
+        test(context(), "openai", "gpt").await.unwrap(),
+        "openai/gpt"
+    );
+}

@@ -1,3 +1,4 @@
+import { prepareAttachment } from "./prepare-attachment";
 import { expect, it } from "vitest";
 import {
   cleanGif,
@@ -130,4 +131,22 @@ it("preserves GIF loop, delay and image blocks but drops comment/trailer junk", 
   ]);
   expect(new Uint8Array(await cleanGif(dirty).arrayBuffer())).toEqual(clean);
   expect(() => cleanGif(dirty.subarray(0, 15))).toThrow(/malformed/);
+});
+
+it("avatar-purpose preparation removes nested snapshot metadata before upload", async () => {
+  const bytes = join([
+    signature,
+    png("IHDR", new Uint8Array(13)),
+    png("tEXt", enc("buzz_agent_snapshot\0NESTED_PRIVATE_MEMORY")),
+    png("IDAT", new Uint8Array([1, 2])),
+    png("IEND"),
+  ]);
+  const prepared = await prepareAttachment(
+    new File([bytes], "avatar.png", { type: "image/png" }),
+    new AbortController().signal,
+    true,
+  );
+  const result = pngChunks(new Uint8Array(await prepared.arrayBuffer()));
+  expect(result.map((chunk) => chunk.kind)).toEqual(["IHDR", "IDAT", "IEND"]);
+  expect(result[1]?.payload).toEqual(new Uint8Array([1, 2]));
 });

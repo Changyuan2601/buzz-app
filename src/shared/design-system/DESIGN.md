@@ -69,8 +69,8 @@ never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
 Avatar-only controls use `IconButton variant="avatar"` so the surrounding backdrop
 shows through their cutouts at rest, hover, press, and while a menu is open. The focus
-target stays unmasked. Its keyboard-ring recipe remains subject to the temporary focus
-appearance policy below.
+target stays unmasked. Its keyboard-ring recipe follows the focus appearance
+policy below.
 Circular and squircle avatars can add `statusBadge="online" | "away" | "offline"`. The dot
 uses a semantic green, yellow, or grey role with light and dark values. Its inset
 cutout and dot scale with the existing avatar size; the dot is separate from the
@@ -227,18 +227,27 @@ A chrome selection can blend into a white panel; choose the appropriate variant
 instead of retinting `--bg-chrome-selected` for one caller. Keep shared behavior
 in one component and show both surface variants in its examples.
 
+A selection and a hover describe the same object, so they occupy the same box.
+The chrome pill fills its tab rather than sitting inset within it; insetting the
+selection alone draws it shorter than the hover beside it, and the two states
+stop agreeing on where a tab is. The container's own padding is the frame.
+
 Panel tabs keep labels at intrinsic width and scroll within the Base UI tablist
 when space is limited. Keyboard navigation reveals the focused tab. The surrounding
 panel grid must have a shrinkable column so tabs do not widen other content.
 
-## Temporary focus appearance
+## Focus appearance
 
-The shared global stylesheet currently hides focus outlines at the designer’s request
-while forms are being polished. The override in `styles/globals.css` takes precedence
-over the keyboard-ring recipes in this guide. This is a known visible-focus
-accessibility exception, not an accessibility pass. Keep focusability,
-Tab order, input modality, selection, and focus restoration intact. Do not add
-local replacement rings or disable keyboard interaction. Shared text fields now use
+Keyboard focus is visible, and the component recipes in this guide own the ring.
+Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
+so a pointer press leaves nothing behind. Keep focusability, Tab order, input
+modality, selection, and focus restoration intact, and do not add a local
+replacement ring where a component recipe already exists.
+
+Shared text fields are the one deliberate exception, and they replace the ring
+rather than removing it. `styles/forms.css` drops the outline for editable
+`.buzz-input`, `.buzz-textarea` and rich textboxes; read-only controls keep their
+keyboard rings. Those fields use
 a border flush with the field perimeter: surface-inset fill and a 1px
 border-prominent stroke fading over 150ms ease for pointer interaction. The
 field-scoped --border variable selects transparent, active, or error color for
@@ -247,8 +256,25 @@ focus and reduced motion change immediately. Composite fields own one stroke
 around the input and actions; error strokes retain priority. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
-and no-container-ring recipes for these fields. Existing component
-recipes remain so this temporary visual decision can be reversed in one place.
+and no-container-ring recipes for these fields.
+
+The composer is the second deliberate exception, and it is a container treatment
+rather than a control ring. `styles/composer.css` clears the textarea's own
+outline and lets `.buzz-composer:focus-within` carry focus on the shell: the 1px
+perimeter border switches to `--border-focus` and a matching 1px ring doubles
+it, so the composite reads as one focused surface instead of a ring around the
+text area inside a bordered box. Measured in the viewer, the stroke moves from
+`rgb(232, 232, 232)` to `rgb(0, 0, 0)` in light and `rgb(35, 35, 35)` to
+`rgb(255, 255, 255)` in dark — 21:1 and 17.4:1 against the panel surface, and
+17.1:1 and 15.7:1 against the resting border, so the change itself is legible.
+Unlike the text-field exception this is not modality-gated, because the shell
+also marks where typing will land. Do not copy the container pattern to a
+control that has a component ring recipe.
+
+`SearchField` is an unresolved gap, not a policy: `styles/search-field.css`
+cancels the ring on both the field and its clear button to match a global
+override that no longer exists, and its 1px perimeter border does not react to
+focus, so the control has no visible focus state. Do not copy it.
 
 ## Surface-aware interactions (proposed)
 
@@ -737,7 +763,7 @@ inside a group than between groups.
 - Distinct swatches, type samples, and avatars often need only space between them. Avoid adding a card or divider when the content already separates itself.
 - Show samples on the surface where they will be used. Glass needs a backdrop; a white swatch on white needs a quiet boundary.
 - Cards group widgets, gallery items, or settings. They sit on `bg-panel` with spacing or a hairline and have no default fill. Use `bg-hover` only for an interactive card’s hover state. There is no `bg-card` role; `bg-inset` is for recessed content such as inputs or code blocks.
-- Use native thin scrollbars: `scrollbar-width: thin` and `scrollbar-color: var(--scrollbar-thumb) transparent`. The thumb is gray in both modes. Load the shared recipe into vendor shadow roots and let the browser control scrolling and visibility.
+- Use native thin scrollbars: `scrollbar-width: thin` and `scrollbar-color: var(--scrollbar-thumb-quiet) transparent`. Use the sidebar’s subtle gray thumb in both modes. Load the shared recipe into vendor shadow roots and let the browser control scrolling and visibility.
 
 ## Motion
 
@@ -875,9 +901,9 @@ identify and check every supported way to reach the action.
 
 The intended focus recipe requires both `html[data-keyboard-navigation]` and
 `:focus-visible`. The app-root modality owner supplies the attribute; pointer
-focus stays quiet, including programmatic focus during a drag. The shared global
-outline suppression is a temporary exception: follow
-[Temporary focus appearance](#temporary-focus-appearance) rather than adding a
+focus stays quiet, including programmatic focus during a drag. Shared text
+fields replace the ring with a perimeter stroke; see
+[Focus appearance](#focus-appearance) rather than adding a
 local replacement.
 
 Pair color with text, shape, or position. Solid avatar status badges are an explicit
@@ -907,7 +933,7 @@ Reuse and compose existing components before adding another.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
-- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles or add a `:focus-within` ring around its container. Preserve these recipes while the temporary global outline suppression is active; shared fields follow the perimeter-stroke exception documented above.
+- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
 
 ## Using the system
 
@@ -962,3 +988,12 @@ picker results use the opt-in `buzz-thin-scrollbar` native scrollbar recipe.
 Mention choices use `NavigationItem variant="option"` with 8px padding and
 immediate hover/focus feedback. The picker owns arrow-key navigation and exact
 identity selection; rows retain ordinary button semantics.
+
+### Chrome route navigation
+
+For full-page destinations, compose native-button `NavigationItem variant="pill"`
+inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
+but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
+buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
+`aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.

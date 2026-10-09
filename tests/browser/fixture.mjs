@@ -11,7 +11,7 @@ import {
 import { writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { bytesToHex } from "nostr-tools/utils";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -35,6 +35,7 @@ export const test = base.extend({
   productionBroker: [false, { option: true }],
   archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
+  agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
@@ -89,6 +90,7 @@ export const test = base.extend({
       productionBroker,
       archiveOnDisk,
       actionProfile,
+      agentMessageDeletion,
       profilePicture,
       readState,
       threadUnread,
@@ -200,8 +202,19 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
-    const ownerAgentKey = lifecycleOwnerAgent ? generateSecretKey() : undefined;
+    const ownerAgentKey =
+      lifecycleOwnerAgent || agentMessageDeletion
+        ? generateSecretKey()
+        : undefined;
     const ownerAgent = ownerAgentKey ? getPublicKey(ownerAgentKey) : undefined;
+    const ownerAuthDigest = ownerAgent
+      ? new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(`nostr:agent-auth:${ownerAgent}:`),
+          ),
+        )
+      : undefined;
     const ownerAgentProfile = ownerAgentKey
       ? sign(
           0,
@@ -210,20 +223,22 @@ export const test = base.extend({
               "auth",
               viewer,
               "",
-              bytesToHex(
-                schnorr.sign(
-                  createHash("sha256")
-                    .update(`nostr:agent-auth:${ownerAgent}:`)
-                    .digest(),
-                  userKey,
-                ),
-              ),
+              bytesToHex(schnorr.sign(ownerAuthDigest, userKey)),
             ],
           ],
           JSON.stringify({ name: "Owner Agent", is_agent: true }),
           ownerAgentKey,
         )
       : undefined;
+    const ownerAttestationValid =
+      !!ownerAgent &&
+      !!ownerAgentProfile &&
+      !!ownerAuthDigest &&
+      schnorr.verify(
+        hexToBytes(ownerAgentProfile.tags[0][3]),
+        ownerAuthDigest,
+        hexToBytes(viewer),
+      );
     const participants = largeSidebar
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
@@ -391,6 +406,19 @@ export const test = base.extend({
             ),
           ),
         );
+    const ownerAgentMessage = agentMessageDeletion
+      ? sign(
+          9,
+          [["h", "alpha"]],
+          "Owned agent deletion fixture",
+          ownerAgentKey,
+          Math.max(
+            ...histories.get("primary/alpha").map((event) => event.created_at),
+          ) + 1,
+        )
+      : undefined;
+    if (ownerAgentMessage)
+      histories.get("primary/alpha").push(ownerAgentMessage);
     const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of [...dmIds, ...lifecycleRows.map((row) => row.id)])
@@ -749,6 +777,7 @@ export const test = base.extend({
         developmentReact,
         pluginFixtures,
         agentManagement,
+        agentMessageDeletion,
         compiledBuild: {
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
@@ -1006,6 +1035,13 @@ export const test = base.extend({
         expect(filter.authors.length).toBeLessThanOrEqual(100);
         return [];
       }
+      if (filter.kinds?.includes(30178)) {
+        expect(filter).toEqual({
+          kinds: [30175, 30178],
+          limit: 63,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
         expect(filter).toEqual({
           authors: [viewer],
@@ -1102,6 +1138,12 @@ export const test = base.extend({
               (filter.until === undefined || event.created_at <= filter.until),
           )
           .slice(0, filter.limit);
+      if (
+        agentMessageDeletion &&
+        filter.kinds?.includes(0) &&
+        filter.authors?.includes(ownerAgent)
+      )
+        return ownerAgentProfile ? [ownerAgentProfile] : [];
       if (filter.kinds?.includes(0))
         return [
           ...[...servedProfiles.values()].filter((event) =>
@@ -1517,7 +1559,20 @@ export const test = base.extend({
           expect(target.tags).toContainEqual(["h", channel]);
           if (event.kind === 7) expect(target.kind).toBe(9);
           else {
-            expect(target.pubkey).toBe(viewer);
+            const ownerDelete =
+              event.kind === 5 &&
+              agentMessageDeletion &&
+              target.pubkey === ownerAgent &&
+              target.kind === 9;
+            if (ownerDelete) {
+              expect(ownerAgentProfile).toBeDefined();
+              expect(ownerAttestationValid).toBe(true);
+              const auth = ownerAgentProfile.tags.find(
+                ([name]) => name === "auth",
+              );
+              expect(auth).toHaveLength(4);
+              expect(auth[1]).toBe(viewer);
+            } else expect(target.pubkey).toBe(viewer);
             expect([7, 9]).toContain(target.kind);
             if (event.kind === 5)
               expect(event.tags).toContainEqual(["k", String(target.kind)]);
@@ -2055,6 +2110,7 @@ export const test = base.extend({
           relay.publish("primary", deletion);
         },
         exact,
+        ownerAgentMessage,
         searchTarget,
         openChannelId: OPEN_CHANNEL,
         membership(

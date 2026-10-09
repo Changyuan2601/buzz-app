@@ -5,6 +5,7 @@ import type {
   TemplateProvider,
   TemplateProviders,
 } from "../../features/channel-templates/provider";
+import type { RegisteredPanel } from "../../features/panels/service";
 import type { Contribution } from "../../plugins/contributions";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { useChannelReadAction } from "./useChannelReadAction";
@@ -39,6 +40,8 @@ export function ChannelHeaderMenu({
   trigger,
   openDetails,
   openCanvas,
+  menuPanels,
+  openMenuPanel,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
@@ -48,6 +51,8 @@ export function ChannelHeaderMenu({
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
   openCanvas(trigger: HTMLButtonElement): void;
+  menuPanels?: readonly RegisteredPanel[] | undefined;
+  openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [prepared, setPrepared] = useState(false);
@@ -102,6 +107,14 @@ export function ChannelHeaderMenu({
           View canvas
         </MenuItem>
       )}
+      {menuPanels?.map((panel) => (
+        <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
+          <MenuIcon>
+            <InfoIcon size={16} />
+          </MenuIcon>
+          {panel.channelMenu?.label}
+        </MenuItem>
+      ))}
       {saveAs}
       {!!actions?.length && <MenuSeparator />}
       {actions}

@@ -201,6 +201,9 @@ export function useMentionChoices(
       });
     }
   }
+  // Space needs the full choice set (README section 5). While the directory
+  // search runs, failed, or has more pages, a namesake may still be missing.
+  const complete = !directory.loading && !directory.error && !directory.more;
   return useMemo(() => {
     const live = new Map(candidates.map((c) => [c.recipient.pubkey, c]));
     const choices = (rows ?? []).map((row) => {
@@ -229,7 +232,7 @@ export function useMentionChoices(
       candidates,
       pending,
       archives,
-      spaceId: exactMention(candidates, query),
+      spaceId: complete ? exactMention(candidates, query) : undefined,
       canSelect: (pubkey: string, space = false) => {
         const fresh = current();
         return (
@@ -239,7 +242,7 @@ export function useMentionChoices(
               (!rows?.find((row) => row.recipient.pubkey === pubkey)?.member ||
                 c.member),
           ) &&
-          (!space || exactMention(fresh, query) === pubkey)
+          (!space || (complete && exactMention(fresh, query) === pubkey))
         );
       },
       truncated: rankMentions(candidates, query).length > 50,
@@ -259,5 +262,6 @@ export function useMentionChoices(
     pending,
     query,
     current,
+    complete,
   ]);
 }

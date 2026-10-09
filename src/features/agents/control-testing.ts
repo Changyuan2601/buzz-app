@@ -26,6 +26,7 @@ export function controlFixture() {
     startOnAppLaunch: true,
     respondTo: "owner-only",
     backend: null,
+    snapshotExportLimitations: [],
     acpCommand: "/fixture/bin/buzz-acp",
     mcpCommand: "/fixture/bin/buzz-dev-mcp",
     launchModel: "fixture-model",

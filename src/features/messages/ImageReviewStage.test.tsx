@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import * as imageCopy from "./image-copy";
+import * as nativeImageCopy from "./native-image-copy";
 import { ImageReviewStage } from "./ImageReviewStage";
 
 // jsdom does not implement pointer capture.
@@ -513,8 +514,11 @@ function stubImageCopy({ supported = true } = {}) {
   return copy;
 }
 
-it("shows the copy image button only when browser-proxy image copy is supported", () => {
-  stubImageCopy({ supported: true });
+it("offers native copy independently of browser clipboard support", async () => {
+  const broker = stubImageCopy({ supported: false });
+  const native = vi
+    .spyOn(nativeImageCopy, "copyNativeImage")
+    .mockResolvedValue();
   const attachments = [
     { url: "proxy", kind: "image" as const },
     { url: "external", kind: "image" as const },
@@ -541,24 +545,36 @@ it("shows the copy image button only when browser-proxy image copy is supported"
     );
   }
   render(<SourcesGallery />);
-  expect(screen.getByRole("button", { name: "Copy image" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(
     screen.queryByRole("button", { name: "Copy image" }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
-  expect(
-    screen.queryByRole("button", { name: "Copy image" }),
-  ).not.toBeInTheDocument();
+  const button = screen.getByRole("button", { name: "Copy image" });
+  fireEvent.click(button);
+  expect(native).toHaveBeenCalledWith(
+    "buzz-media://localhost/https%3A%2F%2Ffixture.test%2Fmedia%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  expect(broker).not.toHaveBeenCalled();
+  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
+
+  native.mockRejectedValueOnce(new Error("clipboard denied"));
+  fireEvent.click(button);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't copy image",
+  );
+  expect(broker).not.toHaveBeenCalled();
 
   cleanup();
   vi.restoreAllMocks();
-  stubImageCopy({ supported: false });
+  const supportedBroker = stubImageCopy({ supported: true });
   setup();
-  expect(
-    screen.queryByRole("button", { name: "Copy image" }),
-  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  expect(supportedBroker).toHaveBeenCalledTimes(1);
 });
 
 it("ignores duplicate copy presses while a clipboard write is pending", async () => {

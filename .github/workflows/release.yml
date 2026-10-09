@@ -99,6 +99,7 @@ jobs:
           osx-codesign-role: ${{ secrets.OSX_CODESIGN_ROLE }}
           codesign-s3-bucket: ${{ secrets.CODESIGN_S3_BUCKET }}
           unsigned-artifact-path: ${{ steps.unsigned.outputs.path }}
+          entitlements-plist-path: src-tauri/entitlements.plist
           artifact-name: buzz-app-${{ github.run_id }}-${{ github.run_attempt }}-arm64
 
       - name: Verify release DMG and bundled runtime
@@ -113,6 +114,8 @@ jobs:
             -R '=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = EYF346PHUG' "$app"
           spctl --assess --type execute --verbose=4 "$app"
           xcrun stapler validate "$app"
+          codesign --display --entitlements :- "$app" > "$RUNNER_TEMP/signed-entitlements.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/signed-entitlements.plist")" = true || { echo '::error::Signed app is missing microphone entitlement'; exit 1; }
           node --input-type=module - "$app/Contents/Resources/agent-runtime" <<'JS'
           import { readFileSync, lstatSync } from 'node:fs';
           import assert from 'node:assert/strict';

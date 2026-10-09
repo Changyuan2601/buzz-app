@@ -74,7 +74,7 @@ const rowValue = (): ChannelMessage => ({
   agentEnvelope: true,
   membership,
   edited: true,
-  attachmentContentRemoved: true,
+  attachmentSeams: [1],
   mentions: [viewer.pubkey],
   attachments: [attachment],
   emoji: [customEmoji],
@@ -142,12 +142,13 @@ it("drops shared row identity when any compared field changes", () => {
       },
     ],
     [
-      "attachmentContentRemoved",
+      "attachmentSeams",
       (row) => {
-        const { attachmentContentRemoved: _removed, ...changed } = row;
+        const { attachmentSeams: _seams, ...changed } = row;
         return changed;
       },
     ],
+    ["attachmentSeams.offset", (row) => ({ ...row, attachmentSeams: [2] })],
     ["mentions", (row) => ({ ...row, mentions: [replacementId] })],
     [
       "attachments.url",

@@ -28,10 +28,14 @@ export type Page = Readonly<{
   /** This page acknowledges its own domain reveal rather than just successful mounting. */
   handlesNavigation?: boolean;
   /**
-   * Opt in to a row in the shell's page navigation. Every active page stays
+   * Opt in to the shell's page navigation. Every active page stays
    * listed in search and reachable by deep link or from another page.
    */
   primary?: boolean;
+  /** Preferred navigation location for a primary page; omitted means sidebar.
+   * The host may move header entries into an overflow menu when space is tight.
+   */
+  placement?: "sidebar" | "topbar" | "toolbar";
   /**
    * A `data:image/<subtype>[;params],<payload>` URL shown beside the page in
    * search and primary navigation. Any other value is dropped with a warning,
@@ -39,6 +43,10 @@ export type Page = Readonly<{
    * pages keep their host icons.
    */
   icon?: string;
+  /** Plugin-owned navigation count or mark. Toolbar icons constrain this to a
+   * compact corner badge; prefer a short count or dot there.
+   */
+  badge?: ComponentType;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -74,7 +82,8 @@ export class PagesService extends Service implements Pages {
         page.layout !== "document" &&
         page.layout !== "workspace") ||
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
-      (page.primary !== undefined && typeof page.primary !== "boolean")
+      (page.primary !== undefined && typeof page.primary !== "boolean") ||
+      (page.badge !== undefined && typeof page.badge !== "function")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",
@@ -87,7 +96,24 @@ export class PagesService extends Service implements Pages {
         typeof page.route.validate !== "function")
     )
       throw new Error("Invalid page route contract");
-    this.contributions.register(this.ctx, this.withAcceptedIcon(page));
+    this.contributions.register(
+      this.ctx,
+      this.withAcceptedPlacement(this.withAcceptedIcon(page)),
+    );
+  }
+  private withAcceptedPlacement(page: Page): Page {
+    const { placement, ...rest } = page;
+    if (
+      placement === undefined ||
+      placement === "sidebar" ||
+      placement === "topbar" ||
+      placement === "toolbar"
+    )
+      return page;
+    console.warn(
+      `Ignoring page placement for ${this.ctx.pluginOwner?.id}/${page.id}: expected sidebar, topbar, or toolbar`,
+    );
+    return rest;
   }
   // A rejected icon is decoration, so it must not fail plugin activation.
   private withAcceptedIcon(page: Page): Page {

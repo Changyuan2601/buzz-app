@@ -92,6 +92,9 @@ export function Select({
           </BaseSelect.Trigger>
         ) : (
           <BaseSelect.Trigger
+            // Base UI adds aria-labelledby after the commit that inserts the
+            // trigger, so it can be unnamed until a later task. Name it now.
+            aria-label={label}
             render={(props) => (
               <Button
                 {...props}

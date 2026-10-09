@@ -56,6 +56,14 @@
 .member:is(:hover, :focus-within, [data-menu-open]) {
   background: var(--affordance-subtle);
 }
+/* Enter adds this person, so mark the row like a highlighted picker row,
+   with the surface's own selection recipe (floating inside the dialog). */
+.member[data-highlighted] {
+  --text-subtle: var(--interaction-selected-text);
+  --text-metadata: var(--interaction-selected-metadata);
+  background: var(--interaction-selected);
+  color: var(--text-standard);
+}
 .addAction {
   flex-shrink: 0;
   padding: var(--space-1) var(--space-2) var(--space-1) 0;

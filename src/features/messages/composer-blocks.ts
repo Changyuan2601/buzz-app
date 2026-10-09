@@ -385,7 +385,8 @@ export const composerPrefixDelimiters: ReadonlySet<string> = new Set([" "]);
 // quote marker. Every form the timeline renders as a list converts, so `* `,
 // `+ ` and `1) ` open blocks although the serializer writes each bullet as `- `
 // and each number with a dot; the sent text renders the same either way.
-const PREFIX = /^(?:([-*+])|(\d{1,9})[.)]|>) $/;
+// A typed Unicode bullet is a convenience alias, serialized as Markdown `- `.
+const PREFIX = /^(?:([-*+•])|(\d{1,9})[.)]|>) $/;
 // Positions to read before the caret: the widest prefix and its space, plus the
 // character before them, so the cheap check sees whether the line starts there.
 const PREFIX_WINDOW = 12;
@@ -507,8 +508,8 @@ export function composerBlockPrefix(
   return marks.length ? tr.setStoredMarks(marks) : tr;
 }
 
-/** Shift+Enter continues the block; an empty last line exits it. Plain Enter
- * remains the host's existing send/completion policy. */
+/** A line break continues the block; an empty last line exits it. The host
+ * owns when Enter sends or requests a line break. */
 export function composerBlockLineBreak(
   state: EditorState,
 ): Transaction | undefined {

@@ -1,11 +1,26 @@
 import { npubEncode } from "nostr-tools/nip19";
+import {
+  parseTeamManifest,
+  parseTeamPayload,
+  payloadCoordinate,
+  TEAM_PAYLOAD_TAG,
+  type TeamPayload,
+  TEAM_MANIFEST_TAG,
+  type TeamManifest,
+} from "./team-payload.ts";
 
 /** Private, community-scoped recipes. Never an OG channel-sections writer. */
 export const KIT_TAG = "buzz-channel-kit-v1";
 export const KIT_RECORD_BYTES = 16 * 1024;
 export const CANVAS_BYTES = 24 * 1024;
 export type Lineup = { teamIds: string[]; agents: string[]; canvas: string };
-export type Team = { type: "team"; id: string; name: string; agents: string[] };
+export type Team = {
+  type: "team";
+  id: string;
+  name: string;
+  agents: string[];
+  portable?: TeamManifest;
+};
 export type Template = Lineup & {
   type: "template";
   id: string;
@@ -20,8 +35,14 @@ export type Groups = {
   assignments: Record<string, string>;
 };
 export type KitValue = Team | Template | Groups;
-export type KitRecord = {
+export type PayloadRecord = {
   version: 1;
+  community: string;
+  deleted: false;
+  value: TeamPayload & { type: "team-payload"; id: string };
+};
+export type KitRecord = {
+  version: 1 | 2;
   community: string;
   deleted: boolean;
   value: KitValue;
@@ -87,7 +108,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),
     v = object(r.value);
   if (
-    r.version !== 1 ||
+    (r.version !== 1 && r.version !== 2) ||
     r.community !== community ||
     typeof r.deleted !== "boolean"
   )
@@ -97,8 +118,9 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
     value = {
       type: "team",
       id: id(v.id),
-      name: text(v.name, 120, true),
-      agents: keys(v.agents, keyPattern, 200),
+      name: text(v.name, r.version === 2 ? 256 : 120, true),
+      agents: keys(v.agents, keyPattern, r.version === 2 ? 32 : 200),
+      ...(r.version === 2 ? { portable: parseTeamManifest(v.portable) } : {}),
     };
   else if (v.type === "template")
     value = {
@@ -139,8 +161,15 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       assignments: Object.fromEntries(assignments) as Record<string, string>,
     };
   } else throw new Error("Unsupported channel recipe type");
+  if (
+    r.version === 2 &&
+    (value.type !== "team" || !value.portable || !value.agents.length)
+  )
+    throw new Error("Unsupported portable recipe");
+  if (r.version === 1 && v.portable !== undefined)
+    throw new Error("Portable teams require version 2");
   const result: KitRecord = {
-    version: 1,
+    version: r.version,
     community,
     deleted: r.deleted,
     value,
@@ -153,8 +182,11 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
     );
   return result;
 }
+export function kitTag(record: KitRecord) {
+  return record.version === 2 ? TEAM_MANIFEST_TAG : KIT_TAG;
+}
 export function coordinate(record: KitRecord) {
-  return `${KIT_TAG}:${encodeURIComponent(record.community)}:${record.value.type}:${record.value.id}`;
+  return `${kitTag(record)}:${encodeURIComponent(record.community)}:${record.value.type}:${record.value.id}`;
 }
 export function resolveLineup(
   lineup: Lineup,
@@ -185,4 +217,46 @@ export function resolveLineup(
       );
     return agent;
   });
+}
+
+export function parsePayloadRecord(
+  raw: unknown,
+  community: string,
+): PayloadRecord {
+  const r = object(raw),
+    value = object(r.value);
+  if (
+    r.version !== 1 ||
+    r.community !== community ||
+    r.deleted !== false ||
+    value.type !== "team-payload"
+  )
+    throw new Error("Invalid team payload record");
+  const payload = parseTeamPayload(value, community);
+  if (value.id !== `${payload.revision}-${payload.index}`)
+    throw new Error("Invalid team payload ID");
+  return {
+    version: 1,
+    community,
+    deleted: false,
+    value: { ...payload, type: "team-payload", id: value.id as string },
+  };
+}
+export function parsePrivateRecord(
+  raw: unknown,
+  community: string,
+): KitRecord | PayloadRecord {
+  return object(object(raw).value).type === "team-payload"
+    ? parsePayloadRecord(raw, community)
+    : parseKitRecord(raw, community);
+}
+export function privateCoordinate(record: KitRecord | PayloadRecord) {
+  return record.value.type === "team-payload"
+    ? payloadCoordinate(record.value)
+    : coordinate(record as KitRecord);
+}
+export function privateTag(record: KitRecord | PayloadRecord) {
+  return record.value.type === "team-payload"
+    ? TEAM_PAYLOAD_TAG
+    : kitTag(record as KitRecord);
 }

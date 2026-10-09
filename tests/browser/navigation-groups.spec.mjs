@@ -82,7 +82,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   const actions = page.getByRole("menu", { name: "Actions for Beta" });
   await expect(
     actions.getByRole("menuitem", { name: "New session", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     actions.getByRole("menuitem", { name: "Move channel", exact: true }),
   ).toBeVisible();
@@ -329,7 +329,7 @@ const sessionSidebar = test.extend({
   sessionParents: { alpha: sessionParent },
 });
 sessionSidebar(
-  "dragging a session or a session draft leaves its channel in place, while the channel still moves",
+  "moving a channel does not expose its legacy child sessions",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -340,31 +340,10 @@ sessionSidebar(
     const parent = parentIn("channels");
     const child = sidebar(page).locator('[data-channel-id="alpha"]');
     await expect(parent).toBeVisible();
-    await expect(child).toBeVisible();
+    await expect(child).toHaveCount(0);
     await expect(
-      page.getByRole("complementary", { name: "Channel sidebar" }),
-    ).not.toHaveAttribute("aria-busy");
-    async function pullsNothing(row) {
-      await pull(page, row, "group:work");
-      await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
-      await expect(page.locator("[data-drop-target]")).toHaveCount(0);
-      await page.mouse.up();
-      await expect(parent).toBeVisible();
-      await expect(parentIn("group:work")).toHaveCount(0);
-    }
-
-    await pullsNothing(child);
-    await parent.click({ button: "right" });
-    await page
-      .getByRole("menuitem", { name: "New session", exact: true })
-      .click();
-    const draft = sidebar(page).getByRole("button", {
-      name: /New session draft in/,
-    });
-    await expect(draft).toBeVisible();
-    await pullsNothing(draft);
-    expect(app.report.sidebarPublications ?? []).toHaveLength(0);
-
+      page.getByRole("button", { name: /New session draft in/ }),
+    ).toHaveCount(0);
     await pull(page, parent, "group:work");
     await expect(
       page.locator('[data-sidebar-section="group:work"][data-drop-target]'),
@@ -376,7 +355,7 @@ sessionSidebar(
       page.locator(
         '[data-sidebar-section="group:work"] [data-channel-id="alpha"]',
       ),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await saved(page, app, 1);
     expect(app.report.sidebarPublications[0].blob.assignments).toEqual({
       beta: "work",
@@ -995,11 +974,11 @@ test.describe("new personal schema", () => {
     await expect(
       page.getByRole("menuitem", { name: "Move channel", exact: true }),
     ).toHaveCount(0);
-    // Sessions remains independently eligible when group writes are unavailable.
+    // Nested creation stays unavailable regardless of the grouping source.
     const actions = page.getByRole("menu", { name: `Actions for ${id}` });
     await expect(
       actions.getByRole("menuitem", { name: "New session", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(actions).toHaveCount(0);
     // Dragging shares the Move gate: a pull neither lifts the row nor saves.
@@ -1036,7 +1015,7 @@ test.describe("new personal schema", () => {
     await expect(
       page.getByRole("menuitem", { name: "Move channel", exact: true }),
     ).toHaveCount(0);
-    // Sessions remains independently eligible when group writes are unavailable.
+    // Nested creation stays unavailable regardless of the grouping source.
     const retainedActions = page.getByRole("menu", {
       name: `Actions for ${id}`,
     });
@@ -1045,7 +1024,7 @@ test.describe("new personal schema", () => {
         name: "New session",
         exact: true,
       }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(retainedActions).toHaveCount(0);
     expect(app.report.sidebarPublications ?? []).toHaveLength(0);

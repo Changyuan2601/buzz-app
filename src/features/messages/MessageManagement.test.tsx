@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
@@ -65,6 +67,7 @@ async function fixture(
   withAttachments = false,
   originalAttachment = false,
   originalMention = false,
+  agentOwner: "viewer" | "other" | undefined = undefined,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -76,9 +79,16 @@ async function fixture(
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const viewer = keypair(),
     relay = keypair(),
-    peer = keypair();
+    peer = keypair(),
+    agent = agentOwner ? keypair() : undefined,
+    agentOwnerKey =
+      agentOwner === "viewer"
+        ? viewer
+        : agentOwner === "other"
+          ? keypair()
+          : undefined;
   const original = message(
-    own ? viewer : peer,
+    own ? viewer : (agent ?? peer),
     "room",
     originalAttachment
       ? "Original message\n\n[original.pdf](https://fixture.test/media/original.pdf)"
@@ -86,18 +96,46 @@ async function fixture(
         ? "@Honey Original message"
         : "Original message",
     1700000000,
-    originalAttachment
-      ? [
-          [
-            "imeta",
-            "url https://fixture.test/media/original.pdf",
-            "m application/pdf",
-          ],
-        ]
-      : originalMention
-        ? [["p", peer.pubkey]]
-        : [],
+    [
+      ...(originalAttachment
+        ? [
+            [
+              "imeta",
+              "url https://fixture.test/media/original.pdf",
+              "m application/pdf",
+            ],
+          ]
+        : []),
+      ...(originalMention ? [["p", peer.pubkey]] : []),
+    ],
   );
+  const agentProfile =
+    agent && agentOwnerKey
+      ? signed(agent, {
+          kind: 0,
+          content: JSON.stringify({ name: "Test agent" }),
+          tags: [
+            [
+              "auth",
+              agentOwnerKey.pubkey,
+              "kind=0&created_at<1700000001",
+              bytesToHex(
+                schnorr.sign(
+                  new Uint8Array(
+                    await crypto.subtle.digest(
+                      "SHA-256",
+                      new TextEncoder().encode(
+                        `nostr:agent-auth:${agent.pubkey}:kind=0&created_at<1700000001`,
+                      ),
+                    ),
+                  ),
+                  agentOwnerKey.secret,
+                ),
+              ),
+            ],
+          ],
+        })
+      : undefined;
   const publications: {
     event: RelayEvent;
     result: ReturnType<typeof deferred<void>>;
@@ -139,7 +177,14 @@ async function fixture(
             roster(relay, "room", [viewer.pubkey, peer.pubkey]),
           ];
         if (filter.kinds?.includes(0))
-          return originalMention ? [profile(peer, { name: "Honey" })] : [];
+          return [
+            ...(originalMention && filter.authors?.includes(peer.pubkey)
+              ? [profile(peer, { name: "Honey" })]
+              : []),
+            ...(agent && agentProfile && filter.authors?.includes(agent.pubkey)
+              ? [agentProfile]
+              : []),
+          ];
         if (filter.kinds?.includes(9))
           return [
             original,
@@ -282,6 +327,33 @@ it("edits in the composer, retains a rejected change and retries the same operat
   expect(h.owner.session.channels.window("room").rows[0]?.content).toBe(
     "Corrected message",
   );
+});
+
+it("offers a confirmed NIP-09 deletion for an agent owned by the viewer", async () => {
+  const h = await fixture(false, false, false, false, false, "viewer");
+  const item = await screen.findByRole("menuitem", { name: "Delete message" });
+  expect(item).toBeVisible();
+  fireEvent.click(item);
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  expect(confirmation).toHaveTextContent(
+    "This requests removal of this message from Buzz’s relay.",
+  );
+  expect(confirmation).toHaveTextContent("People may still have copies.");
+  expect(h.publications).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  expect(h.publication(0).event.kind).toBe(5);
+  expect(h.publication(0).event.pubkey).toBe(h.owner.session.viewer);
+  expect(h.publication(0).event.tags).toContainEqual(["e", h.original.id]);
+  await act(async () => h.publication(0).result.resolve());
+});
+
+it("does not offer agent-message deletion to a non-owner", async () => {
+  await fixture(false, false, false, false, false, "other");
+  await screen.findByRole("menuitem", { name: /Mark (unread|read)/ });
+  expect(screen.queryByRole("menuitem", { name: "Delete message" })).toBeNull();
 });
 
 it("does not expose edit or delete for another person's message", async () => {

@@ -54,6 +54,18 @@ it("discovers remote-only identities, joins explicit profile references and igno
   expect(library.identities[2]?.definitionId).toBeUndefined();
 });
 
+it("does not list an agent's own catalog share as a separate profile", async () => {
+  const agent = "e".repeat(64);
+  const read = vi
+    .fn()
+    .mockResolvedValue([
+      record(30175, agent, { display_name: "Shared" }),
+      record(30175, "profile", { display_name: "Profile" }),
+    ]);
+  const library = await readRelayLibrary({ read }, owner.pubkey, signal());
+  expect(library.definitions.map((row) => row.id)).toEqual(["profile"]);
+});
+
 it("uses the publisher's slug grammar, not display-name matching", () => {
   expect(definitionSlug("builtin:honey")).toBe("builtin-honey");
   expect(definitionSlug("CodeReviewer")).toBe("codereviewer");

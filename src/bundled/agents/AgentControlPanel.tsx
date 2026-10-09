@@ -12,6 +12,7 @@ import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  CatalogSeed,
   CloneSettings,
   ImportSource,
 } from "../../features/agents/control";
@@ -25,6 +26,9 @@ import { relayOrigin } from "../../features/communities/destination";
 import { AgentImport } from "./AgentImport";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import { AgentDeleteDialog } from "./AgentDeleteDialog";
+import { AgentSnapshotExport, AgentSnapshotImport } from "./AgentSnapshots";
+import { AgentDirectShare } from "./DirectShare";
+import type { RelaySession } from "../../features/relay/session";
 import "./AgentControls.css";
 
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
@@ -39,8 +43,25 @@ export function AgentControlPanel({
   onCloseTarget,
   onOpenHarnesses,
   headerActions,
+  session,
+  catalog,
 }: {
+  session?: RelaySession | undefined;
   headerActions?: HTMLElement | null;
+  /** A header launcher that may seed the create flow; it owns any relay use. */
+  catalog?:
+    | ((
+        add:
+          | ((
+              settings: CatalogSeed,
+              onCreated: (agent: AgentView) => void,
+            ) => void)
+          | undefined,
+        hasAgent: (id: string) => boolean,
+        open: boolean,
+        onClose: () => void,
+      ) => ReactNode)
+    | undefined;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
@@ -62,13 +83,15 @@ export function AgentControlPanel({
       source?: ImportSource,
     ) => void,
     onImport: (pubkey: string, source?: ImportSource) => void,
+    onShare: (agent: AgentView) => void,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
     destination: string;
     owner: string;
     source?: AgentView;
-    initialSettings?: CloneSettings;
+    initialSettings?: CloneSettings | CatalogSeed;
+    onCreated?: (agent: AgentView) => void;
   } | null>(null);
   const [localPending, setLocalPending] = useState(false);
   const [handover, setHandover] = useState<{
@@ -105,6 +128,9 @@ export function AgentControlPanel({
     avatar?: string;
   } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [importingSnapshot, setImportingSnapshot] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
     if (editTarget) onCloseTarget?.();
@@ -233,22 +259,37 @@ export function AgentControlPanel({
       }}
     />
   ) : null;
-  const createButton = (
+  const headerButtons = (
     <Button
       variant="subtle"
       size="sm"
       aria-haspopup="dialog"
       disabled={localPending}
       onClick={() =>
-        setAdding({
-          destination: importDestination,
-          owner: createOwner ?? "",
-        })
+        setAdding({ destination: importDestination, owner: createOwner ?? "" })
       }
     >
-      <PlusIcon size={16} aria-hidden="true" />
-      Create agent
+      <PlusIcon size={16} aria-hidden="true" /> Add agent
     </Button>
+  );
+  const catalogBrowser = catalog?.(
+    createOwner &&
+      importDestination &&
+      state.data?.createAvailable &&
+      !localPending
+      ? (initialSettings, onCreated) => {
+          setCatalogOpen(false);
+          setAdding({
+            destination: importDestination,
+            owner: createOwner,
+            initialSettings,
+            onCreated,
+          });
+        }
+      : undefined,
+    (id) => !!state.data?.agents.some((agent) => agent.id === id),
+    catalogOpen,
+    () => setCatalogOpen(false),
   );
   return (
     <section
@@ -258,10 +299,11 @@ export function AgentControlPanel({
     >
       {state.data &&
         (headerActions ? (
-          createPortal(createButton, headerActions)
+          createPortal(headerButtons, headerActions)
         ) : (
-          <div className="flex justify-end">{createButton}</div>
+          <div className="flex justify-end gap-2">{headerButtons}</div>
         ))}
+      {catalogOpen && catalogBrowser}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
       )}
@@ -310,6 +352,7 @@ export function AgentControlPanel({
             });
             setImportSections(["old-buzz"]);
           },
+          (agent) => setExporting(agent.id),
         )
       ) : (
         <div className="agent-grid">
@@ -321,6 +364,7 @@ export function AgentControlPanel({
               editable={[agent]}
               onEdit={edit}
               onDuplicate={duplicate}
+              onShare={(agent) => setExporting(agent.id)}
               onDelete={control.delete ? remove : undefined}
             />
           ))}
@@ -440,6 +484,37 @@ export function AgentControlPanel({
           </Dialog.Portal>
         </Dialog.Root>
       )}
+      {importingSnapshot && (
+        <AgentSnapshotImport
+          control={control}
+          destination={importDestination}
+          owner={createOwner ?? ""}
+          onClose={() => setImportingSnapshot(false)}
+        />
+      )}
+      {state.data?.agents.map((agent) =>
+        agent.id === exporting ? (
+          session ? (
+            <AgentDirectShare
+              key={agent.id}
+              agent={agent}
+              name={label(agent)}
+              control={control}
+              session={session}
+              open
+              onClose={() => setExporting(null)}
+            />
+          ) : (
+            <AgentSnapshotExport
+              key={agent.id}
+              agent={agent}
+              defaultSessionPolicy={state.data?.defaultSettings?.sessionPolicy}
+              destination={importDestination}
+              onClose={() => setExporting(null)}
+            />
+          )
+        ) : null,
+      )}
       {adding && (
         <AgentCreateDialog
           control={control}
@@ -451,7 +526,17 @@ export function AgentControlPanel({
             ? { initialSettings: adding.initialSettings }
             : {})}
           onClose={() => setAdding(null)}
+          onCreated={adding.onCreated}
           onOpenHarnesses={onOpenHarnesses}
+          catalogSession={session}
+          onImport={
+            control.create && !adding.source && !adding.initialSettings
+              ? () => {
+                  setAdding(null);
+                  setImportingSnapshot(true);
+                }
+              : undefined
+          }
         />
       )}
       {editing && (

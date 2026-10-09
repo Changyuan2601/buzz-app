@@ -19,6 +19,17 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
+    if event.kind == 9002 && common(event) && event.tags.len() == 2 {
+        return tag(event, 0, "h").is_some_and(uuid)
+            && tag(event, 1, "name").is_some_and(|name| {
+                !name.is_empty()
+                    && name.chars().count() <= 120
+                    && name
+                        .trim_start_matches(|c: char| c == '#' || c.is_whitespace())
+                        .trim_end_matches(char::is_whitespace)
+                        == name
+            });
+    }
     if event.kind != 9002 || !common(event) || !(3..=5).contains(&event.tags.len()) {
         return false;
     }
@@ -169,6 +180,25 @@ pub(crate) async fn relay_channel_publish(
 mod tests {
     use super::*;
     #[test]
+    fn session_rename_only_admits_a_canonical_name() {
+        let mut event = EventTemplate {
+            kind: 9002,
+            created_at: 12,
+            content: String::new(),
+            tags: vec![
+                vec!["h".into(), uuid::Uuid::nil().to_string()],
+                vec!["name".into(), "Session title".into()],
+            ],
+        };
+        assert!(valid("channel-details", &event));
+        for name in ["", "#name", " name", "name "] {
+            event.tags[1][1] = name.into();
+            assert!(!valid("channel-details", &event));
+        }
+        event.tags[1] = vec!["visibility".into(), "open".into()];
+        assert!(!valid("channel-details", &event));
+    }
+    #[test]
     fn purpose_bound_templates() {
         let mut event = EventTemplate {
             kind: 9002,
@@ -220,7 +250,7 @@ pub(crate) async fn relay_kit_decode(
         || serde_json::to_vec(&events)
             .map_err(|_| "Invalid channel recipe")?
             .len()
-            > 512 * 1024
+            > 1024 * 1024
     {
         return Err("Invalid channel recipe".into());
     }

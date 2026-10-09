@@ -16,6 +16,9 @@
     flex-direction: column;
     gap: var(--space-6);
     overflow-y: auto;
+    /* Keep a focused link's outline clear of the scroll edge: scrolling a link
+       into view aligns its box, not the ring drawn outside it. */
+    scroll-padding-block: var(--space-1);
     padding: 1.125rem 1.5rem;
     background: var(--bg-panel);
     border-inline-end: 1px solid var(--border-primary);

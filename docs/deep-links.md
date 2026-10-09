@@ -23,6 +23,10 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://issue?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://join?relay=<wss-url>&code=<code>[&policy_receipt=<receipt>]`
 
+Both query-based invite and message links also accept a single `/` before `?`,
+as supplied by Windows URL activation (for example, `buzz://join/?relay=…&code=…`).
+Non-root paths remain unsupported for these forms; channel paths are unchanged.
+
 Entity sections are `files`, `commits`, `issues`, `prs`, `contributors`, and
 `channels`; omitting the section opens the overview. Repository commit links add
 `&tab=commits&commit=<40- or 64-hex hash>`. Identifiers use 1-64 ASCII letters,

@@ -12,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Fragment,
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
@@ -124,6 +125,8 @@ export type ChannelTimelineProps = {
   continuityKey?: string | undefined;
   window: ChannelWindow;
   launchPending?: boolean | undefined;
+  /** Sessions page history on scroll; retain an explicit button for errors. */
+  historyControl?: "button" | "scroll";
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -168,6 +171,7 @@ function Timeline({
   queries,
   window,
   launchPending,
+  historyControl = "button",
   onOpenLink,
   canOpenLink,
   revealMessageId,
@@ -735,7 +739,7 @@ function Timeline({
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
-        ) : window.hasMore ? (
+        ) : window.hasMore && (historyControl === "button" || window.error) ? (
           <Button
             type="button"
             disabled={window.loadingOlder}
@@ -746,8 +750,14 @@ function Timeline({
                 olderDemand.current = false;
             }}
           >
-            {window.loadingOlder ? "Loading older…" : "Load older messages"}
+            {window.loadingOlder
+              ? "Loading older…"
+              : window.error
+                ? "Retry older messages"
+                : "Load older messages"}
           </Button>
+        ) : window.loadingOlder ? (
+          <span role="status">Loading older…</span>
         ) : null}
       </div>
       <JumpToLatestButton
@@ -776,43 +786,48 @@ function Timeline({
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
-            return row.membership ? (
-              <MembershipRow
-                resolveName={resolveName}
-                names={queries.names}
-                key={row.id}
-                row={row}
-                profiles={profiles}
-                viewer={viewer}
-                media={queries.media}
-                agentPubkeys={agentPubkeys}
-                day={day}
-              />
-            ) : (
-              <MessageRow
-                layout={
-                  continuesMessageGroup(rows[index - 1], row)
-                    ? "continuation"
-                    : "timeline"
-                }
-                session={queries}
-                scope={scope}
-                key={row.id}
-                row={row}
-                unread={queries.unread}
-                extensions={extensions}
-                profile={profiles.get(row.authorId)}
-                participantProfiles={profiles}
-                agentPubkeys={agentPubkeys}
-                media={queries.media}
-                onOpenLink={onOpenLink}
-                canOpenLink={canOpenLink}
-                onOpenThread={onOpenThread}
-                {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                retry={queries.outbox?.retry}
-                keepMounted={keepRowMounted}
-                day={day}
-              />
+            return (
+              <Fragment key={row.id}>
+                {row.membership ? (
+                  <MembershipRow
+                    resolveName={resolveName}
+                    names={queries.names}
+                    row={row}
+                    profiles={profiles}
+                    viewer={viewer}
+                    media={queries.media}
+                    agentPubkeys={agentPubkeys}
+                    day={day}
+                  />
+                ) : (
+                  <MessageRow
+                    layout={
+                      continuesMessageGroup(rows[index - 1], row)
+                        ? "continuation"
+                        : "timeline"
+                    }
+                    session={queries}
+                    scope={scope}
+                    row={row}
+                    unread={queries.unread}
+                    extensions={extensions}
+                    profile={profiles.get(row.authorId)}
+                    participantProfiles={profiles}
+                    agentPubkeys={agentPubkeys}
+                    media={queries.media}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
+                    onOpenThread={onOpenThread}
+                    {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                    retry={queries.outbox?.retry}
+                    keepMounted={keepRowMounted}
+                    day={day}
+                  />
+                )}
+                {index === rows.length - 1 && (
+                  <div className={styles.timelineEnd} aria-hidden="true" />
+                )}
+              </Fragment>
             );
           })}
         </Virtualizer>

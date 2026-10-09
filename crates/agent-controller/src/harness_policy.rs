@@ -18,6 +18,9 @@ pub struct HarnessConfigurationPolicy {
     pub effort_discovery: EffortDiscovery,
     /// Worker environment selector keys; their values never cross this contract.
     pub selector_environment: Option<SelectorEnvironment>,
+    /// Native launch policy; not an editable setting or an IPC capability.
+    #[serde(skip)]
+    pub(crate) include_buzz_dev_mcp: bool,
 }
 
 /// Authentication ownership does not imply an API key is required.
@@ -91,6 +94,19 @@ impl HarnessConfigurationPolicy {
             model: ModelRequirement::Optional,
             effort_discovery: EffortDiscovery::Unknown,
             selector_environment: None,
+            include_buzz_dev_mcp: match std::path::Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+            {
+                Some("buzz-agent" | "buzz-agent.exe") => true,
+                Some("goose" | "goose.exe" | "goose-acp" | "goose-acp.exe") => false,
+                Some("buzz-pi-acp") => false,
+                Some("codex-acp" | "codex-acp.exe" | "codex-acp.cmd" | "codex-acp.bat") => false,
+                _ => match crate::harness_preset(command) {
+                    Some(preset) => preset.include_buzz_dev_mcp,
+                    None => false,
+                },
+            },
         };
         match harness_kind(command) {
             Some("buzz-agent") => {

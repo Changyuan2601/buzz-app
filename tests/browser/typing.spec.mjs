@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, end, edge } from "./timeline.mjs";
+import { open, end, edge, keyScroll } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -19,13 +19,21 @@ test("Messages receives scoped typing through authenticated live traffic and exp
       ),
     )
     .toBe(true);
-  const indicator = page.getByRole("status", { name: "Typing activity" });
+  // Visible typing is presentation; the persistent live region announces it.
+  const indicator = page
+    .locator('[aria-hidden="true"]')
+    .filter({ hasText: /(?:is|are) typing$/ });
+  const announcement = page.getByRole("status", {
+    name: "Conversation activity",
+  });
+  await expect(announcement).toBeEmpty();
   app.activity({ age: 9 });
   await expect(indicator).toHaveCount(0);
   app.activity();
   await expect(indicator).toContainText("is typing");
   app.activity({ author: 1 });
   await expect(indicator).toContainText("are typing");
+  await expect(announcement).toContainText("are typing");
   await expect(indicator).not.toContainText("…");
   // Browser-only contracts: real geometry and the OS motion preference.
   const composer = page.getByRole("form", { name: "Send a message to Alpha" });
@@ -45,6 +53,7 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await expect(indicator).toHaveCount(0);
   app.activity(); // same-second late pulse cannot resurrect completion
   await expect(indicator).toHaveCount(0);
+  await expect(announcement).toBeEmpty();
   // Typing completion precedes the appended messages' virtual-list layout.
   await expect(
     page.getByText("Fixture completion", { exact: true }),
@@ -66,9 +75,14 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   ).toBeVisible();
   app.activity({ root: root.id });
   await expect(
-    thread.getByRole("status", { name: "Typing activity" }),
+    thread.getByRole("status", { name: "Conversation activity" }),
   ).toContainText("is typing");
   await expect(indicator).toHaveCount(1);
+  await expect(
+    composer
+      .locator("..")
+      .getByRole("status", { name: "Conversation activity" }),
+  ).toBeEmpty();
   await page.screenshot({
     path: testInfo.outputPath("messages-thread-typing.png"),
   });
@@ -96,6 +110,9 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   });
   // Real browser timer, signed timestamp TTL, no polling transport or fixture cleanup.
   await expect(indicator).toHaveCount(0, { timeout: 10000 });
+  await expect(
+    thread.getByRole("status", { name: "Conversation activity" }),
+  ).toBeEmpty();
   expect(app.report.publications).toEqual([]);
 });
 
@@ -103,7 +120,7 @@ for (const scope of ["channel", "thread"]) {
   test(`${scope} typing preserves viewport bounds and the visible bottom through completion and expiry`, async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
     await open(page, app);
     await expect
       .poll(() =>
@@ -141,7 +158,8 @@ for (const scope of ["channel", "thread"]) {
     });
     const indicator = composer
       .locator("..")
-      .getByRole("status", { name: "Typing activity" });
+      .locator('[aria-hidden="true"]')
+      .filter({ hasText: /is typing$/ });
     const gap = () =>
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
@@ -161,10 +179,46 @@ for (const scope of ["channel", "thread"]) {
     ).toBeGreaterThan(100);
     const idle = await history.boundingBox();
     const idleComposer = await composer.boundingBox();
+    // The viewport meets the composer, but the final message has scrollable
+    // breathing room. It must disappear with content, not remain a fixed strip.
+    expect(Math.abs(idle.y + idle.height - idleComposer.y)).toBeLessThan(1);
+    const endPadding = 12; // Default interface size: the shared space-3 token.
+    const tailGap = async () => {
+      const tail = await history
+        .locator("[data-message-id]")
+        .last()
+        .boundingBox();
+      return idleComposer.y - tail.y - tail.height;
+    };
+    await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
+    await history.focus();
+    await keyScroll(page, "PageUp", history);
+    expect(await gap()).toBeGreaterThan(100);
+    expect(await history.boundingBox()).toEqual(idle);
+    expect(await composer.boundingBox()).toEqual(idleComposer);
+    // With the end spacer off-screen, an actual message reaches the lower edge.
+    expect(
+      await history.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return [...element.querySelectorAll("[data-message-id]")].some(
+          (row) => {
+            const rect = row.getBoundingClientRect();
+            return rect.top < bounds.bottom && rect.bottom >= bounds.bottom;
+          },
+        );
+      }),
+    ).toBe(true);
+    await keyScroll(page, "End", history);
+    await expect.poll(gap).toBeLessThan(2);
+    await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
+    await page.screenshot({
+      path: testInfo.outputPath(`${scope}-composer-no-gap.png`),
+    });
     const stable = async () => {
       expect(await history.boundingBox()).toEqual(idle);
       expect(await composer.boundingBox()).toEqual(idleComposer);
       await expect.poll(gap).toBeLessThan(2);
+      await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
       const tail = await history
         .locator("[data-message-id]")
         .last()
@@ -179,7 +233,11 @@ for (const scope of ["channel", "thread"]) {
     app.activity(target);
     await expect(indicator).toContainText("is typing");
     const typingBounds = await indicator.boundingBox();
-    expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y + idle.height);
+    // Activity now floats over history rather than reserving an idle strip.
+    // It must stay inside the conversation and above the composer without
+    // changing either viewport or the user's bottom-reading position.
+    expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y);
+    expect(typingBounds.y + typingBounds.height).toBeLessThan(idleComposer.y);
     await stable();
     app.activity({ ...target, kind: 9 });
     await expect(indicator).toHaveCount(0);

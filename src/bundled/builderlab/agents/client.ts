@@ -8,7 +8,18 @@ export type RemoteAgent = Readonly<{
   name: string;
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
+  instructions?: string;
 }>;
+
+export const MAX_INSTRUCTIONS_LENGTH = 20_000;
+
+export function validInstructions(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    (value === "" || !!value.trim()) &&
+    value.length <= MAX_INSTRUCTIONS_LENGTH
+  );
+}
 
 function resultStatus(value: unknown) {
   return typeof value === "string"
@@ -92,6 +103,41 @@ export function createAgentClient(
     }
   }
   return {
+    async updateInstructions(
+      agent: RemoteAgent,
+      instructions: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (agent.status !== "Active" || !/^[0-9a-f]{64}$/.test(agent.pubkey))
+        throw new Error(
+          "Only Active agents can have their instructions edited.",
+        );
+      if (!validInstructions(instructions))
+        throw new Error(
+          `Instructions must be empty or contain up to ${MAX_INSTRUCTIONS_LENGTH} characters of nonblank text.`,
+        );
+      await request(
+        "update-agent",
+        { agent_pubkey: agent.pubkey, agent_instructions: instructions },
+        signal,
+      );
+    },
+    async delete(agent: RemoteAgent, signal: AbortSignal): Promise<void> {
+      if (!agent.id.trim()) throw new Error("Agent ID is unavailable.");
+      const result = await request(
+        "delete-agent",
+        { agent_id: agent.id },
+        signal,
+      );
+      const status = resultStatus(result.status);
+      // NOT_FOUND also confirms completion after a successful delete lost its response.
+      if ([1, "DELETED", 3, "FOUND"].includes(status)) return;
+      throw new Error(
+        [2, "DISABLED"].includes(status)
+          ? "Agent deletion is disabled on this server."
+          : "Agent deletion was not confirmed. Retry Delete.",
+      );
+    },
     async register(name: string, signal: AbortSignal): Promise<RemoteAgent> {
       signal.throwIfAborted();
       const agentName = name.trim();
@@ -209,7 +255,11 @@ export function createAgentClient(
       return { ...agent, status: "Active" };
     },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
-      const result = await request("list-agents", {}, signal);
+      const result = await request(
+        "list-agents",
+        { include_instructions: true },
+        signal,
+      );
       if (![1, "SUCCESS"].includes(resultStatus(result.status)))
         throw new Error("Builderlab did not return an agent list.");
       // Protobuf JSON can omit an empty repeated field.
@@ -223,7 +273,9 @@ export function createAgentClient(
             !row.agent_id.trim() ||
             typeof row.agent_name !== "string" ||
             typeof row.agent_pubkey !== "string" ||
-            !/^[0-9a-f]{64}$/.test(row.agent_pubkey),
+            !/^[0-9a-f]{64}$/.test(row.agent_pubkey) ||
+            (row.agent_instructions !== undefined &&
+              !validInstructions(row.agent_instructions)),
         )
       )
         throw new Error("Builderlab returned an invalid agent list.");
@@ -232,6 +284,7 @@ export function createAgentClient(
         name: row.agent_name,
         pubkey: row.agent_pubkey,
         status: agentStatus(row.status),
+        instructions: row.agent_instructions ?? "",
       }));
     },
   };

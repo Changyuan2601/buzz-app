@@ -16,7 +16,12 @@ it("validates the primary flag and exposes it on registered pages", async () => 
     const base = { id: "main", title: "Main", component: () => null };
     for (const primary of [null, "yes", 1, {}])
       expect(() => ctx.pages.register({ ...base, primary } as never)).toThrow();
-    ctx.pages.register({ ...base, id: "listed", primary: true });
+    ctx.pages.register({
+      ...base,
+      id: "listed",
+      primary: true,
+      placement: "topbar",
+    });
     // Omitting the flag keeps a page registered without a navigation row.
     ctx.pages.register({ ...base, id: "vended" });
   });
@@ -30,7 +35,7 @@ it("validates the primary flag and exposes it on registered pages", async () => 
   await root.fiber.dispose();
 });
 
-describe("page icon validation", () => {
+describe("page decoration validation", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -61,6 +66,33 @@ describe("page icon validation", () => {
     await root.fiber.dispose();
     return snapshot;
   }
+
+  it.each([undefined, "sidebar", "topbar", "toolbar"])(
+    "preserves placement %j without changing the primary opt-in",
+    async (placement) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      for (const primary of [undefined, false, true]) {
+        const [page] = await registerMain({ placement, primary });
+        expect(page?.placement).toBe(placement);
+        expect(page?.primary).toBe(primary);
+      }
+      expect(warn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, "unknown", "TOPBAR", 1, {}])(
+    "drops placement %j without failing activation or losing other metadata",
+    async (placement) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const icon = "data:image/png,x";
+      const [page] = await registerMain({ placement, primary: true, icon });
+      expect(page).toMatchObject({ key: "example/main", primary: true, icon });
+      expect(page).not.toHaveProperty("placement");
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        "Ignoring page placement for example/main: expected sidebar, topbar, or toolbar",
+      );
+    },
+  );
 
   it.each([
     "data:image/svg+xml,%3Csvg%3E",

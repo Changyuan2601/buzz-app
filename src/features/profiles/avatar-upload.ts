@@ -51,7 +51,7 @@ export async function uploadAvatar(
   );
   if (!transport.uploadAttachment)
     throw new Error("Image uploads are unavailable on this connection.");
-  const prepared = await prepareAttachment(file, signal);
+  const prepared = await prepareAttachment(file, signal, true);
   const result = await transport.uploadAttachment(prepared, signal);
   signal.throwIfAborted();
   if (!result.type.startsWith("image/") || !avatarSource(result.url))

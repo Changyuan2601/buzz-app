@@ -16,15 +16,24 @@ use std::{
 use tokio::sync::oneshot;
 use url::Url;
 
+mod catalog;
 mod channel_writes;
 mod kit;
 pub(crate) use channel_writes::{
     relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
     relay_kit_prepare,
 };
+pub(crate) use kit::current_team_members;
 pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
 mod media_preparation;
+mod media_spool;
+mod reminders;
+pub(crate) use reminders::{relay_decode_reminders, relay_sign_reminder};
+mod upload_spool;
+pub(crate) use upload_spool::Spools;
+mod media_stream;
+pub(crate) use media_stream::{media_stream_base, MediaStream};
 mod project_git;
 pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
 type Result<T> = std::result::Result<T, String>;
@@ -235,7 +244,11 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let signed = host.sign(event).await?;
+    let signed = if catalog::is_catalog(event.kind) {
+        host.sign_bounded(event, catalog::MAX_EVENT_BYTES).await?
+    } else {
+        host.sign(event).await?
+    };
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {
@@ -279,6 +292,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
     } else if event.kind == 9007 {
         if !channel_writes::creation(event) {
             return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        }
+    } else if matches!(event.kind, 30175 | 30178) {
+        if !catalog::valid(event) {
+            return Err("Malformed catalog publication".into());
         }
     } else if event.kind == 40100 {
         if !valid_canvas(event) {
@@ -660,6 +677,9 @@ pub(crate) async fn relay_http(
         if kind == Some(30078) {
             admit_app_data(host.inner(), &event, &community).await?;
         }
+        if kind == Some(30300) {
+            reminders::admit_reminder(host.inner(), &event).await?;
+        }
         if kind == Some(9007) {
             verify_owned_event(host.inner(), &event).await?;
             let template = template(
@@ -894,6 +914,12 @@ impl Uploads {
         uploads.pending.insert(id.into(), now);
     }
 
+    pub(crate) fn cancel_all(&self) {
+        for (_, sender) in self.lock().active.drain() {
+            let _ = sender.send(());
+        }
+    }
+
     fn finish(&self, id: &str) {
         self.lock().active.remove(id);
     }
@@ -908,104 +934,159 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
         .ok_or_else(|| "Invalid upload ID".into())
 }
 
-/// Prepares media when requested, then hashes, signs (`t=upload` + `x`) and
-/// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
-/// descriptor validation, as it does for the dev broker.
+/// Allocate only host-owned storage; callers never supply filesystem paths.
+#[tauri::command]
+pub(crate) async fn relay_upload_begin<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+    size: usize,
+) -> Result<()> {
+    use tauri::Manager as _;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Spools>()
+            .begin(&app.state::<Uploads>(), &id, size)
+    })
+    .await
+    .map_err(|_| "Upload receiving could not complete")?
+}
+
+/// One acknowledged IPC chunk at a time. Bound and validate in the host too.
+#[tauri::command]
+pub(crate) async fn relay_upload_chunk<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<()> {
+    use tauri::Manager as _;
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
+    let id = upload_id(header("x-buzz-upload-id"))?.to_owned();
+    let chunk: Result<_> = (|| {
+        let offset = header("x-buzz-upload-offset")
+            .and_then(|v| v.parse::<usize>().ok())
+            .ok_or("Invalid upload chunk")?;
+        let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+            return Err("Upload body must be raw bytes".into());
+        };
+        if body.is_empty() || body.len() > UPLOAD_CHUNK {
+            return Err("Invalid upload chunk".into());
+        }
+        Ok((offset, body.clone()))
+    })();
+    tauri::async_runtime::spawn_blocking(move || {
+        let spools = app.state::<Spools>();
+        let uploads = app.state::<Uploads>();
+        let result = chunk.and_then(|(offset, bytes)| spools.append(&id, offset, &bytes));
+        if result.is_err() {
+            spools.cancel(&uploads, &id);
+        }
+        result
+    })
+    .await
+    .map_err(|_| "Upload receiving could not complete")?
+}
+
+/// Finalize the received spool, convert on disk when requested, and stream it.
 #[tauri::command]
 pub(crate) async fn relay_upload<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
+    spools: tauri::State<'_, Spools>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<RelayResponse> {
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
     let id = upload_id(header("x-buzz-upload-id"))?;
-    // A raw body cannot carry a Channel argument, so its ID travels as a header.
-    let progress = header("x-buzz-upload-progress")
-        .map(|value| {
-            value
-                .parse::<tauri::ipc::JavaScriptChannelId>()
-                .map(|channel| channel.channel_on(webview))
-                .map_err(|_| "Invalid upload progress channel".to_string())
-        })
-        .transpose()?;
-    let url = origin(header("x-buzz-community").unwrap_or_default())?
-        .join("/upload")
-        .map_err(|_| "Invalid relay path")?;
-    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err("Upload body must be raw bytes".into());
-    };
-    // Tauri sets raw IPC `Content-Type` itself, so the file type travels separately.
-    let kind = header("x-buzz-content-type");
-    let preparation = header("x-buzz-preparation").map(str::to_owned);
-    let Some(mut cancelled) = uploads.start(id)? else {
-        return Err("Upload cancelled".into());
-    };
-    // Dropping the request future closes the connection, so a cancelled upload
-    // stops sending and releases its buffer.
-    let result = if let Err(error) = validate_upload_size(body.len()) {
-        // Preserve preparation's structured size error, but reject before copying
-        // the IPC buffer. Cancellation/admission still takes precedence.
-        if preparation.is_some() {
-            Ok(RelayResponse {
-                status: media_preparation::PreparationError::Size.status(),
-                headers: BTreeMap::new(),
-                body: serde_json::json!({"code": "size"}).to_string(),
+    let result = async {
+        let progress = header("x-buzz-upload-progress")
+            .map(|value| {
+                value
+                    .parse::<tauri::ipc::JavaScriptChannelId>()
+                    .map(|channel| channel.channel_on(webview))
+                    .map_err(|_| "Invalid upload progress channel".to_string())
             })
-        } else {
-            Err(error)
-        }
-    } else if let Some(mode) = preparation.as_deref() {
-        upload_prepared(
+            .transpose()?;
+        let url = origin(header("x-buzz-community").unwrap_or_default())?
+            .join("/upload")
+            .map_err(|_| "Invalid relay path")?;
+        let (spool, mut cancelled) = spools.take(id)?;
+        process_spool(
             host.inner(),
             url,
-            body.clone(),
-            mode,
+            spool,
+            header("x-buzz-content-type"),
+            header("x-buzz-preparation"),
             progress,
             &mut cancelled,
         )
         .await
-    } else {
-        tokio::select! {
-            result = upload(host.inner(), url, kind, body.clone(), progress) => result,
-            _ = &mut cancelled => Err("Upload cancelled".into()),
-        }
-    };
+    }
+    .await;
+    spools.discard(id);
     uploads.finish(id);
     result
 }
 
-#[tauri::command]
-pub(crate) fn relay_upload_cancel(uploads: tauri::State<'_, Uploads>, id: String) -> Result<()> {
-    uploads.cancel(upload_id(Some(&id))?);
-    Ok(())
-}
-
-async fn upload_prepared(
+async fn process_spool(
     host: &IdentityHost,
     url: Url,
-    body: Vec<u8>,
-    mode: &str,
+    spool: upload_spool::Spool,
+    kind: Option<&str>,
+    preparation: Option<&str>,
     progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
-    let (body, kind) = match media_preparation::prepare(body, mode, cancelled).await {
-        Ok(value) => value,
-        Err(media_preparation::PreparationError::Cancelled) => {
-            return Err("Upload cancelled".into())
+    if cancelled.try_recv().is_ok() {
+        return Err("Upload cancelled".into());
+    }
+    let (path, kind) = if let Some(mode) = preparation {
+        match media_preparation::prepare_file(
+            &spool.source(),
+            spool.size,
+            spool.directory.path(),
+            mode,
+            cancelled,
+        )
+        .await
+        {
+            Ok(value) => (value.0, Some(value.1)),
+            Err(media_preparation::PreparationError::Cancelled) => {
+                return Err("Upload cancelled".into())
+            }
+            Err(error) => {
+                return Ok(RelayResponse {
+                    status: error.status(),
+                    headers: BTreeMap::new(),
+                    body: serde_json::json!({"code": error.code()}).to_string(),
+                })
+            }
         }
-        Err(error) => {
-            return Ok(RelayResponse {
-                status: error.status(),
-                headers: BTreeMap::new(),
-                body: serde_json::json!({ "code": error.code() }).to_string(),
-            })
-        }
+    } else {
+        (spool.source(), kind)
+    };
+    let hash = if path == spool.source() {
+        (spool.size, spool.hash.clone())
+    } else {
+        // Hash in bounded blocks; the spool remains owned until it settles.
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || upload_spool::hash_file(&path))
+            .await
+            .map_err(|_| "Upload hashing could not complete")??
     };
     tokio::select! {
-        result = upload(host, url, Some(kind), body, progress) => result,
-        _ = cancelled => Err("Upload cancelled".into()),
+        result = upload_file(host, url, kind, path, hash, progress) => result,
+        _ = &mut *cancelled => Err("Upload cancelled".into()),
     }
+}
+
+#[tauri::command]
+pub(crate) fn relay_upload_cancel(
+    uploads: tauri::State<'_, Uploads>,
+    spools: tauri::State<'_, Spools>,
+    id: String,
+) -> Result<()> {
+    let id = upload_id(Some(&id))?;
+    // Never free a processing slot until the running future has stopped.
+    spools.cancel(&uploads, id);
+    Ok(())
 }
 
 fn validate_upload_size(size: usize) -> Result<()> {
@@ -1015,19 +1096,6 @@ fn validate_upload_size(size: usize) -> Result<()> {
     Ok(())
 }
 
-async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
-    validate_upload_size(body.len())?;
-    // A supported video can be 500 MiB. Hash it off the async executor, moving
-    // the same allocation back to the HTTP body rather than making another copy.
-    tokio::task::spawn_blocking(move || {
-        let hash = format!("{:x}", Sha256::digest(&body));
-        (body, hash)
-    })
-    .await
-    .map_err(|_| "Upload hashing could not complete".into())
-}
-
-/// Byte counts for the calling webview's upload progress bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct UploadSent {
     sent: u64,
@@ -1036,40 +1104,58 @@ pub(crate) struct UploadSent {
 type UploadProgress = tauri::ipc::Channel<UploadSent>;
 const UPLOAD_CHUNK: usize = 64 * 1024;
 
-/// Streams the body in chunks. Each report counts the bytes handed to the
-/// connection once its chunk is yielded, so the last chunk reports `total`
-/// without relying on another poll. Reports are limited to whole-percent changes.
-fn progress_chunks(
-    body: Vec<u8>,
-    report: impl Fn(UploadSent) + Send + 'static,
-) -> impl Iterator<Item = std::io::Result<bytes::Bytes>> + Send + 'static {
-    let body = bytes::Bytes::from(body);
-    let total = body.len() as u64;
-    let mut reported = None;
-    (0..body.len().div_ceil(UPLOAD_CHUNK)).map(move |index| {
-        let start = index * UPLOAD_CHUNK;
-        let end = usize::min(start + UPLOAD_CHUNK, body.len());
-        let sent = end as u64;
-        let percent = sent * 100 / total;
-        if reported != Some(percent) {
-            reported = Some(percent);
-            report(UploadSent { sent, total });
+fn file_chunks(
+    file: std::fs::File,
+    total: u64,
+    report: impl Fn(UploadSent) + Send + Sync + 'static,
+) -> impl futures_util::Stream<Item = std::io::Result<bytes::Bytes>> + Send {
+    use std::io::Read;
+    let report = std::sync::Arc::new(report);
+    futures_util::stream::try_unfold((file, 0u64, None), move |(mut file, sent, reported)| {
+        let mut buffer = vec![0; UPLOAD_CHUNK];
+        let report = report.clone();
+        async move {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                if sent != total {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "Upload spool was truncated",
+                    ));
+                }
+                return Ok(None);
+            }
+            let sent = sent + read as u64;
+            if sent > total {
+                return Err(std::io::Error::other("Upload spool changed"));
+            }
+            let percent = sent * 100 / total;
+            if reported != Some(percent) {
+                report(UploadSent { sent, total });
+            }
+            buffer.truncate(read);
+            Ok(Some((
+                bytes::Bytes::from(buffer),
+                (file, sent, Some(percent)),
+            )))
         }
-        Ok(body.slice(start..end))
     })
 }
 
-async fn upload(
+async fn upload_file(
     host: &IdentityHost,
     url: Url,
     kind: Option<&str>,
-    body: Vec<u8>,
+    path: std::path::PathBuf,
+    (size, hash): (usize, String),
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
+    validate_upload_size(size)?;
     let kind = kind
         .filter(|kind| valid_type(kind))
         .unwrap_or("application/octet-stream");
-    let (body, hash) = hash_upload(body).await?;
+    let file = std::fs::File::open(path)
+        .map_err(|_| "Media preparation could not access temporary storage")?;
     let auth = blossom_auth(
         host,
         &url,
@@ -1080,30 +1166,36 @@ async fn upload(
     .await?;
     let response = client()?
         .put(url)
-        // Matches UPLOAD_TIMEOUT_MS; the shared client's 30 s suits JSON calls only.
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth)
         .header("Content-Type", kind)
         .header("X-SHA-256", hash)
-        .header(reqwest::header::CONTENT_LENGTH, body.len())
-        .body(match progress {
-            Some(channel) => reqwest::Body::wrap_stream(futures_util::stream::iter(
-                progress_chunks(body, move |sent| {
+        .header(reqwest::header::CONTENT_LENGTH, size)
+        .body(reqwest::Body::wrap_stream(file_chunks(
+            file,
+            size as u64,
+            move |sent| {
+                if let Some(channel) = &progress {
                     let _ = channel.send(sent);
-                }),
-            )),
-            None => body.into(),
-        })
+                }
+            },
+        )))
         .send()
         .await
         .map_err(|_| "Upload did not finish")?;
-    // A Blossom descriptor is small; the shared validator rejects anything else.
     read_response(response, 8192).await
 }
 
-/// Largest whole-file media response: the relay's document limit, which also
-/// covers images. Only video can be larger; `<video>` fetches it by `Range`.
+/// Largest whole-file media response buffered in memory: the relay's document
+/// limit, which also covers images. Video is read by `Range`; an origin that
+/// ignores it is spooled to disk up to `WHOLE_VIDEO_MAX` instead.
 const MAX_MEDIA: usize = 100 * 1024 * 1024;
+/// Largest video an origin that ignores `Range` may send whole: 500 MiB, the
+/// development broker's video limit. A video of exactly this size plays; a
+/// larger `Content-Length` gets 413 before any download, and a response
+/// without one is stopped and rejected with 413 once it passes this size.
+/// Edit this value to change the limit; it is compiled into the binary.
+const WHOLE_VIDEO_MAX: u64 = 500 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
@@ -1126,7 +1218,9 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, Some((start, end)))) => media_blocks::read(&host, &url, start, end).await,
+            Ok((url, Some((start, end)))) => {
+                media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await
+            }
             Ok((url, None)) => fetch_media(&host, url, None).await,
             Err(status) => Err(status),
         };
@@ -1289,6 +1383,196 @@ fn save_download(
     Err("Too many files with this name".into())
 }
 
+/// `image` bounds the WebP canvas but its VP8 decoder allocates Y/U/V planes
+/// from the embedded frame header before comparing that frame to the canvas.
+/// Inspect every embedded lossy frame (including ANMF subchunks) before decode.
+fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
+    fn chunks(
+        mut bytes: &[u8],
+        max_bytes: usize,
+        animated_frame: bool,
+        mut expected: Option<(usize, usize)>,
+    ) -> Result<()> {
+        let mut alpha_successor = false;
+        let mut frame_chunk_seen = false;
+        while !bytes.is_empty() {
+            let header = bytes.get(..8).ok_or("Could not decode image")?;
+            let size = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+            let end = 8usize.checked_add(size).ok_or("Could not decode image")?;
+            let next = end.checked_add(size & 1).ok_or("Could not decode image")?;
+            let payload = bytes.get(8..end).ok_or("Could not decode image")?;
+            if bytes.get(..next).is_none() {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame && alpha_successor && &header[..4] != b"VP8 " {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame && frame_chunk_seen {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame
+                && !alpha_successor
+                && &header[..4] != b"ALPH"
+                && &header[..4] != b"VP8 "
+                && &header[..4] != b"VP8L"
+            {
+                return Err("Could not decode image".into());
+            }
+            match &header[..4] {
+                b"VP8 " => {
+                    let frame = payload.get(..10).ok_or("Could not decode image")?;
+                    if frame[0] & 1 != 0 || &frame[3..6] != b"\x9d\x01\x2a" {
+                        return Err("Could not decode image".into());
+                    }
+                    let width = usize::from(u16::from_le_bytes([frame[6], frame[7]]) & 0x3fff);
+                    let height = usize::from(u16::from_le_bytes([frame[8], frame[9]]) & 0x3fff);
+                    // The locked VP8 decoder allocates three padded Y/U/V planes
+                    // before comparing the embedded frame with its canvas.
+                    let plane_bytes = width
+                        .div_ceil(16)
+                        .checked_mul(height.div_ceil(16))
+                        .and_then(|blocks| blocks.checked_mul(16 * 16 + 2 * 8 * 8))
+                        .ok_or("Image too large to copy")?;
+                    if width == 0 || height == 0 || plane_bytes > max_bytes {
+                        return Err("Image too large to copy".into());
+                    }
+                    if expected.is_some_and(|dimensions| dimensions != (width, height)) {
+                        return Err("Could not decode image".into());
+                    }
+                    frame_chunk_seen = true;
+                }
+                b"VP8L" if animated_frame => {
+                    frame_chunk_seen = true;
+                }
+                b"ALPH" if animated_frame => {
+                    // `image-webp` decodes the successor payload as VP8 even when
+                    // its chunk tag is not VP8; require the tag we validated.
+                    alpha_successor = true;
+                    if bytes.len().saturating_sub(next) < 8 {
+                        return Err("Could not decode image".into());
+                    }
+                }
+                b"VP8X" if !animated_frame => {
+                    let canvas = payload.get(..10).ok_or("Could not decode image")?;
+                    let width = usize::from(canvas[4])
+                        | (usize::from(canvas[5]) << 8)
+                        | (usize::from(canvas[6]) << 16);
+                    let height = usize::from(canvas[7])
+                        | (usize::from(canvas[8]) << 8)
+                        | (usize::from(canvas[9]) << 16);
+                    expected = Some((width + 1, height + 1));
+                }
+                b"ANMF" if !animated_frame => {
+                    let frame = payload.get(..16).ok_or("Could not decode image")?;
+                    let width = usize::from(frame[6])
+                        | (usize::from(frame[7]) << 8)
+                        | (usize::from(frame[8]) << 16);
+                    let height = usize::from(frame[9])
+                        | (usize::from(frame[10]) << 8)
+                        | (usize::from(frame[11]) << 16);
+                    chunks(
+                        &payload[16..],
+                        max_bytes,
+                        true,
+                        Some((width + 1, height + 1)),
+                    )?;
+                }
+                _ => {}
+            }
+            bytes = &bytes[next..];
+        }
+        if animated_frame && !frame_chunk_seen {
+            return Err("Could not decode image".into());
+        }
+        Ok(())
+    }
+
+    let header = bytes.get(..12).ok_or("Could not decode image")?;
+    if &header[..4] != b"RIFF" || &header[8..12] != b"WEBP" {
+        return Err("Could not decode image".into());
+    }
+    let riff_size = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+    let end = riff_size.checked_add(8).ok_or("Could not decode image")?;
+    if end != bytes.len() {
+        return Err("Could not decode image".into());
+    }
+    let body = bytes.get(12..end).ok_or("Could not decode image")?;
+    chunks(body, max_bytes, false, None)
+}
+
+/// Decode only formats the gallery can paste, with a bound on both encoded and
+/// expanded bytes. The URL extension and remote Content-Type are not evidence.
+fn clipboard_pixels(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
+    const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("Image too large to copy".into());
+    }
+    let format = image::guess_format(bytes).map_err(|_| "Could not decode image")?;
+    if format == image::ImageFormat::WebP {
+        check_webp_vp8_frames(bytes, MAX_IMAGE_BYTES)?;
+    }
+    if !matches!(
+        format,
+        image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Gif
+    ) {
+        return Err("Could not decode image".into());
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+    reader.limits(limits);
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|_| "Could not decode image")?;
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|size| *size <= MAX_IMAGE_BYTES)
+        .ok_or("Image too large to copy")?;
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+    reader.limits(limits);
+    let rgba = reader
+        .decode()
+        .map_err(|_| "Could not decode image")?
+        .to_rgba8()
+        .into_raw();
+    if rgba.len() != pixels {
+        return Err("Could not decode image".into());
+    }
+    Ok((width as usize, height as usize, rgba))
+}
+
+/// The host owns authenticated media access and the OS clipboard. Never hand
+/// bearer tokens or privileged fetch capability to the webview.
+#[tauri::command]
+pub(crate) async fn media_copy_image<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    host: tauri::State<'_, IdentityHost>,
+    source: String,
+) -> Result<()> {
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    let response = fetch_media(host.inner(), url, None)
+        .await
+        .map_err(|_| "Could not fetch image")?;
+    if !response
+        .headers()
+        .get("Content-Type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|kind| kind.starts_with("image/") && kind != "image/svg+xml")
+    {
+        return Err("Could not decode image".into());
+    }
+    let pixels = tauri::async_runtime::spawn_blocking(move || clipboard_pixels(response.body()))
+        .await
+        .map_err(|_| "Could not decode image".to_owned())??;
+    crate::image_clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
+}
+
 /// Persist an authenticated bounded response without replacing an existing file.
 /// The host, not the webview, owns the save path and collision policy.
 #[tauri::command]
@@ -1313,6 +1597,24 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         .await
         .map_err(|_| "Media download interrupted".to_owned())??;
     Ok(())
+}
+
+/// Read a snapshot into the trusted renderer through the existing authenticated
+/// media path. The caller may tighten, but never raise, the host's snapshot cap.
+#[tauri::command]
+pub(crate) async fn media_snapshot_read(
+    host: tauri::State<'_, IdentityHost>,
+    source: String,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    if max_bytes == 0 || max_bytes > 16 * 1024 * 1024 {
+        return Err("Invalid snapshot size limit".into());
+    }
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    fetch_media_bounded(host.inner(), url, None, max_bytes)
+        .await
+        .map(tauri::http::Response::into_body)
+        .map_err(|status| format!("Snapshot media read failed ({status})"))
 }
 
 /// `buzz-media://localhost/<percent-encoded relay media URL>`, the shape of
@@ -1375,6 +1677,24 @@ async fn fetch_media(
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    fetch_media_bounded(host, url, range, MAX_MEDIA).await
+}
+
+async fn fetch_media_bounded(
+    host: &IdentityHost,
+    url: Url,
+    range: Option<String>,
+    max_bytes: usize,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    buffer_media(send_media(host, url, range.as_deref()).await?, max_bytes).await
+}
+
+/// One freshly signed upstream GET; only a 200 or 206 is returned.
+async fn send_media(
+    host: &IdentityHost,
+    url: Url,
+    range: Option<&str>,
+) -> std::result::Result<reqwest::Response, u16> {
     let auth = blossom_auth(host, &url, "get", "Get buzz-media", Vec::new())
         .await
         .map_err(|_| 401u16)?;
@@ -1384,18 +1704,50 @@ async fn fetch_media(
         // Match the broker's whole-media deadline; large documents may take minutes.
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth);
-    if let Some(range) = &range {
+    if let Some(range) = range {
         request = request.header("Range", range);
     }
-    let mut upstream = request.send().await.map_err(|_| 502u16)?;
+    let upstream = request.send().await.map_err(|_| 502u16)?;
     let status = upstream.status().as_u16();
     if !matches!(status, 200 | 206) {
         return Err(status);
     }
-    let limit = if status == 206 {
-        MAX_MEDIA_RANGE
+    Ok(upstream)
+}
+
+/// The response type of an upstream media response, as `media_type` decides it.
+fn upstream_type(upstream: &reqwest::Response) -> (String, bool) {
+    media_type(
+        upstream
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+    )
+}
+
+/// Headers every `buzz-media` response carries, for an upstream `Content-Type`.
+fn media_headers(kind: String, disposition: bool) -> tauri::http::response::Builder {
+    let response = tauri::http::Response::builder()
+        .header("Content-Type", kind)
+        .header("Accept-Ranges", "bytes")
+        .header("Cache-Control", "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff");
+    if disposition {
+        response.header("Content-Disposition", "attachment")
     } else {
-        MAX_MEDIA
+        response
+    }
+}
+
+async fn buffer_media(
+    mut upstream: reqwest::Response,
+    max_bytes: usize,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let status = upstream.status().as_u16();
+    let limit = if status == 206 {
+        MAX_MEDIA_RANGE.min(max_bytes)
+    } else {
+        max_bytes
     };
     if upstream
         .content_length()
@@ -1403,24 +1755,13 @@ async fn fetch_media(
     {
         return Err(413);
     }
-    let header = |name: &str| {
-        upstream
-            .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned)
-    };
-    let (kind, disposition) = media_type(header("content-type").as_deref());
-    let mut response = tauri::http::Response::builder()
-        .status(status)
-        .header("Content-Type", kind)
-        .header("Accept-Ranges", "bytes")
-        .header("Cache-Control", "private, max-age=3600")
-        .header("X-Content-Type-Options", "nosniff");
-    if disposition {
-        response = response.header("Content-Disposition", "attachment");
-    }
-    if let Some(value) = header("content-range") {
+    let (kind, disposition) = upstream_type(&upstream);
+    let mut response = media_headers(kind, disposition).status(status);
+    if let Some(value) = upstream
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+    {
         response = response.header("Content-Range", value);
     }
     let mut body = Vec::new();

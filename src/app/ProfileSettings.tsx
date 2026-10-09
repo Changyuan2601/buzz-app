@@ -2,6 +2,7 @@ import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import type { Identity } from "../features/identity/service";
 import { PrivateKey } from "../features/identity/PrivateKey";
+import { SignOutDialog } from "../features/identity/SignOut";
 import { profileDefault } from "../features/communities/profile-default";
 import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
@@ -85,6 +86,7 @@ export function ProfileSettings({
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   const [saved, setSaved] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(false);
@@ -393,8 +395,26 @@ export function ProfileSettings({
             {identity && active && (
               <div className="mt-6">
                 <SettingsGroup layout="form">
-                  <PrivateKey identity={identity} />
+                  {/* One key widget at a time; the dialog brings its own. */}
+                  {!signingOut && <PrivateKey identity={identity} />}
                 </SettingsGroup>
+                <SettingsGroup>
+                  <PreferenceRow
+                    title="Sign out of Buzz"
+                    subtitle="Remove your private key from this device. Also ends Builderlab and hosted community logins."
+                    trailing={
+                      <Button type="button" onClick={() => setSigningOut(true)}>
+                        Sign out of Buzz
+                      </Button>
+                    }
+                  />
+                </SettingsGroup>
+                {signingOut && (
+                  <SignOutDialog
+                    identity={identity}
+                    onClose={() => setSigningOut(false)}
+                  />
+                )}
               </div>
             )}
             {copyStatus && (

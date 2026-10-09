@@ -54,6 +54,13 @@ const nativeBridge: BrowserBridge = {
   cancel: (id) => invoke("oauth_callback_cancel", { id }),
 };
 
+function base64url(bytes: Uint8Array) {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 /** Acquire and verify a credential. No UI, storage, or authenticated API consumers. */
 export async function browserCredential(
   host: Host,
@@ -65,14 +72,22 @@ export async function browserCredential(
   let id: string | undefined;
   const path = `/callback/${crypto.randomUUID()}`;
   const login = new URL(`${target}/v1/auth/login`);
-  login.search = new URLSearchParams({
-    type: "cli",
-    product: "builderlab",
-  }).toString();
   const cancel = () => {
     if (id) void bridge.cancel(id).catch(() => {});
   };
   try {
+    const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(verifier),
+    );
+    signal.throwIfAborted();
+    login.search = new URLSearchParams({
+      type: "cli",
+      product: "builderlab",
+      code_challenge: base64url(new Uint8Array(digest)),
+      code_challenge_method: "S256",
+    }).toString();
     const attempt = await bridge.begin({
       authorizationUrl: login.href,
       callbackPath: path,
@@ -122,7 +137,7 @@ export async function browserCredential(
     const exchange = await request(
       "/v1/auth/login/exchange",
       undefined,
-      JSON.stringify({ code }),
+      JSON.stringify({ code, code_verifier: verifier }),
     );
     const session_credential = exchange?.session_credential;
     if (

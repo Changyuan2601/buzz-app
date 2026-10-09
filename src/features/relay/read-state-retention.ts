@@ -10,6 +10,16 @@ export type CoveredFrontier = (
   key: string,
   frontier: (key: string) => number | undefined,
 ) => string | undefined;
+/** The message a mark is about. Message, thread and thread catch-up marks
+ * each name one message (a thread names its root); other marks name none. */
+export function markMessage(key: string): string | undefined {
+  const separator = key.indexOf(":");
+  const kind = key.slice(0, separator);
+  return separator > 0 &&
+    (kind === "msg" || kind === "thread" || kind === "thread-activity")
+    ? key.slice(separator + 1) || undefined
+    : undefined;
+}
 /** Broader marks first: a channel or thread mark covers many messages, so
  * losing one makes old history unread again. Catch-up marks (`activity:`,
  * `thread-activity:`) come next: only this app reads them, so recent catch-up
@@ -266,6 +276,24 @@ export function retainLocalRead(
   const encoder = new TextEncoder();
   let bytes = 2;
   const entries: [string, number][] = [];
+  const accepted = new Map<string, number>();
+  // A mark that a kept broader mark already reads is redundant here too, as
+  // in the journal: keep it and it only takes room from real reads. Covers
+  // always have a broader scope, so they are accepted before what they cover.
+  // Overrides make inherited ancestry load-bearing; keep everything then.
+  const coveredBy = overrides.size ? undefined : covered;
+  const redundant = (key: string, value: number) => {
+    const cover = coveredBy?.(key, (other) =>
+      other === key
+        ? value
+        : (kept.state.frontiers[other] ?? accepted.get(other)),
+    );
+    return (
+      cover !== undefined &&
+      cover !== key &&
+      (kept.state.frontiers[cover] !== undefined || accepted.has(cover))
+    );
+  };
   const protectedKey = (key: string) =>
     overrides.size > 0 && !key.startsWith("msg:");
   // Keep inherited floors first (a subset of the already bounded reserve), then
@@ -278,6 +306,7 @@ export function retainLocalRead(
       bv - av ||
       a.localeCompare(b),
   )) {
+    if (redundant(key, value)) continue;
     const cost =
       encoder.encode(JSON.stringify(key)).byteLength +
       1 +
@@ -289,6 +318,7 @@ export function retainLocalRead(
     )
       break;
     entries.push([key, value]);
+    accepted.set(key, value);
     bytes += cost;
   }
   return { ...kept, reserve: Object.freeze(Object.fromEntries(entries)) };

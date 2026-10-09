@@ -203,9 +203,9 @@ it.each([false, true])(
       expect(h.upload).not.toHaveBeenCalled();
     } else {
       await waitFor(() =>
-        expect(within(form).getByRole("status")).toHaveTextContent(
-          "notes.txt: 1 KB · Queued",
-        ),
+        expect(
+          within(form).getByRole("status", { name: "" }),
+        ).toHaveTextContent("notes.txt: 1 KB · Queued"),
       );
       expect(h.upload).not.toHaveBeenCalled();
     }
@@ -266,9 +266,9 @@ it.each([false, true])(
       expect(h.upload).not.toHaveBeenCalled();
     } else {
       await waitFor(() =>
-        expect(within(pane).getByRole("status")).toHaveTextContent(
-          "notes.txt: 1 KB · Queued",
-        ),
+        expect(
+          within(pane).getByRole("status", { name: "" }),
+        ).toHaveTextContent("notes.txt: 1 KB · Queued"),
       );
       expect(h.upload).not.toHaveBeenCalled();
     }
@@ -298,7 +298,7 @@ it("announces queued files, then background preparation and upload, while editor
   fireEvent.paste(editor, {
     clipboardData: { items: [{ kind: "file", getAsFile: () => source }] },
   });
-  const status = screen.getByRole("status");
+  const status = screen.getByRole("status", { name: "" });
   expect(status).toHaveAttribute("aria-live", "polite");
   expect(status).toHaveAttribute("aria-atomic", "true");
   expect(status).toHaveTextContent("notes.txt: 1 KB · Queued");
@@ -310,17 +310,23 @@ it("announces queued files, then background preparation and upload, while editor
   fireEvent.click(send);
   // The file leaves the composer; the background pill announces its phases.
   await waitFor(() => expect(status).not.toBeInTheDocument());
-  expect(screen.getByRole("status")).toHaveTextContent("Preparing");
+  expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+    "Preparing",
+  );
   expect(editor).toHaveFocus();
   await act(async () => {
     header.resolve(new ArrayBuffer(0));
   });
-  expect(screen.getByRole("status")).toHaveTextContent(/^Uploading$/);
+  expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+    /^Uploading$/,
+  );
   expect(editor).toHaveFocus();
   await act(async () => {
     upload.resolve(h.uploaded);
   });
-  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByRole("status", { name: "" })).toBeNull(),
+  );
   expect(editor).toHaveFocus();
   expect(
     screen.queryByRole("region", { name: "Attachments" }),

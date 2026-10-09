@@ -15,8 +15,9 @@ import type {
   ReadSyncSnapshot,
 } from "./read-state";
 import type { ReadJournal } from "./read-state-storage";
+import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
-import { foldMessages } from "./fold";
+import { foldMessages, deletionApplies } from "./fold";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -190,6 +191,7 @@ export function createUnread({
   reader,
   viewer,
   relayAuthor,
+  signingAuthority,
   workflowAuthority,
   notify = (listener) => listener(),
   follows = memoryThreadFollows(),
@@ -199,6 +201,7 @@ export function createUnread({
   reader: RelayReader;
   viewer: string;
   relayAuthor?: string;
+  signingAuthority?: string;
   workflowAuthority?: string | undefined;
   notify?: (listener: () => void) => void;
   follows?: ThreadFollowStorage;
@@ -395,9 +398,15 @@ export function createUnread({
     ownThreads.clear();
     for (const event of events.values()) {
       if (event.kind !== 5 && event.kind !== 9005) continue;
-      for (const [name, id] of event.tags)
-        if (name === "e" && id && events.get(id)?.pubkey === event.pubkey)
-          tombstones.add(id);
+      for (const [name, id] of event.tags) {
+        const target = id ? events.get(id) : undefined;
+        if (
+          name === "e" &&
+          target &&
+          deletionApplies(event, target, signingAuthority)
+        )
+          tombstones.add(target.id);
+      }
     }
     for (const event of events.values()) {
       if (!contentKind(event) || tombstones.has(event.id)) continue;
@@ -574,30 +583,44 @@ export function createUnread({
    * unread; that is accepted. A reply finds its channel from its own event,
    * but finds its thread only while the root is loaded; after a reload without
    * the root, a thread or thread catch-up mark no longer reads it. So neither
-   * covers a message mark. Only retained evidence supplies a message's
-   * channel; marks without it are kept. */
-  reads.setCoverage((key, frontier) => {
-    const value = frontier(key) ?? Number.POSITIVE_INFINITY;
-    const separator = key.indexOf(":");
-    if (separator < 0) return undefined;
-    const kind = key.slice(0, separator);
-    const id = key.slice(separator + 1);
-    const by = (other: string, through: number) =>
-      (frontier(other) ?? -1) >= through ? other : undefined;
-    if (kind === "activity") return by(id, value);
-    if (closed) return undefined;
-    indexEvidence();
-    const entry = byId.get(id);
-    if (!entry) return undefined;
-    if (kind === "msg")
-      return (
-        by(entry.channelId, entry.event.created_at) ??
-        (caughtUp(entry, frontier) ? `activity:${entry.channelId}` : undefined)
-      );
-    if (kind === "thread") return by(entry.channelId, value);
-    if (kind === "thread-activity")
-      return by(entry.channelId, value) ?? by(`thread:${id}`, value);
-    return undefined;
+   * covers a message mark. A message's channel comes from retained evidence,
+   * or from the channel that read state saved for a marked message (`home`);
+   * marks without either are kept. Catch-up needs the message itself, because only
+   * its event says whether catch-up reads it. */
+  reads.setCoverage({
+    covered(key, frontier, home) {
+      const value = frontier(key) ?? Number.POSITIVE_INFINITY;
+      const separator = key.indexOf(":");
+      if (separator < 0) return undefined;
+      const kind = key.slice(0, separator);
+      const id = key.slice(separator + 1);
+      const by = (other: string, through: number) =>
+        (frontier(other) ?? -1) >= through ? other : undefined;
+      if (kind === "activity") return by(id, value);
+      // Both marks name the same thread root, so this needs no event.
+      if (kind === "thread-activity" && by(`thread:${id}`, value))
+        return `thread:${id}`;
+      if (closed) return undefined;
+      indexEvidence();
+      const entry = byId.get(id);
+      const channel = entry?.channelId ?? home(id);
+      if (channel === undefined) return undefined;
+      if (kind === "msg")
+        return (
+          by(channel, entry?.event.created_at ?? value) ??
+          (entry && caughtUp(entry, frontier)
+            ? `activity:${entry.channelId}`
+            : undefined)
+        );
+      if (kind === "thread" || kind === "thread-activity")
+        return by(channel, value);
+      return undefined;
+    },
+    home(id) {
+      if (closed) return undefined;
+      indexEvidence();
+      return byId.get(id)?.channelId;
+    },
   });
   function category(
     entry: Evidence,
@@ -1493,6 +1516,7 @@ export function createUnread({
         freshness = "observed";
         error = undefined;
         publish();
+        void findHomes(generation);
       } catch (cause) {
         if (closed || generation !== epoch) return;
         freshness = "stale";
@@ -1508,6 +1532,82 @@ export function createUnread({
     });
     publish();
     return refresh;
+  }
+  // Marked messages already asked for this session, found or not.
+  const askedHomes = new Set<string>();
+  // The running lookup and the access epoch it serves.
+  let findingHomes: { generation: number; done: Promise<void> } | undefined;
+  /** Asks the relay for marked messages whose channel is not known, so the
+   * channel marks that cover them can replace their marks (see
+   * `setCoverage`). Only marks that some channel mark could cover are asked
+   * for, each once per session. A failure only keeps marks, which stay
+   * correct; the next session asks again. Found messages are not evidence. */
+  function findHomes(generation: number) {
+    if (findingHomes?.generation === generation) return findingHomes.done;
+    // A lookup for an older epoch first releases the IDs it did not use.
+    const previous = findingHomes?.done;
+    const running = (async () => {
+      await previous;
+      if (closed || generation !== epoch) return;
+      indexEvidence();
+      const { frontiers, overrides } = reads.state();
+      // Overrides turn pruning off, so channels would not help.
+      if (Object.keys(overrides).length) return;
+      const broadest = Math.max(
+        -1,
+        ...Object.entries(frontiers).flatMap(([key, value]) =>
+          key.includes(":") ? [] : [value],
+        ),
+      );
+      const ids = new Set<string>();
+      for (const [key, value] of Object.entries(frontiers)) {
+        const id = markMessage(key);
+        if (
+          id !== undefined &&
+          /^[0-9a-f]{64}$/.test(id) &&
+          value <= broadest &&
+          !askedHomes.has(id) &&
+          !byId.has(id) &&
+          reads.home(id) === undefined
+        )
+          ids.add(id);
+      }
+      const found: Record<string, string> = {};
+      try {
+        const wanted = [...ids];
+        for (let offset = 0; offset < wanted.length; offset += 100) {
+          const batch = wanted.slice(offset, offset + 100);
+          for (const id of batch) askedHomes.add(id);
+          const signal = AbortSignal.any([
+            lifetime.signal,
+            AbortSignal.timeout(10000),
+          ]);
+          const rows = await reader.read(
+            [{ ids: batch, kinds: contentKinds, limit: batch.length }],
+            { signal, priority: "background" },
+          );
+          if (closed || generation !== epoch) break;
+          for (const event of rows) {
+            const channel = channelOf(event);
+            if (ids.has(event.id) && contentKind(event) && channel)
+              found[event.id] = channel;
+          }
+        }
+      } catch {
+        // Keep what was found; the rest is asked for next session.
+      }
+      if (generation !== epoch) {
+        // An access change discarded this answer; the new epoch asks again.
+        for (const id of ids) askedHomes.delete(id);
+        return;
+      }
+      if (!closed && Object.keys(found).length)
+        await reads.learnHomes(found).catch(() => {});
+    })().finally(() => {
+      if (findingHomes?.done === running) findingHomes = undefined;
+    });
+    findingHomes = { generation, done: running };
+    return running;
   }
   /** The viewer's deletions end lookup memberships they were evidence for,
    * including ones decided before the deletion, and even when the deletion

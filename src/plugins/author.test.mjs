@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package in a path with spaces exposes agentControl, host, identity names, and page icons", async () => {
+test("generated author package in a path with spaces exposes agentControl, host, identity names, and page navigation metadata", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -63,6 +63,8 @@ export function apply(ctx: Context) {
     title: "Example",
     component: () => null,
     icon: "data:image/png;base64,iVBOR",
+    primary: true,
+    placement: "toolbar",
   });
   ctx.pages.register({
     id: "other",
@@ -70,6 +72,13 @@ export function apply(ctx: Context) {
     component: () => null,
     // @ts-expect-error A page icon is a data URL string.
     icon: 1,
+  });
+  for (const placement of ["sidebar", "topbar", "toolbar"] as const)
+    ctx.pages.register({ id: placement, title: placement, component: () => null, primary: true, placement });
+  ctx.pages.register({
+    id: "bad-placement", title: "Bad placement", component: () => null,
+    // @ts-expect-error A placement must name a supported navigation location.
+    placement: "floating",
   });
   // @ts-expect-error Native process lifetime is not plugin-owned.
   control.dispose();

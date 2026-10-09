@@ -130,7 +130,17 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
   await expect(checks).toContainText("Some checks were not successful");
   await expect(checks.getByRole("listitem")).toHaveCount(2);
   const spacing = await panel.locator('[class*="pullTabs"]').evaluate((n) => {
-    const tabs = n.querySelector('[role="tablist"]').getBoundingClientRect();
+    const list = n.querySelector('[role="tablist"]');
+    const box = list.getBoundingClientRect();
+    // The shared tab list reserves its keyboard focus ring inside its own box
+    // and cancels that reservation with a negative block margin, so the border
+    // box now bleeds 4px into this gap while nothing visible moves. Measure the
+    // content edge, which is where the tabs are actually drawn.
+    const style = getComputedStyle(list);
+    const tabs = {
+      top: box.top + Number.parseFloat(style.paddingTop),
+      bottom: box.bottom - Number.parseFloat(style.paddingBottom),
+    };
     const previous = n.previousElementSibling.getBoundingClientRect();
     const card = n.parentElement
       .querySelector('[class*="checksCard"]')

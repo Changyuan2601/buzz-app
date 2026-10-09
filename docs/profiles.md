@@ -184,11 +184,14 @@ supplies agent display metadata, not management authority.
   This is not a Markdown parser or a notification change.
 - Replacement edits remain readable but their mentions are not clickable: old
   Buzz can change body identity bindings without changing original recipients.
-  Full-key-qualified namesake occurrences also remain literal. Bodies changed by
-  Markdown image removal do not bind clickable mentions either: stripping an image
-  can create a name that never appeared in the signed prose. Image attachments and
-  signed notification recipients are unchanged. Full edit-snapshot rendering
-  compatibility is deliberately deferred.
+  Full-key-qualified namesake occurrences also remain literal. After Markdown
+  image or file attachment removal, signed names in the remaining prose can bind
+  beside the removed attachment, but a name crossing an interior removal seam
+  stays plain text: stripping must not manufacture a name absent from the signed
+  prose. If Markdown link repair changes a body with attachment seams, mentions
+  remain unbound because the seam offsets no longer identify the repaired text.
+  Image attachments and signed notification recipients are unchanged. Full
+  edit-snapshot rendering compatibility is deliberately deferred.
 - Disabling Profiles removes its panel and clickable affordances without changing
   prose, drafts, delivery or recipient intent. Re-enable does not reopen it.
 - Profile enrichment in channels and threads remains a background batch. The

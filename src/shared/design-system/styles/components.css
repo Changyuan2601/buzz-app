@@ -642,9 +642,16 @@
     color: var(--text-standard);
   }
 
+  /* The selection fills the tab box, so hover and selection are the same shape
+     in the same place. Inset top and bottom instead and a selected tab is drawn
+     8px shorter than the hover fill on the tab beside it: the two states stop
+     agreeing on where a tab is, and the pill reads as a smaller object floating
+     in padding rather than the tab itself turning solid. The container's own
+     `--space-1` is the only inset this control needs — that is how the glass
+     strip in the header read before it became a Tabs component. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
-    top: var(--space-1);
-    bottom: var(--space-1);
+    top: 0;
+    bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
     box-shadow: var(--shadow-xs);
@@ -662,10 +669,16 @@
     gap: var(--space-4);
   }
 
+  /* `overflow-x: auto` forces the block axis to `auto` too, so the list clips
+     the focus ring's top and bottom edges and a focused tab reads as two
+     vertical bars. The inset gives the ring its 4px, and the negative margin
+     cancels it so the strip's footprint is unchanged. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-list {
     min-width: 0;
     overflow-x: auto;
     padding-inline: var(--space-1);
+    padding-block: var(--space-1);
+    margin-block: calc(var(--space-1) * -1);
     scroll-padding-inline: var(--space-1);
     gap: var(--space-5);
   }
@@ -694,11 +707,12 @@
     color: var(--text-standard);
   }
 
-  /* Sits on the container's bottom edge and spans the tab exactly. `height` is
+  /* Sits on the tab's bottom edge and spans the tab exactly. `height` is
      the hairline; the indicator inherits its horizontal travel from the shared
-     rule above. */
+     rule above. The offset matches the list's block inset so the bar stays on
+     the tab edge rather than on the ring's. */
   .buzz-tabs[data-variant="panel"] .buzz-tabs-indicator {
-    bottom: 0;
+    bottom: var(--space-1);
     height: 2px;
     border-radius: var(--radius-pill);
     background: var(--text-standard);
@@ -896,6 +910,37 @@
     color: var(--text-standard);
   }
 
+  /* Route navigation shares chrome material, not Tabs' focus/tabpanel contract. */
+  .chrome-navigation {
+    @apply glass-primary;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    height: 2.5rem;
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"] {
+    width: auto;
+    min-height: 2rem;
+    height: 2rem;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+    @apply text-label;
+  }
+  .chrome-navigation
+    .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
+    background: var(--bg-glass-primary-hover);
+    color: var(--text-standard);
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
+  .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
+    background: var(--bg-chrome-selected);
+    color: var(--text-standard);
+    box-shadow: var(--shadow-xs);
+  }
+
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
     transition: none;
@@ -1003,6 +1048,15 @@
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
+  }
+
+  /* The navigation list scrolls, so it clips: its first tab sits flush against
+     the inline start edge and an offset ring loses that side. Draw this ring
+     inside the tab, as the scrollable menu and popover lists already do. */
+  html[data-keyboard-navigation]
+    .buzz-tabs[data-variant="navigation"]
+    .navigation-item:focus-visible {
+    outline-offset: -2px;
   }
 
   @media (prefers-reduced-motion: reduce) {

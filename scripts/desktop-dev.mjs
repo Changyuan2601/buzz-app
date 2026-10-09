@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { loadEnv } from "vite";
 import { desktopOverlay, options } from "./desktop-config.mjs";
 import { worktreePort } from "./worktree-port.mjs";
 
@@ -51,8 +52,15 @@ if (!help)
 forwarded.unshift("--config", JSON.stringify(config));
 // Runner/application arguments after -- belong to Tauri, including any --port.
 forwarded.push(...rest);
+// Vite normally reads .env.local only in its own process. Give Rust the same
+// effective public pin (including an explicit empty override), so native agent
+// starts select the signer that the development frontend actually uses.
+const viewer =
+  loadEnv("development", process.cwd(), "BUZZ_DEV_VIEWER").BUZZ_DEV_VIEWER ??
+  "";
 const result = spawnSync("pnpm", ["tauri", "dev", ...forwarded], {
   stdio: "inherit",
+  env: { ...process.env, BUZZ_DEV_VIEWER: viewer },
 });
 if (result.error) console.error(result.error.message);
 if (result.signal) process.kill(process.pid, result.signal);

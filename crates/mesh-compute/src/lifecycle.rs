@@ -1,5 +1,6 @@
 //! Process-owned SDK worker. Startup is never aborted: it may already own an OS thread.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -70,6 +71,7 @@ struct Slot {
     generation: u64,
     serving: bool,
     joining: bool,
+    pending_tokens: HashSet<String>,
     retryable: bool,
     dial: Option<mpsc::Sender<String>>,
     stop: Option<watch::Sender<bool>>,
@@ -90,6 +92,7 @@ impl Default for Lifecycle {
                 generation: 0,
                 serving: false,
                 joining: false,
+                pending_tokens: HashSet::new(),
                 retryable: false,
                 dial: None,
                 stop: None,
@@ -218,6 +221,7 @@ impl Lifecycle {
             mpsc::channel::<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>(1);
         let (stop, mut stopping) = watch::channel(false);
         slot.retryable = false;
+        slot.pending_tokens.clear();
         slot.phase = Phase::Starting;
         slot.generation += 1;
         slot.serving = serving;
@@ -276,7 +280,7 @@ impl Lifecycle {
                         shared.lock().expect("mesh slot poisoned").joining = true;
                         // SDK Join queues work inside its serial control loop. Keep just one
                         // in flight; dropping its response does NOT cancel the SDK operation.
-                        let joining = node.join(token);
+                        let joining = node.join(token.clone());
                         tokio::pin!(joining);
                         loop {
                             tokio::select! {
@@ -286,7 +290,11 @@ impl Lifecycle {
                                     if let Err(error) = result {
                                         eprintln!("Mesh peer join failed; keeping node running: {error:#}");
                                     }
-                                    shared.lock().expect("mesh slot poisoned").joining = false;
+                                    {
+                                        let mut slot = shared.lock().expect("mesh slot poisoned");
+                                        slot.joining = false;
+                                        slot.pending_tokens.remove(&token);
+                                    }
                                     break;
                                 }
                                 request = reads.recv() => {
@@ -319,6 +327,7 @@ impl Lifecycle {
                 Err(error) => Phase::Failed(format!("{error:#}")),
             };
             slot.joining = false;
+            slot.pending_tokens.clear();
             slot.dial = None;
             slot.stop = None;
             slot.status = None;
@@ -335,15 +344,20 @@ impl Lifecycle {
         self.enqueue(token)
     }
     fn enqueue(&self, token: String) -> anyhow::Result<()> {
-        let slot = self.slot.lock().expect("mesh slot poisoned");
+        let mut slot = self.slot.lock().expect("mesh slot poisoned");
         if !matches!(slot.phase, Phase::Starting | Phase::Ready) {
             anyhow::bail!("Mesh runtime is not accepting dial targets");
+        }
+        if slot.pending_tokens.contains(&token) {
+            return Ok(());
         }
         slot.dial
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Mesh worker is unavailable"))?
-            .try_send(token)
-            .map_err(|_| anyhow::anyhow!("Mesh dial queue is full or unavailable"))
+            .try_send(token.clone())
+            .map_err(|_| anyhow::anyhow!("Mesh dial queue is full or unavailable"))?;
+        slot.pending_tokens.insert(token);
+        Ok(())
     }
 
     /// Caller timeout never cancels startup or changes the slot to Stopped.
@@ -556,6 +570,55 @@ mod tests {
         release.send(()).unwrap();
         wait_stopped(&owner).await;
         assert!(observed.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn repeated_pending_and_inflight_targets_are_coalesced_and_can_retry() {
+        let owner = Lifecycle::default();
+        let (inner, stopped, release, _) = fixture();
+        let (began, mut observed) = mpsc::unbounded_channel();
+        let (open, gate) = watch::channel(false);
+        let (start, startup) = oneshot::channel();
+        owner
+            .launch(async move {
+                startup.await?;
+                Ok(JoiningNode {
+                    inner,
+                    began,
+                    release_join: gate,
+                    fail: true,
+                })
+            })
+            .unwrap();
+        for _ in 0..100 {
+            owner.enqueue("same-peer".into()).unwrap();
+        }
+        assert_eq!(owner.slot.lock().unwrap().pending_tokens.len(), 1);
+        start.send(()).unwrap();
+        observed.recv().await.unwrap();
+        for _ in 0..100 {
+            owner.enqueue("same-peer".into()).unwrap();
+        }
+        assert_eq!(owner.slot.lock().unwrap().pending_tokens.len(), 1);
+        open.send(true).unwrap();
+        while owner
+            .slot
+            .lock()
+            .unwrap()
+            .pending_tokens
+            .contains("same-peer")
+        {
+            tokio::task::yield_now().await;
+        }
+        // Completion is the barrier: no duplicate queued work remains.
+        assert!(observed.try_recv().is_err());
+        owner.enqueue("same-peer".into()).unwrap();
+        observed.recv().await.unwrap();
+        owner.stop();
+        stopped.await.unwrap();
+        release.send(()).unwrap();
+        wait_stopped(&owner).await;
+        assert!(owner.slot.lock().unwrap().pending_tokens.is_empty());
     }
 
     #[tokio::test]

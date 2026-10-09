@@ -1,7 +1,8 @@
 // FOUNDATION: Preview conversation contribution contract; data and delivery stay session-owned.
 import type { ComponentType } from "react";
 import type { Contribution } from "../../plugins/contributions";
-import type { ChannelMessage } from "../relay/contracts";
+import type { VoiceRecording } from "../relay/voice-media";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
@@ -28,7 +29,25 @@ export type ComposerToolProps = Readonly<{
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
   insertResource(resource: ComposerResource): true | string;
+  capture?(
+    component: ComponentType<ComposerCaptureProps>,
+  ): (() => void) | false;
   focus(): void;
+}>;
+export type ComposerCaptureProps = Readonly<{
+  accept(recording: VoiceRecording): boolean;
+  cancel(): void;
+}>;
+export type AttachmentRendererProps = Readonly<{
+  attachment: Attachment;
+  source: string;
+  onRemove?: (() => void) | undefined;
+}>;
+export type AttachmentRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(attachment: Attachment): boolean;
+  component: ComponentType<AttachmentRendererProps>;
 }>;
 export type ReactionToolProps = Readonly<{
   session: RelaySession;
@@ -98,8 +117,28 @@ export type MessageRenderer = Readonly<{
   matches(message: ChannelMessage): boolean;
   component: ComponentType<{ message: ChannelMessage }>;
 }>;
+/** One ⋯ menu entry for a message. The host owns the menu, focus and row lifetime. */
+export type MessageAction = Readonly<{
+  id: string;
+  title: string;
+  icon?: ComponentType;
+  matches(message: ChannelMessage, session: RelaySession): boolean;
+  /** Mounted by the row after the menu closes; call close() to dismiss. */
+  component: ComponentType<{
+    message: ChannelMessage;
+    session: RelaySession;
+    close(): void;
+  }>;
+  /**
+   * Optional presentation beside the message timestamp, such as a state mark.
+   * Rendered only while `matches` passes: hiding the menu entry hides the mark.
+   */
+  marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
+}>;
 export type ConversationExtensions = Readonly<{
+  attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
+  actions?: ContributionReader<MessageAction>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

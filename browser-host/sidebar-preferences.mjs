@@ -2,7 +2,10 @@ import {
   editSidebarAssignment,
   validSidebarAssignment,
 } from "../src/features/relay/sidebar-edits.ts";
-import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
+import {
+  editSidebarRecord,
+  projectSidebarRecord,
+} from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
@@ -131,22 +134,42 @@ function parseSectionsEvent(events, secret) {
     key.fill(0);
   }
 }
+export function assertSidebarSectionRemovalIntent(intent) {
+  if (
+    !intent ||
+    typeof intent !== "object" ||
+    Array.isArray(intent) ||
+    Object.keys(intent).length !== 1 ||
+    typeof intent.sectionId !== "string" ||
+    !intent.sectionId.trim() ||
+    intent.sectionId.length > 256
+  )
+    throw new Error("Invalid section removal intent");
+}
+
 /** Narrow host command: mutate one assignment against the latest encrypted head. */
-export function prepareSidebarAssignment(
+function prepareSidebarGroups(
   events,
   intent,
   secret,
   now = Date.now(),
+  removing = false,
 ) {
-  assertSidebarAssignmentIntent(intent);
+  if (removing) assertSidebarSectionRemovalIntent(intent);
+  else assertSidebarAssignmentIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
-  const blob = editSidebarAssignment(
-    current.blob,
-    current.createdAt,
-    intent,
-    now,
-  );
+  const blob = removing
+    ? editSidebarRecord(
+        SECTION_COORDINATE,
+        current.blob,
+        current.createdAt,
+        current.blob.sections.some(({ id }) => id === intent.sectionId)
+          ? [[["s", intent.sectionId, "live"], false]]
+          : [],
+        now,
+      )
+    : editSidebarAssignment(current.blob, current.createdAt, intent, now);
   const groups = projectSidebarPreferences(blob, undefined);
   if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
     throw new Error("Sidebar plaintext budget exceeded");
@@ -173,6 +196,42 @@ export function prepareSidebarAssignment(
       secret,
     ),
   };
+}
+
+export function prepareSidebarAssignment(
+  events,
+  intent,
+  secret,
+  now = Date.now(),
+) {
+  return prepareSidebarGroups(events, intent, secret, now);
+}
+export async function mutateSidebarSectionRemoval(
+  intent,
+  secret,
+  readHead,
+  publish,
+) {
+  assertSidebarSectionRemovalIntent(intent);
+  const draft = prepareSidebarGroups(
+    await readHead(),
+    intent,
+    secret,
+    Date.now(),
+    true,
+  );
+  if (!draft.event) return draft.groups;
+  await publish(draft.event);
+  const confirmed = prepareSidebarGroups(
+    await readHead(),
+    intent,
+    secret,
+    Date.now(),
+    true,
+  );
+  if (confirmed.event)
+    throw new Error("Section changed on another device; refresh and try again");
+  return confirmed.groups;
 }
 
 /** Publish one assignment, then re-read the coordinate before reporting saved state. */

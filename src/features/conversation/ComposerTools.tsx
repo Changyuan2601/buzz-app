@@ -71,13 +71,30 @@ function OwnedTool({
         | "insertMentions"
         | "insertResource"
         | "focus"
+        | "capture"
       >
     >();
   useLayoutEffect(() => {
     let live = true;
+    let release: (() => void) | undefined;
     const active = () =>
       live && registry.snapshot().includes(tool) && !current.current.disabled;
     setCommands({
+      capture: (Capture) => {
+        if (!active() || !current.current.capture) return false;
+        const cancel = current.current.capture((props) => (
+          <Capture
+            {...props}
+            accept={(recording) => active() && props.accept(recording)}
+          />
+        ));
+        if (!cancel) return false;
+        release = cancel;
+        return () => {
+          cancel();
+          if (release === cancel) release = undefined;
+        };
+      },
       insertText: (text) =>
         active() ? current.current.insertText(text) : false,
       insertMention: (recipient) =>
@@ -94,6 +111,7 @@ function OwnedTool({
     });
     return () => {
       live = false;
+      release?.();
     };
   }, [tool, registry]);
   const Tool = tool.component;

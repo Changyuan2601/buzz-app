@@ -1,13 +1,13 @@
 import { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HostService } from "./service";
+import { HostService, type Host } from "./service";
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: vi.fn(),
   invoke: vi.fn(),
   Channel: class {
-    onmessage: (message: unknown) => void = () => {};
+    constructor(public onmessage: (event: unknown) => void = () => {}) {}
   },
 }));
 type Events = { onmessage(message: unknown): void };
@@ -314,4 +314,144 @@ it("cancels the native stream when the caller aborts or stops reading", async ()
   });
   early.abort(new Error("too slow"));
   await expect(pending).rejects.toThrow("too slow");
+});
+
+it("starts a declared process as the calling plugin and streams it", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(7);
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const process = await plugin.host.spawn?.("agent", {
+    args: ["--print"],
+    cwd: "~/.buzz",
+    env: { CLAUDECODE: null },
+    agent: "cd".repeat(32),
+    onStdout: (data) => stdout.push(data),
+    onStderr: (data) => stderr.push(data),
+  });
+  const [, spawn] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  expect(invoke).toHaveBeenCalledWith("plugin_host_process_spawn", {
+    id: "example.plugin",
+    revision: "abc",
+    processId: "agent",
+    args: ["--print"],
+    cwd: "~/.buzz",
+    env: { CLAUDECODE: null },
+    agent: "cd".repeat(32),
+    onEvent: spawn.onEvent,
+  });
+  spawn.onEvent.onmessage({ type: "stdout", data: "out" });
+  spawn.onEvent.onmessage({ type: "stderr", data: "err" });
+  expect(stdout).toEqual(["out"]);
+  expect(stderr).toEqual(["err"]);
+
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  await process?.write("line\n");
+  await process?.end();
+  expect(invoke).toHaveBeenCalledWith("plugin_host_process_write", {
+    id: "example.plugin",
+    handle: 7,
+    data: "line\n",
+    close: false,
+  });
+  expect(invoke).toHaveBeenCalledWith("plugin_host_process_write", {
+    id: "example.plugin",
+    handle: 7,
+    data: "",
+    close: true,
+  });
+  spawn.onEvent.onmessage({ type: "exit", code: 0 });
+  await expect(process?.exited).resolves.toBe(0);
+});
+
+it("keeps delivering process events after an output handler throws", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(7);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const process = await plugin.host.spawn?.("agent", {
+    onStdout: () => {
+      throw new Error("handler bug");
+    },
+  });
+  const [, spawn] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  expect(() =>
+    spawn.onEvent.onmessage({ type: "stdout", data: "out" }),
+  ).not.toThrow();
+  expect(error).toHaveBeenCalled();
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  spawn.onEvent.onmessage({ type: "exit", code: 1 });
+  await expect(process?.exited).resolves.toBe(1);
+  error.mockRestore();
+});
+
+it("kills a plugin's processes when the plugin unloads", async () => {
+  const root = new Context();
+  new HostService(root);
+  let host!: Host;
+  const fiber = root
+    .extend({ pluginOwner: { id: "example.plugin", revision: "abc" } })
+    .plugin({
+      inject: ["host"],
+      apply: (ctx: Context) => {
+        host = ctx.host;
+      },
+    });
+  await fiber;
+  vi.mocked(invoke).mockResolvedValue(3);
+  await host.spawn?.("agent");
+  vi.mocked(invoke).mockClear();
+  await fiber.dispose();
+  expect(invoke).toHaveBeenCalledWith("plugin_host_process_kill", {
+    id: "example.plugin",
+    handle: 3,
+  });
+});
+
+it("kills a process that started as its plugin unloaded", async () => {
+  const root = new Context();
+  new HostService(root);
+  let host!: Host;
+  const fiber = root
+    .extend({ pluginOwner: { id: "example.plugin", revision: "abc" } })
+    .plugin({
+      inject: ["host"],
+      apply: (ctx: Context) => {
+        host = ctx.host;
+      },
+    });
+  await fiber;
+  let started!: (handle: number) => void;
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "plugin_host_process_spawn"
+      ? new Promise((resolve) => {
+          started = resolve;
+        })
+      : Promise.resolve(undefined),
+  );
+  const spawning = host.spawn?.("agent");
+  await fiber.dispose();
+  started(4);
+  await expect(spawning).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledWith("plugin_host_process_kill", {
+    id: "example.plugin",
+    handle: 4,
+  });
+});
+
+it("refuses processes outside the desktop app", async () => {
+  const { root, plugin } = pluginContext();
+  await expect(root.host.spawn?.("agent")).rejects.toThrow(
+    "installed desktop plugin",
+  );
+  vi.mocked(isTauri).mockReturnValue(false);
+  await expect(plugin.host.spawn?.("agent")).rejects.toThrow(
+    "installed desktop plugin",
+  );
+  expect(invoke).not.toHaveBeenCalled();
 });

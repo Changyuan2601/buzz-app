@@ -138,6 +138,18 @@ export function parseAttachments(
         : {}),
       ...(name ? { name } : {}),
       ...(duration !== undefined ? { duration } : {}),
+      ...(kind === "audio" &&
+      detectionName?.toLowerCase().startsWith("voice-note-")
+        ? { voiceNote: true as const }
+        : {}),
+      ...(() => {
+        const waveform = fields.waveform?.trim().split(/\s+/).map(Number);
+        return waveform?.length &&
+          waveform.length <= 100 &&
+          waveform.every((n) => Number.isInteger(n) && n >= 0 && n <= 100)
+          ? { waveform }
+          : {};
+      })(),
       ...(blurhash ? { blurhash } : {}),
       ...(previewUrl ? { previewUrl } : {}),
       ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),
@@ -206,6 +218,30 @@ export function messageAuthor(
     : event.pubkey;
 }
 
+/** A relay-verified NIP-09 that passed the relay's author/agent-owner check
+ * removes its target. Keep this predicate shared by timeline and unread evidence.
+ * Attributed owner deletion applies only to message kinds; reactions retain
+ * ordinary raw-author deletion semantics. */
+export function deletionApplies(
+  deletion: EventData,
+  event: EventData,
+  signingAuthority: string | undefined,
+) {
+  const messageKind = [9, 40002].includes(event.kind);
+  const nip09 = deletion.kind === 5 || deletion.kind === 9005;
+  return (
+    (nip09 && deletion.pubkey === event.pubkey) ||
+    (nip09 &&
+      messageKind &&
+      deletion.pubkey === messageAuthor(event, signingAuthority)) ||
+    (deletion.kind === 5 &&
+      messageKind &&
+      deletion.tags.some(
+        ([name, value]) => name === "k" && value === String(event.kind),
+      ))
+  );
+}
+
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level. Output is ascending by time; ties break on id so windows merge deterministically. */
@@ -235,16 +271,16 @@ export function foldMessages(
       overlays.set(entry[1], list);
     }
   }
-  // The relay lets an attributed author edit and delete like the signer.
+  // Relay-signed author attribution and NIP-09 owner deletion are both
+  // independently verified before these events enter the fold. Only the
+  // message target kinds gain the owner path; reactions remain author-only.
   const byAuthor = (item: EventData, event: EventData) =>
     item.pubkey === event.pubkey ||
     item.pubkey === messageAuthor(event, signingAuthority);
   const deleted = (event: EventData) =>
     overlays
       .get(event.id)
-      ?.some(
-        (item) => [5, 9005].includes(item.kind) && byAuthor(item, event),
-      ) ?? false;
+      ?.some((item) => deletionApplies(item, event, signingAuthority)) ?? false;
   const rows: ChannelMessage[] = [];
   for (const event of events) {
     if (!channelRowKind(event.kind)) continue;
@@ -301,6 +337,7 @@ export function foldMessages(
         ? projectMarkdownAttachments(content, imetaUrls)
         : {
             content,
+            seams: Object.freeze([] as number[]),
             urls: Object.freeze([] as string[]),
             names: Object.freeze([]),
           };
@@ -352,10 +389,7 @@ export function foldMessages(
             }
           : {}),
         ...(edits.length ? { edited: true as const } : {}),
-        ...(projected.content !== content &&
-        projected.content !== content.trimEnd()
-          ? { attachmentContentRemoved: true as const }
-          : {}),
+        ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(
             event.tags.flatMap((tag) =>

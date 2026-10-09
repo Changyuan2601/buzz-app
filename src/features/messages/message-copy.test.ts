@@ -46,7 +46,7 @@ it.each([
 it("does not guess edited, stripped, unsigned, or ambiguous mentions", () => {
   for (const change of [
     { edited: true as const },
-    { attachmentContentRemoved: true as const },
+    { attachmentSeams: [9] },
     { mentions: [] },
   ])
     expect(messageCopyText({ ...row, ...change }, profiles, [])).toBe(

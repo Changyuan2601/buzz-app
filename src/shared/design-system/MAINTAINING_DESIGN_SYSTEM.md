@@ -43,9 +43,9 @@ Check default, hover, pressed, selected, disabled, and loading states where they
 apply. Selection must remain clear after the pointer moves away. Preserve
 keyboard operation and focus restoration alongside pointer behavior.
 
-The shared global stylesheet currently hides focus outlines by explicit design
-decision. This is a known exception to visible keyboard focus, not an accessibility
-pass. Follow [Temporary focus appearance](DESIGN.md#temporary-focus-appearance)
+The shared text fields replace their ring with a perimeter stroke; every other
+control keeps a visible keyboard ring. Follow
+[Focus appearance](DESIGN.md#focus-appearance)
 and do not add local replacement rings.
 
 Inspect narrow, intermediate, and wide layouts in both themes. A specimen alone

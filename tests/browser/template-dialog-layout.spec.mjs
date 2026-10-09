@@ -122,7 +122,7 @@ test("template dialogs keep headers and optional setup contained across layouts"
       await teams
         .getByRole("button", { name: "Create team", exact: true })
         .click();
-      const team = page.getByRole("dialog", { name: "New team", exact: true });
+      const team = page.getByRole("dialog", { name: "Add team", exact: true });
       await expect(team).toHaveAccessibleDescription(/Choose agents/);
       await expect(
         team.getByRole("textbox", { name: "Name", exact: true }),

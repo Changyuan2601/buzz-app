@@ -401,22 +401,29 @@ remain deferred until an agreed integration batch. Do not gate ordinary visual
 feedback on them. Broader agent architecture proposals are outside the V1 scope.
 
 
-## Raw Agent Activity plugin
+## Agent Activity plugin
 
-**Agent Activity** is an independently toggleable bundled plugin. Compact
-avatar/name/status rows sit below messages and above the thread composer. The
-channel composer instead shows a collapsed **Channel-wide activity** summary
-with an agent count. Expand it to inspect all channel activity, including work
-in threads and unknown statuses; it does not imply another job is running in
-the channel conversation. Sidebar and thread-summary working dots are unchanged.
-Observer turns have no thread identity, so thread typing never hides channel
-telemetry for that agent, including simultaneous work. Channel navigation resets
-the disclosure; ordinary activity updates preserve its open state while activity
-remains. When the last evidence disappears, the disclosure unmounts and resets.
-Hover/focus on an agent row shows an owner-only summary; click, tap, Enter or Space
-opens that exact agent's **channel activity** in the right panel, including work
-in other threads. Optional names and avatars reuse shared background profile
-queries; key fragments distinguish identities without profiles.
+**Agent Activity** is an independently toggleable bundled plugin that owns capture
+and the transcript panel. Conversation presentation uses a compact, floating
+avatar control above the composer, without a reserved strip or permanent avatar
+container. Hover, click, tap or keyboard opens **Working now**, reusing the sidebar's
+working-agent row. The row opens its known thread (or channel when no unique thread
+is known); a separate **View activity** action opens the agent's transcript.
+
+The channel control includes work in threads. A thread control includes only
+exact-root evidence, never unconfirmed work. Current owner-visible turns provide
+brief tool status; unknown scopes fall back to channel activity. Multiple concurrent
+scopes never choose an arbitrary transcript thread. Public typing for the viewer's
+own `agentChoices` identities remains visible without telemetry; someone else's
+self-declared agent remains ordinary typing, without this owner-activity doorway.
+All projections consume existing stores and loaded profiles/channel rows, not new
+capture leases, relay reads or timers. A persistent, visually hidden status region
+announces working/typing transitions even when visual controls are absent.
+
+The popup resets on conversation changes and when current work ends. Idle and
+historical activity remain accessible from profiles and the activity panel rather
+than lingering above the composer. Compact status labels omit raw arguments and
+full paths; the transcript retains the detail.
 
 Thread indicators consume the existing kind-20002 typing signal with the resolved
 NIP-10 root, not inferred observer turn IDs. The existing per-channel live route
@@ -445,7 +452,8 @@ seconds after the signed timestamp and stays quiet for two seconds after the
 typer's message. It is display-only evidence, not ownership; while the plugin is
 off, the channel popover lists such an agent without a **View activity** action.
 A timeline thread summary shows the same dots from this source while one of the
-viewer's agents types in that thread; a thread with no replies yet has no summary to mark.
+viewer's agents types in that thread; before the first reply it offers **View thread**.
+The visual working label is reduced to dots; its accessible name retains the status.
 No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.
@@ -457,8 +465,44 @@ known-agent check is display-only evidence, not an ownership badge, and the acti
 may show a waiting state for identities with no published owner-visible telemetry.
 Shared agents and new activity-view permissions are out of scope.
 
-The **Channel** selector filters raw entries and working-turn counts, or shows all
-channels including unscoped records. For a selected channel, batches are projected
+### Transcript
+
+The panel opens on **Transcript**; **Raw** keeps the exact diagnostic records
+below. `activityTranscript` (`src/features/agents/activity-transcript.ts`) is a
+display projection over the same session-owned records, not a second store. It
+reads allowlisted ACP fields into turns: the triggering prompt (author and content
+from the `<buzz-event>` framing, other sections collapsed), the session's system
+prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
+their tool call with the auto-approval outcome, plans, mode changes, the session's
+selected config values (e.g. model), context usage, stop reason and errors. Tool
+names and inputs differ by adapter (Pi, Goose, Codex, Claude Code), so tool rows show the
+adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
+`locations` and content (text, with a wholly fenced Markdown block shown as its body,
+and `diff` as removed/added lines) are interpreted.
+Adapter-specific `_meta` such as exit codes stays in **Raw**. The one adapter
+special case: pi-acp repeats its `session/new` startup banner
+(`_meta.piAcp.startupInfo`) as an agent message, which the transcript omits. JSON-RPC ids are matched per pool slot and
+direction. Agent-elided strings and payloads are labeled, not hidden. Turns whose
+`turn_started` frame is not loaded are marked as partial. Posted chat messages are
+not joined here; the transcript shows the agent's ACP output.
+
+Agents use a channel or a thread as their conversation context, so one
+**Conversation** selector scopes the view: all conversations, a whole channel
+(threads included), or one thread. Threads are listed from loaded turns and named
+by their first prompt. A thread composer opens `buzz:agent-activity?…&thread=<root>`
+(valid only with its channel) with that thread selected. A turn's thread root is
+the payload's `threadRootEventId` (harness 2026-10-01 and later) or, for older
+harnesses, the prompt `<context>` block's `Thread root:`. Turns whose thread cannot
+be recovered appear only in the whole channel and are counted, never guessed. The
+whole channel labels each turn as channel conversation, a thread or unknown. Each
+turn starts with a **Turn** line (start time and the session's selected config as
+`Name: choice`, e.g. `Effort: Medium`, or the adapter's label when it already names
+the setting); its status line notes when the turn started a new ACP session.
+
+The transcript covers only loaded records: the live window plus one saved page.
+
+In **Raw**, a channel or thread selection filters entries and working-turn counts
+to that channel; all conversations includes unscoped records. For a selected channel, batches are projected
 as individual matching children, with the original envelope ID retained; displayed
 child JSON is reserialized, not claimed byte-identical to the envelope. Unscoped
 children are omitted rather than inheriting the enclosing batch's channel. The
@@ -586,9 +630,9 @@ Pi/Goose remain honored. Existing running processes are not restarted by this ch
 is off, no new traffic, or an interrupted feed—not that an agent is idle.
 
 For a contextual view, click the identity's avatar/mention in the channel, then
-**View activity**. It preselects that exact key and channel; **Channel → All channels**
+**View activity**. It preselects that exact key and channel; **Conversation → All conversations**
 broadens the view. Alternatively, select an active agent above the channel or thread composer.
-Expand raw entries and close/reopen the panel. In **Settings → Agents → Saved agent
+Check the transcript, then open **Raw**, expand entries and close/reopen the panel. In **Settings → Agents → Saved agent
 activity**, verify both capture switches and the host path. Disable the **Agent
 Activity** plugin in **Settings → Plugins**, give the agent work, then re-enable:
 archive capture should continue independently, and restored rows must not claim
@@ -728,3 +772,36 @@ status. Native cards keep their controls. Other known identities appear in a
 read-only section. Each card offers its own Import; the separate installation
 browser appears only for repair.
 No keys, config, memory, membership, or runtime state are changed by discovery.
+
+### Channel session usage
+
+The Usage tab reads saved kind-44200 metrics from the current account/community's
+host archive. Its strip and detail are **channel-associated session**
+usage, not thread attribution or context-window capacity. Each signed agent key
+and reported harness session remains separate; missing session IDs are individual
+unidentified records. The latest cumulative snapshot is selected by turn sequence;
+turn deltas are shown only when reliable. Unknown counters are not zero and cache
+counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
+
+The Usage tab's agent dropdown shows each agent's latest total or session count;
+selecting an agent reveals an aggregate of the latest trustworthy cumulative
+snapshot from each of its sessions. Counters missing in any session remain unknown
+rather than silently understating the total. The outlined Session dropdown then
+selects one session for provenance and turn detail without filling the pane with
+session buttons. The aggregate may cover other threads and is limited to loaded
+archive history.
+
+The channel's **Channel actions → View channel usage** item opens a dedicated
+**Usage** tab in the channel's side pane. It is available only while this
+account has positive access to the current channel and the default-on Channel Usage
+plugin is enabled under Settings → Plugins. Closing the tab unmounts its
+archive reader; disabling the plugin removes the tab and stops reads. It
+does not change metric capture or retention. Opening the Usage tab reads archive
+pages automatically until exhaustion or the 2,000-record limit; an early page
+without channel matches does not prove the archive has none. **Refresh** starts
+a new scan from the newest page; neither action fetches relay history. The client
+retains at most 2,000 decoded records while this tab lives and fences late reads
+on channel/access changes. Saved metrics remain
+subject to the independent 90-day/byte eviction policy above, so loaded history
+is never a completeness guarantee. Restored usage is display-only and cannot
+establish working, typing, or online status.

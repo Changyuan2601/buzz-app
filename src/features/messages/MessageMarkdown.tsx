@@ -77,7 +77,7 @@ function protectInlineContent(
     ChannelMessage,
     | "content"
     | "edited"
-    | "attachmentContentRemoved"
+    | "attachmentSeams"
     | "mentions"
     | "mentionReferences"
     | "emoji"
@@ -228,7 +228,7 @@ function inlineProtectionKey(
   const emoji = row.emoji?.map(({ shortcode, url }) => [shortcode, url]);
   return JSON.stringify([
     row.edited === true,
-    row.attachmentContentRemoved === true,
+    row.attachmentSeams,
     mentions,
     agentNames,
     emoji,
@@ -473,9 +473,13 @@ function PreparedMessageMarkdown({
       protectInlineContent(
         {
           content: prepared.content,
-          ...(sourceRow.edited ? { edited: true as const } : {}),
-          ...(sourceRow.attachmentContentRemoved
-            ? { attachmentContentRemoved: true as const }
+          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+          ...(sourceRow.edited ||
+          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
+            ? { edited: true as const }
+            : {}),
+          ...(sourceRow.attachmentSeams
+            ? { attachmentSeams: sourceRow.attachmentSeams }
             : {}),
           mentions: sourceRow.mentions,
           mentionReferences: sourceRow.mentionReferences ?? [],

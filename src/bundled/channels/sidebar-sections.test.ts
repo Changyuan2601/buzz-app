@@ -13,15 +13,17 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("forums")).toBe(false);
   expect(isChannelSectionKey("dms")).toBe(false);
 });
-it("intersects groups/stars with active authorized streams, keeping forums and DMs separate", () => {
+it("intersects groups/stars with active authorized streams and movable DMs", () => {
   const roster = [
     row("star"),
     row("work"),
     row("other"),
     row("archived", { archived: true }),
     row("hidden", { hidden: true }),
-    row("dm", { channelType: "dm", hidden: true }),
-    row("group-dm", { channelType: "dm", participants: ["a", "b"] }),
+    row("home-dm", { channelType: "dm" }),
+    row("grouped-dm", { channelType: "dm", participants: ["a", "b"] }),
+    row("starred-dm", { channelType: "dm" }),
+    row("hidden-dm", { channelType: "dm" }),
     row("forum", { channelType: "forum" }),
     row("session", { channelType: "session" }),
   ];
@@ -31,7 +33,9 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
       star: "channels",
       work: "channels",
       revoked: "channels",
-      "group-dm": "channels",
+      "grouped-dm": "channels",
+      "starred-dm": "channels",
+      "hidden-dm": "channels",
       other: "missing",
     },
     muted: [],
@@ -40,47 +44,77 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
       "archived",
       "hidden",
       "revoked",
-      "dm",
+      "starred-dm",
+      "hidden-dm",
       "forum",
       "session",
     ],
   };
-  const project = (channels: readonly ChannelSummary[]) =>
-    sidebarSections(channels, preferences).map((section) => [
-      section.key,
-      section.rows.map((channel) => channel.id),
-    ]);
-  expect(project(roster)).toEqual([
-    ["starred", ["star"]],
-    ["group:channels", ["work"]],
-    ["channels", ["other"]],
-    ["forums", ["forum"]],
-    ["dms", ["dm", "group-dm"]],
+  const project = (
+    channels: readonly ChannelSummary[],
+    hiddenDms: ReadonlySet<string> = new Set(),
+  ) =>
+    sidebarSections(channels, preferences, hiddenDms).map((section) => ({
+      key: section.key,
+      ids: section.rows.map((channel) => channel.id),
+    }));
+  const assertExactlyOnce = (
+    projection: ReturnType<typeof project>,
+    ids: readonly string[],
+  ) => {
+    const placements = projection.flatMap(({ key, ids: rowIds }) =>
+      rowIds.map((id) => ({ id, key })),
+    );
+    for (const id of ids)
+      expect(
+        placements.filter((placement) => placement.id === id),
+      ).toHaveLength(1);
+  };
+  const expectedProjection = [
+    { key: "starred", ids: ["star", "starred-dm"] },
+    { key: "group:channels", ids: ["grouped-dm", "work"] },
+    { key: "channels", ids: ["other"] },
+    { key: "forums", ids: ["forum"] },
+    { key: "dms", ids: ["home-dm"] },
+  ];
+  expect(project(roster, new Set(["hidden-dm"]))).toEqual(expectedProjection);
+  assertExactlyOnce(project(roster, new Set(["hidden-dm"])), [
+    "home-dm",
+    "grouped-dm",
+    "starred-dm",
   ]);
   expect(sidebarSections(roster, preferences)[1]?.icon).toBe(":party:");
-  // Hiding every DM removes its rows but keeps the New message entry point.
+  // Hidden conversations remain absent even when their saved placement is stale.
+  const hiddenProjection = project(
+    roster,
+    new Set(["starred-dm", "hidden-dm"]),
+  );
+  const visibleAfterHide = hiddenProjection.flatMap(({ ids }) => ids);
+  expect(visibleAfterHide).not.toContain("starred-dm");
+  expect(visibleAfterHide).not.toContain("hidden-dm");
   expect(
-    sidebarSections(roster, preferences, new Set(["dm", "group-dm"])).find(
-      (section) => section.key === "dms",
-    ),
-  ).toEqual({
-    key: "dms",
-    title: "Direct messages",
-    icon: undefined,
-    rows: [],
-  });
-  expect(
-    project(roster.filter((channel) => channel.id !== "star")),
-  ).not.toContainEqual(["starred", ["star"]]);
+    project(
+      roster.filter((channel) => channel.id !== "starred-dm"),
+      new Set(["hidden-dm"]),
+    ).find(({ key }) => key === "starred")?.ids,
+  ).toEqual(["star"]);
   expect(sidebarSections([])).toEqual([
     { key: "channels", title: "Channels", icon: undefined, rows: [] },
     { key: "dms", title: "Direct messages", icon: undefined, rows: [] },
   ]);
   expect(
-    sidebarSections(roster).flatMap((section) =>
-      section.rows.map((channel) => channel.id),
+    sidebarSections(roster, undefined, new Set(["hidden-dm"])).flatMap(
+      (section) => section.rows.map((channel) => channel.id),
     ),
-  ).toEqual(["other", "star", "work", "forum", "dm", "group-dm"]);
+  ).toEqual([
+    "other",
+    "star",
+    "work",
+    "forum",
+    "grouped-dm",
+    "home-dm",
+    "starred-dm",
+  ]);
 });
 
 it("sorts every section independently with deterministic inactive and tie fallbacks", () => {

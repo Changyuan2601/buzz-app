@@ -34,14 +34,6 @@
 @source "../";
 @source "../../../../tests/fixtures/design-system";
 
-/* Temporary design direction: hide focus outlines across Buzz and Just Design.
-   Keep this unlayered override centralized so feature/native outlines agree.
-   Focus, keyboard navigation, and input modality remain owned by the controls. */
-:focus {
-  /* biome-ignore lint/complexity/noImportantStyles: Explicit temporary global override must win over feature and component focus recipes. */
-  outline: none !important;
-}
-
 @layer base {
   /* Pointer focus has a caret or pressed control to make its destination clear.
      Chrome also matches :focus-visible for text fields clicked with a pointer,

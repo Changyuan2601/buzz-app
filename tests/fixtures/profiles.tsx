@@ -18,6 +18,7 @@ import { TemplateProvidersService } from "../../src/features/channel-templates/p
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
 import { createAgentControl } from "../../src/features/agents/control";
+import { Agents2Service } from "../../src/features/agents2/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import type {
   RelayData,
@@ -403,6 +404,8 @@ const manager = createPluginManager(context, {
     : bundledPlugins.filter(({ manifest }) => manifest.id === "buzz.profiles"),
 });
 const panels = new PanelsService(context);
+// Profiles reads Agents2 to choose agent tabs; this fixture has no Agents2 agents.
+new Agents2Service(context, relay, undefined);
 const pages = new PagesService(context);
 const providers = new TemplateProvidersService(context);
 Object.assign(window, {

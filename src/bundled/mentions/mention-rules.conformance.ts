@@ -14,6 +14,12 @@ export type FixtureChoice = {
 };
 export type MentionConformance = {
   version: number;
+  matching: {
+    name: string;
+    label: string;
+    query: string;
+    expected: 0 | 1 | 2 | 3 | null;
+  }[];
   ranking: {
     name: string;
     query: string;

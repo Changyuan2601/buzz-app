@@ -124,9 +124,14 @@ it("keeps history omitted by cached discovery, reveals it only after signed chan
     vi.mocked(archive.clear).mockRejectedValueOnce(
       new Error("disk unavailable"),
     );
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    expect(owner.session.channels.get?.("alpha")?.cached).toBeUndefined();
     update.mockClear();
     await expect(owner.clearCache()).rejects.toThrow("disk unavailable");
-    expect(update).toHaveBeenCalledWith([], []);
+    // Discovery has verified alpha's signed membership, so the clear keeps it.
+    expect(update).toHaveBeenCalledWith(["alpha"], ["alpha"]);
     expect(saved).toHaveLength(1);
     await owner.clearCache();
     expect(saved).toEqual([]);

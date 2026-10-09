@@ -2,6 +2,7 @@ import type { HeadPersistence } from "./persistence";
 import { projectSidebarPreferences } from "./sidebar-preferences";
 import type {
   SidebarAssignmentMutator,
+  SidebarSectionRemover,
   SidebarAssignmentIntent,
   SidebarStarMutator,
   SidebarMuteMutator,
@@ -44,6 +45,7 @@ export function createSidebarPreferencesStore(
   writeMute?: SidebarMuteMutator,
   writeSort?: SidebarSortMutator,
   persistence?: HeadPersistence,
+  removeSection?: SidebarSectionRemover,
 ) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -376,6 +378,32 @@ export function createSidebarPreferencesStore(
     ready,
     queries: Object.freeze({
       available,
+      get sectionRemovalWritable() {
+        return writable() && !snapshot.cached && !!removeSection;
+      },
+      removeSection(sectionId: string) {
+        if (!writable() || snapshot.cached || !removeSection)
+          return Promise.reject(new Error("Section deletion is unavailable"));
+        const source = snapshot.data?.groupSource;
+        const writeGeneration = generation;
+        const signal = writeLifetime.signal;
+        const run = writeQueue
+          .catch(() => {})
+          .then(async () => {
+            signal.throwIfAborted();
+            if (closed || generation !== writeGeneration)
+              throw new Error("Section deletion is unavailable");
+            const groups = await removeSection(sectionId, signal, source);
+            signal.throwIfAborted();
+            if (closed || generation !== writeGeneration || !confirmed)
+              throw new Error("Section deletion is unavailable");
+            mutation++;
+            confirmed = { ...confirmed, ...groups };
+            project();
+          });
+        writeQueue = run.catch(() => {});
+        return run;
+      },
       dismissSortError(group: string) {
         failedSorts.delete(group);
         publish(snapshot);

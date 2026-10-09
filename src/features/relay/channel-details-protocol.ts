@@ -75,7 +75,20 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
   };
 }
 
-export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
+export function validateDetailsDraft(
+  draft: ChannelDetailsDraft,
+  base?: ChannelDetailsDraft,
+): void {
+  const metadata = sessionMetadata(base?.description);
+  if (metadata && !metadata.parentId) {
+    if (
+      draft.description !== base?.description ||
+      draft.visibility !== base.visibility ||
+      draft.ttlSeconds !== base.ttlSeconds
+    )
+      throw new Error("Only the name of a session can be changed here.");
+    draft = { ...draft, description: "" };
+  }
   const errors = detailsDraftErrors(draft);
   const error =
     errors.name ?? errors.description ?? errors.visibility ?? errors.lifetime;
@@ -114,7 +127,7 @@ export function detailsSettings(
     canEdit:
       authority.channelType !== "dm" &&
       exactLifecycleTag(metadata, "archived") !== "true" &&
-      sessionMetadata(description) === undefined &&
+      !sessionMetadata(description)?.parentId &&
       (role === "owner" || role === "admin"),
   });
   return { details, metadata };
@@ -125,7 +138,17 @@ export function detailsTemplate(
   draft: ChannelDetailsDraft,
   base: ChannelDetailsDraft,
 ): EventTemplate {
-  validateDetailsDraft(draft);
+  validateDetailsDraft(draft, base);
+  if (sessionMetadata(base.description))
+    return {
+      kind: 9002,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "",
+      tags: [
+        ["h", lifecycleChannelId(id)],
+        ["name", draft.name],
+      ],
+    };
   return {
     kind: 9002,
     created_at: Math.floor(Date.now() / 1000),
@@ -161,6 +184,29 @@ function parseDetailsTtl(value: string | undefined): number | undefined {
 
 /** Separate from lifecycle and outbox admission. Admits only explicit open/private visibility. */
 export function validateDetailsTemplate(event: EventTemplate): void {
+  if (
+    event?.kind === 9002 &&
+    event.content === "" &&
+    Number.isSafeInteger(event.created_at) &&
+    event.created_at >= 0 &&
+    Array.isArray(event.tags) &&
+    event.tags.length === 2 &&
+    event.tags.every(
+      (tag, index) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag[0] === ["h", "name"][index] &&
+        typeof tag[1] === "string",
+    )
+  ) {
+    lifecycleChannelId(event.tags[0]?.[1] ?? "");
+    validateDetailsDraft({
+      name: event.tags[1]?.[1] ?? "",
+      description: "",
+      visibility: "private",
+    });
+    return;
+  }
   if (
     event?.kind !== 9002 ||
     event.content !== "" ||

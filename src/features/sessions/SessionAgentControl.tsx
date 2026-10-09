@@ -53,7 +53,6 @@ export function SessionAgentControl({
         channel?.parentChannelId ? (parent?.members ?? []) : undefined
       }
       parentName={parent?.name}
-      emptyLabel="Automatic / @mentions"
     />
   );
 }

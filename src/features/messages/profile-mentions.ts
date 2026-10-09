@@ -8,19 +8,18 @@ type Part = { text: string; target?: string | undefined };
 export function profileMentionParts(
   row: Pick<
     ChannelMessage,
-    | "content"
-    | "edited"
-    | "attachmentContentRemoved"
-    | "mentions"
-    | "mentionReferences"
+    "content" | "edited" | "attachmentSeams" | "mentions" | "mentionReferences"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: AgentLibrary["identities"] = [],
 ): Part[] {
   const text = row.content;
   const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
-  if (row.edited || row.attachmentContentRemoved || !identities.length)
-    return [{ text }];
+  if (row.edited || !identities.length) return [{ text }];
+  // Attachment removal must not join text into a name the author never wrote.
+  const seams = row.attachmentSeams ?? [];
+  const spansSeam = (start: number, end: number) =>
+    seams.some((seam) => start < seam && seam < end);
   const names = new Map<string, Set<string>>();
   for (const id of new Set(identities)) {
     const target = profileTarget(id);
@@ -58,7 +57,8 @@ export function profileMentionParts(
     const candidate = candidates.find(
       ([name]) =>
         text.startsWith(name, i + 1) &&
-        !/[\p{L}\p{N}_]/u.test(text[i + 1 + name.length] ?? ""),
+        !/[\p{L}\p{N}_]/u.test(text[i + 1 + name.length] ?? "") &&
+        !spansSeam(i, i + 1 + name.length),
     );
     if (!candidate) {
       i++;

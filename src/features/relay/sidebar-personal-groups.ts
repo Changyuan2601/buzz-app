@@ -4,6 +4,7 @@ import type { Groups } from "../channel-templates/model";
 import type {
   SidebarAssignmentMutator,
   SidebarGroups,
+  SidebarSectionRemover,
   SidebarPreferences,
 } from "./sidebar-preferences";
 
@@ -93,6 +94,56 @@ export function activeSidebarAssignment(
       confirmed.assignments[intent.channelId] !== target
     )
       throw new Error("Personal group placement could not be confirmed");
+    return projectPersonalGroups(confirmed);
+  };
+}
+
+export function activeSidebarSectionRemoval(
+  kit: ChannelKit,
+  legacy: SidebarSectionRemover,
+): SidebarSectionRemover {
+  return async (id, signal, source) => {
+    signal.throwIfAborted();
+    if (kit.snapshot().status === "unavailable") {
+      if (source) throw new Error("Personal groups are unavailable");
+      return legacy(id, signal);
+    }
+    await kit.refresh();
+    signal.throwIfAborted();
+    const state = kit.snapshot();
+    if (state.status !== "ready")
+      throw new Error(state.error ?? "Personal groups are unavailable");
+    const entry = personalGroups(state.entries);
+    const current =
+      entry?.record.value.type === "groups" ? entry.record.value : undefined;
+    if (!!current !== (source === "personal"))
+      throw new Error(
+        "The active group source changed; refresh before deleting this section",
+      );
+    if (!current || !entry) return legacy(id, signal);
+    if (!current.groups.some((group) => group.id === id))
+      return projectPersonalGroups(current);
+    await kit.save(
+      {
+        ...current,
+        groups: current.groups.filter((group) => group.id !== id),
+        assignments: Object.fromEntries(
+          Object.entries(current.assignments).filter(
+            ([, section]) => section !== id,
+          ),
+        ),
+      },
+      entry.eventId,
+      false,
+      signal,
+    );
+    signal.throwIfAborted();
+    const confirmed = personalGroups(kit.snapshot().entries)?.record.value;
+    if (
+      confirmed?.type !== "groups" ||
+      confirmed.groups.some((group) => group.id === id)
+    )
+      throw new Error("Section deletion could not be confirmed");
     return projectPersonalGroups(confirmed);
   };
 }

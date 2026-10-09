@@ -1145,10 +1145,14 @@ Shift+Enter on an empty last line leaves the block. Only a fence that opens a bl
 fence typed inside an existing code block stays literal, and so does pasted or restored fenced
 text, including its closing fence line, so Enter after a pasted or edited fenced block sends or
 saves as usual and the text still renders as code once sent.
-Typing the space after a list or quote marker that starts a line (`- `, `* ` or `+ `, a number
+Typing the space after a list or quote marker that starts a line (`- `, `* `, `+ ` or `• `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
-formatting toolbar creates, and one undo restores the typed marker and its space. Inside a
+formatting toolbar creates, and one undo restores the typed marker and its space. The typed
+`• ` alias sends as Markdown `- `. The channel placeholder appears only in an empty plain
+paragraph, not beside a list marker. Enter
+continues a list and exits an empty item; use the Send button to send while the caret is
+in a list (or Save changes when editing). Enter in ordinary prose still sends or saves. Inside a
 quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
 marker of the item's own list kind, typed as the only text of an item after the first,
 converts, nesting that item as Tab does. A marker typed after prose on the same line, inside
@@ -1209,7 +1213,7 @@ with local ephemeral signing keys; it does not contact the deployed relay.
 
 The smile button in channel and thread composers opens Emoji Mart with standard
 Unicode emoji, skin tones, and the selected community's custom category. Its data
-and search load only when opened. Search by name/shortcode, then choose an emoji
+and search load only when opened. Fuzzy search by name/shortcode, then choose an emoji
 to insert at the cursor; Enter selects a search result and Escape closes the picker
 and returns focus. You can also type `:shortcode:`: the closing colon after one
 exact Unicode or community shortcode, such as `:+1:` or `:-1:`, replaces it with

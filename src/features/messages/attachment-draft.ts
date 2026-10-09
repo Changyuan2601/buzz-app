@@ -1,3 +1,4 @@
+import { validateRecording, type VoiceRecording } from "../relay/voice-media";
 import { useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import {
@@ -10,6 +11,7 @@ import { prepareAttachment } from "./prepare-attachment";
 export type DraftAttachment = Readonly<{
   id: string;
   file: File;
+  voice?: UploadedAttachment["voice"];
   status: "queued" | "preparing" | "uploading" | "ready" | "error";
   uploaded?: UploadedAttachment;
   error?: string | undefined;
@@ -19,7 +21,8 @@ export type DraftAttachment = Readonly<{
 export type AttachmentDraft = {
   snapshot(): readonly DraftAttachment[];
   subscribe(listener: () => void): () => void;
-  add(files: readonly File[]): void;
+  add(files: readonly File[], recording?: VoiceRecording): void;
+  addUploaded(attachment: UploadedAttachment): void;
   adopt(files: readonly DraftAttachment[]): boolean;
   prepareForSend(signal: AbortSignal): Promise<readonly UploadedAttachment[]>;
   remove(id: string): void;
@@ -28,7 +31,7 @@ export type AttachmentDraft = {
   clear(): void;
 };
 const drafts = new WeakMap<RelaySession, Map<string, AttachmentDraft>>();
-const MAX_FILES = 10;
+export const MAX_ATTACHMENT_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 
 /** Tab-local files survive navigation, not reload. Delivery remains outbox-owned. */
@@ -122,7 +125,7 @@ export function attachmentDraft(
       const prepared = await prepareAttachment(item.file, combined);
       combined.throwIfAborted();
       replace(item.id, { status: "uploading" });
-      const uploaded = await abortable(
+      const result = await abortable(
         attachments.upload(prepared, channelId, combined, (sent, total) => {
           if (
             !combined.aborted &&
@@ -138,6 +141,7 @@ export function attachmentDraft(
         combined,
       );
       combined.throwIfAborted();
+      const uploaded = item.voice ? { ...result, voice: item.voice } : result;
       replace(item.id, { status: "ready", uploaded });
       return uploaded;
     } catch (error) {
@@ -175,10 +179,17 @@ export function attachmentDraft(
         }
       };
     },
-    add(files: readonly File[]) {
+    add(files: readonly File[], recording?: VoiceRecording) {
+      if (recording) {
+        validateRecording(recording);
+        if (files.length !== 1 || files[0] !== recording.file)
+          throw new Error("Invalid voice note attachment");
+      }
       if (!session.attachments) throw new UploadError("unavailable");
-      if (items.length + files.length > MAX_FILES)
-        throw new Error(`Attach at most ${MAX_FILES} files per message.`);
+      if (items.length + files.length > MAX_ATTACHMENT_FILES)
+        throw new Error(
+          `Attach at most ${MAX_ATTACHMENT_FILES} files per message.`,
+        );
       for (const file of files)
         if (!file.size || file.size > UPLOAD_MAX_BYTES)
           throw new UploadError("size");
@@ -199,8 +210,38 @@ export function attachmentDraft(
             id: crypto.randomUUID(),
             file,
             status: "queued",
+            ...(recording
+              ? {
+                  voice: {
+                    duration: recording.duration,
+                    waveform: recording.waveform.map((n) =>
+                      Math.round(n * 100),
+                    ),
+                  },
+                }
+              : {}),
           }),
         ),
+      ];
+      owners.set(key, store);
+      emit();
+    },
+    addUploaded(attachment: UploadedAttachment) {
+      if (!session.attachments) throw new UploadError("unavailable");
+      if (items.some((item) => item.uploaded?.url === attachment.url)) return;
+      if (items.length >= MAX_ATTACHMENT_FILES)
+        throw new Error(
+          `Attach at most ${MAX_ATTACHMENT_FILES} files per message.`,
+        );
+      // No local bytes are retained. Send reuses the already uploaded descriptor.
+      items = [
+        ...items,
+        {
+          id: crypto.randomUUID(),
+          file: new File([], attachment.name, { type: attachment.type }),
+          status: "ready",
+          uploaded: attachment,
+        },
       ];
       owners.set(key, store);
       emit();

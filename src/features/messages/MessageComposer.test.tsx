@@ -1,3 +1,4 @@
+import { snapshotClipboardHtml } from "../agents/snapshot-link";
 // @vitest-environment jsdom
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -162,6 +163,7 @@ function mount(
   const outboxListeners = new Set<() => void>();
   let pending: readonly OutgoingEvent[] = [];
   let rows: readonly ChannelMessage[] = [];
+  const rowListeners = new Set<() => void>();
   const setPending = (next: readonly OutgoingEvent[]) => {
     pending = next;
     for (const listener of outboxListeners) listener();
@@ -256,6 +258,10 @@ function mount(
     },
     channels: {
       window: () => ({ rows }),
+      subscribeWindow(_id: string, listener: () => void) {
+        rowListeners.add(listener);
+        return () => rowListeners.delete(listener);
+      },
       list: () => channelList,
       subscribeList: () => () => {},
     },
@@ -344,7 +350,10 @@ function mount(
       view.rerender(tree());
     },
     setRows(next: readonly ChannelMessage[]) {
-      rows = next;
+      act(() => {
+        rows = next;
+        for (const listener of rowListeners) listener();
+      });
     },
     setDelivery(delivery: OutgoingEvent["delivery"]) {
       act(() =>
@@ -639,7 +648,7 @@ it("keeps unpublished completions invisible but lets Escape revoke pending work"
   const pending = h.completionRequests.length - 1;
   expect(pending).toBeGreaterThanOrEqual(0);
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status", { name: "" })).not.toBeInTheDocument();
   expect(input).not.toHaveAttribute("aria-controls");
   expect(input).not.toHaveAttribute("aria-haspopup");
   fireEvent.keyDown(input, { key: "Escape" });
@@ -663,7 +672,9 @@ it("shows provider-owned pending and retry states and hides an empty publication
   act(() => {
     publish({ items: [], status: "Searching fixture…" });
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Searching fixture…");
+  expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+    "Searching fixture…",
+  );
   const retry = vi.fn(() =>
     publish({
       items: [
@@ -949,6 +960,8 @@ async function mountUploadComposer(
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
     editable?: boolean;
+    media?: (url: string) => string | undefined;
+    extensions?: MessageComposerProps["extensions"];
   } = {},
 ) {
   vi.stubGlobal(
@@ -978,7 +991,7 @@ async function mountUploadComposer(
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://relay.example.test",
-      media: (url) => url,
+      media: options.media ?? ((url) => url),
       uploadAttachment(file, signal, progress) {
         const result = deferred<ReturnType<typeof uploadDescriptor>>();
         uploadCalls.push({ file, signal, progress, result });
@@ -1031,6 +1044,7 @@ async function mountUploadComposer(
       scope={scope}
       channelId="channel"
       channelName="General"
+      {...(options.extensions ? { extensions: options.extensions } : {})}
       {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
       {...(options.replyParentId
         ? { replyParentId: options.replyParentId }
@@ -2080,21 +2094,69 @@ it("opens a code block as ``` is typed without waiting for Enter, then sends the
   expect(h.input().querySelector("pre")).toBeNull();
 });
 
-it("opens a bullet as `- ` is typed, continues it with Shift+Enter and sends the list on Enter", async () => {
+it.each([
+  ["- ", "ul", "- first\n- second"],
+  ["3. ", "ol", "3. first\n4. second"],
+])(
+  "continues a typed %s list on Enter and sends with the button",
+  async (marker, tag, markdown) => {
+    const h = mount();
+    await h.user.type(h.input(), `${marker}first`);
+    expect(h.input().querySelector(`${tag} > li`)).toHaveTextContent("first");
+    // Composition confirmation must neither split nor send the list.
+    fireEvent.keyDown(h.input(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 229 });
+    expect(h.input().querySelectorAll(`${tag} > li`)).toHaveLength(1);
+    await h.user.keyboard("{Enter}second");
+    expect(h.input().querySelectorAll(`${tag} > li`)).toHaveLength(2);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      markdown,
+      [],
+      [],
+    );
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it("exits an empty list item on Enter, then sends from ordinary prose", async () => {
   const h = mount();
   await h.user.type(h.input(), "- first");
-  expect(h.input().querySelector("ul > li")).toHaveTextContent("first");
-  expect(h.input()).toHaveValue("first");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}{Enter}");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.input().querySelector(":scope > p")).not.toBeNull();
+  fireEvent.keyDown(h.input(), { key: "Enter", repeat: true });
   expect(h.messages.send).not.toHaveBeenCalled();
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}");
+  await h.user.keyboard("outside{Enter}");
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    "- first\n- second",
+    "- first\n- second\n\noutside",
     [],
     [],
   );
-  expect(h.input()).toHaveValue("");
-  expect(h.input().querySelector("ul")).toBeNull();
+});
+
+it("uses Enter to leave a nested empty item without sending", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- first{Enter}nested{Tab}{Enter}{Enter}");
+  expect(h.input().querySelector("ul ul > li")).toHaveTextContent("nested");
+  expect(h.input().querySelectorAll(":scope > ul > li")).toHaveLength(2);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelector(":scope > p")).not.toBeNull();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("accepts a completion before handling list Enter", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- !search");
+  expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(1);
+  expect(h.input()).toHaveValue("chosen ");
+  expect(h.messages.send).not.toHaveBeenCalled();
 });
 
 it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
@@ -3235,10 +3297,8 @@ it.each(
         screen.getByRole("button", { name: "Choose an agent" }),
       );
       await view.user.click(
-        await screen.findByRole("menuitemradio", {
-          name: parent
-            ? "Honey Adds to session and channel"
-            : "Honey Adds to session",
+        await screen.findByRole("button", {
+          name: parent ? "Honey — adds to session and channel" : "Honey",
         }),
       );
     }
@@ -3387,9 +3447,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   await view.user.click(
     screen.getByRole("button", { name: "Choose an agent" }),
   );
-  await view.user.click(
-    await screen.findByRole("menuitemradio", { name: "Fizz" }),
-  );
+  await view.user.click(await screen.findByRole("button", { name: "Fizz" }));
   await view.user.type(view.input(), "Hello");
   await view.user.keyboard("{Enter}");
   expect(view.messages.send).toHaveBeenLastCalledWith(
@@ -3908,6 +3966,26 @@ it.each([
     expect(readView("scope", "draft:channel", "")).toBe("");
   },
 );
+
+it("continues a list while editing and saves through Save changes", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Revised");
+  act(() => {
+    h.input().setSelectionRange(7, 7);
+    h.input().toggleFormat("bullet_list");
+  });
+  await h.user.keyboard("{Enter}Added");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.messages.edit).not.toHaveBeenCalled();
+  await h.user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "- Revised\n- Added",
+    "c".repeat(64),
+  );
+});
 
 it.each(["bullet_list", "ordered_list", "code_block"] as const)(
   "does not save a whitespace-only %s edit through Enter",
@@ -4919,6 +4997,7 @@ describe("project resource picker", () => {
   function picker(
     home: () => Promise<unknown> = () =>
       Promise.resolve({ status: "home", project }),
+    issues: readonly (typeof item)[] = [item],
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -4928,7 +5007,7 @@ describe("project resource picker", () => {
       (route: { type: string; tab?: string }, signal: AbortSignal) => {
         if (route.type === "project")
           return Promise.resolve({
-            items: route.tab === "prs" ? [] : [item],
+            items: route.tab === "prs" ? [] : issues,
             repositories: [repository],
             truncated: route.tab === "prs",
           });
@@ -4996,13 +5075,18 @@ describe("project resource picker", () => {
     for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
       fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
       expect(search).toHaveFocus();
-      fireEvent.keyDown(search, { key: "Enter", ...composition });
+      // fireEvent returns false when a handler cancelled the default.
+      expect(fireEvent.keyDown(search, { key: "Enter", ...composition })).toBe(
+        true,
+      );
       expect(p.validations).toHaveLength(0);
     }
-    // Keyboard: ArrowDown moves from search to the row; Enter in search chooses it.
+    // Keyboard: focus stays in search with the row highlighted; Enter
+    // chooses it.
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
     await p.h.user.keyboard("{ArrowDown}");
-    expect(choice).toHaveFocus();
-    await p.h.user.click(screen.getByRole("searchbox"));
+    expect(search).toHaveFocus();
+    expect(choice).toHaveAttribute("data-selected");
     await p.h.user.keyboard("{Enter}");
     expect(p.validations).toHaveLength(1);
     expect(choice).toHaveTextContent("Checking…");
@@ -5014,6 +5098,145 @@ describe("project resource picker", () => {
     expect(p.h.messages.send.mock.calls[0]?.[1]).toBe(
       `[Fix login](${resource.uri}) `,
     );
+  });
+
+  it("orders titles by match: prefix, then word start, then the rest", async () => {
+    const issue = (id: string, title: string, created_at: number) => ({
+      ...item,
+      id: id.repeat(64),
+      created_at,
+      content: title,
+      tags: [
+        ["a", repository.address],
+        ["subject", title],
+      ],
+    });
+    const p = picker(undefined, [
+      issue("a", "Relogin bug", 9),
+      item,
+      issue("b", "Login page", 1),
+    ]);
+    await p.open();
+    const titles = async () =>
+      (
+        await screen.findAllByRole("button", { name: /, Issue in Game repo$/ })
+      ).map((choice) => choice.getAttribute("aria-label")?.split(",")[0]);
+    expect(await titles()).toEqual(["Relogin bug", "Fix login", "Login page"]);
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "login");
+    expect(await titles()).toEqual(["Login page", "Fix login", "Relogin bug"]);
+    const choice = screen.getByRole("button", { name: /^Login page,/ });
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
+    expect(choice.querySelector("mark")).toHaveTextContent(/^login$/i);
+    // Up wraps to the last row; Shift+Enter is not a choice.
+    await p.h.user.keyboard("{ArrowUp}");
+    expect(search).toHaveAttribute(
+      "aria-activedescendant",
+      screen.getByRole("button", { name: /^Relogin bug,/ }).id,
+    );
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    expect(p.validations).toHaveLength(0);
+    await p.h.user.keyboard("{ArrowDown}{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+  });
+
+  it("highlights and announces the row that Tab focuses", async () => {
+    const p = picker(undefined, [
+      item,
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: 1,
+        content: "Login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Login page"],
+        ],
+      },
+    ]);
+    await p.open();
+    const second = await screen.findByRole("button", { name: /^Login page,/ });
+    const search = screen.getByRole("searchbox");
+    const list = document.getElementById(
+      search.getAttribute("aria-controls") ?? "",
+    );
+    expect(list).toContainElement(second);
+    for (let i = 0; i < 10 && document.activeElement !== second; i += 1)
+      await p.h.user.tab();
+    expect(second).toHaveFocus();
+    expect(second).toHaveAttribute("data-selected");
+    expect(screen.getByRole("button", { name: row })).not.toHaveAttribute(
+      "data-selected",
+    );
+    expect(search).toHaveAttribute("aria-activedescendant", second.id);
+    expect(
+      screen.getByText("Login page. Press Enter to add.", { exact: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("puts an exact title before a newer title that starts with it", async () => {
+    const p = picker(undefined, [
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: item.created_at + 1,
+        content: "Fix login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Fix login page"],
+        ],
+      },
+      item,
+    ]);
+    await p.open();
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "fix login");
+    const choice = screen.getByRole("button", { name: row });
+    expect(
+      (
+        await screen.findAllByRole("button", { name: /, Issue in Game repo$/ })
+      ).map((option) => option.getAttribute("aria-label")?.split(",")[0]),
+    ).toEqual(["Fix login", "Fix login page"]);
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+  });
+
+  it("keeps focus on the highlighted row after Tab, for arrows and pointer", async () => {
+    const p = picker(undefined, [
+      item,
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: 1,
+        content: "Login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Login page"],
+        ],
+      },
+    ]);
+    await p.open();
+    const first = await screen.findByRole("button", { name: row });
+    const second = screen.getByRole("button", { name: /^Login page,/ });
+    for (let i = 0; i < 10 && document.activeElement !== first; i += 1)
+      await p.h.user.tab();
+    expect(first).toHaveFocus();
+    // Down on a focused row moves the highlight and focus together.
+    await p.h.user.keyboard("{ArrowDown}");
+    expect(second).toHaveFocus();
+    expect(second).toHaveAttribute("data-selected");
+    expect(first).not.toHaveAttribute("data-selected");
+    // A pointer highlight moves focus too, so Enter adds the highlighted row.
+    fireEvent.pointerMove(first, { clientX: 1, clientY: 1 });
+    fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
+    expect(first).toHaveAttribute("data-selected");
+    expect(first).toHaveFocus();
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(first).toHaveTextContent("Checking…");
   });
 
   it("keeps focus in the popover while a clicked row is checked", async () => {
@@ -5765,5 +5988,169 @@ it.each(["disabled", "retarget", "unmount"])(
     else h.unmount();
     act(() => expect(insert([first, second])).toBe(false));
     expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it("rechecks session setup before publishing after a background upload", async () => {
+  const channelId = "22222222-2222-4222-8222-222222222222";
+  const h = mount({ channelId });
+  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
+  const upload = vi.fn(() => gate.promise);
+  h.rerender(
+    <ToastProvider>
+      <MessageComposer
+        session={{ ...h.session, attachments: { upload } }}
+        scope="scope"
+        channelId={channelId}
+        channelName="General"
+      />
+    </ToastProvider>,
+  );
+  h.fill("Keep this draft");
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: { files: [new NodeFile(["notes"], "notes.txt")] },
+  });
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Send a message to General" }),
+  );
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  writeView("scope", "sessions:section:work:pending", {
+    id: channelId,
+    text: "Original start",
+    creationId: "c".repeat(64),
+    setup: { sectionId: "work", canvas: "Frozen", agents: [] },
+  });
+  await act(async () => gate.resolve(uploadDescriptor()));
+  await waitFor(() => expect(h.input()).toHaveValue("Keep this draft"));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.messages.reply).not.toHaveBeenCalled();
+  expect(within(screen.getByRole("form")).getByText("notes.txt")).toBeVisible();
+});
+
+it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
+  const empty: readonly never[] = [];
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "capture",
+      key: "test/capture",
+      pluginId: "test",
+      revision: "1",
+      title: "Capture",
+      component: ({ capture }) => (
+        <button
+          type="button"
+          onClick={() =>
+            capture?.(({ accept }) => (
+              <button
+                type="button"
+                onClick={() =>
+                  accept({
+                    file: new File([new Uint8Array(100)], "voice-note.wav", {
+                      type: "audio/wav",
+                    }),
+                    duration: 1,
+                    waveform: [0.5],
+                  })
+                }
+              >
+                Finish recording
+              </button>
+            ))
+          }
+        >
+          Start recording
+        </button>
+      ),
+    },
+  ];
+  const h = await mountUploadComposer({
+    media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      completions: { snapshot: () => empty, subscribe: () => () => {} },
+    },
+  });
+  const picker =
+    h.container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!picker) throw new Error("Missing file picker");
+  fireEvent.change(picker, {
+    target: {
+      files: Array.from(
+        { length: 9 },
+        (_, i) => new File(["draft"], `draft-${i}.txt`, { type: "text/plain" }),
+      ),
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  const finish = screen.getByRole("button", { name: "Finish recording" });
+  const descriptor = {
+    name: "helper.agent.png",
+    url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
+    type: "image/png",
+    size: 2048,
+    sha256: "a".repeat(64),
+  };
+  fireEvent.paste(finish, {
+    clipboardData: {
+      items: [],
+      getData: (type: string) =>
+        type === "text/html"
+          ? snapshotClipboardHtml(descriptor, "Helper")
+          : descriptor.url,
+    },
+  });
+  expect(
+    screen.queryByRole("button", { name: "Remove helper.agent.png" }),
+  ).toBeNull();
+  fireEvent.click(finish);
+  expect(
+    await screen.findByRole("button", { name: "Remove voice-note.wav" }),
+  ).toBeVisible();
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it.each(["agent", "team"])(
+  "pastes a copied %s snapshot as an attachment and sends only on Send",
+  async (kind) => {
+    const h = await mountUploadComposer({
+      media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+    });
+    const descriptor = {
+      name: `helper.${kind}.png`,
+      url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
+      type: "image/png",
+      size: 2048,
+      sha256: "a".repeat(64),
+    };
+    const html = snapshotClipboardHtml(descriptor, "Helper");
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/html" ? html : descriptor.url,
+      },
+    });
+    expect(
+      await within(h.form()).findByRole("button", {
+        name: `Remove ${descriptor.name}`,
+      }),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue("");
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.uploadCalls).toHaveLength(0);
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(h.uploadCalls).toHaveLength(0);
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(event?.content).toContain(descriptor.url);
+    expect(event?.tags).toContainEqual(
+      expect.arrayContaining([
+        "imeta",
+        `filename ${descriptor.name}`,
+        `x ${descriptor.sha256}`,
+      ]),
+    );
   },
 );

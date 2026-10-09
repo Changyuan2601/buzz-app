@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
+import { matchPerson } from "../search/person-match";
 
 export type Recipient = Profile & { pubkey: string };
-const normalize = (value: string) =>
-  value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
 type PeopleState = {
   session: RelaySession;
@@ -31,11 +30,11 @@ function empty(session: RelaySession, query: string): PeopleState {
   };
 }
 function matching(people: Recipient[], query: string) {
-  const needle = normalize(query.trim());
+  const key = query.trim().toLowerCase();
   return people.filter(
     (person) =>
-      normalize(person.name).includes(needle) ||
-      (/^[0-9a-f]{64}$/.test(needle) && person.pubkey === needle),
+      matchPerson(person.name, query) !== undefined ||
+      (/^[0-9a-f]{64}$/.test(key) && person.pubkey === key),
   );
 }
 export function usePeople(session: RelaySession, query: string) {

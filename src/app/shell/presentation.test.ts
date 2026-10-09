@@ -24,15 +24,16 @@ function page(key: string, title: string, icon?: string): RegisteredPage {
   };
 }
 
+const me = page("buzz.me/me", "Me");
 const messages = page("buzz.channels/channels", "Channels");
 const inbox = page("buzz.inbox/inbox", "Inbox");
 const bestie = page("buzz.bestie/bestie", "Bestie");
 const projects = page("buzz.projects/projects", "Projects");
 
 test("bundled page order ignores activation order without mutating the registry", () => {
-  const input = Object.freeze([projects, bestie, messages, inbox]);
-  expect(orderPages(input)).toEqual([messages, inbox, bestie, projects]);
-  expect(input).toEqual([projects, bestie, messages, inbox]);
+  const input = Object.freeze([projects, bestie, messages, inbox, me]);
+  expect(orderPages(input)).toEqual([me, messages, inbox, bestie, projects]);
+  expect(input).toEqual([projects, bestie, messages, inbox, me]);
   expect(orderPages([messages, projects])).toEqual([messages, projects]);
   expect(orderPages([projects])).toEqual([projects]);
   expect(orderPages([])).toEqual([]);

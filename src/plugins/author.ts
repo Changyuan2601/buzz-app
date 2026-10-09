@@ -37,6 +37,9 @@ export type {
   ComposerAccessory,
   ComposerAccessoryProps,
   ComposerResource,
+  ComposerCaptureProps,
+  AttachmentRenderer,
+  AttachmentRendererProps,
   ComposerToolProps,
   ComposerTool,
   InlineContent,
@@ -103,3 +106,5 @@ export type {
   SecuritySnapshot,
   SecurityProvider,
 } from "../features/agents/security";
+
+export type { VoiceRecording } from "../features/relay/voice-media";

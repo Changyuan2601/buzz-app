@@ -25,6 +25,13 @@ impl Store for Arc<Memory> {
         *saved = Some(value.to_vec());
         Ok(())
     }
+    fn delete(&self) -> Result<()> {
+        if *self.write_denied.lock().unwrap() {
+            return Err("delete denied".into());
+        }
+        *self.saved.lock().unwrap() = None;
+        Ok(())
+    }
 }
 fn identity(store: &Arc<Memory>) -> Identity {
     Identity {
@@ -442,4 +449,55 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     let mut foreign = builderlab_challenge();
     foreign["origin"] = "https://example.com".into();
     assert!(invoke(foreign).is_err());
+}
+
+#[test]
+fn remove_key_deletes_then_confirms_absence() {
+    let store = Arc::new(Memory::default());
+    identity(&store).save(None).unwrap();
+    remove_key(&store).unwrap();
+    assert_eq!(identity(&store).restore().unwrap(), None);
+    // Absent is already signed out.
+    remove_key(&store).unwrap();
+    identity(&store).save(None).unwrap();
+    *store.write_denied.lock().unwrap() = true;
+    assert!(remove_key(&store).is_err());
+    assert!(store.saved.lock().unwrap().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_refuses_every_key_operation_including_a_sign_started_before_it() {
+    let host = IdentityHost::fixture();
+    let owner = host.viewer().await.unwrap();
+    let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
+    let template = || {
+        serde_json::from_value(serde_json::json!({
+            "kind": 1, "content": "", "tags": [], "created_at": 0
+        }))
+        .unwrap()
+    };
+    // Started while another operation holds the identity, run after it closes.
+    let started = {
+        let mut running = host.0.lock().unwrap();
+        let task = host.clone();
+        let started = tokio::spawn(async move { task.sign(template()).await });
+        // The test's handle, the task's, and the one `sign` clones once it starts.
+        while Arc::strong_count(&host.0) < 3 {
+            std::thread::yield_now();
+        }
+        running.close();
+        started
+    };
+    assert!(started.await.unwrap().is_err());
+    host.close();
+    assert!(host.sign(template()).await.is_err());
+    assert!(host.viewer().await.is_err());
+    assert!(host.authorize_agent(owner, agent).await.is_err());
+    assert!(host.with_key(|_, _| Ok(())).await.is_err());
+    assert!(with_identity(host.clone(), |identity| identity.export())
+        .await
+        .is_err());
+    assert!(with_identity(host, |identity| identity.save(None))
+        .await
+        .is_err());
 }

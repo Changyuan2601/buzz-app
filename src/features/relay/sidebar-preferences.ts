@@ -226,3 +226,9 @@ export async function readSidebarPreferences(
     );
   }
 }
+
+export type SidebarSectionRemover = (
+  sectionId: string,
+  signal: AbortSignal,
+  source?: "personal",
+) => Promise<SidebarGroups>;

@@ -7,6 +7,12 @@ import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
 
+/** Owner authorization is supplied only after the agent's signed profile is verified. */
+export type AgentOwnerAuthorization = Readonly<{
+  agentId: string;
+  ownerId: string;
+}>;
+
 /** NIP-56 types accepted by the Buzz relay for message reports. */
 export const REPORT_TYPES = [
   "spam",
@@ -259,7 +265,10 @@ export function createMessages(
         ],
       });
     },
-    remove(eventIds: readonly string[]) {
+    remove(
+      eventIds: readonly string[],
+      authorization?: AgentOwnerAuthorization,
+    ) {
       const ids = [...new Set(eventIds)];
       if (!ids.length || ids.length > 100)
         throw new Error("Choose between 1 and 100 events to remove");
@@ -267,7 +276,16 @@ export function createMessages(
         const event = find(id);
         if (!event || ![7, 9, 40002].includes(event.kind))
           throw new Error("Load the message or reaction before removing it");
-        if (event.kind === 7 ? event.pubkey !== viewer : !ownedMessage(event))
+        const agentOwnerRemoval =
+          !!viewer &&
+          event.kind !== 7 &&
+          messageAuthor(event, signingAuthority) === authorization?.agentId &&
+          authorization.ownerId === viewer;
+        if (
+          event.kind === 7
+            ? event.pubkey !== viewer
+            : !ownedMessage(event) && !agentOwnerRemoval
+        )
           throw new Error(
             "Only your own messages and reactions can be removed",
           );

@@ -38,8 +38,8 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.membership?.actor === right.membership?.actor &&
     left.membership?.target === right.membership?.target &&
     left.edited === right.edited &&
-    left.attachmentContentRemoved === right.attachmentContentRemoved &&
     left.attachmentSourceId === right.attachmentSourceId &&
+    sameArray(left.attachmentSeams, right.attachmentSeams) &&
     sameArray(left.mentions, right.mentions) &&
     sameArray(left.mentionReferences ?? [], right.mentionReferences ?? []) &&
     sameArray(
@@ -52,6 +52,8 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
         a.size === b.size &&
         a.name === b.name &&
         a.duration === b.duration &&
+        a.voiceNote === b.voiceNote &&
+        sameArray(a.waveform, b.waveform) &&
         a.dimensions?.width === b.dimensions?.width &&
         a.dimensions?.height === b.dimensions?.height &&
         a.blurhash === b.blurhash &&

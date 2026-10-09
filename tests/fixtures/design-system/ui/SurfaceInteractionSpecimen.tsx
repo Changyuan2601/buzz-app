@@ -117,7 +117,7 @@ export function SurfaceInteractionSpecimen() {
   return (
     <Section
       title="Surface-aware interactions — proposed"
-      description="The same controls on a panel, in a dialog and in a portaled popover. Compare both themes. Fields retain their inset fill; the nested panel resets its action recipe. Focus outlines remain globally suppressed by the current design policy."
+      description="The same controls on a panel, in a dialog and in a portaled popover. Compare both themes. Fields retain their inset fill; the nested panel resets its action recipe. Keyboard focus rings stay visible on every surface."
     >
       <div className="flex flex-wrap gap-4">
         <Button onClick={() => setOpen(true)}>Open interaction dialog</Button>

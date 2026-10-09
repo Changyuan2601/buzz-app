@@ -44,6 +44,28 @@ function shortcodeScore(
   return span === undefined ? undefined : { tier: 3, score: span };
 }
 
+/** Separator-insensitive exact, prefix, substring, then subsequence matches. */
+export function rankShortcodes<T>(
+  query: string,
+  items: readonly T[],
+  shortcode: (item: T) => string,
+) {
+  const needle = normalize(query);
+  if (!needle) return [];
+  return items
+    .flatMap((item) => {
+      const match = shortcodeScore(needle, shortcode(item));
+      return match ? [{ item, ...match }] : [];
+    })
+    .sort(
+      (a, b) =>
+        a.tier - b.tier ||
+        a.score - b.score ||
+        shortcode(a.item).length - shortcode(b.item).length ||
+        shortcode(a.item).localeCompare(shortcode(b.item)),
+    );
+}
+
 /** Data only: never initialize or query Emoji Mart's mutable picker singleton. */
 function loadStandard() {
   standard ??= import("@emoji-mart/data")
@@ -123,8 +145,7 @@ function rankEmoji(
   custom: readonly CustomEmoji[],
   limit: number,
 ): readonly EmojiMatch[] {
-  const needle = normalize(query);
-  if (!needle) return [];
+  if (!normalize(query)) return [];
   const customCandidates: Standard[] = custom.map(({ shortcode, url }) => ({
     id: `custom/${shortcode}`,
     shortcode,
@@ -133,19 +154,8 @@ function rankEmoji(
     url,
     terms: [shortcode],
   }));
-  const rankShortcodes = (items: readonly Standard[]) =>
-    items
-      .flatMap((item) => {
-        const match = shortcodeScore(needle, item.shortcode);
-        return match ? [{ item, ...match }] : [];
-      })
-      .sort(
-        (a, b) =>
-          a.tier - b.tier ||
-          a.score - b.score ||
-          a.item.shortcode.length - b.item.shortcode.length ||
-          a.item.shortcode.localeCompare(b.item.shortcode),
-      );
+  const rank = (items: readonly Standard[]) =>
+    rankShortcodes(query, items, (item) => item.shortcode);
   const semantic = native
     .flatMap((item) => {
       const score = semanticScore(query.toLowerCase(), item.terms);
@@ -156,12 +166,12 @@ function rankEmoji(
   const semanticIds = new Set(semantic.map((item) => item.id));
   const combined = [
     ...semantic,
-    ...rankShortcodes(customCandidates).map(({ item }) => item),
-    ...rankShortcodes(native)
+    ...rank(customCandidates).map(({ item }) => item),
+    ...rank(native)
       .map(({ item }) => item)
       .filter((item) => !semanticIds.has(item.id)),
   ];
-  const strong = rankShortcodes(combined)
+  const strong = rank(combined)
     .filter(({ tier }) => tier <= 1)
     .map(({ item }) => item);
   const promoted = new Set(strong.map((item) => item.id));

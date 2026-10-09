@@ -13,6 +13,7 @@ fn profile(picture: Option<&str>) -> CreationProfile {
         auth: json!(["auth", "owner", "", "signature"]).to_string(),
         name: "New name".into(),
         picture: picture.map(str::to_owned),
+        about: None,
         revision: 2,
     }
 }

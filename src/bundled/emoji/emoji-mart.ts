@@ -6,7 +6,9 @@ import { pickerIcons } from "../../shared/design-system/icons/svg";
 import data from "@emoji-mart/data";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
+import { rankShortcodes } from "./emoji-search";
 
+const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
@@ -550,6 +552,7 @@ export function mountEmojiMart({
         (c: { id: string }) => c.id !== "buzz-custom",
       );
     }
+    SearchIndex.search = martSearch;
     SearchIndex.reset();
     if (active === dismiss) active = undefined;
   }
@@ -558,6 +561,37 @@ export function mountEmojiMart({
     close();
   }
   active = dismiss;
+  // Keep Mart's word-prefix results first, then fill its result limit with the
+  // composer's fuzzy shortcode matches (`pointup`, `bufo_pray`, `bfpray`).
+  SearchIndex.search = async (value, options) => {
+    const results: { id: string }[] | null | undefined = await martSearch(
+      value,
+      options,
+    );
+    const limit = options?.maxResults || 90; // Mart's own default limit
+    if (!results || results.length >= limit) return results;
+    const found = new Set(results.map(({ id }) => id));
+    const emojis: Record<string, { id: string; search?: string }> = Data.emojis;
+    const candidates = [
+      ...Object.values(emojis).map((emoji) => ({
+        emoji,
+        shortcode: values.get(emoji.id)?.shortcode ?? emoji.id,
+      })),
+      // Mart does not index alias shortcodes such as `open_book`.
+      ...Object.entries<string>(Data.aliases).flatMap(([shortcode, id]) => {
+        const emoji = emojis[id];
+        return emoji ? [{ emoji, shortcode }] : [];
+      }),
+      // Mart leaves unsupported emoji in its dictionary without search terms.
+    ].filter(({ emoji }) => emoji.search && !found.has(emoji.id));
+    const fuzzy = rankShortcodes(
+      String(value).replaceAll(":", ""),
+      candidates,
+      ({ shortcode }) => shortcode,
+    );
+    const extra = new Set(fuzzy.map(({ item }) => item.emoji));
+    return [...results, ...extra].slice(0, limit);
+  };
   // Search also caches results after deletion/replacement; recreate rather than update.
   SearchIndex.reset();
   return dispose;

@@ -54,12 +54,14 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // The fixture's active plugin pages, in shell order, lead the channel sidebar.
-// Sidebar rows are the primary pages; Messages remains available through search.
+// Sidebar rows exclude header pages; Me and Messages remain available through search.
 const destinationTitles = [
   "Inbox",
+  "Reminders",
   "Bestie",
   "Projects",
   "Agents",
+  "Agents2",
   "Sessions",
   "Workflows",
 ];
@@ -1042,11 +1044,14 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
+    "Me",
     "Messages",
     "Inbox",
+    "Reminders",
     "Bestie",
     "Projects",
     "Agents",
+    "Agents2",
     "Sessions",
     "Workflows",
   ];
@@ -1123,10 +1128,13 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expectPageOrder([
+    "Me",
     "Messages",
     "Inbox",
+    "Reminders",
     "Bestie",
     "Agents",
+    "Agents2",
     "Sessions",
     "Workflows",
   ]);
@@ -1165,11 +1173,7 @@ sidebarActions(
     await companionLauncher(page, "Companion fixture").click();
     await expect(companion).toBeVisible();
     const alpha = page.locator('button[data-channel-id="alpha"]');
-    for (const [index, action] of [
-      "activity",
-      "message",
-      "session",
-    ].entries()) {
+    for (const [index, action] of ["activity", "message"].entries()) {
       await link(page, app, `https://github.com/block/buzz/pull/${20 + index}`);
       if (action === "activity") {
         await alpha.hover();
@@ -1195,18 +1199,6 @@ sidebarActions(
           .click();
         await expect(
           page.getByRole("region", { name: "New message", exact: true }),
-        ).toBeVisible();
-      } else {
-        await alpha.hover();
-        await alpha.click({ button: "right" });
-        await page
-          .getByRole("menuitem", { name: "New session", exact: true })
-          .click();
-        await expect(
-          page.getByRole("region", {
-            name: "New session in Alpha",
-            exact: true,
-          }),
         ).toBeVisible();
       }
       await expect(panel(page)).toHaveCount(0);

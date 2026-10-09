@@ -29,6 +29,7 @@ import {
 import styles from "./Messages.module.css";
 import { downloadNativeMedia } from "./native-download";
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
+import { copyNativeImage } from "./native-image-copy";
 
 const ZOOM_STEP = 0.25;
 const ZOOM_PRESETS = [0.5, 1, 1.5, 2];
@@ -92,7 +93,7 @@ export function ImageReviewStage({
   const selectedUrlRef = useRef(selectedUrl);
   selectedUrlRef.current = selectedUrl;
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
-  const canCopyImage = proxySource && !nativeSource && supportsImageCopy();
+  const canCopyImage = proxySource && (nativeSource || supportsImageCopy());
   const {
     zoom,
     offset,
@@ -143,9 +144,10 @@ export function ImageReviewStage({
     setCopying(true);
     clearCopyNotice();
     try {
-      // Do not await before this call: WebKit requires clipboard.write to happen
-      // inside the user's click gesture.
-      await copyImageToClipboard(image.current);
+      // The broker path must invoke clipboard.write synchronously in the gesture.
+      // Native media instead stays in the authenticated host boundary.
+      if (nativeSource && source) await copyNativeImage(source);
+      else await copyImageToClipboard(image.current);
       if (selectedUrlRef.current === copiedUrl) showCopyNotice("success");
     } catch {
       if (selectedUrlRef.current === copiedUrl) showCopyNotice("error");
@@ -153,7 +155,7 @@ export function ImageReviewStage({
       copyBusy.current = false;
       setCopying(false);
     }
-  }, [clearCopyNotice, selectedUrl, showCopyNotice]);
+  }, [clearCopyNotice, nativeSource, source, selectedUrl, showCopyNotice]);
 
   const choose = useCallback(
     (index: number) => {

@@ -16,10 +16,12 @@ import { deferred } from "../test-helpers";
 export function enrollmentFixture(
   login: OAuthSession,
   selected: string | null = "https://community.example",
+  kinds: readonly number[] = [30177, 5],
 ) {
   const identity = keypair();
   const viewer = identity.pubkey;
   const events: RelayEvent[] = [];
+  const deleted = new Set<string>();
   let saved: readonly OutgoingEvent[] = [];
   let closed = deferred<void>();
   const save = vi.fn(async (next: readonly OutgoingEvent[]) => {
@@ -32,11 +34,28 @@ export function enrollmentFixture(
   };
   const sign = vi.fn(async (event: EventTemplate) => signed(identity, event));
   const publish = vi.fn(async (event: RelayEvent) => {
+    // Kind 5 soft-deletes records present on arrival; it is not a fence for
+    // registrations arriving later, even when they have an older timestamp.
+    if (event.kind === 5)
+      for (const existing of events)
+        if (
+          existing.pubkey === event.pubkey &&
+          existing.created_at <= event.created_at &&
+          event.tags.some(
+            ([key, value]) =>
+              key === "a" &&
+              value ===
+                `${existing.kind}:${existing.pubkey}:${existing.tags.find(([name]) => name === "d")?.[1]}`,
+          )
+        )
+          deleted.add(existing.id);
     events.push(event);
   });
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    events.filter((event) =>
-      filters.some((filter) => matchesEvent(event, filter)),
+    events.filter(
+      (event) =>
+        filters.some((filter) => matchesEvent(event, filter)) &&
+        !deleted.has(event.id),
     ),
   );
   const start = () =>
@@ -47,7 +66,7 @@ export function enrollmentFixture(
         scope: "https://community.example",
         query,
         media: () => undefined,
-        writer: { kinds: [30177], sign, publish },
+        writer: { kinds, sign, publish },
       },
       { outboxStorage: storage },
     );
@@ -96,7 +115,6 @@ export function enrollmentFixture(
       for (const listener of listeners) listener();
     },
     async restart() {
-      await owner.session.outbox?.ready();
       owner.dispose();
       await closed.promise;
       closed = deferred<void>();

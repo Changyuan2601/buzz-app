@@ -755,3 +755,86 @@ async fn early_connection_loss_is_error_before_publication_and_uncertain_after()
         }
     }
 }
+
+#[tokio::test]
+async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
+    use futures_util::{SinkExt, StreamExt};
+    let (exchange, target, _, code) = entry();
+    let request = submission(&exchange, &target, &code, 1);
+    let (socket, mut server) = local_sockets().await;
+    let (tx, mut rx) = mpsc::channel(1);
+    let manager = Pairing::default();
+    let cancel = CancellationToken::new();
+    let finished = CancellationToken::new();
+    let attempt = |id: &str, cancel: CancellationToken, finished, confirm| Active {
+        id: id.into(),
+        cancel,
+        finished,
+        confirm,
+        status: Status::Code {
+            code: code.clone(),
+            code_entry: true,
+        },
+        payload_sent: false,
+    };
+    manager
+        .admit(attempt("live", cancel.clone(), finished.clone(), tx))
+        .unwrap();
+    // The payload is prepared and waits only for the phone's code.
+    manager.close();
+    let owner = manager.clone();
+    let task = tokio::spawn(async move {
+        let mut exchange = exchange;
+        let mut socket = socket;
+        let mut auth = relay::Authentication::default();
+        let result = exchange_loop(
+            ExchangeContext {
+                pairing: &owner,
+                id: "live",
+                relay_url: &url::Url::parse("wss://relay.test").unwrap(),
+                pending: vec![],
+            },
+            &mut exchange,
+            &mut socket,
+            &mut auth,
+            &mut rx,
+        )
+        .await;
+        finished.cancel();
+        result
+    });
+    server
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            serde_json::json!(["EVENT", "pair", request])
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    while let Ok(Some(Ok(frame))) =
+        tokio::time::timeout(Duration::from_millis(500), server.next()).await
+    {
+        let Ok(text) = frame.to_text() else { continue };
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let event = Event::from_json(json[1].to_string()).unwrap();
+        let plaintext =
+            nostr_pairing::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
+                .unwrap();
+        assert!(
+            !matches!(
+                serde_json::from_str::<PairingMessage>(&plaintext).unwrap(),
+                PairingMessage::Payload { .. }
+            ),
+            "the key was published after sign-out"
+        );
+    }
+    let ended = tokio::time::timeout(Duration::from_secs(2), task).await;
+    assert!(ended.unwrap().unwrap().is_ok());
+    // A start raced past the close is refused, not registered.
+    let (tx, _) = mpsc::channel(1);
+    let late = CancellationToken::new();
+    assert!(manager
+        .admit(attempt("late", late.clone(), CancellationToken::new(), tx))
+        .is_err());
+    assert!(!manager.mark_payload_sent("late"));
+}

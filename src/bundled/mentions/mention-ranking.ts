@@ -1,23 +1,16 @@
+import {
+  exactName,
+  matchPerson,
+  normalizeName,
+} from "../../features/search/person-match";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
 };
-const normalized = (text: string) => text.trim().toLowerCase();
+const normalized = normalizeName;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-function nameMatch(text: string, needle: string) {
-  if (!needle) return 0;
-  const name = normalized(text);
-  const words = name.split(/\s+/u);
-  return name === needle
-    ? 0
-    : name.startsWith(needle)
-      ? 1
-      : words.includes(needle)
-        ? 2
-        : words.some((word) => word.startsWith(needle))
-          ? 3
-          : Infinity;
-}
+const nameMatch = (text: string, query: string) =>
+  query ? (matchPerson(text, query)?.tier ?? Infinity) : 0;
 function baseMatch(choice: MentionChoice, query: string) {
   return Math.min(
     ...choice.aliases.map((name) => nameMatch(name, normalized(query))),
@@ -87,22 +80,13 @@ export function rankMentions(
     .map((k) => k.c);
 }
 /** Space is intent only for one exact key across the full, uncapped choice set. */
-export function exactMention(choices: readonly MentionChoice[], query: string) {
-  const needle = normalized(query);
-  if (!needle) return;
-  const matches = choices.filter(
-    (c) =>
-      c.aliases.length > 0 &&
-      [...c.aliases, c.label].some((name) => normalized(name) === needle),
-  );
-  if (
-    matches.length !== 1 ||
-    choices.some((c) =>
-      [...c.aliases, c.label].some((name) =>
-        normalized(name).startsWith(`${needle} `),
-      ),
-    )
-  )
-    return;
-  return matches[0]?.recipient.pubkey;
-}
+export const exactMention = (
+  choices: readonly MentionChoice[],
+  query: string,
+) =>
+  exactName(
+    choices,
+    (c) => [...c.aliases, c.label],
+    query,
+    (c) => c.aliases.length > 0,
+  )?.recipient.pubkey;

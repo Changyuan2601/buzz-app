@@ -3,6 +3,8 @@
 //! On Windows, a kill-on-close Job Object contains the listener before it runs.
 use crate::Result;
 #[cfg(unix)]
+use std::process::ExitStatus;
+#[cfg(unix)]
 use std::process::Stdio;
 use std::process::{Child, Command};
 #[cfg(unix)]
@@ -72,7 +74,24 @@ impl Process {
             }
         }
     }
+    #[cfg(unix)]
+    pub fn try_wait(&mut self) -> Result<Option<ExitStatus>> {
+        self.child
+            .try_wait()
+            .map_err(|_| "Could not inspect owned process".into())
+    }
+    /// Short-lived discovery has no cooperative listener shutdown to wait for.
+    #[cfg(unix)]
+    pub fn kill(&mut self) -> Result<()> {
+        self.stop_with_grace(Duration::ZERO)
+    }
     pub fn stop(&mut self) -> Result<()> {
+        #[cfg(unix)]
+        return self.stop_with_grace(Duration::from_secs(2));
+        #[cfg(windows)]
+        self.stop_with_grace()
+    }
+    fn stop_with_grace(&mut self, #[cfg(unix)] grace: Duration) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
@@ -80,7 +99,7 @@ impl Process {
         {
             // First let ACP cancel turns and shut down its workers itself.
             signal_in_session(self.session, self.session, libc::SIGTERM)?;
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + grace;
             loop {
                 let members = session_members(self.session)?;
                 if members.is_empty() {

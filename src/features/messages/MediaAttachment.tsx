@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
+import { useMediaElementSource } from "./use-media-element-source";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -107,6 +108,10 @@ export function MediaAttachment({
     : undefined;
   const visiblePreview = preview ?? capturedPreview;
   useVideoPosition(video, seekTo, seekRequest, active);
+  const element = useMediaElementSource(
+    attachment.kind === "video" ? source : undefined,
+  );
+  const videoSource = element.src;
 
   if (!source)
     return (
@@ -117,7 +122,7 @@ export function MediaAttachment({
       </span>
     );
 
-  if (failed)
+  if (failed || element.unavailable)
     return (
       <span className={styles.attachmentUnavailable} role="status">
         {attachment.kind === "video"
@@ -195,7 +200,7 @@ export function MediaAttachment({
     <video
       ref={video}
       className={styles.mediaVideo}
-      src={source}
+      src={videoSource}
       poster={visiblePreview}
       preload={preload}
       playsInline

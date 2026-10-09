@@ -41,9 +41,7 @@ import {
   isBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
-import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
-  NewSessionView,
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
@@ -179,7 +177,6 @@ function ChannelWorkspace({
   cached,
   relay,
   panels,
-  sessionsEnabled,
   scope,
   companion,
   navigation,
@@ -497,8 +494,15 @@ function ChannelWorkspace({
     committedVisit.current = { currentId, queries };
   }, [currentId, queries]);
   const tabState = useChannelTabState(queries, currentId);
-  const { thread, setThread, settings, setSettings, entries, setEntries } =
-    tabState;
+  const {
+    thread,
+    setThread,
+    settings,
+    setSettings,
+    entries,
+    setEntries,
+    retireMenuEntries,
+  } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draftParent) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -521,36 +525,10 @@ function ChannelWorkspace({
     setSettings(undefined);
     afterClose("settings");
   };
-  const canStartSession =
-    !!current &&
-    sessionsEnabled &&
-    !current.readOnly &&
-    !current.archived &&
-    current.channelType !== "dm" &&
-    current.channelType !== "session";
-  const drafting =
-    canStartSession &&
-    !!draftParent &&
-    draftParent === currentId &&
-    !requestedMessage;
   useEffect(() => {
-    if (drafting && navigation?.target.kind === "page")
-      navigation.complete({ status: "opened" });
-    if (
-      !cached &&
-      draftParent &&
-      (!sessionsEnabled || (current && !canStartSession))
-    )
+    if (draftParent)
       navigation?.complete({ status: "failed", reason: "unavailable" });
-  }, [
-    cached,
-    drafting,
-    navigation,
-    draftParent,
-    sessionsEnabled,
-    current,
-    canStartSession,
-  ]);
+  }, [draftParent, navigation]);
   const flatSession = current?.channelType === "session";
   const onComposerSend = useComposerSent(
     currentId,
@@ -784,9 +762,19 @@ function ChannelWorkspace({
     current?.id,
     panels,
   ]);
+  // Menu panels belong to one visit. Retire only this visit's keyed entries.
+  useEffect(() => {
+    if (!currentId) return;
+    return () => retireMenuEntries();
+  }, [currentId, retireMenuEntries]);
   const panelTabs = entries.filter(
     (entry) =>
       available.includes(entry.panel) &&
+      (!entry.panel.channelMenu ||
+        (current &&
+          current.id === entry.channelId &&
+          !cached &&
+          entry.panel.channelMenu.eligible(current, queries))) &&
       (!entry.channelContext ||
         (current &&
           !current.readOnly &&
@@ -1479,25 +1467,10 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
-          ) : drafting && current ? (
-            <NewSessionView parentName={current.name}>
-              <NewSessionComposer
-                extensions={extensions}
-                key={current.id}
-                session={queries}
-                scope={scope}
-                parent={current}
-                onStarted={(id) => {
-                  handoff?.updateDraftParents((previous) =>
-                    previous.filter((parent) => parent !== current.id),
-                  );
-                  select(id);
-                }}
-              />
-            </NewSessionView>
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Checking session parent access…
+              Start new sessions from Sessions. Channel-nested sessions are no
+              longer available.
             </p>
           ) : (
             <>
@@ -1562,6 +1535,44 @@ function ChannelWorkspace({
                           setSettings({ channelId: currentId });
                         }}
                         openCanvas={openCanvas}
+                        menuPanels={
+                          current && !cached
+                            ? available.filter((panel) =>
+                                panel.channelMenu?.eligible(current, queries),
+                              )
+                            : []
+                        }
+                        openMenuPanel={(panel) => {
+                          const connection = relay.snapshot();
+                          const channel = queries.channels
+                            .list()
+                            .channels.find((item) => item.id === currentId);
+                          if (
+                            connection.status !== "ready" ||
+                            connection.cached ||
+                            connection.session !== queries ||
+                            !drawerContext ||
+                            drawerContext.channelId !== channel?.id ||
+                            !channel ||
+                            channel.cached ||
+                            channel.readOnly ||
+                            !channel.members?.includes(queries.viewer ?? "") ||
+                            !panels.snapshot().includes(panel) ||
+                            !panel.channelMenu?.eligible(channel, queries)
+                          )
+                            return;
+                          drawer.close();
+                          panelTrigger.current = settingsTrigger.current;
+                          open(
+                            {
+                              panel,
+                              channelId: channel.id,
+                              target: channel.id,
+                              channelContext: drawerContext,
+                            },
+                            true,
+                          );
+                        }}
                       />
                       {current && (
                         <IconButton
@@ -1840,6 +1851,7 @@ function ChannelWorkspace({
                                   chooseTool(tab.id, panel)
                                 }
                                 icon={conversationIcon}
+                                usageScope={scope}
                                 choose={(channelId) =>
                                   chooseConversation(tab.id, channelId)
                                 }

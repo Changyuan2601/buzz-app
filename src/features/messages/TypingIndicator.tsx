@@ -1,23 +1,45 @@
 import { useChannelIdentityNames } from "../identity-names/react";
-import { useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { activityTarget } from "../agents/activity-target";
+import { currentActivity } from "../agents/current-activity";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { Button } from "../../shared/design-system/ui/Button";
+import { AgentActivityRow } from "../agents/AgentActivityRow";
+import activityStyles from "../agents/ActivityRows.module.css";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+} from "../../shared/design-system/ui/Popover";
 import type { RelaySession } from "../relay/session";
 import styles from "./TypingIndicator.module.css";
 
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
+const noRows: readonly never[] = [];
 
-/** Shared presentation only. Mounting more consumers creates no relay work. */
+/** Floating conversation activity over existing stores; no reads or capture. */
 export function TypingIndicator({
   session,
   channelId,
   threadRootId,
   canOpenActivity,
+  openActivity,
 }: {
   session: RelaySession;
   channelId: string;
   threadRootId?: string | undefined;
   canOpenActivity?: ((target: string) => boolean) | undefined;
+  openActivity?: ((target: string) => boolean) | undefined;
 }) {
   const entries = useSyncExternalStore(
     session.typing.subscribe,
@@ -32,40 +54,260 @@ export function TypingIndicator({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
-  const matching = entries.filter(
+  const choices = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+  );
+  const ownedAgents = useMemo(
+    () => new Set(choices.identities.map(({ pubkey }) => pubkey)),
+    [choices],
+  );
+  const details = useMemo(
+    () =>
+      currentActivity(activity, entries, ownedAgents, channelId, threadRootId),
+    [activity, entries, ownedAgents, channelId, threadRootId],
+  );
+  // Read only the already-loaded channel window to name threads. No ensure/read.
+  const needsRows = details.size > 0 && !threadRootId;
+  const subscribeRows = useCallback(
+    (listener: () => void) =>
+      needsRows
+        ? session.channels.subscribeWindow(channelId, listener)
+        : () => {},
+    [session, channelId, needsRows],
+  );
+  const getRows = useCallback(
+    () => (needsRows ? session.channels.window(channelId).rows : noRows),
+    [session, channelId, needsRows],
+  );
+  const rows = useSyncExternalStore(subscribeRows, getRows);
+  const agents = [...details.keys()].sort();
+  const firstAgent = agents[0];
+  const humans = entries.filter(
     (entry) =>
       entry.channelId === channelId &&
       entry.threadRootId === threadRootId &&
-      // The existing activity accessory already presents these exact identities.
-      // Keep public typing when that activity action is unavailable or disabled.
-      !activity?.typing.some(
-        (agent) =>
-          agent.channelId === channelId &&
-          agent.threadRootId === threadRootId &&
-          agent.agent === entry.pubkey &&
-          canOpenActivity?.(activityTarget(agent.agent, channelId)),
-      ),
+      !details.has(entry.pubkey),
   );
-  if (!matching.length) return null;
-  // Reuse already available names; optional typing must not trigger profile reads.
-  const names = matching
-    .slice(0, 3)
-    .map(({ pubkey }) =>
-      resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10)),
+  const name = (pubkey: string) =>
+    resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
+  const avatar = (pubkey: string) => {
+    const picture = profiles.get(pubkey)?.picture;
+    return (
+      <span className={styles.avatar} key={pubkey}>
+        <Avatar
+          alt=""
+          fallback={name(pubkey)}
+          shape="squircle"
+          size="fill"
+          src={picture ? session.media(picture, "small") : undefined}
+        />
+      </span>
     );
-  const others = matching.length - names.length;
+  };
+  const scopeLabel = (pubkey: string) => {
+    if (threadRootId) return undefined;
+    const roots = details.get(pubkey)?.roots ?? [];
+    const labels = roots.slice(0, 2).map((root) => {
+      if (root === null) return "Channel conversation";
+      if (!root) return "Work with unconfirmed thread";
+      const text = rows
+        .find((row) => row.id === root)
+        ?.content.replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 60);
+      return `Thread · ${text || root.slice(0, 8)}`;
+    });
+    return [
+      ...labels,
+      ...(roots.length > 2 ? [`+${roots.length - 2} more`] : []),
+    ].join(" / ");
+  };
+  const agentStatus = (pubkey: string, navigate: (target: string) => void) => {
+    const detail = details.get(pubkey);
+    if (!detail) return null;
+    // Unknown or multiple scopes open channel activity, never an inferred transcript.
+    const root =
+      threadRootId ?? (detail.roots.length === 1 ? detail.roots[0] : undefined);
+    const target = activityTarget(pubkey, channelId, root ?? undefined);
+    const canOpen = !!openActivity && !!canOpenActivity?.(target);
+    const knownRoots = detail.roots.filter(
+      (value) => typeof value === "string",
+    );
+    const conversationRoot =
+      threadRootId ?? (knownRoots.length === 1 ? knownRoots[0] : undefined);
+    const conversation = conversationRoot
+      ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
+      : `buzz://channel/${encodeURIComponent(channelId)}`;
+    const picture = profiles.get(pubkey)?.picture;
+    return (
+      <AgentActivityRow
+        name={name(pubkey)}
+        picture={picture ? session.media(picture, "small") : undefined}
+        status={detail.label}
+        scope={scopeLabel(pubkey)}
+        openLabel={`Open ${conversationRoot ? "thread" : "conversation"} for ${name(pubkey)}`}
+        onOpen={openActivity ? () => navigate(conversation) : undefined}
+        onOpenActivity={canOpen ? () => navigate(target) : undefined}
+      />
+    );
+  };
+  const workingText = agents.length
+    ? `${agents.map(name).join(", ")}${agents.length === 1 ? " is working" : " are working"}`
+    : "";
+  const typingText = humans.length
+    ? `${humans
+        .slice(0, 2)
+        .map(({ pubkey }) => name(pubkey))
+        .join(
+          ", ",
+        )}${humans.length > 2 ? ` and ${humans.length - 2} others` : ""}${humans.length === 1 ? " is typing" : " are typing"}`
+    : "";
   return (
-    <div className={styles.typing} role="status" aria-label="Typing activity">
-      <span className={styles.dots} aria-hidden="true">
-        <span />
-        <span />
-        <span />
+    <>
+      {/* Establish the live region before the first working/typing transition. */}
+      <span
+        className="sr-only"
+        role="status"
+        aria-label="Conversation activity"
+        data-agent-working-status=""
+      >
+        {[workingText, typingText].filter(Boolean).join(". ")}
       </span>
-      <span className={styles.label}>
-        <span className={styles.names}>{names.join(", ")}</span>
-        {others > 0 ? ` and ${others} others` : ""}
-        {matching.length === 1 ? " is typing" : " are typing"}
-      </span>
-    </div>
+      {(agents.length > 0 || humans.length > 0) && (
+        <div className={styles.typing} data-conversation-activity="">
+          {agents.length > 0 && (
+            <AgentChooser
+              key={`${channelId}:${threadRootId ?? ""}`}
+              label={
+                agents.length === 1 && firstAgent
+                  ? `Activity: ${name(firstAgent)} working`
+                  : `Activity: ${agents.length} agents working`
+              }
+              avatars={agents.slice(0, 4).map(avatar)}
+              overflow={Math.max(0, agents.length - 4)}
+              openTarget={openActivity}
+            >
+              {(navigate) =>
+                agents.map((pubkey) => (
+                  <div key={pubkey}>{agentStatus(pubkey, navigate)}</div>
+                ))
+              }
+            </AgentChooser>
+          )}
+          {humans.length > 0 && (
+            <span className={styles.humans} aria-hidden="true">
+              <span className={styles.dots} aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className={styles.label}>{typingText}</span>
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function AgentChooser({
+  label,
+  avatars,
+  overflow,
+  openTarget,
+  children,
+}: {
+  label: string;
+  avatars: ReactNode;
+  overflow: number;
+  openTarget?: ((target: string) => boolean) | undefined;
+  children(navigate: (target: string) => void): ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const actions =
+    useRef<
+      NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
+    >(null);
+  useEffect(() => {
+    if (!open) return;
+    // Hover leaves focus in the composer. Consume Escape before its panel's
+    // React handler; Base UI's document-bubble dismissal would arrive too late.
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229)
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      actions.current?.close();
+    };
+    document.addEventListener("keydown", dismiss, true);
+    return () => document.removeEventListener("keydown", dismiss, true);
+  }, [open]);
+  const navigate = (target: string) => {
+    const previous = document.activeElement;
+    // The popup action unmounts after navigation. Existing panel navigation
+    // captures activeElement, so give it the retained avatar control instead.
+    trigger.current?.focus({ preventScroll: true });
+    if (openTarget?.(target)) setOpen(false);
+    else if (previous instanceof HTMLElement)
+      previous.focus({ preventScroll: true });
+  };
+  return (
+    <PopoverRoot
+      modal={false}
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        // Base UI tracks compositionstart/end; also honor the native key flags
+        // when composition began before this hover popup mounted.
+        if (
+          details.reason === "escape-key" &&
+          details.event instanceof KeyboardEvent &&
+          (details.event.isComposing || details.event.keyCode === 229)
+        ) {
+          details.cancel();
+          return;
+        }
+        setOpen(nextOpen);
+      }}
+      actionsRef={actions}
+    >
+      <PopoverTrigger
+        ref={trigger}
+        openOnHover
+        delay={250}
+        closeDelay={150}
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-label={label}
+            data-agent-activity-trigger=""
+          >
+            <span className={styles.avatars} aria-hidden="true">
+              {avatars}
+              {overflow > 0 && (
+                <span className={styles.overflow}>+{overflow}</span>
+              )}
+            </span>
+          </Button>
+        }
+      />
+      <PopoverPopup
+        size="wide"
+        padding="list"
+        side="top"
+        align="end"
+        aria-label="Working now"
+      >
+        <section
+          className={activityStyles.activityList}
+          aria-label="Agents working now"
+        >
+          <h2 className={activityStyles.activitySectionLabel}>Working now</h2>
+          {children(navigate)}
+        </section>
+      </PopoverPopup>
+    </PopoverRoot>
   );
 }

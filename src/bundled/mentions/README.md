@@ -1,6 +1,6 @@
 # Mention rules
 
-`version 1` · `client contract` · `uses existing tags`
+`version 2` · `client contract` · `uses existing tags`
 
 ## Abstract
 
@@ -79,11 +79,12 @@ NOT contain `@`, a line break, or a tab. It MAY contain spaces. A client MAY loo
 back only 160 characters from the caret. A caret outside the text gives no query.
 
 A query with a space is **admitted** only while it is still the start of a
-known name (case-insensitive). A query that is a complete known name plus a
-trailing space is not admitted, so the user can keep typing prose. The known
-names are the aliases and labels of the current choice set, including people
-that the directory search for this query found. This check is the `admission`
-fixture section.
+known name. Compare with the section 3 normalization of the names, but do not
+trim the query: its trailing space matters here. A query that is a complete
+known name plus a trailing space is not admitted, so the user can keep typing
+prose. The known names are the aliases and labels of the current choice set,
+including people that the directory search for this query found. This check is
+the `admission` fixture section.
 
 Admission does not decide whether the client searches. A multi-word query can
 name someone the client does not know yet, for example `@Mary J` for a Mary
@@ -101,9 +102,28 @@ that the user already selected does not open a query.
 
 ## 3. Matching (normative)
 
-Normalize the query and each name by trimming at both ends and lowercasing
-(ECMAScript `trim` and `toLowerCase`). An empty query matches every choice at
-tier 0. Otherwise, a name matches the query at the first tier that applies:
+Normalize the query and each name the same way. For each code point, apply
+Unicode NFKD, remove the combining accents in the Unicode "Combining
+Diacritical Marks" blocks (U+0300–U+036F, U+1AB0–U+1AFF, U+1DC0–U+1DFF,
+U+20D0–U+20FF, U+FE20–U+FE2F), lowercase (ECMAScript `toLowerCase`), and
+replace final sigma `ς` with `σ`. Then trim both ends (ECMAScript `trim`). So
+`jose` matches `José`, and `παρος` matches `ΠΑΡΟΣ`. Other marks stay: in many
+scripts they make a different letter, so `राम` does not match `रम` and `ジョン`
+does not match `ション`. Letters without a decomposition do not fold: `ø`, `ł`,
+`æ`, `ß` and `ı` stay themselves. Use Unicode 15.0 or later data; Unicode
+normalization does not change for assigned characters, so later versions give
+the same fixture results. The `matching` fixtures pin cases that differ between
+common folding APIs. A client MUST
+NOT substitute a broader case or diacritic folding (for example, Swift
+`.diacriticInsensitive` or full Unicode case folding).
+
+Space selection (section 5), query admission (section 2, without trimming the
+query), and ordering by normalized labels (section 4) use this same
+normalization. Shared code:
+[person-match.ts](../../features/search/person-match.ts).
+
+An empty query matches every choice at tier 0. Otherwise, a name matches the
+query at the first tier that applies:
 
 | Tier | Rule |
 | --- | --- |
@@ -112,8 +132,13 @@ tier 0. Otherwise, a name matches the query at the first tier that applies:
 | 2 | A word of the name equals the query |
 | 3 | A word of the name starts with the query |
 
-Words are split on runs of Unicode whitespace. Nothing else matches. Text inside
-a word does not match: `oney` does not find `Honey`.
+A **word** is a run of letters, marks, and digits (Unicode general categories
+L, M, and N). Every other code point separates words, so `jane` finds
+`Mary-Jane` at tier 2 and `brien` finds `O'Brien`. For tiers 2 and 3, the match
+starts where a word starts; it equals the word (tier 2) when the next code point
+is not a letter, mark, or digit. A query that contains whitespace matches only
+at tiers 0 and 1. Nothing else matches. Text inside a word does not match:
+`oney` does not find `Honey`. This check is the `matching` fixture section.
 
 A choice's **match** is the tier of its label. If the label does not match, the
 match is 4 plus the best tier among its aliases. A choice with no aliases never
@@ -155,11 +180,18 @@ of these are true:
 
 - the normalized query is not empty;
 - exactly one choice with aliases has an alias or label equal to the query;
-- no choice has an alias or label that starts with the query plus a space; and
+- no choice has an alias or label that **continues** the query: the normalized
+  name is longer, starts with the normalized query, and the next code point is
+  not a letter, mark, or digit (`Jose Luis` and `Jose-Luis` continue `jose`;
+  `Josefa` does not);
+- the full choice set is known: no directory search for this query is waiting,
+  running, or failed, and the search reported no more pages; and
 - that choice is shown and can still be chosen.
 
-Check this against the full choice set, not only the shown rows. Otherwise Space
-is a normal space. Tab, Enter, and a click select the highlighted row.
+Check this against the full choice set, not only the shown rows. A namesake that
+a pending search would find makes the name ambiguous, so Space MUST NOT select
+before the search finishes. Otherwise Space is a normal space. Tab, Enter, and a
+click select the highlighted row.
 
 ## 6. List stability (desktop behavior; not in the fixtures)
 
@@ -239,6 +271,7 @@ each choice supplies its own label.
 
 | Section | Tests |
 | --- | --- |
+| `matching` | Section 3. `expected` is the tier of `label` for `query` (0 to 3), or `null` when it does not match. |
 | `ranking` | Sections 3 and 4. `expected` is the full ordered key list. |
 | `space` | Section 5. `expected` is a key or `null`. |
 | `query` | Section 2 syntax. `expected` is `{start, end, query}` or `null`. |

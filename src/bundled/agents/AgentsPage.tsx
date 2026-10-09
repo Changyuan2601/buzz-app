@@ -39,6 +39,7 @@ import {
   ManagedAgentActions,
   useManagedAgentActions,
 } from "./ManagedAgentActions";
+import { CatalogLauncher } from "./CommunityCatalog";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 
@@ -95,7 +96,11 @@ export function AgentsPage({
         {(entry, active) => {
           const Teams = entry.teams;
           return Teams ? (
-            <Teams session={connection.session} active={active} />
+            <Teams
+              session={connection.session}
+              control={control}
+              active={active}
+            />
           ) : null;
         }}
       </OwnedContribution>
@@ -313,9 +318,30 @@ export function AgentsPage({
                     }}
                     resolveName={resolveName}
                     importDestination={importDestination}
+                    session={
+                      connection.status === "ready"
+                        ? connection.session
+                        : undefined
+                    }
                     createOwner={
                       connection.status === "ready"
                         ? connection.viewer
+                        : undefined
+                    }
+                    catalog={
+                      connection.status === "ready"
+                        ? (addAgent, hasAgent, open, onClose) => (
+                            <CatalogLauncher
+                              key={`${connection.scope}:${connection.generation}`}
+                              session={connection.session}
+                              open={open}
+                              onClose={onClose}
+                              addAgent={addAgent}
+                              hasAgent={hasAgent}
+                              control={control}
+                              destination={importDestination}
+                            />
+                          )
                         : undefined
                     }
                   >
@@ -328,6 +354,7 @@ export function AgentsPage({
                       label,
                       onUseHere,
                       onImport,
+                      onShare,
                     ) =>
                       state.status === "unavailable" ? (
                         <>
@@ -358,6 +385,7 @@ export function AgentsPage({
                           }
                           onUseHere={onUseHere}
                           onImport={onImport}
+                          onShare={onShare}
                         />
                       ) : (
                         <ManagedAgents
@@ -367,6 +395,7 @@ export function AgentsPage({
                           label={label}
                           edit={edit}
                           duplicate={duplicate}
+                          onShare={onShare}
                           remove={remove}
                           importedId={importedId}
                           control={control}
@@ -401,6 +430,7 @@ function ManagedAgents({
   state,
   edit,
   duplicate,
+  onShare,
   remove,
   importedId,
   control,
@@ -416,6 +446,7 @@ function ManagedAgents({
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   duplicate(agent: AgentView): void;
+  onShare(agent: AgentView): void;
   remove(agent: AgentView): void;
   importedId: string | null;
   control: AgentControl;
@@ -466,6 +497,7 @@ function ManagedAgents({
               }
               onEdit={edit}
               onDuplicate={duplicate}
+              onShare={onShare}
               onDelete={control.delete ? remove : undefined}
               onViewProfile={
                 sameCommunityAgents([agent], connection.scope ?? "").length

@@ -12,7 +12,11 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { VoiceNoteCard } from "../../bundled/voice-notes/VoiceNoteCard";
 import { AudioAttachment } from "./AudioAttachment";
+
+// No media listener: `media_stream_base` reports none.
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
 
 const source = "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Faudio.mp3";
 let play: ReturnType<typeof vi.spyOn>;
@@ -64,9 +68,9 @@ it("toggles the accessible play control name", () => {
   if (!audio) throw new Error("Missing audio element");
   const playButton = screen.getByRole("button", { name: "Play audio" });
   expect(playButton).toBeInTheDocument();
-  expect(playButton).toHaveAttribute("data-icon-variant", "solid");
-  expect(playButton).toHaveAttribute("data-icon-size", "compact");
-  expect(playButton).toHaveAttribute("data-icon-shape", "round");
+  expect(playButton).toHaveAttribute("data-icon-variant", "ghost");
+  expect(playButton).toHaveAttribute("data-icon-size", "sm");
+  expect(playButton).toHaveAttribute("data-icon-shape", "control");
   fireEvent.play(audio);
   expect(
     screen.getByRole("button", { name: "Pause audio" }),
@@ -109,7 +113,7 @@ it("shows wire duration before metadata loads", () => {
       source={source}
     />,
   );
-  expect(screen.getByText("0:00 / 1:23")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 01:23");
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "max",
     "83",
@@ -131,7 +135,7 @@ it("keeps normal media durations from metadata", () => {
   if (!audio) throw new Error("Missing audio element");
   setDuration(audio, 95);
   fireEvent.durationChange(audio);
-  expect(screen.getByText("0:00 / 1:35")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 01:35");
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "max",
     "95",
@@ -153,7 +157,7 @@ it("ignores oversized media durations", () => {
   if (!audio) throw new Error("Missing audio element");
   setDuration(audio, 1e15);
   fireEvent.durationChange(audio);
-  expect(screen.getByText("0:00 / 1:23")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 01:23");
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "max",
     "83",
@@ -175,7 +179,7 @@ it("ignores non-finite media durations", () => {
   if (!audio) throw new Error("Missing audio element");
   setDuration(audio, Number.POSITIVE_INFINITY);
   fireEvent.durationChange(audio);
-  expect(screen.getByText("0:00 / 1:23")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 01:23");
 });
 
 it("keeps playback enabled while disabling seek until metadata supplies a duration", () => {
@@ -188,7 +192,7 @@ it("keeps playback enabled while disabling seek until metadata supplies a durati
   const audio = container.querySelector("audio");
   if (!audio) throw new Error("Missing audio element");
 
-  expect(screen.getByText("0:00")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 —:—");
   expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled();
   expect(screen.getByRole("slider", { name: "Seek audio" })).toBeDisabled();
 
@@ -197,7 +201,7 @@ it("keeps playback enabled while disabling seek until metadata supplies a durati
 
   expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled();
   expect(screen.getByRole("slider", { name: "Seek audio" })).toBeEnabled();
-  expect(screen.getByText("0:00 / 1:23")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 01:23");
 });
 
 it("updates bare elapsed slider value text before duration is known", () => {
@@ -307,7 +311,7 @@ it("completes progress, resets the play label, and releases playback when audio 
   ended.currentTime = 5.4;
   fireEvent.ended(ended);
 
-  expect(screen.getAllByText("0:05 / 0:05")[0]).toBeInTheDocument();
+  expect(screen.getAllByRole("group")[0]).toHaveTextContent("00:05 00:05");
   expect(
     screen.getAllByRole("button", { name: "Play audio" })[0],
   ).toBeInTheDocument();
@@ -377,7 +381,7 @@ it("keeps ended cleanup idempotent when pause fires before ended", () => {
   expect(
     screen.getAllByRole("button", { name: "Play audio" })[0],
   ).toBeInTheDocument();
-  expect(screen.getAllByText("0:05 / 0:05")[0]).toBeInTheDocument();
+  expect(screen.getAllByRole("group")[0]).toHaveTextContent("00:05 00:05");
   expect(pause).not.toHaveBeenCalled();
 });
 
@@ -399,7 +403,7 @@ it("does not correct duration or suppress later duration sync when ended far bef
   audio.currentTime = 2;
   fireEvent.ended(audio);
 
-  expect(screen.getByText("1:00 / 1:00")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("01:00 01:00");
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "max",
     "60",
@@ -407,7 +411,7 @@ it("does not correct duration or suppress later duration sync when ended far bef
 
   setDuration(audio, 62);
   fireEvent.durationChange(audio);
-  expect(screen.getByText("1:00 / 1:02")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("01:00 01:02");
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "max",
     "62",
@@ -436,7 +440,7 @@ it("does not correct duration just outside the ended correction bound", () => {
     "max",
     "5.4",
   );
-  expect(screen.getByText("0:05 / 0:05")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:05 00:05");
 });
 
 it("corrects duration to the observed end without resetting it on replay", () => {
@@ -457,7 +461,7 @@ it("corrects duration to the observed end without resetting it on replay", () =>
   audio.currentTime = 4.6;
   fireEvent.ended(audio);
 
-  expect(screen.getByText("0:04 / 0:04")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:04 00:04");
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "max",
     "4.6",
@@ -475,7 +479,7 @@ it("corrects duration to the observed end without resetting it on replay", () =>
   expect(
     screen.getByRole("button", { name: "Pause audio" }),
   ).toBeInTheDocument();
-  expect(screen.getByText("0:00 / 0:04")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 00:04");
 });
 
 it("does not correct duration on a normal mid-clip pause and seek", () => {
@@ -501,7 +505,7 @@ it("does not correct duration on a normal mid-clip pause and seek", () => {
     "max",
     "5.4",
   );
-  expect(screen.getByText("0:02 / 0:05")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:02 00:05");
 });
 
 it("renders an unavailable card on load errors", () => {
@@ -517,6 +521,20 @@ it("renders an unavailable card on load errors", () => {
   expect(screen.getByRole("status")).toHaveTextContent("Audio unavailable");
 });
 
+it("renders an unavailable card for native audio without the media listener", async () => {
+  const native = `buzz-media://localhost/${encodeURIComponent("https://relay.test/media/" + "b".repeat(64) + ".mp3")}`;
+  const { container } = render(
+    <AudioAttachment
+      attachment={{ url: "https://fixture.test/audio.mp3", kind: "audio" }}
+      source={native}
+    />,
+  );
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Audio unavailable",
+  );
+  expect(container.querySelector("audio")).toBeNull();
+});
+
 it("resets load failure and playback display when the source changes", async () => {
   const attachment = {
     url: "https://fixture.test/audio.mp3",
@@ -530,7 +548,7 @@ it("resets load failure and playback display when the source changes", async () 
   if (!audio) throw new Error("Missing audio element");
   audio.currentTime = 42;
   fireEvent.timeUpdate(audio);
-  expect(screen.getByText("0:42 / 1:23")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:42 01:23");
   fireEvent.error(audio);
   expect(screen.getByRole("status")).toHaveTextContent("Audio unavailable");
 
@@ -545,7 +563,7 @@ it("resets load failure and playback display when the source changes", async () 
     expect(screen.queryByRole("status")).not.toBeInTheDocument(),
   );
   expect(container.querySelector("audio")).toBeInTheDocument();
-  expect(screen.getByText("0:00")).toBeInTheDocument();
+  expect(screen.getByRole("group")).toHaveTextContent("00:00 —:—");
   expect(screen.getByRole("button", { name: "Play audio" })).toBeEnabled();
 });
 
@@ -775,3 +793,92 @@ it.each([false, true])(
     }
   },
 );
+
+it("previews mouse hover time without seeking and clears on leave, touch, or source change", () => {
+  const attachment = {
+    url: "https://fixture.test/audio.mp3",
+    kind: "audio" as const,
+    duration: 80,
+  };
+  const { container, rerender } = render(
+    <AudioAttachment attachment={attachment} source={source} />,
+  );
+  const audio = container.querySelector("audio");
+  const timeline = screen.getByRole("slider").parentElement;
+  if (!audio || !timeline) throw new Error("Missing audio controls");
+  vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({
+    left: 100,
+    width: 202,
+  } as DOMRect);
+  const move = (clientX: number, pointerType = "mouse") => {
+    const event = new MouseEvent("pointermove", { bubbles: true, clientX });
+    Object.defineProperty(event, "pointerType", { value: pointerType });
+    fireEvent(timeline, event);
+  };
+  const preview = () => container.querySelector("[data-seek-preview]");
+  move(151);
+  expect(preview()).toHaveTextContent("00:20");
+  expect(audio.currentTime).toBe(0);
+  move(251);
+  expect(preview()).toHaveTextContent("01:00");
+  move(500);
+  expect(preview()).toHaveTextContent("01:20");
+  move(0);
+  expect(preview()).toHaveTextContent("00:00");
+  fireEvent.pointerLeave(timeline);
+  expect(preview()).toBeNull();
+  move(151);
+  move(151, "touch");
+  expect(preview()).toBeNull();
+  move(151);
+  rerender(
+    <AudioAttachment
+      attachment={{ url: attachment.url, kind: "audio" }}
+      source="/new-audio.mp3"
+    />,
+  );
+  expect(preview()).toBeNull();
+  move(151);
+  expect(preview()).toBeNull();
+});
+
+it("shares playback ownership with voice-note plugin cards in both directions", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  try {
+    const { container } = render(
+      <>
+        <AudioAttachment
+          attachment={{ url: "https://fixture.test/audio.mp3", kind: "audio" }}
+          source={source}
+        />
+        <VoiceNoteCard source="https://fixture.test/voice.wav" duration={5} />
+      </>,
+    );
+    const [regular, voice] = container.querySelectorAll("audio");
+    if (!regular || !voice) throw new Error("Missing audio players");
+    await act(async () => {
+      await regular.play();
+    });
+    expect(regular.paused).toBe(false);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Play voice note" }));
+    });
+    expect(regular.paused).toBe(true);
+    expect(voice.paused).toBe(false);
+    await act(async () => {
+      await regular.play();
+    });
+    expect(voice.paused).toBe(true);
+    expect(regular.paused).toBe(false);
+    cleanup();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

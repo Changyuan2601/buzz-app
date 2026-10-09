@@ -282,18 +282,9 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
   const header = page.locator(".shell-header");
   await expect(header).toBeVisible();
   expect((await header.boundingBox()).height).toBe(48);
-  const controls = header.locator(".buzz-button[data-icon-variant]");
-  expect(await controls.count()).toBeGreaterThanOrEqual(5);
-  for (const control of await controls.all()) {
-    const box = await control.boundingBox();
-    expect([box.width, box.height]).toEqual([32, 32]);
-  }
-  const icons = header.locator(".buzz-button[data-icon-variant] svg");
-  expect(await icons.count()).toBeGreaterThanOrEqual(4);
-  for (const icon of await icons.all()) {
-    const box = await icon.boundingBox();
-    expect([box.width, box.height]).toEqual([16, 16]);
-  }
+  // The overflow trigger stays mounted but is hidden while header pages fit.
+  const controls = header.locator(".buzz-button[data-icon-variant]:visible");
+  const icons = controls.locator("svg");
   await expect(
     header.getByRole("button", { name: "Bestie", exact: true }),
   ).toHaveCount(0);
@@ -302,18 +293,40 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
     exact: true,
   });
   await expect(search).toHaveAttribute("data-icon-variant", "ghost");
-  const ghosts = header.locator('[data-icon-variant="ghost"]');
-  await page.mouse.move(700, 500);
-  for (const control of await ghosts.all())
-    await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  const ghosts = header.locator('[data-icon-variant="ghost"]:visible');
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 950 });
+    const overflow = header.locator("[data-shell-pages-overflow]");
+    const topbarPages = header.getByRole("navigation", {
+      name: "Topbar pages",
+      includeHidden: true,
+    });
+    if (width === 390) {
+      await expect(overflow).toBeVisible();
+      await expect(topbarPages).toBeHidden();
+    } else {
+      await expect(overflow).toBeHidden();
+      await expect(topbarPages).toBeVisible();
+    }
+    expect(await controls.count()).toBeGreaterThanOrEqual(5);
+    for (const control of await controls.all()) {
+      const box = await control.boundingBox();
+      expect([box.width, box.height]).toEqual([32, 32]);
+    }
+    expect(await icons.count()).toBeGreaterThanOrEqual(4);
+    for (const icon of await icons.all()) {
+      const box = await icon.boundingBox();
+      expect([box.width, box.height]).toEqual([16, 16]);
+    }
+    await page.mouse.move(700, 500);
+    for (const control of await ghosts.all())
+      await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     for (const [group, gap] of [
       [".shell-communities", 0],
       [".shell-actions", 8],
     ]) {
       const boxes = await header
-        .locator(`${group} .buzz-button[data-icon-variant]`)
+        .locator(`${group} .buzz-button[data-icon-variant]:visible`)
         .evaluateAll((nodes) =>
           nodes.map((node) => {
             const { x, width } = node.getBoundingClientRect();
@@ -818,7 +831,6 @@ fillSidebar(
       }),
       channel: sidebar.getByRole("button", { name: "Beta", exact: true }),
       dm: sidebar.getByRole("button", { name: "Alice Fixture", exact: true }),
-      session: sidebar.getByRole("button", { name: /Alpha, session in/ }),
     };
     const fillBounds = (row) =>
       row.evaluate((button) => {

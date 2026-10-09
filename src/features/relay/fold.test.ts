@@ -48,7 +48,7 @@ describe("message fold", () => {
         truncated: true,
       },
     });
-    expect(row?.attachmentContentRemoved).toBeUndefined();
+    expect(row?.attachmentSeams).toBeUndefined();
     expect(Object.isFrozen(row?.diff)).toBe(true);
     const untagged = signed(alice, {
       kind: 40008,
@@ -255,6 +255,48 @@ describe("message fold", () => {
       [bob.pubkey, "spoof"],
     ]);
   });
+  it("applies relay-authorized agent message deletes but not owner deletes of agent reactions", () => {
+    const agentMessage = message(alice, channel, "agent message", 10);
+    const agentReaction = signed(alice, {
+      kind: 7,
+      content: "👍",
+      created_at: 11,
+      tags: [["e", agentMessage.id]],
+    });
+    const ownerDeleteReaction = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 12,
+      tags: [
+        ["e", agentReaction.id],
+        ["k", "7"],
+      ],
+    });
+    const ownerDeleteMessage = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 13,
+      tags: [
+        ["e", agentMessage.id],
+        ["k", "9"],
+      ],
+    });
+    expect(
+      foldMessages(channel, relay.pubkey, [
+        agentMessage,
+        agentReaction,
+        ownerDeleteReaction,
+      ])[0]?.reactions,
+    ).toHaveLength(1);
+    expect(
+      foldMessages(channel, relay.pubkey, [
+        agentMessage,
+        agentReaction,
+        ownerDeleteMessage,
+      ]),
+    ).toHaveLength(0);
+  });
+
   it("reads relay-signed thread summaries only and tolerates malformed ones", () => {
     const a = message(alice, channel, "a", 10),
       b = message(alice, channel, "b", 11),
@@ -418,7 +460,7 @@ describe("message fold", () => {
         name: "Aidys Cap - EU.bebe5b6f.pdf",
       },
     ]);
-    expect(row?.attachmentContentRemoved).toBe(true);
+    expect(row?.attachmentSeams).toEqual([4]);
   });
 
   it("projects attachment link references as file names", () => {
@@ -983,6 +1025,7 @@ it("classifies voice-note mp4 metadata as audio with validated duration and file
       kind: "audio",
       mime: "video/mp4",
       name: "voice-note-1.mp4",
+      voiceNote: true,
       duration: 12.3,
     },
   ]);
@@ -1002,6 +1045,7 @@ it.each([
       kind: "audio",
       mime,
       name,
+      voiceNote: true,
     },
   ]);
 });
@@ -1013,7 +1057,13 @@ it("detects legacy voice-note mp4s from the link label when filename is absent",
   ]);
   const [row] = foldMessages("channel", relay.pubkey, [event]);
   expect(row?.attachments).toEqual([
-    { url, kind: "audio", mime: "video/mp4", name: "voice-note-2.mp4" },
+    {
+      url,
+      kind: "audio",
+      mime: "video/mp4",
+      name: "voice-note-2.mp4",
+      voiceNote: true,
+    },
   ]);
 });
 

@@ -7,11 +7,25 @@ import {
   CANVAS_BYTES,
   coordinate,
   KIT_TAG,
+  kitTag,
   parseKitRecord,
   type KitEntry,
   type KitRecord,
   type KitValue,
+  type Team,
+  type PayloadRecord,
+  parsePayloadRecord,
+  privateCoordinate,
 } from "./model";
+import {
+  TEAM_MANIFEST_TAG,
+  TEAM_PAYLOAD_TAG,
+  encodeTeamPayload,
+  decodeTeamPayload,
+  payloadCoordinate,
+  parseTeamManifest,
+} from "./team-payload";
+import type { TeamSnapshot } from "../agents/team-bundles";
 
 const canvasConflict =
   "Canvas changed since you opened it. Your draft is kept; load the current document before replacing it.";
@@ -92,7 +106,12 @@ export function createChannelKit({
     pending = (async () => {
       try {
         const events = await fresh([
-          { kinds: [30078], authors: [viewer], "#t": [KIT_TAG], limit: 500 },
+          {
+            kinds: [30078],
+            authors: [viewer],
+            "#t": [KIT_TAG, TEAM_MANIFEST_TAG],
+            limit: 500,
+          },
         ]);
         if (events.length >= 500)
           throw new Error(
@@ -101,7 +120,12 @@ export function createChannelKit({
         const heads = new Map<string, RelayEvent>();
         for (const event of events) {
           const d = event.tags.find((t) => t[0] === "d")?.[1];
-          if (!d?.startsWith(`${KIT_TAG}:${encodeURIComponent(community)}:`))
+          if (
+            !d ||
+            ![KIT_TAG, TEAM_MANIFEST_TAG].some((tag) =>
+              d?.startsWith(`${tag}:${encodeURIComponent(community)}:`),
+            )
+          )
             continue;
           const old = heads.get(d);
           if (!old || selectedHead([event, old])?.id === event.id)
@@ -186,6 +210,144 @@ export function createChannelKit({
       if (state.status === "idle") void refresh();
     },
     refresh,
+    async loadTeam(team: Team): Promise<unknown> {
+      if (!host || !team.portable)
+        throw new Error("This team has no portable definition");
+      const manifest = parseTeamManifest(team.portable);
+      if (manifest.owner !== viewer)
+        throw new Error("Portable team belongs to another viewer");
+      const payloads: PayloadRecord["value"][] = [];
+      // Exact revision reads only. Never include chunks in recipe discovery.
+      for (let index = 0; index < manifest.chunks; index++) {
+        signal.throwIfAborted();
+        const coordinate = payloadCoordinate({
+          community,
+          owner: viewer,
+          teamId: team.id,
+          revision: manifest.revision,
+          index,
+        });
+        const events = await fresh([
+          {
+            kinds: [30078],
+            authors: [viewer],
+            "#d": [coordinate],
+            limit: 2,
+            consistency: "strong",
+          },
+        ]);
+        const event = selectedHead(events);
+        if (!event) throw new Error("Portable team payload is unavailable");
+        const decoded = await host.decode([event], signal);
+        const row = decoded[0];
+        if (!row || decoded.length !== 1 || row.eventId !== event.id)
+          throw new Error("Incomplete portable team payload decode");
+        const record = parsePayloadRecord(row.record, community);
+        if (
+          privateCoordinate(record) !== coordinate ||
+          !event.tags.some(
+            ([tag, value]) => tag === "d" && value === coordinate,
+          )
+        )
+          throw new Error("Portable team payload coordinate mismatch");
+        payloads.push(record.value);
+      }
+      return decodeTeamPayload(manifest, payloads, community, viewer, team.id);
+    },
+    async savePortable(
+      team: Omit<Team, "portable">,
+      snapshot: TeamSnapshot,
+      expected: string | undefined,
+      revision: string,
+      operationSignal?: AbortSignal,
+    ) {
+      const preparing = operationSignal
+        ? AbortSignal.any([signal, operationSignal])
+        : signal;
+      preparing.throwIfAborted();
+      if (
+        !host ||
+        !outbox ||
+        !team.agents.length ||
+        team.agents.length !== snapshot.members.length ||
+        team.name !== snapshot.team.name
+      )
+        throw new Error("Portable team members do not match their definitions");
+      const { manifest, payloads } = await encodeTeamPayload(
+        snapshot,
+        community,
+        viewer,
+        team.id,
+        revision,
+      );
+      await ready;
+      for (const payload of payloads) {
+        preparing.throwIfAborted();
+        const record: PayloadRecord = {
+          version: 1,
+          community,
+          deleted: false,
+          value: {
+            ...payload,
+            type: "team-payload",
+            id: `${payload.revision}-${payload.index}`,
+          },
+        };
+        const coordinate = privateCoordinate(record);
+        const existing = selectedHead(
+          await fresh(
+            [
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#d": [coordinate],
+                limit: 1,
+                consistency: "strong",
+              },
+            ],
+            preparing,
+          ),
+        );
+        if (existing) {
+          const rows = await host.decode([existing], preparing);
+          const row = rows[0];
+          if (
+            !row ||
+            row.eventId !== existing.id ||
+            JSON.stringify(parsePayloadRecord(row.record, community)) !==
+              JSON.stringify(record)
+          )
+            throw new Error(
+              "Portable team revision already has different content",
+            );
+          continue;
+        }
+        const pending = local
+          ?.snapshot()
+          .find(
+            (item) =>
+              item.event.kind === 30078 &&
+              item.event.tags.some(
+                ([tag, value]) => tag === "d" && value === coordinate,
+              ),
+          );
+        const id =
+          pending?.event.id ??
+          outbox.send({
+            kind: 30078,
+            content: await host.prepare(record, preparing),
+            tags: [
+              ["d", coordinate],
+              ["t", TEAM_PAYLOAD_TAG],
+            ],
+          });
+        await confirm(id);
+      }
+      const value: Team = { ...team, portable: manifest };
+      // Confirm complete payload availability/integrity before replacing the manifest.
+      await capability.loadTeam(value);
+      return capability.save(value, expected, false, preparing);
+    },
     async save(
       value: KitValue,
       expected: string | undefined,
@@ -201,7 +363,12 @@ export function createChannelKit({
       if (!host || !outbox || saving)
         throw new Error("Recipe saving is unavailable or already in progress");
       const record = parseKitRecord(
-        { version: 1, community, value, deleted },
+        {
+          version: value.type === "team" && value.portable ? 2 : 1,
+          community,
+          value,
+          deleted,
+        },
         community,
       );
       saving = true;
@@ -240,7 +407,7 @@ export function createChannelKit({
           content,
           tags: [
             ["d", coordinate(record)],
-            ["t", KIT_TAG],
+            ["t", kitTag(record)],
           ],
         });
         await confirm(id);

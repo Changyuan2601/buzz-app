@@ -14,7 +14,11 @@ dotenvy = "0.15"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+regex = "1"
 sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+nostr = { version = "=0.45.5", default-features = false, features = ["std", "nip44", "os-rng"] }
 strip-ansi-escapes = "0.2"
 getrandom = "0.3"
 tempfile = "3"

@@ -1,3 +1,4 @@
+import type { ReminderHost } from "./reminders";
 import { archiveClient } from "../archive/client";
 import type { ArchiveHost } from "../archive/types";
 import {
@@ -9,7 +10,7 @@ import { publicationRefusal } from "../developer/traffic";
 import { avatarSource } from "../../shared/avatar-source";
 import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
-import type { KitRecord } from "../channel-templates/model";
+import type { KitRecord, PayloadRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import {
   communityGitRepository,
@@ -28,6 +29,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
+  type SidebarSectionRemover,
   type SidebarStarMutator,
   type SidebarSortMutator,
   type SidebarDecoder,
@@ -110,6 +112,8 @@ export interface ReadTransport {
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly writeSidebarSort?: SidebarSortMutator;
   readonly readState?: ReadStateHost;
+  /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
+  readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
@@ -133,6 +137,7 @@ export interface ReadTransport {
   readonly writeSidebarMute?: SidebarMuteMutator;
   /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  readonly removeSidebarSection?: SidebarSectionRemover;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -400,6 +405,7 @@ export async function connectBrokerTransport(
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     sidebarPreferenceWrites?: boolean;
+    sidebarSectionRemoval?: boolean;
     sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -715,7 +721,10 @@ export async function connectBrokerTransport(
     ...(session.channelKit
       ? {
           channelKit: {
-            async prepare(record: KitRecord, signal: AbortSignal) {
+            async prepare(
+              record: KitRecord | PayloadRecord,
+              signal: AbortSignal,
+            ) {
               const response = await fetch(`${endpoint}/channel-kit-prepare`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -730,7 +739,7 @@ export async function connectBrokerTransport(
               const result = await response.json();
               if (
                 typeof result.content !== "string" ||
-                result.content.length > 24 * 1024
+                result.content.length > 64 * 1024
               )
                 throw new Error("Invalid encrypted recipe");
               return result.content as string;
@@ -893,6 +902,34 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.identityArchives === true
       ? { identityArchive: routeWriter("identity-archive") }
+      : {}),
+    ...(session.sidebarSectionRemoval
+      ? {
+          async removeSidebarSection(sectionId: string, signal: AbortSignal) {
+            const response = await fetch(
+              `${endpoint}/sidebar-section-removal`,
+              {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sectionId }),
+                signal,
+              },
+            );
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            const value = await response.json();
+            const { sections, assignments } = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return { sections, assignments };
+          },
+        }
       : {}),
     ...(session.sidebarPreferenceWrites
       ? {

@@ -10,6 +10,7 @@ test.use({ historyCounts: { alpha: 1, beta: 1 } });
 test("entity links open real project content, history and responsive controls", async ({
   page,
   app,
+  browserName,
 }) => {
   const key = new Uint8Array(32).fill(17);
   const owner = getPublicKey(key);
@@ -162,6 +163,10 @@ test("entity links open real project content, history and responsive controls", 
   ).toBeFocused();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.getByRole("tab", { name: "Overview", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Reader", exact: true }),
+    ).toBeFocused();
     await page.getByRole("tab", { name: "Files", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "src/reader.ts" }),
@@ -171,6 +176,51 @@ test("entity links open real project content, history and responsive controls", 
         .locator(".projects-page")
         .evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
+    // The shared list owns horizontal scrolling. A second scroll container on
+    // the strip would clip its focus-ring reservation and let tabs drift upward.
+    const list = page.getByRole("tablist", { name: "Project sections" });
+    const strip = list.locator("..");
+    await expect
+      .poll(() =>
+        strip.evaluate((element) => {
+          element.scrollTop = 4;
+          return element.scrollTop;
+        }),
+      )
+      .toBe(0);
+    const files = list.getByRole("tab", { name: "Files", exact: true });
+    const tabKey =
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Alt+Tab"
+        : "Tab";
+    // Navigation focuses the destination heading after its data has loaded.
+    // Finish that handoff before deliberately moving keyboard focus to the tabs.
+    await expect(
+      page.getByRole("heading", { name: "Reader", exact: true }),
+    ).toBeFocused();
+    await files.focus();
+    await page.keyboard.press(`Shift+${tabKey}`);
+    await page.keyboard.press(tabKey);
+    await expect(files).toBeFocused();
+    await expect(files).toHaveCSS("outline-style", "solid");
+    await expect(files).toHaveCSS("outline-width", "2px");
+    await expect(files).toHaveCSS("outline-offset", "2px");
+    await expect
+      .poll(() =>
+        files.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const list = element.closest('[role="tablist"]');
+          const bounds = list.getBoundingClientRect();
+          return (
+            box.top - 4 >= bounds.top &&
+            box.bottom + 4 <= bounds.bottom &&
+            box.left - 4 >= bounds.left &&
+            box.right + 4 <= bounds.right &&
+            list.parentElement.getBoundingClientRect().height === box.height
+          );
+        }),
+      )
+      .toBe(true);
     await page.screenshot({
       path: test.info().outputPath(`entity-${width}.png`),
     });

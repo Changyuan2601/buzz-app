@@ -537,6 +537,7 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         "buzz.agents",
         "buzz.emoji",
         "buzz.mentions",
+        "buzz.voice-notes",
         "buzz.links",
     ] {
         assert!(
@@ -664,6 +665,10 @@ fn channels_is_required_even_with_saved_disabled_settings() {
 fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
     let (_root, manager, _source) = fixture();
     let catalog = manager.catalog().unwrap();
+    assert!(catalog
+        .plugins
+        .iter()
+        .any(|plugin| plugin.manifest.id == "buzz.me"));
     for plugin in &catalog.plugins {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(

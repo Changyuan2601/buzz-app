@@ -1,19 +1,42 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
+import { activityTarget } from "../agents/activity-target";
 import { TypingIndicator } from "./TypingIndicator";
 
 afterEach(cleanup);
 const agent = "a".repeat(64),
-  human = "b".repeat(64);
+  human = "b".repeat(64),
+  other = "c".repeat(64);
+const root = "d".repeat(64),
+  secondRoot = "e".repeat(64);
+type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
 function fixture() {
   const listeners = new Set<() => void>();
   let typing: readonly TypingEntry[] = [];
-  let activity = {
-    typing: [] as { agent: string; channelId: string; threadRootId?: string }[],
+  let activity: Snapshot = {
+    status: "listening",
+    typing: [],
+    records: [],
+    turns: [],
+    trimmed: 0,
+    history: "ready",
+    hasOlder: false,
+    historyOlder: false,
+    historySkipped: 0,
+    historyAgents: [],
+    capture: "off",
   };
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
@@ -23,106 +46,439 @@ function fixture() {
   };
   const profiles = new Map([
     [agent, { name: "Agent" }],
-    [human, { name: "Human" }],
+    [human, { name: "Human", isAgent: true }],
+    [other, { name: "Other" }],
   ]);
+  const library = { identities: [{ pubkey: agent }, { pubkey: other }] };
+  const rows = [
+    { id: root, content: "First task" },
+    { id: secondRoot, content: "Second task" },
+  ];
+  const ensure = vi.fn();
   const session = {
     typing: { snapshot: () => typing, subscribe },
     agentActivity: { snapshot: () => activity, subscribe },
-    profiles: { snapshot: () => profiles, subscribe },
+    profiles: { snapshot: () => profiles, subscribe, ensure },
+    agentChoices: { snapshot: () => library, subscribe },
+    channels: {
+      window: () => ({ rows }),
+      subscribeWindow: (_id: string, fn: () => void) => subscribe(fn),
+      ensure,
+    },
   } as unknown as RelaySession;
   return {
     session,
-    update(entries: readonly TypingEntry[], agents: typeof activity.typing) {
+    ensure,
+    update(entries: readonly TypingEntry[], patch: Partial<Snapshot> = {}) {
       act(() => {
         typing = entries;
-        activity = { typing: agents };
+        activity = { ...activity, ...patch };
         for (const listener of listeners) listener();
       });
     },
   };
 }
-it("omits only identities represented by available exact-thread activity rows and restores public typing", () => {
-  const f = fixture();
-  const canOpen = vi.fn(() => true);
+const entry = (
+  pubkey = agent,
+  threadRootId: string | undefined = root,
+): TypingEntry => ({ pubkey, channelId: "channel", threadRootId });
+
+it("opens one avatar by hover, with separate thread and activity actions and keyboard focus return", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry()]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      openActivity={open}
+      canOpenActivity={() => true}
+    />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  expect(trigger).toHaveTextContent("A");
+  expect(trigger).not.toHaveTextContent("Working");
+  await user.hover(trigger);
+  let dialog = await screen.findByRole("dialog", { name: "Working now" });
+  expect(within(dialog).getByText("Thread · First task")).toBeVisible();
+  await user.click(
+    within(dialog).getByRole("button", { name: "View Agent activity" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel", root));
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  dialog = await screen.findByRole("dialog", { name: "Working now" });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Open thread for Agent" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(
+    `buzz://message?channel=channel&id=${root}&thread=${root}`,
+  );
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("dialog");
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  expect(f.ensure).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{ title: "unknown", kind: "__proto__" }, "Running a tool"],
+  [{ title: "unknown", kind: "constructor" }, "Running a tool"],
+  [{ title: "__proto__", kind: "read" }, "Reading"],
+  [{ title: "constructor", kind: "read" }, "Reading"],
+] as const)(
+  "renders the Working now chooser for inherited tool keys: %j",
+  async (tool, label) => {
+    const f = fixture(),
+      user = userEvent.setup();
+    const now = Date.parse("2026-10-08T12:00:00Z");
+    f.update([], {
+      turns: [
+        {
+          agent,
+          channelId: "channel",
+          turnId: "turn",
+          state: "working",
+          timestamp: now,
+        },
+      ],
+      records: [
+        {
+          id: "f".repeat(64),
+          agent,
+          createdAt: now / 1000,
+          receivedAt: now,
+          historical: false,
+          kind: "acp_read",
+          channelIds: ["channel"],
+          plaintext: JSON.stringify({
+            kind: "acp_read",
+            channelId: "channel",
+            turnId: "turn",
+            timestamp: new Date(now).toISOString(),
+            payload: {
+              method: "session/update",
+              params: {
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call",
+                  status: "in_progress",
+                  rawInput: { path: "/private/report.txt" },
+                  ...tool,
+                },
+              },
+            },
+          }),
+        },
+      ],
+    });
+    render(<TypingIndicator session={f.session} channelId="channel" />);
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Working now" });
+    expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
+    expect(dialog).not.toHaveTextContent("report.txt");
+  },
+);
+
+it("shows stable agent ordering, scopes humans exactly, and clears after work stops", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
   const props = {
     session: f.session,
     channelId: "channel",
-    threadRootId: "root",
-    canOpenActivity: canOpen,
+    openActivity: () => true,
+    canOpenActivity: () => true,
   };
+  f.update([entry(other, secondRoot), entry(agent), entry(human)]);
   const view = render(<TypingIndicator {...props} />);
-  expect(screen.queryByRole("status")).toBeNull();
-  const entries = [agent, human].map((pubkey) => ({
-    pubkey,
-    channelId: "channel",
-    threadRootId: "root",
-  }));
-  f.update(entries, [{ agent, channelId: "channel", threadRootId: "other" }]);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Agent, Human are typing",
-  );
-  f.update(entries, [{ agent, channelId: "other", threadRootId: "root" }]);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Agent, Human are typing",
-  );
-  f.update(entries, [{ agent, channelId: "channel", threadRootId: "root" }]);
+  expect(screen.getByRole("status")).not.toHaveTextContent("Human is typing");
+  const trigger = screen.getByRole("button", {
+    name: "Activity: 2 agents working",
+  });
+  await user.hover(trigger);
+  const dialog = await screen.findByRole("dialog");
+  const labels = () =>
+    within(dialog)
+      .getAllByRole("button", { name: /^Open thread/ })
+      .map((el) => el.getAttribute("aria-label"));
+  expect(labels()).toEqual(["Open thread for Agent", "Open thread for Other"]);
+  f.update([entry(human), entry(agent), entry(other, secondRoot)]);
+  expect(labels()).toEqual(["Open thread for Agent", "Open thread for Other"]);
+  view.rerender(<TypingIndicator {...props} threadRootId={root} />);
   expect(screen.getByRole("status")).toHaveTextContent("Human is typing");
-  f.update(entries.slice(0, 1), [
-    { agent, channelId: "channel", threadRootId: "root" },
-  ]);
-  expect(screen.queryByRole("status")).toBeNull();
-  view.rerender(<TypingIndicator {...props} canOpenActivity={() => false} />);
-  expect(screen.getByRole("status")).toHaveTextContent("Agent is typing");
-  view.rerender(<TypingIndicator {...props} />);
-  f.update(entries.slice(0, 1), []); // Plugin disabled: public activity is still useful.
-  expect(screen.getByRole("status")).toHaveTextContent("Agent is typing");
-  view.rerender(<TypingIndicator {...props} threadRootId="other" />);
-  expect(screen.queryByRole("status")).toBeNull();
-  view.rerender(<TypingIndicator {...props} channelId="other" />);
-  expect(screen.queryByRole("status")).toBeNull();
-  f.update([], []);
-  view.rerender(<TypingIndicator {...props} />);
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  ).toBeVisible();
+  f.update([]);
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
-it("deduplicates main-channel agents while retaining human typing and unavailable fallback", () => {
-  const f = fixture();
+
+it("keeps a non-navigable status when the plugin is unavailable and does not close after rejected navigation", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => false);
+  f.update([entry()], { status: "disabled" });
   const view = render(
-    <TypingIndicator
-      session={f.session}
-      channelId="channel"
-      canOpenActivity={() => true}
-    />,
+    <TypingIndicator session={f.session} channelId="channel" />,
   );
-  f.update(
-    [{ pubkey: agent, channelId: "channel" }],
-    [{ agent, channelId: "channel" }],
-  );
-  expect(screen.queryByRole("status")).toBeNull();
-  f.update(
-    [
-      { pubkey: agent, channelId: "channel" },
-      { pubkey: human, channelId: "channel" },
-    ],
-    [{ agent, channelId: "channel" }],
-  );
-  expect(screen.getByRole("status")).toHaveTextContent("Human is typing");
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  await user.click(trigger);
+  let dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("Working")).toBeVisible();
+  expect(within(dialog).queryByRole("button")).toBeNull();
   view.rerender(
     <TypingIndicator
       session={f.session}
       channelId="channel"
+      openActivity={open}
       canOpenActivity={() => false}
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Agent, Human are typing",
+  dialog = screen.getByRole("dialog");
+  expect(
+    within(dialog).queryByRole("button", { name: "View Agent activity" }),
+  ).toBeNull();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Open thread for Agent" }),
   );
-  view.rerender(
+  expect(screen.getByRole("dialog")).toBeVisible();
+});
+
+it("never chooses one thread from simultaneous work and deduplicates public and owner evidence", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry(), entry(agent, secondRoot)], {
+    typing: [
+      {
+        agent,
+        channelId: "channel",
+        threadRootId: root,
+        working: true,
+        startedAt: 1,
+        timestamp: 1,
+        expiresAt: 100,
+      },
+    ],
+  });
+  render(
     <TypingIndicator
       session={f.session}
       channelId="channel"
+      openActivity={open}
       canOpenActivity={() => true}
     />,
   );
-  f.update([{ pubkey: agent, channelId: "channel" }], []);
-  expect(screen.getByRole("status")).toHaveTextContent("Agent is typing");
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getAllByRole("button", { name: /^Open conversation/ }),
+  ).toHaveLength(1);
+  await user.click(
+    within(dialog).getByRole("button", { name: "View Agent activity" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+});
+
+it("retains one explicit live region from idle through work and back to idle", () => {
+  const f = fixture();
+  render(<TypingIndicator session={f.session} channelId="channel" />);
+  const status = screen.getByRole("status");
+  expect(status).toBeEmptyDOMElement();
+  expect(status).toHaveClass("sr-only");
+  f.update([entry()]);
+  expect(screen.getByRole("status")).toBe(status);
+  expect(status).toHaveTextContent("Agent is working");
+  expect(within(status).queryByRole("button")).toBeNull();
+  f.update([]);
+  expect(screen.getByRole("status")).toBe(status);
+  expect(status).toBeEmptyDOMElement();
+  expect(screen.queryByRole("button")).toBeNull();
+});
+
+it("keeps another owner's self-declared agent as ordinary typing without activity actions", () => {
+  const f = fixture();
+  f.update([{ pubkey: human, channelId: "channel" }]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      openActivity={() => true}
+      canOpenActivity={() => true}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Human is typing");
+  expect(screen.queryByRole("button")).toBeNull();
+});
+
+it.each([null, undefined])(
+  "opens channel activity and conversation for root %s",
+  async (threadRootId) => {
+    const f = fixture(),
+      user = userEvent.setup(),
+      open = vi.fn(() => true);
+    f.update(
+      [],
+      threadRootId === null
+        ? {
+            typing: [
+              {
+                agent,
+                channelId: "channel",
+                threadRootId: undefined,
+                working: true,
+                startedAt: 1,
+                timestamp: 1,
+                expiresAt: 100,
+              },
+            ],
+          }
+        : {
+            turns: [
+              {
+                agent,
+                channelId: "channel",
+                turnId: "unknown",
+                state: "working",
+                timestamp: 1,
+              },
+            ],
+          },
+    );
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        openActivity={open}
+        canOpenActivity={() => true}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "View Agent activity" }),
+    );
+    expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Open conversation for Agent" }),
+    );
+    expect(open).toHaveBeenLastCalledWith("buzz://channel/channel");
+  },
+);
+
+it("opens the sole known conversation without attributing unknown telemetry to that thread", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry()], {
+    turns: [
+      {
+        agent,
+        channelId: "channel",
+        turnId: "unconfirmed",
+        state: "working",
+        timestamp: 1,
+      },
+    ],
+  });
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      openActivity={open}
+      canOpenActivity={() => true}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  expect(screen.getByText(/Work with unconfirmed thread/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "View Agent activity" }));
+  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Open thread for Agent" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(
+    `buzz://message?channel=channel&id=${root}&thread=${root}`,
+  );
+});
+
+it.each(["hover", "keyboard"])(
+  "consumes %s popup Escape before the owning panel and preserves IME",
+  async (mode) => {
+    const f = fixture(),
+      user = userEvent.setup(),
+      panelKey = vi.fn();
+    f.update([entry()]);
+    render(
+      <section aria-label="Thread" onKeyDown={panelKey}>
+        <input aria-label="Composer" />
+        <TypingIndicator session={f.session} channelId="channel" />
+      </section>,
+    );
+    const input = screen.getByRole("textbox");
+    const trigger = screen.getByRole("button", {
+      name: "Activity: Agent working",
+    });
+    input.focus();
+    if (mode === "hover") await user.hover(trigger);
+    else {
+      trigger.focus();
+      await user.keyboard("{Enter}");
+    }
+    await screen.findByRole("dialog");
+    panelKey.mockClear();
+    fireEvent.keyDown(input, { key: "Escape", isComposing: true });
+    expect(screen.getByRole("dialog")).toBeVisible();
+    fireEvent.keyDown(input, { key: "Escape", keyCode: 229 });
+    expect(screen.getByRole("dialog")).toBeVisible();
+    panelKey.mockClear();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(panelKey).not.toHaveBeenCalled();
+  },
+);
+
+it("hands navigation a retained trigger instead of the disposable popup action", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const captured: (Element | null)[] = [];
+  const open = vi.fn(() => {
+    captured.push(document.activeElement);
+    return true;
+  });
+  f.update([entry()]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      openActivity={open}
+      canOpenActivity={() => true}
+    />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  await user.click(trigger);
+  await user.click(screen.getByRole("button", { name: "View Agent activity" }));
+  expect(captured).toEqual([trigger]);
+  expect(captured[0]).toBeInTheDocument();
 });

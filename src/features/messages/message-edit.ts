@@ -10,7 +10,7 @@ export function messageEditText(
   profiles: ReadonlyMap<string, Profile>,
   agents: AgentLibrary["identities"] = [],
 ) {
-  const { attachmentContentRemoved: _removed, ...source } = row;
+  const { attachmentSeams: _seams, ...source } = row;
   return profileMentionParts(
     { ...source, content: row.sourceContent ?? row.content },
     profiles,

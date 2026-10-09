@@ -55,6 +55,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
+import { AgentDelete } from "../../features/agents2/AgentManage";
+import { useAgent2, useChannelChoices } from "../../features/agents2/react";
+import type { Agents2 } from "../../features/agents2/service";
+import { agentSections } from "../../features/agents2/tabs";
 
 const emptyState: AgentControlState = {
   status: "unavailable",
@@ -71,6 +75,7 @@ export function ProfilePanel({
   context,
   navigation,
   control,
+  agents2,
   instanceId,
   close,
   refreshControl = true,
@@ -78,6 +83,8 @@ export function ProfilePanel({
   relay: RelayData;
   navigation?: Navigation;
   control?: AgentControl;
+  /** Agents2 agents show their type's tabs in place of harness ones. */
+  agents2?: Agents2;
   instanceId?: string | undefined;
   /** An enclosing exact-instance panel already owns status refresh. */
   refreshControl?: boolean;
@@ -98,6 +105,7 @@ export function ProfilePanel({
       context={context}
       navigation={navigation}
       control={control}
+      agents2={agents2}
       scope={connection.scope}
       viewer={connection.viewer}
       close={close}
@@ -122,11 +130,13 @@ function ProfileDetails({
   context,
   navigation,
   control,
+  agents2,
   scope,
   viewer,
   instanceId,
   close,
 }: {
+  agents2: Agents2 | undefined;
   agentHint: boolean;
   instanceId?: string | undefined;
   refreshControl: boolean;
@@ -165,9 +175,19 @@ function ProfileDetails({
     control?.snapshot ?? emptyControlSnapshot,
     emptyControlSnapshot,
   );
-  const [tab, setTab] = useState<"info" | "runtime" | "channels" | "memories">(
-    "info",
+  const [tab, setTab] = useState<
+    "info" | "runtime" | "channels" | "memories" | `agent:${string}`
+  >("info");
+  // An Agents2 agent's sections come from its type and the app, not the harness.
+  const plugin = useAgent2(agents2, pubkey);
+  const channelChoices = useChannelChoices(
+    plugin ? session.channels : undefined,
   );
+  const sections =
+    plugin && agents2
+      ? agentSections({ agents2, ...plugin, channels: channelChoices })
+      : [];
+  const section = sections.find((item) => item.value === tab);
   const tabHost = usePanelTabHost();
   const tabbed = !!tabHost;
   const region = useRef<HTMLElement>(null);
@@ -237,7 +257,9 @@ function ProfileDetails({
     if (logTarget && !logAuthorized) setLogTarget(null);
   }, [logTarget, logAuthorized]);
   const selectedTab =
-    (tab === "memories" && !isOwner) || (tab === "runtime" && !canViewRuntime)
+    (tab === "memories" && (!isOwner || plugin)) ||
+    (tab === "runtime" && !canViewRuntime) ||
+    (tab.startsWith("agent:") && !section)
       ? "info"
       : tab;
   useEffect(() => {
@@ -400,11 +422,12 @@ function ProfileDetails({
           onValueChange={setTab}
           items={[
             { value: "info", label: "Info" },
+            ...sections.map(({ value, label }) => ({ value, label })),
             ...(canViewRuntime
               ? [{ value: "runtime" as const, label: "Runtime" }]
               : []),
             { value: "channels", label: "Channels" },
-            ...(isOwner
+            ...(isOwner && !plugin
               ? [{ value: "memories" as const, label: "Memories" }]
               : []),
           ]}
@@ -412,7 +435,9 @@ function ProfileDetails({
           variant="panel"
           renderPanel={(selected) => (
             <div className={styles.tabContent}>
-              {selected === "info" ? (
+              {selected.startsWith("agent:") ? (
+                sections.find((item) => item.value === selected)?.render()
+              ) : selected === "info" ? (
                 <>
                   <UserStatusDisplay session={session} userId={pubkey} />
                   {canMessage && (
@@ -456,6 +481,15 @@ function ProfileDetails({
                       running={runtimeAgent?.status === "running"}
                       onDeleted={close}
                     />
+                  )}
+                  {plugin && agents2 && (
+                    <div>
+                      <AgentDelete
+                        agents2={agents2}
+                        agent={plugin.agent}
+                        onRemoved={close}
+                      />
+                    </div>
                   )}
                   {knownAgent && (
                     <ProfileActivity

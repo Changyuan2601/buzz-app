@@ -1,7 +1,7 @@
 name: CI
 
 on:
-  # Manual dispatch runs only Windows; automatic PR/main checks stay on Linux.
+  # Manual dispatch runs only Windows; automatic checks include macOS recording.
   workflow_dispatch:
   pull_request:
   push:
@@ -252,10 +252,36 @@ jobs:
           path: test-results/browser
           retention-days: 7
 
+  media_recorder:
+    if: github.event_name != 'workflow_dispatch'
+    name: WebKit recording (macOS)
+    # Playwright disables ENABLE_MEDIA_RECORDER in its GTK/WPE builds.
+    # Keep the real recorder and every assertion on the supported WebKit host.
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install pinned WebKit
+        run: ./bin/pnpm exec playwright install webkit
+      - name: Recording journeys
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="WebKit recording (macOS)" -- ./bin/pnpm test:browser --project webkit --grep @media-recorder --no-deps --reporter=list,json
+      - name: Recording evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-media-recorder-webkit
+          path: test-results/browser
+          retention-days: 7
+
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
     if: always() && github.event_name != 'workflow_dispatch'
-    needs: [javascript, native, measurements, browser_fixture, browser]
+    needs: [javascript, native, measurements, browser_fixture, browser, media_recorder]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -266,7 +292,8 @@ jobs:
           MEASUREMENTS: ${{ needs.measurements.result }}
           FIXTURE: ${{ needs.browser_fixture.result }}
           BROWSER: ${{ needs.browser.result }}
+          MEDIA_RECORDER: ${{ needs.media_recorder.result }}
         run: |
-          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER"; do
+          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER"; do
             test "$result" = success || exit 1
           done

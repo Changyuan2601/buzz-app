@@ -11,7 +11,7 @@
   ],
   "goose": {
     "repository": "https://github.com/aaif-goose/goose.git",
-    "revision": "4dea9b483efbd2541d43500b8ed3c044c65e6d2f",
+    "revision": "01eb01aecea4a1a745c276195c2504a42cd574e2",
     "profile": "lean",
     "features": "native-tls,system-keyring,online-model-meta,openssl/vendored"
   },

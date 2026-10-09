@@ -1,7 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { createChannelKit } from "./capability";
-import { coordinate, KIT_TAG, type KitRecord } from "./model";
+import {
+  coordinate,
+  KIT_TAG,
+  type KitRecord,
+  type PayloadRecord,
+} from "./model";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { ReadFilter, RelayEvent } from "../relay/events";
@@ -58,8 +63,9 @@ function fixture() {
   const delivered = vi.fn(async () => {});
   const canWrite = vi.fn(() => true);
   const host = {
-    prepare: vi.fn(async (value: KitRecord, _signal: AbortSignal) =>
-      JSON.stringify(value),
+    prepare: vi.fn(
+      async (value: KitRecord | PayloadRecord, _signal: AbortSignal) =>
+        JSON.stringify(value),
     ),
     decode: vi.fn(async (rows: readonly RelayEvent[]) =>
       rows.map((event) => ({
@@ -719,4 +725,143 @@ it("fences Canvas history after access loss or session retirement, including dur
   await expect(f.canvas.history(channel)).rejects.toMatchObject({
     name: "AbortError",
   });
+});
+
+it("publishes payloads before a manifest and discovers only recipes", async () => {
+  const f = fixture();
+  const team = {
+    type: "team" as const,
+    id: "portable",
+    name: "Portable",
+    agents: [keypair().pubkey],
+  };
+  const snapshot = {
+    format: "buzz-team-snapshot" as const,
+    version: 1 as const,
+    team: {
+      name: team.name,
+      description: "Description",
+      instructions: "TEAM".repeat(12000),
+    },
+    members: [
+      {
+        format: "buzz-agent-snapshot" as const,
+        version: 1 as const,
+        definition: { name: "Agent", systemPrompt: "INDIVIDUAL" },
+        profile: { displayName: "Agent" },
+        memory: { level: "none" as const, entries: [] },
+      },
+    ],
+  };
+  const id = await f.capability.savePortable(
+    team,
+    snapshot,
+    undefined,
+    crypto.randomUUID(),
+  );
+  expect(f.events.at(-1)?.id).toBe(id);
+  expect(f.events.length).toBeGreaterThan(2);
+  expect(
+    f.events
+      .slice(0, -1)
+      .every((event) =>
+        event.tags.some(
+          ([tag, value]) => tag === "t" && value === "buzz-team-payload-v1",
+        ),
+      ),
+  ).toBe(true);
+  expect(f.capability.snapshot().entries).toHaveLength(1);
+  const saved = f.capability.snapshot().entries[0]?.record.value;
+  if (saved?.type !== "team") throw new Error("Missing portable team");
+  expect(await f.capability.loadTeam(saved)).toEqual(snapshot);
+  // The old reader's exact v1 query cannot see/rewrite portable manifest records.
+  expect(
+    f.events.filter((event) =>
+      matchesEvent(event, { "#t": [KIT_TAG], limit: 500 }),
+    ),
+  ).toHaveLength(0);
+});
+
+it("resumes interrupted payload publication without replacing the previous team", async () => {
+  const f = fixture();
+  const team = {
+    type: "team" as const,
+    id: "portable",
+    name: "Portable",
+    agents: [keypair().pubkey],
+  };
+  const snapshot = {
+    format: "buzz-team-snapshot" as const,
+    version: 1 as const,
+    team: { name: team.name, instructions: "TEAM".repeat(12000) },
+    members: [
+      {
+        format: "buzz-agent-snapshot" as const,
+        version: 1 as const,
+        definition: { name: "Agent" },
+        profile: { displayName: "Agent" },
+        memory: { level: "none" as const, entries: [] },
+      },
+    ],
+  };
+  const oldRevision = crypto.randomUUID();
+  const oldId = await f.capability.savePortable(
+    team,
+    snapshot,
+    undefined,
+    oldRevision,
+  );
+  const nextRevision = crypto.randomUUID();
+  const prepare = f.host.prepare.getMockImplementation();
+  if (!prepare) throw new Error("Missing fixture prepare");
+  let fail = true;
+  f.host.prepare.mockImplementation(async (record, signal) => {
+    if (
+      fail &&
+      record.value.type === "team-payload" &&
+      record.value.index === 1
+    )
+      throw new Error("Fixture interrupted upload");
+    return prepare(record, signal);
+  });
+  await expect(
+    f.capability.savePortable(
+      team,
+      { ...snapshot, team: { ...snapshot.team, description: "Next" } },
+      oldId,
+      nextRevision,
+    ),
+  ).rejects.toThrow("interrupted");
+  expect(f.capability.snapshot().entries[0]?.eventId).toBe(oldId);
+  fail = false;
+  await f.capability.savePortable(
+    team,
+    { ...snapshot, team: { ...snapshot.team, description: "Next" } },
+    oldId,
+    nextRevision,
+  );
+  const firstChunkCoordinates = f.events.filter((event) => {
+    const record = JSON.parse(event.content);
+    return (
+      record.value.type === "team-payload" &&
+      record.value.revision === nextRevision &&
+      record.value.index === 0
+    );
+  });
+  expect(firstChunkCoordinates).toHaveLength(1);
+  expect(f.capability.snapshot().entries).toHaveLength(1);
+});
+
+it("keeps private catalog refresh and saves independent of native bindings", async () => {
+  const f = fixture();
+  const id = await f.capability.save(record.value, undefined);
+  await f.capability.refresh();
+  expect(f.capability.snapshot().status).toBe("ready");
+  expect(f.capability.snapshot().entries[0]?.eventId).toBe(id);
+  await expect(
+    f.capability.save(
+      { type: "team", id: "team", name: "Updated", agents: [] },
+      id,
+    ),
+  ).resolves.toBeTypeOf("string");
 });

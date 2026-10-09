@@ -1,6 +1,22 @@
+import { pendingSessionDraft } from "../../features/sessions/pending-start";
+import { RenameSession } from "../../features/sessions/RenameSession";
+import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import {
+  DotsThreeIcon,
+  GearIcon,
+  PencilSimpleIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -22,11 +38,10 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { SessionsWorkspace } from "./SessionsWorkspace";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
-  NewSessionView,
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
@@ -88,11 +103,25 @@ function LiveSessions({
     const saved = readView<unknown>(scope, "sessions:selected", "");
     return typeof saved === "string" ? saved : "";
   });
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [newSection, setNewSection] = useState<string>();
+  const pendingDraft = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => (selected ? pendingSessionDraft(scope, selected) : undefined),
+  );
   const selectedSession = list.channels.find(
-    (item) => item.id === selected && item.channelType === "session",
+    (item) =>
+      item.id === selected &&
+      item.channelType === "session" &&
+      !item.parentChannelId,
   );
   const sessions = list.channels
-    .filter((item) => item.channelType === "session" && !item.archived)
+    .filter(
+      (item) =>
+        item.channelType === "session" &&
+        !item.archived &&
+        !item.parentChannelId,
+    )
     .sort(
       (a, b) =>
         (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
@@ -103,6 +132,8 @@ function LiveSessions({
   };
   return (
     <SessionsWorkspace
+      session={session}
+      scope={scope}
       sessions={sessions.map((item) => {
         const parent = list.channels.find(
           (candidate) => candidate.id === item.parentChannelId,
@@ -127,7 +158,9 @@ function LiveSessions({
       })}
       selected={selected}
       onSelect={select}
-      onNew={() => {
+      onNew={(sectionId) => {
+        setFocusRequest((value) => value + 1);
+        setNewSection(sectionId);
         select("");
       }}
       listStatus={
@@ -146,7 +179,7 @@ function LiveSessions({
         ) : undefined
       }
     >
-      {selectedSession ? (
+      {selectedSession && !pendingDraft ? (
         <SessionWork
           key={selectedSession.id}
           session={session}
@@ -161,14 +194,21 @@ function LiveSessions({
           }
         />
       ) : (
-        <NewSessionView>
-          <NewSessionComposer
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            onStarted={select}
-          />
-        </NewSessionView>
+        <NewSessionComposer
+          standalone
+          focusRequest={focusRequest}
+          key={pendingDraft ?? newSection ?? "unfiled"}
+          resumeDraftKey={pendingDraft}
+          sectionId={
+            pendingDraft?.startsWith("sessions:section:")
+              ? pendingDraft.slice("sessions:section:".length)
+              : newSection
+          }
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          onStarted={select}
+        />
       )}
     </SessionsWorkspace>
   );
@@ -191,6 +231,8 @@ function SessionWork({
 }) {
   const window = useChannelWindow(session.channels, channel.id);
   const [sent, setSent] = useState<string>();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const targetForLink = useCallback(
     (url: string) => sessionLinkTarget(url, scope, session.viewer),
     [scope, session.viewer],
@@ -216,7 +258,61 @@ function SessionWork({
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
     >
-      <SessionHeading channel={channel} parentName={parentName} />
+      <SessionHeading channel={channel} parentName={parentName}>
+        <MenuRoot>
+          <MenuTrigger
+            render={(props) => (
+              <IconButton
+                {...props}
+                size="toolbar"
+                aria-label="Session actions"
+                title="Session actions"
+                icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+              />
+            )}
+          />
+          <MenuPopup aria-label="Session actions" align="end">
+            <MenuItem
+              disabled={
+                !!channel.readOnly || !session.channelDetails?.available
+              }
+              onClick={() => setRenameOpen(true)}
+            >
+              <MenuIcon>
+                <PencilSimpleIcon size={16} />
+              </MenuIcon>
+              Rename
+            </MenuItem>
+            <MenuItem
+              disabled={!!channel.readOnly || !session.canvas.available}
+              onClick={() => setSettingsOpen(true)}
+            >
+              <MenuIcon>
+                <GearIcon size={16} />
+              </MenuIcon>
+              Session settings…
+            </MenuItem>
+          </MenuPopup>
+        </MenuRoot>
+      </SessionHeading>
+      {renameOpen && (
+        <RenameSession
+          key={channel.id}
+          session={session}
+          id={channel.id}
+          name={channel.name}
+          close={() => setRenameOpen(false)}
+        />
+      )}
+      {settingsOpen && (
+        <WorkspaceSettings
+          key={channel.id}
+          session={session}
+          scope={scope}
+          target={{ kind: "session", id: channel.id, name: channel.name }}
+          close={() => setSettingsOpen(false)}
+        />
+      )}
       <SessionColumn>
         <MessageManagementStatus />
         <div className={styles.timeline}>
@@ -236,6 +332,7 @@ function SessionWork({
             </p>
           ) : (
             <ChannelTimeline
+              historyControl="scroll"
               extensions={extensions}
               queries={session}
               viewer={session.viewer}

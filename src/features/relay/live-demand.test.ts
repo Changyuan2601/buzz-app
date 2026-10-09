@@ -1251,10 +1251,13 @@ it.each([
       interrupted.respond([roster(h.relay, "stale", [h.viewer.pubkey])]);
       await flush();
       expect(h.owner.session.channels.get?.("stale")).toBeUndefined();
-      expect(h.owner.session.live.snapshot().roster.state).toBe("deferred");
-      expect(h.wire.pending).toHaveLength(0);
-      h.owner.session.live.retry();
-      await flush();
+      // Revocation owes a pass by itself; cache clear waits for a retry.
+      if (interruption === "cache clear") {
+        expect(h.owner.session.live.snapshot().roster.state).toBe("deferred");
+        expect(h.wire.pending).toHaveLength(0);
+        h.owner.session.live.retry();
+        await flush();
+      }
       const retry = h.wire.next();
       expect(retry.filters[0]?.consistency).toBe("strong");
       const granted = [membership, metadata(h.relay, "new", "New")];

@@ -1,6 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { foldMessages } from "./fold";
+import { deletionApplies, foldMessages } from "./fold";
 import {
   readJournal,
   newReadJournal,
@@ -278,6 +278,86 @@ it("unread repair observes history without seeding the channel window or consumi
     before_id: rows[40]?.id,
     limit: 20,
   });
+});
+
+it("owner deletion reconciles agent message unread evidence but keeps agent reactions", async () => {
+  const h = setup({}, true, undefined, true);
+  h.grant("room");
+  const agent = keypair();
+  const attributed = signed(h.relay, {
+    kind: 9,
+    content: "Agent unread message",
+    created_at: 11,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "room"],
+    ],
+  });
+  const olderMessage = message(h.alice, "room", "Older message", 10);
+  const agentReaction = signed(h.relay, {
+    kind: 7,
+    content: "+",
+    created_at: 12,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "room"],
+      ["e", olderMessage.id],
+    ],
+  });
+  h.emit([olderMessage, attributed]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    latestMessage: { id: attributed.id, createdAt: 11 },
+  });
+
+  // The confirmed owner request carries a standard message-kind hint. Its
+  // verified target no longer contributes to unread count or latest evidence.
+  const ownerDeletion = signed(h.viewer, {
+    kind: 5,
+    content: "",
+    created_at: 13,
+    tags: [
+      ["h", "room"],
+      ["e", attributed.id],
+      ["k", "9"],
+    ],
+  });
+  h.emit([ownerDeletion]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 1,
+    latestMessage: { id: olderMessage.id, createdAt: 10 },
+  });
+
+  const laterMessage = message(h.alice, "room", "Later message", 14);
+  h.emit([agentReaction, laterMessage]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    latestMessage: { id: laterMessage.id, createdAt: 14 },
+  });
+
+  const reactionOwnerDelete = signed(h.viewer, {
+    kind: 5,
+    content: "",
+    created_at: 15,
+    tags: [
+      ["h", "room"],
+      ["e", agentReaction.id],
+      ["k", "7"],
+    ],
+  });
+  expect(
+    deletionApplies(reactionOwnerDelete, agentReaction, h.relay.pubkey),
+  ).toBe(false);
+  const rows = foldMessages(
+    "room",
+    h.relay.pubkey,
+    [olderMessage, agentReaction, reactionOwnerDelete],
+    { signingAuthority: h.relay.pubkey },
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.reactions[0]?.events.map(({ id }) => id)).toEqual([
+    agentReaction.id,
+  ]);
 });
 
 it.each([5, 9005])(
@@ -2955,6 +3035,172 @@ it("a read reply stays read after a reload that does not load its root", async (
       unread: false,
     }),
   );
+});
+
+it("a channel mark replaces a message mark whose message is no longer loaded", async () => {
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", 11);
+  h.emit([first]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  lease.dispose();
+  // The save keeps the message's channel with its mark.
+  expect(h.journal()?.homes).toEqual({ [first.id]: "room" });
+  await h.clearCache();
+  h.grant("room");
+  clock(30);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+  expect(h.journal()?.homes).toEqual({});
+});
+
+it("finds the channels of marked messages that are not loaded, then drops the covered marks", async () => {
+  const author = keypair();
+  const covered = message(author, "room", "covered", 11);
+  const late = message(author, "room", "late", 40);
+  const missing = "f".repeat(64);
+  const marks = {
+    room: 30,
+    [`msg:${covered.id}`]: 11,
+    [`thread:${covered.id}`]: 12,
+    [`msg:${missing}`]: 12,
+    // No channel mark reaches 40, so this one is not asked for.
+    [`msg:${late.id}`]: 40,
+  };
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    // Old saves have no channels, in the journal or the reserve.
+    state: {
+      frontiers: { room: 30, [`msg:${covered.id}`]: 11 },
+      overrides: {},
+    },
+    reserve: Object.fromEntries(
+      Object.entries(marks).filter(
+        ([key]) => key !== "room" && key !== `msg:${covered.id}`,
+      ),
+    ),
+  }));
+  h.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.ids)
+      ? [covered, late].filter((event) =>
+          filters.some((filter) => filter.ids?.includes(event.id)),
+        )
+      : [],
+  );
+  h.grant("room");
+  await h.session.unread.ensure();
+  await vi.waitFor(() =>
+    expect({
+      ...h.journal()?.state.frontiers,
+      ...h.journal()?.reserve,
+    }).toEqual({
+      room: 30,
+      [`msg:${missing}`]: 12,
+      [`msg:${late.id}`]: 40,
+    }),
+  );
+  const asked = h.query.mock.calls.flatMap(([filters]) =>
+    filters.flatMap((filter) => filter.ids ?? []),
+  );
+  expect(asked.sort()).toEqual([covered.id, missing].sort());
+  // Finding channels changes no read, so it publishes nothing.
+  expect(h.journal()?.revision).toBe(0);
+  // Each message is asked for once per session.
+  await h.session.unread.refresh();
+  await flush();
+  expect(
+    h.query.mock.calls.flatMap(([filters]) =>
+      filters.flatMap((filter) => filter.ids ?? []),
+    ),
+  ).toHaveLength(2);
+});
+
+it("a loaded message in a channel too long to save does not block other reads", async () => {
+  const long = "c".repeat(257);
+  const author = keypair();
+  const odd = message(author, long, "odd", 11);
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    // A mark synced from another client, for a channel this one cannot save.
+    state: { frontiers: { [`msg:${odd.id}`]: 11 }, overrides: {} },
+  }));
+  h.grant(long);
+  h.grant("room");
+  h.emit([odd]);
+  const read = message(author, "room", "read", 12);
+  h.emit([read]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([read.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toMatchObject({
+    [`msg:${odd.id}`]: 11,
+    [`msg:${read.id}`]: 12,
+  });
+  expect(h.journal()?.homes).toEqual({ [read.id]: "room" });
+});
+
+it("one found message in a channel too long to save does not block the rest of its lookup", async () => {
+  const author = keypair();
+  const long = "c".repeat(257);
+  const covered = message(author, "room", "covered", 11);
+  const odd = message(author, long, "odd", 12);
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { room: 30 }, overrides: {} },
+    reserve: { [`msg:${covered.id}`]: 11, [`msg:${odd.id}`]: 12 },
+  }));
+  h.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.ids)
+      ? [covered, odd].filter((event) =>
+          filters.some((filter) => filter.ids?.includes(event.id)),
+        )
+      : [],
+  );
+  h.grant("room");
+  await h.session.unread.ensure();
+  await vi.waitFor(() =>
+    expect(h.journal()?.reserve).toEqual({ [`msg:${odd.id}`]: 12 }),
+  );
+  expect(h.journal()?.homes).toEqual({});
+});
+
+it("a channel lookup discarded by an access change is asked again in the same session", async () => {
+  const author = keypair();
+  const covered = message(author, "room", "covered", 11);
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { room: 30 }, overrides: {} },
+    reserve: { [`msg:${covered.id}`]: 11 },
+  }));
+  let answer: () => void = () => {};
+  let held = true;
+  h.query.mockImplementation(async (filters) => {
+    if (!filters.some((filter) => filter.ids)) return [];
+    if (held) {
+      held = false;
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+    }
+    return [covered];
+  });
+  h.grant("room");
+  h.grant("other");
+  await h.session.unread.ensure();
+  await vi.waitFor(() =>
+    expect(h.query.mock.calls.some(([f]) => f.some((x) => x.ids))).toBe(true),
+  );
+  // Revoking another channel bumps the access epoch while the lookup waits.
+  h.emit([roster(h.relay, "other", [], 20)]);
+  answer();
+  await flush();
+  await h.session.unread.refresh();
+  await vi.waitFor(() => expect(h.journal()?.reserve).toEqual({}));
+  const asked = h.query.mock.calls.flatMap(([filters]) =>
+    filters.flatMap((filter) => filter.ids ?? []),
+  );
+  expect(asked).toEqual([covered.id, covered.id]);
 });
 
 it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {

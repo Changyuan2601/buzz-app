@@ -49,7 +49,6 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "Channel actions unavailable",
   );
   await expect(menu.getByRole("menuitem")).toHaveText([
-    "New session",
     "Move channel",
     "Mute",
     "Mark as Read",
@@ -309,12 +308,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
   await toggleSessions(true);
-  // The production broker must expose a valid empty agent library when this
-  // retained row menu opens the session composer (not just in the local-only host).
-  await beta.click({ button: "right" });
-  await menu
-    .getByRole("menuitem", { name: "New session", exact: true })
-    .click();
+  // Session creation lives in Sessions and still uses the production broker.
+  await openPage(page, "Sessions");
+  await page.getByRole("button", { name: "New session", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message this session", exact: true }),
   ).toBeFocused();

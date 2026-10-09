@@ -396,7 +396,7 @@ it.each(["cache clear", "disposal"])(
 );
 
 it.each(["revocation", "cache clear"])(
-  "fences a later page after %s and allows a fresh scan",
+  "fences a later page after %s and starts a fresh scan",
   async (action) => {
     const h = setup();
     h.emit([
@@ -408,11 +408,10 @@ it.each(["revocation", "cache clear"])(
     const late = await h.next(39002);
     if (action === "revocation") h.emit([roster(relay, "revoked", [], 11)]);
     else await h.clearCache();
-    await h.settled("deferred");
     expect(late.signal?.aborted).toBe(true);
     const snapshot = h.channels.list();
     late.respond(memberships.slice(500, 501));
-    h.channels.ensureList();
+    if (action === "cache clear") h.channels.ensureList();
     const restarted = await h.next(39002);
     expect(restarted.filters[0]?.before_id).toBeUndefined();
     expect(h.channels.list().channels).toEqual(snapshot.channels);
@@ -631,4 +630,47 @@ it("continues into an older timestamp after a full same-timestamp page", async (
   await h.metadata(501);
   expect(h.channels.list().channels).toHaveLength(501);
   expect(h.channels.list().coverage).toBeUndefined();
+});
+
+it.each([
+  ["between pages", 1],
+  ["before the first page", 0],
+])(
+  "resumes discovery after a live revocation interrupts it %s",
+  async (_, pagesBefore) => {
+    const h = setup();
+    h.emit([roster(relay, "revoked", [viewer.pubkey], 10)]);
+    h.channels.ensureList();
+    for (let page = 0; page < pagesBefore; page++)
+      (await h.next(39002)).respond(memberships.slice(0, 500));
+    const interrupted = await h.next(39002);
+    h.emit([roster(relay, "revoked", [], 11)]);
+    expect(interrupted.signal?.aborted).toBe(true);
+    await h.rosters(501);
+    await h.metadata(501);
+    expect(h.pending).toHaveLength(0);
+    expect(h.channels.list().channels).toHaveLength(501);
+    expect(h.channels.list().coverage).toBeUndefined();
+  },
+);
+
+it("leaves a failed roster page in error without rereading", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  (await h.next(39002)).respond(memberships.slice(0, 500));
+  (await h.next(39002)).fail(new Error("Relay read failed (500)"));
+  await h.settled("error");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
+});
+
+it("does not reread after dispose interrupts discovery", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  (await h.next(39002)).respond(memberships.slice(0, 500));
+  const interrupted = await h.next(39002);
+  h.dispose();
+  expect(interrupted.signal?.aborted).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.pending).toHaveLength(0);
 });

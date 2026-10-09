@@ -83,7 +83,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     "View channel details",
     "View canvas",
     "Save as template…",
-    "New session",
+
     "Archive channel",
     "Delete channel",
   ]) {
@@ -408,7 +408,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
 // without stealing header focus, and hand modal/session focus to the existing owners.
 test.describe("sidebar actions in the header", () => {
   test.use({ channelLifecycle: false, savedSidebar: true, readState: true });
-  test("shares move, mute, read and session actions without transferring focus to the sidebar", async ({
+  test("shares move, mute and read actions without transferring focus to the sidebar", async ({
     page,
     app,
   }) => {
@@ -479,15 +479,11 @@ test.describe("sidebar actions in the header", () => {
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
-    await menu
-      .getByRole("menuitem", { name: "New session", exact: true })
-      .click();
     await expect(
-      page.getByRole("textbox", { name: "Message this session", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("textbox", { name: "Message this session", exact: true }),
-    ).toBeFocused();
+      menu.getByRole("menuitem", { name: "New session", exact: true }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
     expect(app.report.unexpected).toEqual([]);
   });
 });

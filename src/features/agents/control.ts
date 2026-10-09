@@ -1,3 +1,4 @@
+import type { TeamSnapshot, BundleMember } from "./team-bundles";
 /** Native-owned configuration and process evidence; never a relay-session capability. */
 // Keep injection reachable from the generated author contract, not host construction.
 import type {} from "@deepseek-ai/cordis";
@@ -60,12 +61,16 @@ export interface AgentView {
   respondTo: "owner-only" | "allowlist" | "anyone" | null;
   /** Imported provider backend id; null for local agents. */
   backend: string | null;
+  /** Redacted native effective behavior not representable by standalone snapshots. */
+  snapshotExportLimitations?: string[];
   acpCommand: string | null;
   mcpCommand: string | null;
   /** Model/provider the next start uses from saved selectors or build
    * defaults. Null when none applies or an environment override decides it. */
   launchModel: string | null;
   launchProvider: string | null;
+  /** Next-start listener workers, including native defaults/overrides; never a raw env value. */
+  launchParallelism?: number | null;
   /** Environment key deciding that selector; its value stays native. */
   launchModelEnv: string | null;
   launchProviderEnv: string | null;
@@ -200,6 +205,17 @@ export type CommunityResolution = {
   signature: string;
 };
 export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
+/** A community catalog definition that seeds a new agent. Portable fields
+ * only: never paths, arguments, environment values or credentials. */
+export type CatalogSeed = CloneSettings & {
+  origin: "catalog";
+  sessionPolicy: "channel" | "thread";
+  runtime?: string;
+  model?: string;
+  provider?: string;
+  /** Already-filtered HTTPS artwork from the publication. */
+  picture?: string;
+};
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
   configureHere?(
@@ -217,13 +233,37 @@ export interface AgentControlHost {
     requestId: string,
     destination: string,
     owner: string,
-  ): Promise<{ id: string; pubkey: string }>;
+  ): Promise<{ id: string; pubkey: string; saved?: boolean }>;
   commitCreate?(
     requestId: string,
     edit: AgentEdit,
     auth: string,
+    bundle?: BundleMember,
   ): Promise<ControlSnapshot>;
+  exportTeam?(
+    snapshot: TeamSnapshot,
+    members: string[],
+    community: string,
+    memoryLevel?: "none" | "core" | "everything",
+  ): Promise<TeamSnapshot>;
+  applyTeamInstructions?(
+    id: string,
+    revision: number,
+    instructions: string,
+    team: string,
+    community: string,
+  ): Promise<ControlSnapshot>;
+  captureTeam?(
+    team: TeamSnapshot["team"],
+    members: string[],
+    community: string,
+  ): Promise<TeamSnapshot>;
+  previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  writeSnapshotMemory?(
+    id: string,
+    entries: readonly { slug: string; body: string }[],
+  ): Promise<{ written: number; total: number; errors: string[] }>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -287,8 +327,29 @@ export interface AgentControl {
     destination: string,
     owner: string,
     edit: AgentEdit,
+    bundle?: BundleMember,
   ): Promise<AgentView>;
+  exportTeam?(
+    snapshot: TeamSnapshot,
+    members: string[],
+    community: string,
+    memoryLevel?: "none" | "core" | "everything",
+  ): Promise<TeamSnapshot>;
+  applyTeamInstructions?(
+    id: string,
+    revision: number,
+    instructions: string,
+    team: string,
+    community: string,
+  ): Promise<ControlSnapshot>;
+  captureTeam?(
+    team: TeamSnapshot["team"],
+    members: string[],
+    community: string,
+  ): Promise<TeamSnapshot>;
+  previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
@@ -548,6 +609,7 @@ export function createAgentControl(
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
   const checkClaudeAuth = host?.checkClaudeAuth;
+  const writeSnapshotMemory = host?.writeSnapshotMemory;
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
@@ -579,6 +641,7 @@ export function createAgentControl(
             destination: string,
             owner: string,
             edit: AgentEdit,
+            bundle?: BundleMember,
           ) => {
             let id = "";
             const data = await run(
@@ -591,6 +654,7 @@ export function createAgentControl(
                   owner,
                 );
                 id = prepared.id;
+                if (prepared.saved) return native.snapshot();
                 const result = await communityRequest<{ auth: string[] }>(
                   destination,
                   "authorize-agent",
@@ -600,6 +664,7 @@ export function createAgentControl(
                   requestId,
                   edit,
                   JSON.stringify(result.auth),
+                  bundle,
                 );
               },
               ready,
@@ -616,6 +681,64 @@ export function createAgentControl(
           },
         }
       : {}),
+    ...(host?.applyTeamInstructions
+      ? {
+          applyTeamInstructions: (
+            id: string,
+            revision: number,
+            instructions: string,
+            team: string,
+            community: string,
+          ) =>
+            run(async (host) => {
+              if (!host.applyTeamInstructions)
+                throw new Error("Team instruction updates are unavailable.");
+              return host.applyTeamInstructions(
+                id,
+                revision,
+                instructions,
+                team,
+                community,
+              );
+            }, ready),
+        }
+      : {}),
+    ...(host?.captureTeam
+      ? {
+          captureTeam: (
+            team: TeamSnapshot["team"],
+            members: string[],
+            community: string,
+          ) => {
+            if (!host.captureTeam)
+              throw new Error("Team capture is unavailable.");
+            return host.captureTeam(team, members, community);
+          },
+        }
+      : {}),
+    ...(host?.exportTeam
+      ? {
+          exportTeam: (
+            snapshot: TeamSnapshot,
+            members: string[],
+            community: string,
+            memoryLevel: "none" | "core" | "everything" = "none",
+          ) => {
+            if (!host.exportTeam)
+              throw new Error("Team export is unavailable.");
+            return host.exportTeam(snapshot, members, community, memoryLevel);
+          },
+        }
+      : {}),
+    ...(host?.previewTeam
+      ? {
+          previewTeam: (content: string) => {
+            if (!host.previewTeam)
+              throw new Error("Team preview is unavailable.");
+            return host.previewTeam(content);
+          },
+        }
+      : {}),
     ...(host?.publishProfile
       ? {
           publishProfile: (id: string) =>
@@ -626,6 +749,23 @@ export function createAgentControl(
                 return native.publishProfile(id);
               },
               ready,
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(writeSnapshotMemory
+      ? {
+          writeSnapshotMemory: (
+            id: string,
+            entries: readonly { slug: string; body: string }[],
+          ) =>
+            run(
+              () => writeSnapshotMemory(id, entries),
+              () => {
+                if (state.data) ready(state.data);
+              },
               false,
               undefined,
               true,

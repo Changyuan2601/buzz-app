@@ -1,13 +1,16 @@
 import { defineConfig } from "@playwright/test";
 import config from "./playwright.config.mjs";
 
-// Keep the full local gate unchanged. Only documented WebKit cases leave CI;
-// their Chromium counterparts and all other WebKit journeys remain required.
+// Linux WebKit is built without MediaRecorder. Those cases run with the local
+// config in the required macOS job; Chromium still records on Linux.
+// The documented @local-webkit measurements remain local-only.
 export default defineConfig({
   ...config,
   projects: config.projects.map((project) =>
     project.name === "webkit-measurements"
       ? { ...project, grepInvert: /@local-webkit/ }
-      : project,
+      : project.name === "webkit"
+        ? { ...project, grepInvert: /@classic-scrollbars|@media-recorder/ }
+        : project,
   ),
 });

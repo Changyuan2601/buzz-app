@@ -26,19 +26,23 @@ semantic tokens, UI authoring rules and the local component reference.
   styles live in Tailwind's base layer, so utilities can override them normally.
   Existing feature CSS variables remain available for incremental adoption.
 - `src/app/shell/presentation.ts` owns page labels, icons and navigation ordering.
-  Messages comes first, then Inbox, Bestie and Projects; other contributed pages
+  Me comes first, then Messages, Inbox, Reminders, Bestie and Projects; other contributed pages
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
-  activation/re-enable order. Sidebar navigation lists only pages registered with
-  `primary: true` (Inbox, Bestie, Projects, Agents, Sessions and Workflows among the bundled
-  plugins); page search lists every active page. Inbox and Bestie are placeholder
-  pages of their own plugins, so disabling Bestie removes its row. Channels is
-  vended without a row: Messages opens by default, from any channel row and from
-  search. Sessions opens from its page row, Messages and search; disabling the
-  Sessions plugin removes its row.
+  activation/re-enable order. Primary pages choose `sidebar` (default), `topbar`
+  (centered text) or `toolbar` (top-right icon) placement. Me and Messages start
+  in the topbar; other primary bundled pages retain their sidebar rows. Me is an
+  optional, default-enabled empty page and does not change community scope.
+  Me replaces the channel list and sidebar page links with an empty dedicated
+  sidebar using the shared SidebarFrame and saved channel-sidebar width. Its list
+  contents remain undefined; it does not acquire a channel list or create another
+  navigation mode.
+  Messages opens by default, from any channel row, its topbar button and search.
+  Page search lists every active page, including non-primary pages.
+  Disabling an optional plugin removes its navigation entry.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
-  Add recognized page presentation here without changing plugin contracts.
+  Presentation is keyed by full contribution identity, not plugin-local IDs.
 - `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
   above the channel list outside Settings, using its saved sidebar width
@@ -55,10 +59,16 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Messages, Agents, and desktop Settings share an animated header toggle; hiding
+  Me, Messages, Agents, and desktop Settings share an animated header toggle; hiding
   the sidebar preserves its mounted state and saved width. Reduced motion disables
   the transition. Other desktop pages retain the visible sidebar.
-  The header keeps history and account/search actions, with no second navigation row.
+  The same header keeps history and account/search actions, plus a centered
+  navigation strip and full-page toolbar icons. Real control widths, native insets
+  and text scale determine whether header pages fit without overlap. Otherwise
+  those entries move into a labelled More pages popover (always at <=650px).
+  Native-button navigation uses `aria-current`, not tab/tabpanel semantics;
+  selecting a destination focuses main content. Header pages never become
+  companion launchers, and only the exact current page is selected.
   The shell owns one joined Panel around navigation and page content, with a
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout
@@ -151,7 +161,8 @@ window's apparent size. On macOS, quitting in fullscreen can preserve the
 fullscreen-sized frame instead of the earlier normal size; leaving fullscreen
 after relaunch may therefore produce a screen-sized window.
 
-The top-right group contains enabled plugin launchers, a page finder, and the local
+The top-right group contains full-page toolbar icons, enabled companion plugin
+launchers, a page finder, and the local
 avatar. Search, sidebar and history controls use unfilled ghost icon buttons with
 32px containers, 16px icons and 10px corners, matching content-toolbar actions.
 Their hover fills remain translucent over the colored backdrop.

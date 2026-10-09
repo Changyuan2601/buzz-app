@@ -47,6 +47,7 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
 bundled/channels/       conversation navigation, page layout and panel placement
+bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
 bundled/projects/       repository/project pages, issue/PR details and Git views
 features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
@@ -56,7 +57,9 @@ bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
-The host composes one channel sidebar beside independently mounted pages. It reuses
+The host composes the channel sidebar beside independently mounted pages, with
+Settings and Me supplying their own sidebar contents. Me currently has an empty
+sidebar sharing the channel sidebar's frame and saved width. The channel sidebar reuses
 session-owned roster, unread, creation and preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
 have separate boundaries. Sidebar presentation helpers currently remain importable
@@ -77,12 +80,50 @@ source imports are not a versioned external SDK. See
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, icon?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
 `ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
-contribution when its Cordis scope ends. `primary: true` gives a page a row in the
-shell's page navigation. Pages without it are still listed in search and reachable
-by deep link or from another page; Channels is a bundled example.
+contribution when its Cordis scope ends. `primary: true` opts a page into shell
+navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
+(centered text destination), or `"toolbar"` (top-right full-page icon near search).
+Pages without `primary: true` remain search/deep-link-only even with a placement.
+The host owns ordering, active state, responsive overflow and navigation history;
+plugins do not supply header React or a second navigation stack. Placement is fixed
+for a registration's lifetime. An invalid value is dropped with a page-named warning,
+falling back to the sidebar without failing activation. Older hosts ignore placement
+and continue to show primary pages in their sidebar.
+
+```ts
+ctx.pages.register({
+  id: "dashboard",
+  title: "Dashboard",
+  primary: true,
+  placement: "toolbar",
+  component: Dashboard,
+});
+```
+
+Header entries move into the labelled More pages popover when they cannot fit,
+including at narrow widths. They use native-button navigation and `aria-current`,
+not tab/tabpanel semantics or companion-panel toggles. Every active page remains
+searchable, regardless of its placement.
+
+A primary page may also supply `badge`, a component the shell renders at the end
+of its navigation row, such as a count of due items. The plugin owns its data and
+re-rendering; the shell owns the row and placement. A badge that throws renders
+nothing and leaves navigation usable. Toolbar badges are clipped to a compact
+2rem × 1rem corner mark; authors should use short counts or dots there, not rich
+content. The overflow popover uses ordinary labelled rows with trailing badges.
+Pages without `primary` have no navigation entry, so their badge is not shown.
+
+`notifications.register({ id, label })` adds a category with its own switch in
+Settings and returns `submit({ sourceKey, target, title?, body? })`. Submissions
+share the host's permission, preference, duplicate and click handling. The host
+owns display text: `title` and `body` are flattened to plain text and bounded the
+same way message alerts are (`title` to 128 characters; `body` as Markdown prose
+to 200), so a plugin cannot send raw markup or unlimited text to the OS. Without
+them the banner reads `Buzz` / `New <label>`. The host applies no age limit to
+plugin submissions; the plugin decides what is still worth announcing.
 
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
@@ -113,11 +154,16 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 22 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+**Channels is the only required bundled plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Channel Usage, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Me, Inbox,
 Projects, Agents, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
+
+Me is an empty, optional default-enabled page. Me and Channels request topbar
+placement; the shell presents Channels as Messages and orders Me before Messages.
+Messages remains the startup destination. Selecting Me changes neither community
+scope nor the legacy Home-to-Messages mapping.
 
 Saved enabled/disabled flags win over defaults (except required Channels). There
 is no migration or forced reset: a browser profile that previously saved its full
@@ -136,6 +182,21 @@ GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
+
+### Optional channel menu panels
+
+A panel can register `channelMenu: { label, eligible(channel, session) }` for
+placement in Channels → Channel actions. Channels owns the menu, selected channel,
+tab geometry, focus, and close behavior; it opens the **exact active contribution**
+without resolving a target matcher. Eligibility is evaluated again at activation
+against the current connected session, selected non-cached channel and membership.
+Disabling or replacing a plugin retires its open tab; a channel change or loss of
+eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
+stale tab. Eligibility and `channelContext` are presentation, **not authority**:
+the panel must independently verify access before reading any sensitive data and
+fence asynchronous reads on revocation. Channel Usage owns this panel and its
+archive projection; the session continues to own archive capture, access and
+retention. Plugin enablement controls visibility without changing capture settings.
 
 ### Optional channel templates and Settings cards
 
@@ -436,6 +497,43 @@ limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
+A plugin that needs a long-lived program, such as an agent CLI that speaks a
+JSON protocol on stdin and stdout, declares it under `host.processes`:
+
+```json
+{
+  "host": {
+    "processes": [
+      { "id": "agent", "program": "example-agent" },
+      { "id": "install", "program": "bash", "args": ["-c", "curl -fsSL https://example.com/install.sh | bash"] }
+    ]
+  }
+}
+```
+
+`ctx.host.spawn(id, { args, cwd, env, agent, onStdout, onStderr })` starts it
+with the caller's `args` after the declared ones, so the declaration names the
+program but not every argument. It returns `{ write, end, kill, exited }`.
+stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
+`cwd` is absolute or `~/…` and is created if missing. `env` adds to the app's
+environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
+are never inherited. The program is found on the same search path as commands,
+which on macOS also includes `~/.local/bin`.
+
+`agent` names an Agents2 agent whose type the calling plugin registered. The
+process then runs as that agent, as harness agents do: native puts its key in
+`BUZZ_PRIVATE_KEY` (and `NOSTR_PRIVATE_KEY`), its community in `BUZZ_RELAY_URL`
+and its owner attestation in `BUZZ_AUTH_TAG`, and puts the bundled agent tools,
+including the `buzz` CLI, first on its PATH. The key never enters the WebView,
+but the process can sign any event as the agent; the kind allowlist on
+`publish` does not bound it.
+
+A process lives until it exits, the plugin kills it, the plugin unloads, the
+page reloads or the app exits. `kill` sends SIGTERM to its process group and
+SIGKILL three seconds later; the group is always killed once the process exits,
+so descendants do not outlive it. At most 64 processes run at once. Processes
+run with the user's full access and no sandbox; the import preview says so.
+
 Bundled host grants use the effective compiled manifest at revision `bundled` and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external
@@ -661,6 +759,18 @@ renderers. The host retains author/time chrome, actions, attachments and session
 ownership. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
+`registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an
+entry to a message's ⋯ menu. `matches(message, session)` decides per row whether
+the entry appears; throwing matchers are skipped. `icon` renders beside the title.
+Choosing the entry mounts `component` with `{ message, session, close }` inside the
+row, typically a dialog; it stays mounted until it calls `close()`. The optional
+`marker` receives `{ message, session }` and renders beside the timestamp, such as a
+state mark. It renders only while `matches` passes, so hiding the menu entry also
+hides its mark. The host owns the menu, focus restoration and row lifetime: a row
+with an open action stays mounted while it scrolls out of view. Icon, component
+and marker failures each render nothing and leave the row and menu usable. The
+bundled Reminders plugin is the first consumer.
+
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages
 independently of the plugin, preserving raw patches rather than interpreting them
@@ -869,11 +979,27 @@ behavior remain host-owned; no new completion API or editor command is introduce
 This is the same host-matched preview as toolbar tools, not version negotiation or
 a sandbox. Inline mention pills remain outside this completion implementation.
 
-Formatting needs selection transforms. Attachments and voice need shared media
-capabilities, destination-bound asynchronous work and cancellation; accepted
-material belongs to the draft, not the optional tool. Add these contracts against
-real workflows rather than declaring the toolbar a universal editor API.
+The optional bundled `buzz.voice-notes` plugin registers a microphone tool and
+an attachment renderer. `capture(component)` gives the tool a revocable composer
+surface with `accept(recording)` and `cancel()` commands. Disabling the plugin,
+hiding the conversation, changing destinations or entering read-only mode stops
+unaccepted recording. Accepted recordings belong to the existing attachment draft,
+so navigation or plugin removal leaves them available with host fallback controls.
 
+The existing native and browser upload adapters prepare `voice-note-*.wav` files
+as the old Buzz H.264/AAC MP4 envelope. Voice Notes adds no uploader, signer or
+outbox. Files upload on Send, retain the shared progress/recovery behavior, and
+carry bounded duration and waveform metadata through ordinary `imeta` tags.
+Recordings stop at five minutes. Pending files have the same tab-local lifetime
+and limits as other attachment drafts; they do not survive app restart.
+
+The player loads audio on Play, supports seeking and playback speed, and pauses
+when its conversation is hidden. Existing voice notes are recognized from signed
+filename metadata even when their Markdown label differs. Notes without waveform
+metadata retain a neutral waveform. Disabling the plugin restores ordinary audio
+cards. The fixture at `/tests/fixtures/voice-notes.html` exercises the real recorder,
+composer and session with disposable local media; browser tests provide its local
+media response. Native microphone permissions were exercised in the staging app.
 
 ## Desktop browser
 

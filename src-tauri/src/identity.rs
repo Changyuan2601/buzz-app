@@ -188,6 +188,8 @@ impl Key {
 trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     fn add(&self, value: &[u8]) -> Result<()>;
+    /// Only Sign out may call this, from the next launch; an absent item is success.
+    fn delete(&self) -> Result<()>;
 }
 struct OsStore;
 #[cfg(not(test))]
@@ -236,6 +238,19 @@ mod platform {
                 .add_generic_password(&identity_service()?, credentials::HUMAN_ACCOUNT, value)
                 .map_err(error)
         }
+        fn delete(&self) -> Result<()> {
+            match SecKeychain::default()
+                .map_err(error)?
+                .find_generic_password(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT)
+            {
+                Ok((_, item)) => {
+                    item.delete();
+                    Ok(())
+                }
+                Err(e) if e.code() == -25300 => Ok(()),
+                Err(e) => Err(error(e)),
+            }
+        }
     }
 }
 #[cfg(all(any(target_os = "windows", target_os = "linux"), not(test)))]
@@ -266,6 +281,12 @@ mod keyring_platform {
         fn add(&self, value: &[u8]) -> Result<()> {
             credentials::add(&identity_service()?, credentials::HUMAN_ACCOUNT, value).map_err(error)
         }
+        fn delete(&self) -> Result<()> {
+            match credentials::delete(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT) {
+                Ok(()) | Err(Error::Absent) => Ok(()),
+                Err(e) => Err(error(e)),
+            }
+        }
     }
 }
 // Native tests cannot touch an OS credential store, even via the default host.
@@ -280,6 +301,22 @@ impl Store for OsStore {
     fn add(&self, _: &[u8]) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
+    fn delete(&self) -> Result<()> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
+}
+
+/// Delete the saved human key and confirm a fresh read finds nothing.
+fn remove_key(store: &dyn Store) -> Result<()> {
+    store.delete()?;
+    match store.read()? {
+        None => Ok(()),
+        Some(_) => Err("Your key is still saved in secure storage".into()),
+    }
+}
+/// Sign out's next-launch step; never reachable from the webview.
+pub(crate) fn remove_saved_key() -> Result<()> {
+    remove_key(&OsStore)
 }
 
 #[derive(Default)]
@@ -288,6 +325,9 @@ enum State {
     Unread,
     Missing,
     Ready(Key),
+    /// Signing out: the key is dropped and nothing reads, saves or uses one
+    /// again until Buzz restarts.
+    Closed,
 }
 struct Identity {
     state: State,
@@ -295,6 +335,9 @@ struct Identity {
 }
 impl Identity {
     fn restore(&mut self) -> Result<Option<String>> {
+        if matches!(self.state, State::Closed) {
+            return Err("Buzz is signing out".into());
+        }
         if matches!(self.state, State::Unread) {
             self.state = match self.store.read()? {
                 None => State::Missing,
@@ -323,6 +366,9 @@ impl Identity {
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
         Ok(viewer)
+    }
+    fn close(&mut self) {
+        self.state = State::Closed;
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -610,6 +656,17 @@ impl IdentityHost {
         })))
     }
 
+    /// The owner key of synthetic agent attestations in agent-controller tests.
+    #[cfg(test)]
+    pub(crate) fn fixture_owner() -> Self {
+        let mut key = [0; 32];
+        key[31] = 2;
+        Self(Arc::new(Mutex::new(Identity {
+            state: State::Ready(Key(Zeroizing::new(key))),
+            store: Box::new(OsStore),
+        })))
+    }
+
     pub(crate) async fn viewer(&self) -> Result<String> {
         with_identity(self.clone(), |identity| {
             identity
@@ -868,10 +925,19 @@ impl IdentityHost {
     }
 
     pub(crate) async fn sign(&self, event: EventTemplate) -> Result<serde_json::Value> {
+        self.sign_bounded(event, 64 * 1024).await
+    }
+
+    /// Signs with a caller-validated serialized-event bound, e.g. NIP-AP catalogs.
+    pub(crate) async fn sign_bounded(
+        &self,
+        event: EventTemplate,
+        max_event_bytes: usize,
+    ) -> Result<serde_json::Value> {
         with_identity(self.clone(), move |identity| {
             identity.restore()?;
             match &identity.state {
-                State::Ready(key) => key.sign(event),
+                State::Ready(key) => key.sign_bounded(event, max_event_bytes),
                 _ => Err("Set up your identity first".into()),
             }
         })
@@ -904,6 +970,13 @@ impl IdentityHost {
             }
         })
         .await
+    }
+}
+impl IdentityHost {
+    /// Close signing for the rest of this process. Taken under the same lock
+    /// every operation holds while it runs, so jobs already queued refuse too.
+    pub(crate) fn close(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).close();
     }
 }
 impl Default for IdentityHost {

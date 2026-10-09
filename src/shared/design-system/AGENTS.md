@@ -15,8 +15,8 @@ Before editing, read [the design guide](DESIGN.md) and
 ## Preserve interaction contracts
 
 Keep keyboard focus, Tab order, selection, dismissal, and focus restoration intact.
-The shared global stylesheet temporarily hides focus outlines; follow
-[Temporary focus appearance](DESIGN.md#temporary-focus-appearance). Do not add local
+Keyboard focus must stay visible; follow
+[Focus appearance](DESIGN.md#focus-appearance). Do not add local
 replacement rings. Preserve the underlying keyboard-focus recipes and their space.
 
 For rows in dialogs and panels, follow

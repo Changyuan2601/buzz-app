@@ -15,6 +15,18 @@ test("Space commits a unique exact identity but leaves namesakes as prose", asyn
   await expect(input.locator(".inline-chip")).toHaveCount(0);
   await input.fill("@Mary Jane");
   await expect(page.getByRole("option", { name: /^Mary Jane / })).toBeVisible();
+  // Space selects only after the directory search settles (README section 5).
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        searched: window.mentionFixture
+          .searches()
+          .some((s) => s.toLowerCase() === "mary jane"),
+        pending: window.mentionFixture.reads().pending,
+      })),
+    )
+    .toEqual({ searched: true, pending: 0 });
+  await expect(page.getByText("Searching community…")).toHaveCount(0);
   await input.press("Space");
   await expect(input.locator(".inline-chip")).toHaveText("@Mary Jane");
   await input.pressSequentially("hello");

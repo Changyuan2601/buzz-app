@@ -1,3 +1,8 @@
+import type {
+  AttachmentRenderer,
+  ContributionReader,
+} from "../conversation/contracts";
+import { AttachmentView } from "../conversation/AttachmentView";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useEffect, useRef, useState } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -13,14 +18,17 @@ import {
 import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useAttachmentPoof } from "./AttachmentPoof";
+import { useMediaElementSource } from "./use-media-element-source";
 
 export function ComposerAttachments({
   items,
+  renderers,
   disabled,
   remove,
   retry,
   media,
 }: {
+  renderers?: ContributionReader<AttachmentRenderer> | undefined;
   media(url: string): string | undefined;
   items: readonly DraftAttachment[];
   disabled: boolean;
@@ -36,6 +44,7 @@ export function ComposerAttachments({
           <ul className={styles.list}>
             {items.map((item) => (
               <AttachmentItem
+                renderers={renderers}
                 media={media}
                 key={item.id}
                 item={item}
@@ -55,11 +64,13 @@ export function ComposerAttachments({
 }
 function AttachmentItem({
   item,
+  renderers,
   disabled,
   remove,
   retry,
   media,
 }: {
+  renderers?: ContributionReader<AttachmentRenderer> | undefined;
   media(url: string): string | undefined;
   item: DraftAttachment;
   disabled: boolean;
@@ -70,7 +81,7 @@ function AttachmentItem({
   const presented = useRef(active);
   presented.current = active;
   const [source, setSource] = useState<string>();
-  const [failed, setFailed] = useState(false);
+  const [previewFailed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
   if (!active && open) setOpen(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -83,9 +94,12 @@ function AttachmentItem({
   const video =
     type.startsWith("video/") ||
     (!item.uploaded && /\.(mp4|mov|webm|m4v)$/i.test(item.file.name));
+  const element = useMediaElementSource(video ? source : undefined);
+  const videoSource = element.src;
+  const failed = previewFailed || element.unavailable;
   useEffect(() => {
     setFailed(false);
-    if (!image && !video) {
+    if (!image && !video && !item.voice) {
       setSource(undefined);
       return;
     }
@@ -96,11 +110,12 @@ function AttachmentItem({
     const url = URL.createObjectURL(item.file);
     setSource(url);
     return () => URL.revokeObjectURL(url);
-  }, [item.file, item.uploaded, image, video, uploadedSource]);
+  }, [item.file, item.uploaded, item.voice, image, video, uploadedSource]);
+  const bytes = item.uploaded?.size ?? item.file.size;
   const size =
-    item.file.size < 1024 * 1024
-      ? `${Math.max(1, Math.round(item.file.size / 1024))} KB`
-      : `${(item.file.size / (1024 * 1024)).toFixed(1)} MB`;
+    bytes < 1024 * 1024
+      ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+      : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   const status = {
     queued: "Queued",
     preparing: "Preparing…",
@@ -110,6 +125,56 @@ function AttachmentItem({
   }[item.status];
   // Queued files wait for Send; only preparation and transfer are busy.
   const busy = item.status === "preparing" || item.status === "uploading";
+  if (item.voice && source && renderers)
+    return (
+      <li className={styles.voiceItem} data-voice-draft>
+        <AttachmentView
+          registry={renderers}
+          attachment={{
+            url: item.uploaded?.url ?? source,
+            kind: "audio",
+            mime: item.uploaded?.type ?? item.file.type,
+            name: item.uploaded?.name ?? item.file.name,
+            voiceNote: true,
+            ...item.voice,
+          }}
+          source={source}
+          onRemove={
+            disabled
+              ? undefined
+              : () =>
+                  remove(
+                    item.id,
+                    trigger.current?.getBoundingClientRect() ?? new DOMRect(),
+                  )
+          }
+          fallback={
+            <div>
+              <span>{item.file.name}</span>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => remove(item.id, new DOMRect())}
+              >
+                Remove voice note
+              </button>
+            </div>
+          }
+        />
+        {item.error && (
+          <>
+            <span role="alert">{item.error}</span>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => retry(item.id)}
+            >
+              Retry voice note upload
+            </button>
+          </>
+        )}
+      </li>
+    );
   return (
     <li
       className={styles.item}
@@ -134,7 +199,7 @@ function AttachmentItem({
             ) : (
               <video
                 key={source}
-                src={source}
+                src={videoSource}
                 muted
                 playsInline
                 preload="metadata"
@@ -236,7 +301,7 @@ function AttachmentItem({
               // biome-ignore lint/a11y/useMediaCaption: user-selected video has no caption track.
               <video
                 className={styles.fullPreview}
-                src={source}
+                src={videoSource}
                 controls
                 playsInline
               />

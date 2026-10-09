@@ -677,3 +677,47 @@ it("allows only a single canonical TTL command tag without widening other fields
       ).not.toThrow();
   }
 });
+
+it("renames standalone sessions with a name-only command and confirmed relay readback", async () => {
+  const h = harness();
+  h.set([
+    h.metadata("Old title", sessionDescription(), "private"),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  expect(base.canEdit).toBe(true);
+  h.publish.mockImplementationOnce(async () => {
+    h.set([
+      h.metadata("New title", sessionDescription(), "private"),
+      ...h.events().slice(1),
+    ]);
+  });
+  await h.owner.capability.save(base, { ...base, name: "New title" });
+  const command = h.sign.mock.calls[0]?.[0];
+  expect(command?.tags).toEqual([
+    ["h", id],
+    ["name", "New title"],
+  ]);
+  assert(command);
+  expect(() => validateDetailsTemplate(command)).not.toThrow();
+  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+});
+it.each([
+  { description: "ordinary channel" },
+  { visibility: "public" as const },
+  { ttlSeconds: 600 },
+])(
+  "rejects session metadata changes alongside renaming: %j",
+  async (change) => {
+    const h = harness();
+    h.set([
+      h.metadata("Old title", sessionDescription(), "private"),
+      ...h.events().slice(1),
+    ]);
+    const base = await h.owner.capability.load(id);
+    await expect(
+      h.owner.capability.save(base, { ...base, name: "New title", ...change }),
+    ).rejects.toThrow("Only the name");
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);

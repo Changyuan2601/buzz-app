@@ -103,7 +103,7 @@ it("shows unavailable treatment when shared video review playback errors", async
 
   fireEvent.error(video);
 
-  expect(await screen.findByRole("status")).toHaveTextContent(
+  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
     "Media unavailable",
   );
   expect(document.querySelector("video")).toBeNull();
@@ -203,7 +203,7 @@ it("keeps play available after a rejected playback request", async () => {
   if (!video) throw new Error("Missing video element");
   vi.spyOn(video, "play").mockRejectedValue(new Error("NotAllowedError"));
   fireEvent.click(screen.getByRole("button", { name: "Play video" }));
-  expect(await screen.findByRole("status")).toHaveTextContent(
+  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
     "Press play to try again",
   );
   expect(screen.getByRole("button", { name: "Play video" })).toBeVisible();

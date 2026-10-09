@@ -26,6 +26,43 @@ fn edit(harness: &str, model: &str, effort: &str) -> AgentDefaultsEdit {
 }
 
 #[test]
+fn saved_worker_count_projects_to_portable_next_launch_count() {
+    let mut agent = fixture();
+    agent.harness.command = "buzz-agent".into();
+    agent.imported = Value::Null;
+    let defaults = AgentDefaults::default();
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(1));
+    agent.harness.command = "/opt/buzz-agent".into();
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(1));
+    agent.harness.command = "buzz-agent".into();
+    let mut other_device = defaults.clone();
+    other_device
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "4".into());
+    assert_eq!(agent.view(&other_device).launch_parallelism, Some(4));
+    // The source's fallback must export explicitly: otherwise importing on
+    // other_device would silently change its listener from 1 to 4.
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(1));
+    for count in [1, 4] {
+        agent
+            .environment
+            .insert("BUZZ_ACP_AGENTS".into(), count.to_string());
+        let saved: crate::config::Agent =
+            serde_json::from_value(serde_json::to_value(&agent).unwrap()).unwrap();
+        saved.validate().unwrap();
+        assert_eq!(saved.view(&defaults).launch_parallelism, Some(count));
+    }
+    agent.environment.remove("BUZZ_ACP_AGENTS");
+    agent.imported = serde_json::json!({"record":{"parallelism":4}});
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(4));
+    let mut inherited = defaults;
+    inherited
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "1".into());
+    assert_eq!(agent.view(&inherited).launch_parallelism, Some(1));
+}
+
+#[test]
 fn blank_fields_inherit_for_the_same_harness_and_agent_values_win() {
     let mut agent = fixture();
     agent.harness.command = "buzz-agent".into();
@@ -357,4 +394,120 @@ fn an_invalid_pi_default_pair_is_refused_before_it_is_saved() {
     let mut chosen = edit("pi", "pi-model", "");
     chosen.provider = "global-provider".into();
     saved.apply(chosen).unwrap();
+}
+
+#[test]
+fn snapshot_export_rejects_unrepresentable_native_behavior_without_exposing_records() {
+    let mut agent = fixture();
+    agent.harness.command = "buzz-agent".into();
+    agent.imported = Value::Null;
+    assert!(agent
+        .view(&AgentDefaults::default())
+        .snapshot_export_limitations
+        .is_empty());
+    for imported in [
+        serde_json::json!({"teamInstructions":"legacy team rules"}),
+        serde_json::json!({"record":{"idle_timeout_seconds":30}}),
+        serde_json::json!({"record":{"max_turn_duration_seconds":60}}),
+        serde_json::json!({"record":{"effort_level":"high"}}),
+    ] {
+        agent.imported = imported;
+        let view = serde_json::to_value(agent.view(&AgentDefaults::default())).unwrap();
+        assert!(!view["snapshotExportLimitations"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(view.get("imported").is_none());
+    }
+    agent.imported = Value::Null;
+    assert_eq!(
+        agent
+            .view(&defaults("buzz-agent"))
+            .snapshot_export_limitations,
+        vec!["effort level"]
+    );
+}
+
+#[test]
+fn snapshot_export_limits_effective_behavior_overrides_without_exposing_values() {
+    for placement in ["inherited", "agent"] {
+        for (harness, key) in [
+            ("goose-acp", "BUZZ_ACP_SYSTEM_PROMPT"),
+            ("buzz-agent", "BUZZ_AGENT_SYSTEM_PROMPT"),
+            ("buzz-agent", "BUZZ_AGENT_SYSTEM_PROMPT_FILE"),
+            ("buzz-agent", "BUZZ_AGENT_MAX_CONTEXT_TOKENS"),
+            ("buzz-agent", "BUZZ_AGENT_MAX_HISTORY_BYTES"),
+            ("buzz-agent", "BUZZ_AGENT_NO_HINTS"),
+            ("buzz-agent", "BUZZ_AGENT_THINKING_EFFORT"),
+        ] {
+            let mut agent = fixture();
+            agent.imported = Value::Null;
+            agent.harness.command = harness.into();
+            agent.environment.clear();
+            let mut defaults = AgentDefaults {
+                harness: if harness == "goose-acp" {
+                    "goose"
+                } else {
+                    "buzz-agent"
+                }
+                .into(),
+                ..AgentDefaults::default()
+            };
+            // Credentials remain local; only effective behavioral overrides limit portability.
+            defaults
+                .environment
+                .insert("PROVIDER_TOKEN".into(), "private".into());
+            let key = key.to_string();
+            if placement == "inherited" {
+                defaults
+                    .environment
+                    .insert(key.clone(), "private override".into());
+            } else {
+                agent
+                    .environment
+                    .insert(key.clone(), "private override".into());
+            }
+            let view = serde_json::to_value(agent.view(&defaults)).unwrap();
+            assert_eq!(
+                view["snapshotExportLimitations"],
+                serde_json::json!(["behavioral environment overrides"])
+            );
+            assert!(!view.to_string().contains("private override"));
+            assert!(!view.to_string().contains("PROVIDER_TOKEN"));
+            if placement == "inherited" {
+                agent.environment.insert(key.clone(), "own override".into());
+                assert_eq!(
+                    agent.view(&defaults).snapshot_export_limitations,
+                    vec!["behavioral environment overrides"]
+                );
+            }
+            defaults.environment.remove(&key);
+            agent.environment.remove(&key);
+            assert!(agent.view(&defaults).snapshot_export_limitations.is_empty());
+        }
+    }
+}
+
+#[test]
+fn snapshot_export_ignores_unapplied_defaults_and_local_credentials() {
+    let mut agent = fixture();
+    agent.imported = Value::Null;
+    agent.environment.clear();
+    let mut defaults = AgentDefaults {
+        harness: "pi".into(),
+        ..AgentDefaults::default()
+    };
+    defaults
+        .environment
+        .insert("BUZZ_ACP_SYSTEM_PROMPT".into(), "different harness".into());
+    defaults
+        .environment
+        .insert("PROVIDER_TOKEN".into(), "local credential".into());
+    assert!(agent.view(&defaults).snapshot_export_limitations.is_empty());
+    defaults.environment.remove("BUZZ_ACP_SYSTEM_PROMPT");
+    defaults
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "4".into());
+    assert!(agent.view(&defaults).snapshot_export_limitations.is_empty());
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(4));
 }

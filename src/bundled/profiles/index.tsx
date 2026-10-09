@@ -4,7 +4,13 @@ import type { PluginModule } from "../../plugins/api";
 import { profilePanelKey } from "../../features/profiles/target";
 import { ProfilePanel } from "./ProfilePanel";
 
-export const inject = ["panels", "relay", "navigation", "agentControl"];
+export const inject = [
+  "panels",
+  "relay",
+  "navigation",
+  "agentControl",
+  "agents2",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "profile",
@@ -27,6 +33,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           relay={ctx.relay}
           navigation={ctx.navigation}
           control={ctx.agentControl}
+          agents2={ctx.agents2}
         />
       );
     },

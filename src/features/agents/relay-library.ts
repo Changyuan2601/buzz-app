@@ -109,6 +109,8 @@ export async function readRelayLibrary(
     if (!name) continue;
     if (event.kind === 30175) {
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) continue;
+      // Catalog shares are addressed by agent pubkey; the identity row is the agent.
+      if (/^[0-9a-f]{64}$/.test(id)) continue;
       const avatar = avatarSource(body.avatar_url);
       definitions.push({ id, name, ...(avatar ? { avatar } : {}) });
     } else {

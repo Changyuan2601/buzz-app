@@ -1,7 +1,6 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { expectTabler } from "./tabler.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 test.use({
   largeSidebar: true,
@@ -199,91 +198,29 @@ test("channel sidebar resizes from the full gutter and persists", async ({
 });
 
 sessionSidebar(
-  "parent disclosures and child sessions share the channel icon and label columns",
+  "legacy child sessions do not add disclosure rows to channels",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
     const parent = page.locator(`[data-channel-id="${sessionParent}"]`);
-    const child = page.locator('[data-channel-id="alpha"]');
-    const regular = page.locator('[data-channel-id="beta"]');
-    const disclosure = page.getByRole("button", { name: /sessions in/ });
-    const x = async (locator) => (await locator.boundingBox())?.x;
-    const centerX = async (locator) => {
-      const bounds = await locator.boundingBox();
-      if (!bounds) throw new Error("Sidebar icon has no visible bounds");
-      return bounds.x + bounds.width / 2;
-    };
-    const label = (row) => row.locator(".navigation-item-label");
-
     await expect(parent).toBeVisible();
-    await expect(child).toBeVisible();
-    await expect(regular).toBeVisible();
-    await expectTabler(regular.locator("svg").first(), "hash");
-    const regularIconX = await centerX(regular.locator("svg").first());
-    const parentIconX = await centerX(disclosure.locator("svg:visible"));
-    expect(parentIconX).toBeCloseTo(regularIconX, 0);
-
-    await parent.hover();
-    const chevronX = await centerX(disclosure.locator("svg:visible"));
-    expect(chevronX).toBeCloseTo(regularIconX, 0);
-    expect(await x(label(parent))).toBeCloseTo(await x(label(regular)), 0);
-    expect(await x(label(child))).toBeCloseTo(await x(label(regular)), 0);
-
-    const parentSurface = parent.locator(
-      "xpath=ancestor::*[@data-channel-sidebar-row]",
+    await expect(page.locator('[data-channel-id="alpha"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /sessions in/ })).toHaveCount(
+      0,
     );
-    await expect(
-      parentSurface.getByRole("button", { name: /More options for/ }),
-    ).toHaveCount(0);
-    expect(
-      await parent.evaluate((row) => getComputedStyle(row).backgroundColor),
-    ).toBe("rgba(0, 0, 0, 0)");
-    expect(
-      await parentSurface.evaluate(
-        (row) => getComputedStyle(row, "::before").backgroundColor,
-      ),
-    ).not.toBe("rgba(0, 0, 0, 0)");
-
-    await openPage(page, "Projects");
     await parent.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "New session" }).click();
-    const draft = page.getByRole("button", { name: /New session draft in/ });
-    await expect(draft).toBeVisible();
-    expect(await x(label(draft))).toBeCloseTo(await x(label(regular)), 0);
-    const parentName = await label(parent).innerText();
     await expect(
-      page.getByRole("region", {
-        name: `New session in ${parentName}`,
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("textbox", { name: "Message this session", exact: true }),
-    ).toBeVisible();
-    await button(page, "Go back").click();
-    await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
-    ).toBeVisible();
-
-    await child.click();
-    await expectTabler(
-      page
-        .getByRole("article", { name: "Conversation" })
-        .locator(".panel-header-title > svg"),
-      "lock",
-    );
+      page.getByRole("menuitem", { name: "New session", exact: true }),
+    ).toHaveCount(0);
   },
 );
 
 sessionSidebar(
-  "session rows use rounded hovers and Channels opens the shared creation dialog",
+  "Channels opens the shared creation dialog without nested session rows",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    const child = page.locator('[data-channel-id="alpha"]');
-    await expect(child).toBeVisible();
-    await child.hover();
-    await expect(child).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(page.locator('[data-channel-id="alpha"]')).toHaveCount(0);
 
     await openPage(page, "Projects");
     await expect(
@@ -401,9 +338,10 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await open(page, app);
   await button(page, "Alpha").click({ button: "right" });
   const menu = page.getByRole("menu", { name: "Actions for Alpha" });
-  await expect(
-    menu.getByRole("menuitem", { name: "New session" }),
-  ).toBeVisible();
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "New session" })).toHaveCount(
+    0,
+  );
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 
@@ -419,8 +357,7 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 
   await openPage(page, "Messages");
-  // Lifecycle is an independent action group: disabling Sessions removes only
-  // New session, not the context menu or its unavailable-host explanation.
+  // Lifecycle is independent of Sessions and retains its unavailable-host explanation.
   for (const keyboard of [false, true]) {
     if (keyboard) {
       await button(page, "Alpha").focus();

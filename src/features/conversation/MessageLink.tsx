@@ -1,3 +1,7 @@
+import {
+  canPreviewSnapshotLink,
+  requestSnapshotLinkPreview,
+} from "../agents/snapshot-preview";
 import { useConversationPresentation } from "./ConversationPresentation";
 import {
   useRef,
@@ -219,6 +223,22 @@ export function MessageLink({
               </MenuIcon>
               Open in browser
             </MenuLinkItem>
+            {session && canPreviewSnapshotLink(session, url) && (
+              <MenuItem
+                onClick={() => {
+                  try {
+                    requestSnapshotLinkPreview(session, url);
+                  } catch {
+                    setNotice({
+                      text: "Snapshot preview is unavailable.",
+                      error: true,
+                    });
+                  }
+                }}
+              >
+                Preview snapshot
+              </MenuItem>
+            )}
             <MenuItem disabled={copying} onClick={() => void copy()}>
               <MenuIcon>
                 <CopyIcon size={16} />

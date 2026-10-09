@@ -80,6 +80,7 @@ import {
   type ComposerInputElement,
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
+import { macWebKit } from "./mac-webkit";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
@@ -383,17 +384,17 @@ export function EditableInput({
         decorations(state) {
           const { from, to } = state.selection;
           const ranges: Decoration[] = [];
-          if (!projectComposerDocument(state.doc).draft.text) {
-            state.doc.descendants((node, pos) => {
-              if (node.isTextblock) {
-                ranges.push(
-                  Decoration.node(pos, pos + node.nodeSize, {
-                    "data-placeholder": current.current.placeholder,
-                  }),
-                );
-                return false;
-              }
-            });
+          const first = state.doc.firstChild;
+          if (
+            state.doc.childCount === 1 &&
+            first?.type === composerSchema.nodes.paragraph &&
+            first.content.size === 0
+          ) {
+            ranges.push(
+              Decoration.node(0, first.nodeSize, {
+                "data-placeholder": current.current.placeholder,
+              }),
+            );
           }
           state.doc.descendants((node, pos) => {
             if (
@@ -1583,11 +1584,19 @@ export function EditableInput({
         value: () => {
           if (!editable() || composing.current || editor.composing)
             return false;
+          // Mac WebKit can keep painting a stale caret after a line break:
+          // https://discuss.prosemirror.net/t/ghost-cursor-on-safari/9074
+          // Clear the focused editor's native caret so ProseMirror re-adds it
+          // while rendering the line break (or on focus below if the edit is
+          // rejected), as prosemirror-view itself did on Safari before 5daf445
+          // (1.41.0). Remove once upstream repaints it.
+          if (editor.state.selection.empty && editor.hasFocus() && macWebKit())
+            editor.dom.ownerDocument.getSelection()?.removeAllRanges();
           const tr = composerBlockLineBreak(editor.state);
-          if (!tr) return insert("\n");
-          editor.dispatch(closeHistory(tr).scrollIntoView());
+          if (tr) editor.dispatch(closeHistory(tr).scrollIntoView());
+          const inserted = !!tr || insert("\n");
           editor.focus();
-          return true;
+          return inserted;
         },
       },
       editLink: { configurable: true, value: editLink },

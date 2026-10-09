@@ -6,7 +6,7 @@
 //! frame for many seconds. Each aligned block is one signed `Range` GET, shared
 //! by every read and player of the same URL.
 
-use super::fetch_media;
+use super::{buffer_media, media_spool, send_media, upstream_type};
 use crate::identity::IdentityHost;
 use std::{
     collections::VecDeque,
@@ -52,7 +52,7 @@ fn slot(url: &Url, index: u64) -> Slot {
 }
 
 /// `bytes START-END/TOTAL`, the only form a 206 to a single range carries.
-fn content_range(value: &str) -> Option<(u64, u64, u64)> {
+pub(super) fn content_range(value: &str) -> Option<(u64, u64, u64)> {
     let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
     let (start, end) = range.split_once('-')?;
     Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
@@ -61,8 +61,11 @@ fn content_range(value: &str) -> Option<(u64, u64, u64)> {
 /// Why a block fetch left nothing to cache.
 enum Uncached {
     Status(u16),
-    /// The upstream ignored `Range`: its bounded 200 goes to the player as is.
+    /// The upstream ignored `Range` for something other than video: its bounded
+    /// 200 goes to the player as is.
     Whole(Box<tauri::http::Response<Vec<u8>>>),
+    /// The upstream ignored `Range` for a video, which is spooled to disk.
+    Video(Box<reqwest::Response>),
 }
 
 async fn fetch_block(
@@ -71,13 +74,19 @@ async fn fetch_block(
     index: u64,
 ) -> std::result::Result<Arc<Block>, Uncached> {
     let start = index * BLOCK;
-    let response = fetch_media(
+    let upstream = send_media(
         host,
         url.clone(),
-        Some(format!("bytes={start}-{}", start + BLOCK - 1)),
+        Some(&format!("bytes={start}-{}", start + BLOCK - 1)),
     )
     .await
     .map_err(Uncached::Status)?;
+    if upstream.status() == 200 && upstream_type(&upstream).0.starts_with("video/") {
+        return Err(Uncached::Video(Box::new(upstream)));
+    }
+    let response = buffer_media(upstream, super::MAX_MEDIA)
+        .await
+        .map_err(Uncached::Status)?;
     if response.status() != 206 {
         return Err(Uncached::Whole(Box::new(response)));
     }
@@ -103,12 +112,17 @@ async fn fetch_block(
 
 /// Answers `bytes=START-END` (already bounded by `media_range`) exactly, ending
 /// early only at the end of the blob, or with an upstream 200 that ignored `Range`.
+/// A video sent whole is spooled to disk, up to `video_limit` bytes.
 pub(super) async fn read(
     host: &IdentityHost,
     url: &Url,
     start: u64,
     end: u64,
+    video_limit: u64,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    if let Some(spool) = media_spool::cached(url) {
+        return media_spool::read(spool, start, end).await;
+    }
     let mut body = Vec::new();
     let mut first: Option<Arc<Block>> = None;
     let mut at = start;
@@ -121,6 +135,10 @@ pub(super) async fn read(
             Ok(block) => block.clone(),
             Err(Uncached::Status(status)) => return Err(status),
             Err(Uncached::Whole(response)) => return Ok(*response),
+            Err(Uncached::Video(upstream)) => {
+                let spool = media_spool::open(url, *upstream, video_limit).await?;
+                return media_spool::read(spool, start, end).await;
+            }
         };
         let last = end.min(block.total.checked_sub(1).ok_or(416u16)?);
         if at > last {

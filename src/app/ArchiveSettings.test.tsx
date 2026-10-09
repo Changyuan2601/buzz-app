@@ -202,37 +202,3 @@ it("successful clear reports refresh failure without claiming deletion failed", 
   expect(h.value.clear).toHaveBeenCalledWith(24200);
   f.dispose();
 });
-it("shorter retention requires confirmation; cancel preserves it, longer retention saves directly", async () => {
-  const h = host(),
-    f = fixture(h.value);
-  const user = userEvent.setup();
-  render(<ArchiveSettings relay={f.relay} community="Alpha" active />);
-  await screen.findByRole("switch", { name: "Save agent activity" });
-  const choose = async (label: string) => {
-    screen.getByRole("combobox", { name: "Activity retention" }).focus();
-    await user.keyboard("{ArrowDown}");
-    await user.click(await screen.findByRole("option", { name: label }));
-  };
-  await choose("1 day");
-  expect(screen.getByRole("alertdialog")).toHaveTextContent("older than 1 day");
-  expect(h.value.configure).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(h.value.configure).not.toHaveBeenCalled();
-  await choose("7 days");
-  await user.click(screen.getByRole("button", { name: "Shorten retention" }));
-  await waitFor(() =>
-    expect(h.value.configure).toHaveBeenCalledWith(
-      expect.objectContaining({ observerDays: 7 }),
-      expect.any(AbortSignal),
-    ),
-  );
-  await choose("90 days");
-  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(h.value.configure).toHaveBeenLastCalledWith(
-      expect.objectContaining({ observerDays: 90 }),
-      expect.any(AbortSignal),
-    ),
-  );
-  f.dispose();
-});

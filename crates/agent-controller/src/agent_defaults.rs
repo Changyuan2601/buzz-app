@@ -132,7 +132,7 @@ impl AgentDefaults {
 /// Harness kind of a saved command; device defaults support a subset.
 pub(crate) fn harness_kind(command: &str) -> Option<&'static str> {
     match Path::new(command).file_name().and_then(|s| s.to_str()) {
-        Some("buzz-agent") => Some("buzz-agent"),
+        Some("buzz-agent" | "buzz-agent.exe") => Some("buzz-agent"),
         Some("goose" | "goose.exe" | "goose-acp" | "goose-acp.exe") => Some("goose"),
         Some("buzz-pi-acp") => Some("pi"),
         _ => crate::harness_preset(command).map(|preset| preset.id.as_str()),

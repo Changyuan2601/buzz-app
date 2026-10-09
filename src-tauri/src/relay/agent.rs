@@ -299,7 +299,7 @@ fn unique_json(text: &str) -> Result<Value> {
         .map_err(|_| "Invalid memory body".into())
 }
 
-fn slug(s: &str) -> bool {
+pub(crate) fn slug(s: &str) -> bool {
     if s == "core" {
         return true;
     }
@@ -706,6 +706,33 @@ mod tests {
         assert!(!slug("mem/a//b"));
         assert!(slug("mem/a/b_2"));
     }
+    #[test]
+    fn snapshot_memory_events_round_trip_through_native_owner_reader() {
+        let agent_key = buzz_agent_controller::Secret::generate().unwrap();
+        let agent = agent_key.pubkey().to_owned();
+        let owner_bytes = [2; 32];
+        let owner = signed_event(&owner_bytes, 1, vec![], String::new()).pubkey;
+        let events = [
+            ("core", "private fixture core"),
+            ("mem/one", "private fixture entry"),
+        ]
+        .into_iter()
+        .map(|(slug, body)| {
+            Some(
+                agent_key
+                    .memory_event(&owner, slug, body, 1_700_000_001)
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+        let listing =
+            decode_memories_with_key(&owner_bytes, &owner, &owner, &agent, &events).unwrap();
+        assert_eq!(listing["partial"], false);
+        assert_eq!(listing["entries"][0]["body"], "private fixture core");
+        assert_eq!(listing["entries"][1]["body"], "private fixture entry");
+        assert_ne!(agent, owner);
+    }
+
     #[test]
     fn encrypted_memory_and_observer_fixtures() {
         let (viewer_secret, viewer) = fixture();

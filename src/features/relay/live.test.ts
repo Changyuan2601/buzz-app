@@ -299,6 +299,46 @@ describe("per-channel replay allowance", () => {
   });
 });
 
+it("delivers verified live-phase events to subscribeLive, never replay", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  const relay = keypair(),
+    author = keypair();
+  const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      h.callbacks.receive.mockImplementation(callbacks.receive);
+      h.callbacks.state.mockImplementation(callbacks.state);
+      return h.owner;
+    },
+  });
+  try {
+    h.callbacks.receive([roster(relay, "a", [h.key.pubkey])]);
+    await h.first.auth();
+    const initial = h.first.requests().find((r) => scopeOf(r).includes("a"));
+    assert.exists(initial);
+    const live = vi.fn();
+    owner.session.subscribeLive(live);
+    await h.first.receive([
+      "EVENT",
+      initial[1],
+      message(author, "a", "replayed", 1700000000),
+    ]);
+    await h.first.receive(["EOSE", initial[1]]);
+    expect(live).not.toHaveBeenCalled();
+    const fresh = message(author, "a", "fresh", 1700000002);
+    await h.first.receive(["EVENT", initial[1], fresh]);
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(live.mock.calls[0]?.[0]).toMatchObject({
+      channelId: "a",
+      events: [expect.objectContaining({ id: fresh.id })],
+    });
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each(["single", "chained"])(
   "preserves survivor alerts before replacement EOSE and deduplicates the overlapping live copy (%s removal)",
   async (removal) => {

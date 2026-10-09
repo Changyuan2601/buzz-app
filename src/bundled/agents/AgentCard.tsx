@@ -50,6 +50,7 @@ export function AgentCard({
   onEdit,
   onViewProfile,
   onDuplicate,
+  onShare,
   onDelete,
   archive,
   archived = false,
@@ -76,6 +77,7 @@ export function AgentCard({
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
   onViewProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   onDelete?: ((agent: AgentView) => void) | undefined;
   /** Visibility in the connected community; undefined when it cannot change. */
   archive?:
@@ -312,6 +314,16 @@ export function AgentCard({
                           {editable.length === 1
                             ? "Duplicate"
                             : `Duplicate ${identityLabel(agent)}`}
+                        </MenuItem>
+                      )}
+                      {onShare && (
+                        <MenuItem
+                          onClick={() => {
+                            trigger.current?.focus();
+                            onShare(agent);
+                          }}
+                        >
+                          Share
                         </MenuItem>
                       )}
                       {onDelete && (

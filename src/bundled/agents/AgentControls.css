@@ -77,3 +77,31 @@
     justify-content: flex-end;
   }
 }
+
+.agent-add-layout {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  min-width: 0;
+}
+.agent-add-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: min(70vh, 42rem);
+  overflow-y: auto;
+  border-right: 1px solid var(--border-standard);
+  padding: var(--space-3);
+}
+.agent-add-sidebar .text-label {
+  padding: var(--space-3);
+}
+@media (max-width: 640px) {
+  .agent-add-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-add-sidebar {
+    max-height: 10rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-standard);
+  }
+}

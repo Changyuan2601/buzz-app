@@ -213,6 +213,10 @@ pub(crate) fn effective_path() -> OsString {
             .filter(|directory| !directory.as_os_str().is_empty())
             .collect::<Vec<_>>();
         directories.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
+        // Per-user installs, such as Claude Code's official installer.
+        if let Some(home) = std::env::var_os("HOME") {
+            directories.push(std::path::Path::new(&home).join(".local/bin"));
+        }
         std::env::join_paths(directories).unwrap_or(path)
     }
     #[cfg(not(target_os = "macos"))]

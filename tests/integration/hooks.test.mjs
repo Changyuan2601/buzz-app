@@ -716,7 +716,7 @@ test("a subdirectory push with multiple refs still tests HEAD", (t) => {
 });
 
 test("raw activity CSS blocks an actual push; shared tokens pass without hook writes", (t) => {
-  const file = "src/bundled/agent-activity/ActivityAccessory.module.css";
+  const file = "src/features/agents/ActivityRows.module.css";
   const bad = ".root { margin: 12px 16px -8px; font-weight: 600; }\n";
   const f = pushFixture(t, { [file]: bad });
   const index = f.git("write-tree");

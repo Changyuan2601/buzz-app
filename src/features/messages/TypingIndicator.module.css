@@ -1,18 +1,17 @@
 .typing {
-  /* The composer context reserves this row even while typing is idle. */
   position: absolute;
-  inset-inline: calc(var(--space-4) + var(--space-2));
-  top: 0;
+  inset-block-end: calc(100% + var(--space-2));
+  inset-inline: var(--space-4);
+  z-index: 1;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  pointer-events: none;
   display: flex;
   align-items: center;
   gap: var(--space-1h);
-  width: fit-content;
-  max-width: calc(100% - 2 * (var(--space-4) + var(--space-2)));
-  pointer-events: none;
-  box-sizing: border-box;
-  padding: var(--space-half) var(--space-1h);
-  border-radius: var(--radius-pill);
-  background: var(--surface-panel);
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
@@ -21,15 +20,12 @@
 }
 
 .label {
+  display: block;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.names {
-  color: var(--text-standard);
-  font-weight: var(--type-weight-medium);
 }
 
 .dots {
@@ -66,9 +62,51 @@
   }
 }
 
+.avatars {
+  display: inline-flex;
+  align-items: center;
+  padding-inline-end: var(--space-1);
+}
+
+.avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.avatars .avatar {
+  padding: var(--space-half);
+  margin-inline-end: calc(-1 * var(--space-1));
+  background: var(--surface-panel);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-sm);
+}
+
+.typing [data-agent-activity-trigger] {
+  pointer-events: auto;
+  padding: var(--space-1);
+  min-height: var(--size-control-sm);
+}
+
+.humans {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-inline-end: auto;
+  max-width: 50%;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-panel);
+  border-radius: var(--radius-control);
+}
+
+.overflow {
+  padding-inline-start: var(--space-2);
+}
+
 @media (max-width: 40.625rem) {
   .typing {
-    inset-inline: calc(var(--space-3) + var(--space-2));
-    max-width: calc(100% - 2 * (var(--space-3) + var(--space-2)));
+    inset-inline: var(--space-3);
   }
 }

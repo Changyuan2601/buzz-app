@@ -27,7 +27,11 @@ import {
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { SearchResults } from "./SearchResults";
-import { readSearchUsage, recordChoice, recordVisit } from "./search-usage";
+import {
+  readSearchUsage,
+  recordChoice,
+  recordVisit,
+} from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
@@ -1592,6 +1596,84 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
   }
 });
 
+it("finds and resolves authors by name words, sending the relay the typed accents", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    zoe = keypair(),
+    other = keypair();
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const reads: Filter[][] = [];
+  const searches: string[] = [];
+  const people = [
+    profile(zoe, { display_name: "Zoë" }),
+    profile(other, { display_name: "Mary Zoë" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      const search = filters.find((filter) => filter.kinds?.includes(0))
+        ?.search as string | undefined;
+      if (search !== undefined) {
+        searches.push(search);
+        // Like the relay's `simple` text index: lowercase word prefixes,
+        // with no accent folding.
+        return Promise.resolve(
+          people.filter((event) =>
+            String(JSON.parse(event.content).display_name)
+              .toLowerCase()
+              .split(/[^\p{L}\p{N}]+/u)
+              .some((word) => word.startsWith(search)),
+          ),
+        );
+      }
+      if (filters.some((filter) => filter.kinds?.includes(9))) {
+        reads.push(filters as Filter[]);
+        return Promise.resolve([]);
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const props = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="from:@Zoë" />);
+    const group = within(screen.getByRole("group", { name: "People" }));
+    // The exact name first, then a later word that matches.
+    await waitFor(() =>
+      expect(
+        group.getAllByRole("option").map((option) => option.textContent),
+      ).toEqual([
+        expect.stringContaining("Zoë"),
+        expect.stringContaining("Mary Zoë"),
+      ]),
+    );
+    mounted.rerender(<SearchResults {...props} query="from:Zoë " />);
+    await waitFor(() =>
+      expect(reads.at(-1)).toEqual([
+        expect.objectContaining({ authors: [zoe.pubkey] }),
+      ]),
+    );
+    // Folding is local only; the relay sees what the user typed.
+    expect(searches.length).toBeGreaterThan(0);
+    expect(searches.every((search) => search === "zoë")).toBe(true);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("prioritizes people, separates agents, shows profile avatars, and excludes archived identities", async () => {
   const relay = keypair(),
     viewer = keypair(),
@@ -1744,6 +1826,88 @@ it.each([
     }
   },
 );
+
+it.each([
+  ["resolves it", false],
+  ["reports a profile namesake as ambiguous", true],
+])("completing an agent's own name with Space %s", async (_, namesake) => {
+  const relay = keypair(),
+    viewer = keypair(),
+    agent = keypair(),
+    human = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(agent, { display_name: "Legacy Bee" }),
+          ...(namesake ? [profile(human, { display_name: "Jose" })] : []),
+        ]);
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      return Promise.resolve([]);
+    },
+  });
+  const source = owner.session.agentChoices;
+  const choices = {
+    ...source.snapshot(),
+    identities: [{ pubkey: agent.pubkey, name: "José", managed: true }],
+    selectable: [{ pubkey: agent.pubkey, name: "José", managed: true }],
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  const props = {
+    session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="from:jose" />);
+    // The picker offers the agent by its own name.
+    expect(
+      await within(
+        await screen.findByRole("group", { name: "Agents" }),
+      ).findByRole("option"),
+    ).toBeVisible();
+    mounted.rerender(<SearchResults {...props} query="from:jose " />);
+    if (!namesake) {
+      await waitFor(() =>
+        expect(reads.at(-1)).toEqual([
+          expect.objectContaining({ authors: [agent.pubkey] }),
+        ]),
+      );
+    } else {
+      // Both keys are offered; neither is searched silently.
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("group", { name: "People" })).getAllByRole(
+            "option",
+          ),
+        ).toHaveLength(1),
+      );
+      expect(
+        within(screen.getByRole("group", { name: "Agents" })).getAllByRole(
+          "option",
+        ),
+      ).toHaveLength(1);
+      expect(reads).toEqual([]);
+    }
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it("adds a late shared agent without another keystroke or prefix read", async () => {
   vi.useFakeTimers();

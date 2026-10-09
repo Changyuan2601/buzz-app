@@ -44,6 +44,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.pages.register({
     id: "channels",
     title: "Channels",
+    primary: true,
+    placement: "topbar",
     layout: "workspace",
     companion: true,
     handlesNavigation: true,

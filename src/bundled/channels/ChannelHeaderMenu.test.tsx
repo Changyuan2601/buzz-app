@@ -13,6 +13,7 @@ import {
   type ChannelMenuSurface,
 } from "../../features/channel-navigation/ChannelNavigationState";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import type { RegisteredPanel } from "../../features/panels/service";
 import type { RelayData } from "../../features/relay/service";
 
 const channel: ChannelSummary = {
@@ -290,4 +291,42 @@ it("offers DM Hide using the existing lifecycle permissions, not stream actions"
     screen.queryByRole("menuitem", { name: "Delete channel" }),
   ).not.toBeInTheDocument();
   expect(h.run).not.toHaveBeenCalled();
+});
+
+it("launches the exact menu contribution and removes it when unavailable", async () => {
+  const h = harness();
+  const open = vi.fn();
+  const panel = {
+    key: "usage/usage",
+    channelMenu: { label: "View channel usage" },
+  } as RegisteredPanel;
+  const user = userEvent.setup();
+  const snapshot = { session: h.props.session, status: "ready" };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const view = render(
+    <ChannelNavigationProvider relay={relay}>
+      <ChannelHeaderMenu
+        {...h.props}
+        menuPanels={[panel]}
+        openMenuPanel={open}
+      />
+    </ChannelNavigationProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View channel usage" }),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith(panel);
+  view.rerender(
+    <ChannelNavigationProvider relay={relay}>
+      <ChannelHeaderMenu {...h.props} menuPanels={[]} openMenuPanel={open} />
+    </ChannelNavigationProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  expect(
+    screen.queryByRole("menuitem", { name: "View channel usage" }),
+  ).toBeNull();
 });

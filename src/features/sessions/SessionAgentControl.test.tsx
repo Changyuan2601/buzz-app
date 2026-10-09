@@ -75,7 +75,7 @@ it("retries the failed library and updates the picker when a second agent joins"
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Choose an agent" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Retry agent list" }),
+    await screen.findByRole("button", { name: "Retry agent list" }),
   );
   await user.keyboard("{Escape}");
   expect(refresh).toHaveBeenCalledOnce();

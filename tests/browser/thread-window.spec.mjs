@@ -256,7 +256,8 @@ test("newest window positions immediately; scrollback preserves the visible repl
     const history = panel.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
     await expect(replies).toHaveCount(10);
-    await expect(panel.getByRole("status")).toHaveCount(0);
+    // Loading belongs to history; the composer retains its live region idle.
+    await expect(history.getByRole("status")).toHaveCount(0);
     await expect(
       panel.getByText("First root reply 302", { exact: true }),
     ).toBeInViewport();

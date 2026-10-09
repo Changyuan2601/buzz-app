@@ -162,7 +162,7 @@ export function createChannelDetails({
       if (attempts.has(id))
         throw new Error("Check the previous change before saving again.");
       const draft = Object.freeze({ ...input });
-      validateDetailsDraft(draft);
+      validateDetailsDraft(draft, base);
       let publicationStarted = false;
       attempts.set(id, Object.freeze({ draft, status: "saving" }));
       emit();

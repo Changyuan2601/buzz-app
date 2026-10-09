@@ -351,3 +351,31 @@ it("confirmed cleanup forgets a ready file after unmount and a reopened scoped d
   expect(after.result.current.items).toEqual([]);
   expect(h.calls).toHaveLength(1);
 });
+
+it("adds a copied snapshot without reupload, deduplicates and permits removal", async () => {
+  const h = fixture();
+  const draft = renderHook(() =>
+    useAttachmentDraft(h.session, "copied", "one"),
+  );
+  const descriptor = {
+    ...uploaded("helper.agent.png"),
+    type: "image/png",
+    size: 2048,
+  };
+  act(() => {
+    draft.result.current.store.addUploaded(descriptor);
+    draft.result.current.store.addUploaded(descriptor);
+  });
+  expect(draft.result.current.items).toHaveLength(1);
+  expect(draft.result.current.items[0]?.status).toBe("ready");
+  expect(
+    await draft.result.current.store.prepareForSend(
+      new AbortController().signal,
+    ),
+  ).toEqual([descriptor]);
+  expect(h.upload).not.toHaveBeenCalled();
+  const item = draft.result.current.items[0];
+  assert.exists(item);
+  act(() => draft.result.current.store.remove(item.id));
+  expect(draft.result.current.items).toHaveLength(0);
+});

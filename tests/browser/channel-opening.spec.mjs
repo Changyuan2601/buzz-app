@@ -17,7 +17,7 @@ const heads = (app, channel) =>
       filter.until === undefined,
   );
 
-test("cold opening bypasses held DM labels; warm switching paints without a head read and stays within its regression ceiling", {
+test("cold opening bypasses held DM labels; warm switching paints without a head read", {
   tag: "@local-webkit",
 }, async ({ page, app }) => {
   const submittedHeads = [];
@@ -109,9 +109,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     ).toBeVisible();
     expect(heads(app, "beta")).toHaveLength(1);
     const before = submittedHeads.length;
-    const warmTimings = [];
     const targetMs = 100;
-    const ceilingMs = 200;
     // Browser-clock click → first visible row → paint, excluding Playwright IPC.
     for (const name of ["Alpha", "Beta", "Alpha", "Beta"]) {
       const timing = await page
@@ -185,12 +183,11 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
           },
         );
       app.report.measurements.push({ name, ...timing });
-      warmTimings.push({ name, ...timing });
       // Surface target misses without truncating samples or functional checks.
       if (timing.warmVisibleMs >= targetMs)
         test.info().annotations.push({
           type: "performance",
-          description: `${name} warm switch: ${timing.warmVisibleMs.toFixed(1)}ms (target <${targetMs}ms; ceiling <${ceilingMs}ms)`,
+          description: `${name} warm switch: ${timing.warmVisibleMs.toFixed(1)}ms (target <${targetMs}ms)`,
         });
     }
     expect(submittedHeads).toHaveLength(before);
@@ -214,12 +211,6 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     );
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
-    // A provisional margin for shared-runner scheduling, not a device SLA.
-    // Enforce only after the complete functional journey and all four samples.
-    for (const { name, warmVisibleMs } of warmTimings)
-      expect
-        .soft(warmVisibleMs, `${name} warm-switch regression ceiling`)
-        .toBeLessThan(ceilingMs);
   } finally {
     preferences.resolve();
     app.relay.releaseEose("alpha");

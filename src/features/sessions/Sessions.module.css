@@ -1,5 +1,6 @@
 .work {
   container: session-conversation / inline-size;
+  height: 100%;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -78,6 +79,7 @@
 
 .column {
   flex: 1;
+  overflow: hidden;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -102,13 +104,21 @@
 }
 
 .agentTrigger {
+  --agent-avatar-size: 1.5rem;
+  --agent-picker-padding: var(--space-1h);
+  --agent-picker-radius: calc(
+    var(--agent-avatar-size) /
+    2 +
+    var(--agent-picker-padding)
+  );
   display: inline-flex;
   min-width: 0;
   max-width: min(15rem, 45vw);
 }
 .agentTrigger .agentAvatar {
-  width: 1.5rem;
-  height: 1.5rem;
+  display: inline-grid;
+  width: var(--agent-avatar-size);
+  height: var(--agent-avatar-size);
 }
 .agentName {
   overflow: hidden;
@@ -133,4 +143,91 @@
 }
 .targetNavigation button {
   cursor: pointer;
+}
+
+/* Mask the ghost hover surface, keeping content and focus rings unclipped. */
+.agentTrigger [data-agent-picker] {
+  isolation: isolate;
+  padding: var(--agent-picker-padding);
+  border-radius: var(--agent-picker-radius);
+  background: transparent;
+  box-shadow: none;
+}
+.agentTrigger [data-agent-picker]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  --corner-size: calc(var(--agent-picker-radius) * 2);
+  mask:
+    url("./agent-picker-shape.svg") top left / var(--corner-size)
+    var(--corner-size) no-repeat,
+    url("./agent-picker-shape.svg") top right / var(--corner-size)
+    var(--corner-size) no-repeat,
+    url("./agent-picker-shape.svg") bottom left / var(--corner-size)
+    var(--corner-size) no-repeat,
+    url("./agent-picker-shape.svg") bottom right / var(--corner-size)
+    var(--corner-size) no-repeat,
+    linear-gradient(currentColor 0 0) center / calc(100% - var(--corner-size))
+    100% no-repeat,
+    linear-gradient(currentColor 0 0) center / 100%
+    calc(100% - var(--corner-size)) no-repeat;
+}
+@media (hover: hover) and (pointer: fine) {
+  .agentTrigger
+    [data-agent-picker]:hover:not(:disabled, [data-disabled])::before {
+    background: var(--interaction-hover);
+  }
+}
+.agentTrigger
+  [data-agent-picker]:is(:active, [aria-expanded="true"]):not(
+    :disabled,
+    [data-disabled]
+  )::before {
+  background: var(--interaction-pressed);
+}
+
+.agentTrigger .agentAvatar svg {
+  display: block;
+}
+
+.agentPickerContent {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  padding: var(--space-3);
+  gap: var(--space-2);
+}
+.agentPickerContent > :not(.agentPickerChoices) {
+  flex-shrink: 0;
+}
+.agentPickerContent p,
+.agentOptionLabel small {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  color: var(--text-subtle);
+}
+.agentPickerChoices {
+  flex: 1;
+  grid-auto-rows: max-content;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: var(--space-1);
+}
+.agentOptionLabel {
+  display: flex;
+  flex-direction: column;
+  white-space: normal;
+}
+
+.agentIdentifier {
+  font-size: var(--text-caption);
+  color: var(--text-subtle);
+  font-weight: var(--type-weight-normal);
 }

@@ -9,10 +9,10 @@
 # The format is described: https://github.blog/2017-07-06-introducing-code-owners/
 
 # These owners will be the default owners for everything in the repo.
-*       @wesbillman @comp615 @block/buzz-oss-team
+*       @block/buzz-oss-team
 
 # Builderlab's bundled plugin, including files in nested directories.
-/src/bundled/builderlab/ @wesbillman @comp615 @block/buzz-oss-team @block/buzz-builderlab-oss-team
+/src/bundled/builderlab/ @block/buzz-oss-team @block/buzz-builderlab-oss-team
 
 
 # -----------------------------------------------

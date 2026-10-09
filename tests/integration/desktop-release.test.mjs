@@ -39,6 +39,38 @@ const assembly = jobs.publish.steps.find((step) =>
   step.run?.includes("sha256sum --check"),
 ).run;
 
+test("Tauri and the release signer use microphone entitlements and verify the signed app", () => {
+  const config = JSON.parse(
+    readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"),
+  );
+  const signing = jobs.build.steps.find((step) => step.id === "codesign");
+  const path = `src-tauri/${config.bundle.macOS.entitlements}`;
+  assert.equal(signing.with["entitlements-plist-path"], path);
+  assert.match(
+    readFileSync(join(root, path), "utf8"),
+    /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\s*\/>/,
+  );
+  const verify = jobs.build.steps.find(
+    (step) => step.name === "Verify release DMG and bundled runtime",
+  );
+  assert.ok(
+    verify.run.includes(
+      'codesign --display --entitlements :- "$app" > "$RUNNER_TEMP/signed-entitlements.plist"',
+    ),
+  );
+  assert.ok(
+    verify.run.includes(
+      `test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$RUNNER_TEMP/signed-entitlements.plist")" = true ||`,
+    ),
+  );
+  assert.ok(
+    jobs.build.steps.indexOf(verify) <
+      jobs.build.steps.findIndex(
+        (step) => step.name === "Stage release assets and checksums",
+      ),
+  );
+});
+
 function temp(t) {
   const dir = mkdtempSync(join(tmpdir(), "desktop-release-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

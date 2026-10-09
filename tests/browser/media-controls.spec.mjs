@@ -54,7 +54,12 @@ for (const kind of ["image", "video"]) {
         await page.evaluate(() =>
           window.dispatchEvent(new Event("fixture-typing")),
         );
-        const typing = dialog.getByRole("status", { name: "Typing activity" });
+        const typing = dialog
+          .locator('[aria-hidden="true"]')
+          .filter({ hasText: "Alex is typing" });
+        await expect(
+          dialog.getByRole("status", { name: "Conversation activity" }),
+        ).toHaveText("Alex is typing");
         const frameOption = dialog.getByRole("checkbox", {
           name: "Comment at current frame",
         });

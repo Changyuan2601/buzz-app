@@ -1,9 +1,8 @@
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
 import { activitySelection } from "../../features/agents/activity-target";
-import { ActivityAccessory } from "./ActivityAccessory";
 import { ActivityPanel } from "./ActivityPanel";
-export const inject = ["panels", "relay", "conversation"];
+export const inject = ["panels", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   ctx.effect(() => {
@@ -24,11 +23,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       stop();
       release?.();
     };
-  });
-  ctx.conversation.registerAccessory({
-    id: "activity",
-    title: "Agent Activity",
-    component: ActivityAccessory,
   });
   ctx.panels.register({
     id: "activity",

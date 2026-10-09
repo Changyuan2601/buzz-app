@@ -1,9 +1,12 @@
 import type { RelayEvent } from "../relay/events";
-import type { KitRecord } from "./model";
+import type { KitRecord, PayloadRecord } from "./model";
 export interface ChannelKitHost {
-  prepare(record: KitRecord, signal: AbortSignal): Promise<string>;
+  prepare(
+    record: KitRecord | PayloadRecord,
+    signal: AbortSignal,
+  ): Promise<string>;
   decode(
     events: readonly RelayEvent[],
     signal: AbortSignal,
-  ): Promise<{ eventId: string; record: KitRecord }[]>;
+  ): Promise<{ eventId: string; record: KitRecord | PayloadRecord }[]>;
 }

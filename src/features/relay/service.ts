@@ -16,7 +16,10 @@ import type { ReadTransport } from "./transport";
 export type RelaySnapshot = Readonly<{
   status: "disconnected" | "connecting" | "ready" | "error";
   generation: number;
+  /** The persistence partition, `origin:viewer`. */
   scope?: string;
+  /** The community's normalized origin, as `scope` was built from. */
+  origin?: string;
   session: RelaySession;
   viewer?: string;
   error?: string;
@@ -131,6 +134,7 @@ export function provideRelay(
         cached: true,
         generation,
         viewer: resume.viewer,
+        origin: resume.scope,
         scope: relayPartition(resume.scope, resume.viewer),
         session: store.session,
       });
@@ -241,6 +245,7 @@ export function provideRelay(
             status: "ready",
             generation,
             viewer: transport.viewer,
+            origin: transportOrigin(transport),
             scope: transportPartition(transport),
             session: store.session,
           });

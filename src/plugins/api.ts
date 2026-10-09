@@ -16,6 +16,13 @@ export type PluginManifest = Readonly<{
       maxOutputBytes?: number;
     }>[];
     networkOrigins?: readonly string[];
+    /** Programs the plugin may start with `host.spawn`; the caller's
+     * arguments follow the declared ones. */
+    processes?: readonly Readonly<{
+      id: string;
+      program: string;
+      args?: readonly string[];
+    }>[];
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.

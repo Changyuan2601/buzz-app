@@ -84,10 +84,66 @@ test("list toolbar, native item splitting and indentation survive reload and sen
   await expect(input.locator(":scope > p")).toHaveText("outside");
   await page.reload();
   await expect(input.locator("ul > li")).toHaveCount(3);
-  await input.press("Enter");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
   expect(
     await page.evaluate(() => window.linkComposerFixture.sent.at(-1).text),
   ).toBe("- one\n- two\n- three\n\noutside");
+});
+
+// Native text input, caret selection and history are browser-owned; the marker
+// matrix and completion/IME guards remain in the component tests.
+test("typed lists use Enter to split and exit, preserve mentions and send by button", async ({
+  page,
+}) => {
+  const input = await composer(page);
+  await expect(input.locator("[data-placeholder]")).toHaveCount(1);
+  await input.pressSequentially("3. ");
+  await expect(input.locator("ol")).toHaveAttribute("start", "3");
+  await expect(input.locator("[data-placeholder]")).toHaveCount(0);
+  await input.press("Enter");
+  await expect(input.locator("ol")).toHaveCount(0);
+  await expect(input.locator("[data-placeholder]")).toHaveCount(1);
+  await input.pressSequentially("3. ");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(input.locator("ol")).toHaveCount(0);
+  await expect.poll(() => input.evaluate((el) => el.value)).toBe("3. ");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await input.pressSequentially("first second");
+  await input.evaluate((el) => el.setSelectionRange(6, 6));
+  await input.press("Enter");
+  await expect(input.locator("ol > li")).toHaveText(["first ", "second"]);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(input.locator("ol > li")).toHaveText("first second");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await input.evaluate((el) =>
+    el.setSelectionRange(el.value.length, el.value.length),
+  );
+  await input.press("Enter");
+  await input.press("Enter");
+  await expect(input.locator(":scope > p")).toHaveCount(1);
+  await input.pressSequentially("• ");
+  await expect(input.locator("ul > li")).toHaveCount(1);
+  await expect(input.locator("[data-placeholder]")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Close formatting", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Mention Alex Chen", exact: true })
+    .click();
+  await input.press("Enter");
+  await input.pressSequentially("follow up");
+  await expect(input.locator("ul > li")).toHaveCount(2);
+  // Both Enter presses finished synchronously without submitting the form.
+  expect(
+    await page.evaluate(() => window.linkComposerFixture.sent.length),
+  ).toBe(0);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.linkComposerFixture.sent.at(-1)))
+    .toEqual({
+      text: "3. first \n4. second\n\n- @Alex Chen \n- follow up",
+      mentions: ["a".repeat(64)],
+    });
 });
 
 test("a typed fence opens a code block at once, and the block sends fenced", async ({

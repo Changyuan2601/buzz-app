@@ -1,3 +1,4 @@
+import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import {
@@ -83,6 +84,18 @@ function fixture(personal = true) {
       query,
       decodeSidebarPreferences: async () => legacy,
       writeSidebarAssignment: assignment,
+      removeSidebarSection: async (id) => {
+        legacy = {
+          ...legacy,
+          sections: legacy.sections.filter((section) => section.id !== id),
+          assignments: Object.fromEntries(
+            Object.entries(legacy.assignments).filter(
+              ([, section]) => section !== id,
+            ),
+          ),
+        };
+        return legacy;
+      },
       writeSidebarStar: star,
       channelKit: {
         decode: async (rows) =>
@@ -269,7 +282,10 @@ it("retries a personal catalog read cancelled by initial roster authority", asyn
     const catalog = owner.session.channelKit.refresh();
     await flush();
     const interrupted = wire.next();
-    expect(interrupted.filters[0]?.["#t"]).toEqual([KIT_TAG]);
+    expect(interrupted.filters[0]?.["#t"]).toEqual([
+      KIT_TAG,
+      TEAM_MANIFEST_TAG,
+    ]);
     owner.session.channels.ensureList();
     await flush();
     wire.next().respond([roster(relay, channel, [viewer.pubkey])]);
@@ -307,3 +323,32 @@ it.each(["clearCache", "dispose"] as const)(
     }
   },
 );
+
+it("removes active personal groups without altering legacy groups or channel membership", async () => {
+  const h = fixture();
+  await h.session.sidebarPreferences.ensure();
+  expect(h.session.sidebarPreferences.snapshot().data?.groupSource).toBe(
+    "personal",
+  );
+  await h.session.sidebarPreferences.removeSection("work");
+  expect(h.session.sidebarPreferences.snapshot().data?.sections).toEqual([]);
+  expect(h.session.sidebarPreferences.snapshot().data?.assignments).toEqual({});
+  expect(h.assignment).not.toHaveBeenCalled();
+  h.dispose();
+});
+
+it("rejects section deletion when another device changes the active group source", async () => {
+  const h = fixture(false);
+  try {
+    await h.preferences.ensure();
+    h.install(structuredClone(groups));
+    await expect(h.preferences.removeSection("work")).rejects.toThrow(
+      "active group source changed",
+    );
+    expect(h.publish).not.toHaveBeenCalled();
+    await h.preferences.refresh();
+    expect(h.preferences.snapshot().data?.sections).toHaveLength(1);
+  } finally {
+    h.dispose();
+  }
+});

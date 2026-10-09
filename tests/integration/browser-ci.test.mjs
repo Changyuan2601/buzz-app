@@ -172,7 +172,7 @@ test("one same-run native artifact preserves the executable, revision and test-o
   }
 });
 
-test("workflow shards discover every functional test/project exactly once", (t) => {
+test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
   const command = browser.match(
     /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
   )?.[1];
@@ -198,7 +198,7 @@ test("workflow shards discover every functional test/project exactly once", (t) 
     return collect(report.suites);
   };
   const expected = discover([
-    "test:browser:ci",
+    "test:browser",
     "--project",
     "chromium",
     "--project",
@@ -222,15 +222,31 @@ test("workflow shards discover every functional test/project exactly once", (t) 
       t.diagnostic(`${engine}/${shard}: ${selected.length} functional tests`);
     }
   }
+  const recording = parse(workflow).jobs.media_recorder.steps.find(
+    (step) => step.name === "Recording journeys",
+  );
+  assert.equal(recording.if, undefined);
+  assert.equal(recording["continue-on-error"], undefined);
+  const recordingCommand = recording.run.match(
+    / -- (\.\/bin\/pnpm test:browser .+)$/,
+  )?.[1];
+  assert.ok(recordingCommand, "macOS must execute the recording cases");
+  const mac = discover(
+    recordingCommand.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
+  );
+  assert.ok(mac.length > 0, "macOS recording must select tests");
+  assert.ok(mac.every((id) => id.startsWith("webkit:")));
+  actual.push(...mac);
+  t.diagnostic(`macOS WebKit: ${mac.length} recording tests`);
   assert.equal(
     new Set(actual).size,
     actual.length,
-    "no duplicate test/project across shards",
+    "no duplicate test/project across Linux shards and macOS",
   );
   assert.deepEqual(
     actual.sort(),
     expected.sort(),
-    "matrix must cover unsharded discovery",
+    "Linux and macOS must cover full local functional discovery",
   );
 });
 
@@ -331,7 +347,7 @@ test("classic-scrollbar cases run exactly once, after the measurements, without 
     assert.ok(!spec.tags.includes("classic-scrollbars"), spec.title);
 });
 
-test("automatic CI stays on Linux and manual dispatch runs only Windows", () => {
+test("automatic CI uses Linux plus macOS recording and manual dispatch runs only Windows", () => {
   const { jobs } = parse(workflow);
   for (const lane of [
     "javascript",
@@ -343,6 +359,36 @@ test("automatic CI stays on Linux and manual dispatch runs only Windows", () => 
     assert.equal(jobs[lane].if, "github.event_name != 'workflow_dispatch'");
     assert.equal(jobs[lane]["runs-on"], "ubuntu-24.04");
   }
+  const recording = jobs.media_recorder;
+  assert.equal(recording.if, "github.event_name != 'workflow_dispatch'");
+  assert.equal(recording["runs-on"], "macos-15");
+  assert.equal(recording.container, undefined);
+  assert.equal(recording["continue-on-error"], undefined);
+  assert.ok(
+    recording.steps.some((step) => step.uses === "./.github/actions/setup"),
+  );
+  const install = recording.steps.find(
+    (step) => step.name === "Install pinned WebKit",
+  );
+  assert.equal(install.run, "./bin/pnpm exec playwright install webkit");
+  assert.equal(install.if, undefined);
+  const journey = recording.steps.find(
+    (step) => step.name === "Recording journeys",
+  );
+  assert.match(
+    journey.run,
+    /-- \.\/bin\/pnpm test:browser --project webkit --grep @media-recorder --no-deps --reporter=list,json$/,
+  );
+  assert.match(journey.run, /scripts\/ci-test-report\.mjs kind=playwright/);
+  assert.equal(
+    journey.env.PLAYWRIGHT_JSON_OUTPUT_FILE,
+    "test-results/browser/ci-report.json",
+  );
+  const evidence = recording.steps.find(
+    (step) => step.name === "Recording evidence",
+  );
+  assert.equal(evidence.if, "always()");
+  assert.equal(evidence.with.path, "test-results/browser");
   const windows = jobs["windows-native"];
   assert.equal(windows.if, "github.event_name == 'workflow_dispatch'");
   assert.equal(windows["runs-on"], "windows-2025");
@@ -378,10 +424,17 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser\]$/m,
+    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser, media_recorder\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
-  const lanes = ["JAVASCRIPT", "NATIVE", "MEASUREMENTS", "FIXTURE", "BROWSER"];
+  const lanes = [
+    "JAVASCRIPT",
+    "NATIVE",
+    "MEASUREMENTS",
+    "FIXTURE",
+    "BROWSER",
+    "MEDIA_RECORDER",
+  ];
   for (const lane of lanes)
     assert.ok(
       required.includes(

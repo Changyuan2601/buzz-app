@@ -812,3 +812,23 @@ fn protection_defaults_revision_limit_preserves_saved_bytes() {
         "Invalid protection revision"
     );
 }
+
+#[test]
+fn existing_agent_save_accepts_international_text_and_crlf_but_rejects_hidden_controls() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+    let mut update = edit();
+    update.name = "زبان فارسی".into();
+    update.system_prompt = "فارسی‌زبان\r\nनमस्ते\u{200d}दुनिया 👩‍💻 “അവന്‍” അവന്‍। വന്നു".into();
+    store.save(&agent.id, agent.revision, update).unwrap();
+    let saved = store.agents().unwrap().into_iter().next().unwrap();
+    assert_eq!(
+        saved.system_prompt,
+        "فارسی‌زبان\r\nनमस्ते\u{200d}दुनिया 👩‍💻 “അവന്‍” അവന്‍। വന്നു"
+    );
+    let mut invalid = edit();
+    invalid.system_prompt = "hidden\u{202e} instructions".into();
+    assert!(store.save(&agent.id, saved.revision, invalid).is_err());
+}

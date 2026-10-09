@@ -152,3 +152,41 @@ it("classifies the buzz scheme case-insensitively, matching URL normalization", 
   expect(isBuzzLink("javascript:alert(1)")).toBe(false);
   expect(isBuzzLink("not a url")).toBe(false);
 });
+
+it("accepts the Windows root slash without changing message or thread targets", () => {
+  for (const suffix of ["", `&thread=${"b".repeat(64)}`]) {
+    const canonical = `${example}${suffix}`;
+    const windows = canonical.replace("message?", "message/?");
+    expect(parseBuzzLink(windows)).toEqual(parseBuzzLink(canonical));
+    expect(buzzLinkTarget(windows, scope)).toEqual(
+      buzzLinkTarget(canonical, scope),
+    );
+    expect(buzzLinkKind(windows)).toBe(suffix ? "thread" : "message");
+    expect(parseBuzzLink(windows.replace("buzz:", "BUZZ:"))).toEqual(
+      parseBuzzLink(canonical),
+    );
+  }
+});
+it.each(["", "/"])("keeps message validation with path %j", (path) => {
+  const query = `channel=general&id=${"a".repeat(64)}`;
+  for (const url of [
+    `buzz://message${path}?${query}&id=${"b".repeat(64)}`,
+    `buzz://message${path}?${query}&channel=other`,
+    `buzz://message${path}?${query}&thread=${"b".repeat(64)}&thread=${"b".repeat(64)}`,
+    `buzz://message${path}?${query}#fragment`,
+    `buzz://message:443${path}?${query}`,
+    `buzz://user@message${path}?${query}`,
+    `buzz://message${path}?channel=general&id=bad`,
+    `buzz://message${path}?id=${"a".repeat(64)}`,
+    `buzz://message${path}?${query}&thread=bad`,
+  ])
+    expect(parseBuzzLink(url), url).toBeNull();
+});
+it.each(["//", "/extra", "/%2F", "/./", "/extra/..", "/%2e/"])(
+  "rejects non-root message path %j",
+  (path) => {
+    expect(
+      parseBuzzLink(example.replace("message?", `message${path}?`)),
+    ).toBeNull();
+  },
+);

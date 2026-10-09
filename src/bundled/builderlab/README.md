@@ -29,6 +29,41 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   creations; **Retry community setup** reuses a pending publication without
   registering or attesting again. Personal space skips relay registration.
   Creation never adds channel membership.
+  Optional **Agent instructions** are saved through Beekeeper's `update-agent`
+  after activation and community setup. Active rows offer **Edit**
+  with Save and Cancel; saving replaces the text, and an empty value clears it.
+  `list-agents` requests `include_instructions: true` to populate the editor.
+  Instructions affect newly accepted tasks and are never published to the relay.
+  Drafts stay in memory across setup/save retries and refreshes; a failed save
+  can be retried on the same agent without creating another. Navigation, restart
+  or sign-out discards drafts. Text is limited to 20,000 characters.
+  **Delete** confirms owner-signed kind-5 deletion of the selected
+  community's registration, refreshes discovery, then deletes the runtime through
+  Beekeeper. Personal space only deletes from Beekeeper. Failure leaves the row
+  available for manual retry; an already-missing Beekeeper agent counts as success.
+  Account-scoped deletion tombstones (`buzz.builderlab.deletion.v1:`) persist to
+  fence new enrollment after restart or in another community. They contain only
+  server/account scope and agent pubkey. Standard Web Locks, also used by the
+  app's read-state sync, order registration and deletion
+  for the same scope across app windows; deletion waits for an issued registration
+  attempt to settle, even when its caller cancels. If that session retires, the
+  lock drain ends without confirming or discarding its receipt; a ten-second
+  bound also covers disposal without notification. Setup requires Web Locks.
+  Successful deletion retires failed or confirmed registration receipts.
+  Deletion does not archive identities, remove channel memberships, erase history,
+  or clean registrations in other communities.
+
+Deletion follow-ups requiring shared relay/outbox support:
+
+- Relay acceptance alone does not prove coordinate absence: clock skew can leave
+  a newer registration advertised after the runtime is deleted. A fresh strong
+  relay-only read is needed; `session.read()` includes local evidence. Failed
+  discovery reads currently stop backend deletion, but are not absence proof.
+- Web Locks do not cover other devices or survive process exit. A request whose
+  delivery becomes unknown may arrive after its lock is released. The tombstone
+  fences later admission, not that issued request; durable reconciliation is
+  needed to compensate late arrival. Unknown registration receipts are retained
+  because the shared outbox cannot safely retire them, and still consume a slot.
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.
@@ -40,6 +75,8 @@ Native code inserts a loopback `redirect_uri` address, opens the browser, and re
 callback parameters to the plugin. Native code generates and validates OAuth
 state; the plugin also uses a random callback path.
 
-The plugin posts the callback code to `/v1/auth/login/exchange`, then verifies
-the returned session credential with `/v1/auth/me` using the
+Each attempt generates a random PKCE verifier held only in memory, sending its
+SHA-256 challenge with `code_challenge_method=S256` during login. The plugin
+posts the callback code and `code_verifier` to `/v1/auth/login/exchange`, then
+verifies the returned session credential with `/v1/auth/me` using the
 `X-BB-Session-Credential` header. These requests use the shared host transport.

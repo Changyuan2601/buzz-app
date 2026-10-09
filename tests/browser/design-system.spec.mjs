@@ -101,13 +101,10 @@ test("shared tokens reach app controls without history or chip overrides", async
   for (const mode of ["Light", "Dark"]) {
     await chooseColorMode(page, mode);
     await expect(page.locator("body")).toHaveCSS("scrollbar-width", "thin");
-    await expect(page.locator("body")).toHaveCSS(
-      "scrollbar-color",
-      "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
-    );
     const override = await page.addStyleTag({
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);
+        --scrollbar-thumb-quiet: rgb(34, 56, 78);
         --text-standard: rgb(10, 20, 30);
         --text-label-sm: 19px;
         --space-1: 3px;
@@ -124,6 +121,10 @@ test("shared tokens reach app controls without history or chip overrides", async
       }`,
     });
     try {
+      await expect(page.locator("body")).toHaveCSS(
+        "scrollbar-color",
+        "rgb(34, 56, 78) rgba(0, 0, 0, 0)",
+      );
       for (const control of [
         increase,
         page.locator("#probe-edge"),

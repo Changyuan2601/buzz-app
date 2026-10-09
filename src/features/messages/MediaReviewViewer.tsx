@@ -3,6 +3,7 @@ import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
 import { readReviewOrigin, useReviewEntrance } from "./use-review-entrance";
 import { VideoPlayer, videoTime } from "./VideoPlayer";
+import { useMediaElementSource } from "./use-media-element-source";
 import { seekVideoBy } from "./use-video-gestures";
 import {
   PanelHeader,
@@ -212,6 +213,10 @@ function ReviewShell({
   retry?: () => void | Promise<void>;
 }) {
   const source = session.media(attachment.url);
+  // Listener unavailability is not a playback error the selection resets.
+  const sourceUnavailable = useMediaElementSource(
+    attachment.kind === "video" ? source : undefined,
+  ).unavailable;
   const mediaTitle =
     attachment.kind === "video" ? (attachment.name ?? "Video") : "Image";
   const backdrop = useRef<HTMLDivElement>(null);
@@ -411,7 +416,7 @@ function ReviewShell({
           />
         </div>
         <div className={styles.mediaReviewStage} data-review-stage="">
-          {!source || unavailable || mediaFailed ? (
+          {!source || unavailable || sourceUnavailable || mediaFailed ? (
             <p
               className={styles.mediaReviewUnavailable}
               role={error ? "alert" : "status"}

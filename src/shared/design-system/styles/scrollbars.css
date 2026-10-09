@@ -1,13 +1,13 @@
-/* Also loaded into vendor shadow roots so every scrolling surface agrees. */
+/* Match the sidebar thumb across native scroll surfaces, including vendor shadow roots. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-color: var(--scrollbar-thumb-quiet) transparent;
 }
 
 /* Opt-in native scrollbar treatment, also injected into Emoji Mart. */
 .buzz-thin-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-prominent) transparent;
+  scrollbar-color: var(--scrollbar-thumb-quiet) transparent;
 }
 
 /* Match the sidebar's quiet thumb without changing geometry on hover.

@@ -1,5 +1,6 @@
 import { newer, type RelayEvent } from "./events";
 import {
+  markMessage,
   retainLocalRead,
   retainReadState,
   type CoveredFrontier,
@@ -85,6 +86,18 @@ const localState = (journal: ReadJournal): ReadState =>
     }),
     overrides: journal.state.overrides,
   });
+/** Which broader mark covers a mark, as in `CoveredFrontier`. `home` gives
+ * the channel of a message when it is known: from a loaded message, or from
+ * a channel saved with the mark. */
+export type MarkCoverage = Readonly<{
+  covered: (
+    key: string,
+    frontier: (key: string) => number | undefined,
+    home: (id: string) => string | undefined,
+  ) => string | undefined;
+  /** The channel of a loaded, verified message. */
+  home: (id: string) => string | undefined;
+}>;
 /** One durable domain owner. Read intent is not cache; one tab never saves over another's intent. */
 export function createReadState({
   viewer,
@@ -113,7 +126,7 @@ export function createReadState({
   let journal: ReadJournal | undefined;
   let state: ReadState = EMPTY_READ_STATE;
   // Message evidence (and so ancestry) belongs to unread, which registers this.
-  let covered: CoveredFrontier | undefined;
+  let coverage: MarkCoverage | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let refreshing: Promise<void> | undefined;
   let publishing: Promise<void> | undefined;
@@ -161,6 +174,44 @@ export function createReadState({
     const next = work.then(job);
     work = next.catch(() => {});
     return next;
+  }
+  const homeLookup =
+    (saved: Readonly<Record<string, string>> = {}) =>
+    (id: string) =>
+      saved[id] ?? coverage?.home(id);
+  const coveredWith = (
+    home: (id: string) => string | undefined,
+  ): CoveredFrontier | undefined =>
+    coverage && ((key, frontier) => coverage?.covered(key, frontier, home));
+  /** `retainLocalRead`, with the channels of the messages that the kept
+   * marks name. Each save records the channel of every loaded message that a
+   * kept mark names, so the mark can still be covered after a reload. */
+  function retainMarks(
+    current: ReadJournal,
+    states: readonly ReadState[],
+    recent: Readonly<Record<string, number>>,
+    learned: Readonly<Record<string, string>> = {},
+  ) {
+    const home = homeLookup({ ...current.homes, ...learned });
+    const kept = retainLocalRead(
+      states,
+      recent,
+      current.clientId,
+      current.reserve,
+      coveredWith(home),
+    );
+    const homes: Record<string, string> = {};
+    for (const key of [
+      ...Object.keys(kept.state.frontiers),
+      ...Object.keys(kept.reserve),
+    ]) {
+      const id = markMessage(key);
+      const channel = id === undefined ? undefined : home(id);
+      // A channel the saved record cannot hold is used for this save's
+      // pruning but not kept, so it cannot make the whole save fail.
+      if (id !== undefined && contextId(channel)) homes[id] = channel;
+    }
+    return { ...kept, homes: Object.freeze(homes) };
   }
   async function save(
     change: (current: ReadJournal) => ReadJournal,
@@ -277,14 +328,14 @@ export function createReadState({
           "Read-state observation cancelled",
           "AbortError",
         );
-      const { state, recent, reserve } = retainLocalRead(
-        [current.state, ...decoded.map(({ parsed }) => parsed.state)],
-        current.recent ?? {},
-        current.clientId,
-        current.reserve,
-        covered,
-      );
-      return { ...current, state, recent, reserve };
+      return {
+        ...current,
+        ...retainMarks(
+          current,
+          [current.state, ...decoded.map(({ parsed }) => parsed.state)],
+          current.recent ?? {},
+        ),
+      };
     });
     if (closed || generation !== epoch) return;
     for (const item of decoded) {
@@ -381,16 +432,19 @@ export function createReadState({
               : { ...current.recent, [key]: revision };
           const kept =
             timestamp === undefined
-              ? { state: current.state, recent, reserve: current.reserve ?? {} }
-              : retainLocalRead(
+              ? {
+                  state: current.state,
+                  recent,
+                  reserve: current.reserve ?? {},
+                  homes: current.homes ?? {},
+                }
+              : retainMarks(
+                  current,
                   [
                     current.state,
                     { frontiers: { [key]: timestamp }, overrides: {} },
                   ],
                   recent,
-                  current.clientId,
-                  current.reserve,
-                  covered,
                 );
           const localUnread = { ...current.localUnread };
           // Automatic observations do not clear explicit local manual-unread intent.
@@ -403,6 +457,7 @@ export function createReadState({
             state: kept.state,
             recent: kept.recent,
             reserve: kept.reserve,
+            homes: kept.homes,
             localUnread,
             acceptedRevision:
               timestamp === undefined &&
@@ -478,7 +533,7 @@ export function createReadState({
             journal.recent ?? {},
             journal.clientId,
             READ_STATE_PLAINTEXT_BYTES,
-            covered,
+            coveredWith(homeLookup(journal.homes)),
           );
           const payload = readBlob(journal.clientId, publishingState, (key) =>
             effectiveFrontier(publishingState, key),
@@ -586,9 +641,23 @@ export function createReadState({
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
     /** Lets the next save drop marks that broader marks already cover. */
-    setCoverage(next: CoveredFrontier | undefined) {
-      covered = next;
+    setCoverage(next: MarkCoverage | undefined) {
+      coverage = next;
     },
+    /** The saved channel of a message that a kept mark names. */
+    home: (id: string) => journal?.homes?.[id],
+    /** Saves channels found for marked messages (from signed events) and
+     * drops the marks that they show are covered. Like a synced update, this
+     * changes no read, so it publishes nothing. */
+    learnHomes: (found: Readonly<Record<string, string>>) =>
+      queue(async () => {
+        await ready;
+        if (!journal || closed) return;
+        await save((current) => ({
+          ...current,
+          ...retainMarks(current, [current.state], current.recent ?? {}, found),
+        }));
+      }),
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -662,17 +731,16 @@ export function createReadState({
             }
             if (clearForce) delete localUnread[clearForce];
             const kept = Object.keys(frontiers).length
-              ? retainLocalRead(
+              ? retainMarks(
+                  current,
                   [current.state, { frontiers, overrides: {} }],
                   recent,
-                  current.clientId,
-                  current.reserve,
-                  covered,
                 )
               : {
                   state: current.state,
                   recent,
                   reserve: current.reserve ?? {},
+                  homes: current.homes ?? {},
                 };
             return {
               ...current,
@@ -680,6 +748,7 @@ export function createReadState({
               state: kept.state,
               recent: kept.recent,
               reserve: kept.reserve,
+              homes: kept.homes,
               localUnread,
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision

@@ -91,6 +91,24 @@ export function useChannelTabState(
     (entries: PanelOpening[]) => update((s) => ({ ...s, entries })),
     [update],
   );
+  const retireMenuEntries = useCallback(
+    () =>
+      update((s) => {
+        const entries = s.entries.filter((entry) => !entry.panel.channelMenu);
+        if (entries.length === s.entries.length) return s;
+        return {
+          ...s,
+          entries,
+          selected: s.entries.some(
+            (entry) =>
+              entry.panel.channelMenu && panelTabId(entry) === s.selected,
+          )
+            ? "thread"
+            : s.selected,
+        };
+      }),
+    [update],
+  );
   const setTabs = useCallback(
     (change: (tabs: ConversationTab[]) => ConversationTab[]) =>
       update((s) => ({ ...s, tabs: change(s.tabs) })),
@@ -135,6 +153,7 @@ export function useChannelTabState(
   return {
     ...state,
     setEntries,
+    retireMenuEntries,
     setTabs,
     select,
     setThread,

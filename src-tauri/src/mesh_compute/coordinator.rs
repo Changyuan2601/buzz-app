@@ -124,27 +124,45 @@ async fn reconcile(
             .await
             .map_err(|e| e.to_string())?;
         // Restart only with retained admission; failed status discovery cannot widen it.
-        let targets = availability_from_events(retained_records.clone()).serve_targets;
-        return super::start_with_evidence(
-            app,
-            &host,
-            &identity,
-            &lease,
-            retained,
-            targets,
-            retained_records,
+        return recover_routes(
+            &membership,
+            &retained_records,
+            &retained,
+            async {
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    super::discovery::read_events(&identity, &community),
+                )
+                .await
+                .map_err(|_| "Community status discovery timed out".to_owned())?
+            },
+            |targets| {
+                super::start_with_evidence(
+                    app,
+                    &identity,
+                    &lease,
+                    retained.clone(),
+                    targets,
+                    retained_records.clone(),
+                    true,
+                )
+            },
         )
         .await;
     }
+
     if removed {
+        // Stop is requested even if lease revocation or agent cleanup fails.
+        host.lifecycle.stop();
         host.lease.revoke(&lease)?;
-        app.state::<crate::agents::AgentHost>()
-            .stop_mesh_consumers()
-            .await?;
-        host.lifecycle
-            .stop_and_wait()
-            .await
-            .map_err(|e| e.to_string())?;
+        let consumers = app.state::<crate::agents::AgentHost>();
+        finish_revocation(consumers.stop_mesh_consumers(), async {
+            host.lifecycle
+                .stop_and_wait()
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await?;
         return Err("Community membership was removed; shared compute has stopped".into());
     }
     let events = tokio::time::timeout(
@@ -215,6 +233,54 @@ async fn reconcile(
         }
     }
     failure.map_or(Ok(()), Err)
+}
+
+async fn finish_revocation(
+    agents: impl std::future::Future<Output = Result<(), String>>,
+    node: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    let (agents, node) = tokio::join!(agents, node);
+    node?;
+    agents
+}
+
+// Optional routing failure must not prevent rebuilding the reduced admission.
+async fn recover_routes<F, R>(
+    membership: &[nostr::event::Event],
+    admitted: &[nostr::event::Event],
+    owners: &[String],
+    discovery: F,
+    restart: impl FnOnce(Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>) -> R,
+) -> Result<(), String>
+where
+    F: std::future::Future<Output = Result<Vec<nostr::event::Event>, String>>,
+    R: std::future::Future<Output = Result<(), String>>,
+{
+    let events = discovery.await;
+    restart(retained_targets(
+        events.as_deref().unwrap_or(admitted),
+        membership,
+        owners,
+    ))
+    .await
+}
+
+// Fresh routes may be used only for the retained admission set. They never widen it.
+fn retained_targets(
+    events: &[nostr::event::Event],
+    membership: &[nostr::event::Event],
+    owners: &[String],
+) -> Vec<buzz_mesh_compute::discovery_types::MeshServeTarget> {
+    availability_from_events(retained_evidence(events, membership))
+        .serve_targets
+        .into_iter()
+        .filter(|target| {
+            target
+                .owner_id
+                .as_ref()
+                .is_some_and(|owner| owners.contains(owner))
+        })
+        .collect()
 }
 
 // Reuse only previously verified owner bindings; new admission needs full discovery.
@@ -306,6 +372,138 @@ mod tests {
         assert_eq!(owner_ids_from_events(&retained), vec![owner_a.owner_id()]);
         assert!(!retained.iter().any(|event| event.pubkey == b.public_key()));
         assert_eq!(current_member_pubkeys(&retained).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn recovery_uses_fresh_retained_routes_not_expired_admission_or_new_owners() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        use nostr::{
+            event::{EventBuilder, FinalizeEvent, Kind, Tag},
+            key::Keys,
+            types::time::Timestamp,
+        };
+        let relay = Keys::generate();
+        let member = Keys::generate();
+        let newcomer = Keys::generate();
+        let dir = tempfile::tempdir().unwrap();
+        let owner =
+            buzz_mesh_compute::identity::load_owner_at(&dir.path().join("owner.json")).unwrap();
+        let new_owner =
+            buzz_mesh_compute::identity::load_owner_at(&dir.path().join("new.json")).unwrap();
+        let token = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "id": hex::encode(owner.verifying_key().as_bytes()),
+                "addrs": [{"Ip": "192.168.1.20:47916"}]
+            }))
+            .unwrap(),
+        );
+        let raw = serde_json::json!({"hosted_models": ["fixture-model"]});
+        let old = buzz_mesh_compute::publication::status_event(
+            &owner,
+            &member.public_key().to_hex(),
+            true,
+            Some(&raw),
+            Some(&token),
+            None,
+        )
+        .unwrap()
+        .custom_created_at(Timestamp::from_secs(Timestamp::now().as_secs() - 180))
+        .finalize(&member)
+        .unwrap();
+        let fresh = buzz_mesh_compute::publication::status_event(
+            &owner,
+            &member.public_key().to_hex(),
+            true,
+            Some(&raw),
+            Some(&token),
+            None,
+        )
+        .unwrap()
+        .finalize(&member)
+        .unwrap();
+        let new = buzz_mesh_compute::publication::status_event(
+            &new_owner,
+            &newcomer.public_key().to_hex(),
+            true,
+            Some(&raw),
+            Some(&token),
+            None,
+        )
+        .unwrap()
+        .finalize(&newcomer)
+        .unwrap();
+        let membership = vec![EventBuilder::new(Kind::Custom(13534), "")
+            .tags([
+                Tag::parse(["member", &member.public_key().to_hex()]).unwrap(),
+                Tag::parse(["member", &newcomer.public_key().to_hex()]).unwrap(),
+            ])
+            .finalize(&relay)
+            .unwrap()];
+        let owners = vec![owner.owner_id()];
+        assert!(retained_targets(std::slice::from_ref(&old), &membership, &owners).is_empty());
+        recover_routes(
+            &membership,
+            &[old],
+            &owners,
+            async { Ok(vec![fresh, new]) },
+            |targets| {
+                assert_eq!(targets.len(), 1);
+                assert_eq!(targets[0].owner_id.as_ref(), Some(&owner.owner_id()));
+                std::future::ready(Ok(()))
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn revocation_finishes_node_stop_even_when_agent_cleanup_fails() {
+        let stopped = std::cell::Cell::new(false);
+        let error = finish_revocation(async { Err("agent cleanup failed".into()) }, async {
+            stopped.set(true);
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert!(stopped.get());
+        assert_eq!(error, "agent cleanup failed");
+        assert_eq!(
+            finish_revocation(async { Err("agent failed".into()) }, async {
+                Err("node failed".into())
+            })
+            .await
+            .unwrap_err(),
+            "node failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn removal_restarts_with_empty_routes_when_optional_discovery_fails() {
+        let restarted = std::cell::Cell::new(false);
+        recover_routes(
+            &[],
+            &[],
+            &["retained-owner".into()],
+            async { Err("relay unavailable".into()) },
+            |targets| {
+                assert!(targets.is_empty());
+                restarted.set(true);
+                std::future::ready(Ok(()))
+            },
+        )
+        .await
+        .unwrap();
+        assert!(restarted.get());
+        let error = recover_routes(
+            &[],
+            &[],
+            &[],
+            async { Err("relay unavailable".into()) },
+            |_| std::future::ready(Err("restart failed".into())),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "restart failed");
     }
 
     #[test]

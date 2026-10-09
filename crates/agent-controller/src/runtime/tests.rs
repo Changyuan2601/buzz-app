@@ -53,6 +53,101 @@ fn agent(workspace: &Path) -> Agent {
     }
 }
 #[test]
+fn kept_agents_start_only_for_their_attested_owner() {
+    const OWNER: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let saved = agent(dir.path());
+    let mut unattested = agent(dir.path());
+    unattested.id = agent_id(&"ab".repeat(32), "wss://relay.example");
+    unattested.pubkey = "ab".repeat(32);
+    unattested.auth_tag = None;
+    store
+        .insert(vec![saved.clone(), unattested.clone()])
+        .unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    assert!(controller.check_owner(&saved.id, Some(OWNER)).is_ok());
+    let refusal = controller.check_owner(&saved.id, Some(PUB)).unwrap_err();
+    assert!(refusal.contains("different Buzz identity"), "{refusal}");
+    assert_eq!(
+        controller.check_owner(&saved.id, None).unwrap_err(),
+        refusal
+    );
+    // Launch validation, not this check, refuses a missing attestation.
+    assert!(controller.check_owner(&unattested.id, None).is_ok());
+}
+/// Agent keys left in a fake keychain; deleting the second one fails once.
+struct Keychain(std::sync::Mutex<(Vec<String>, bool)>);
+impl Credentials for Keychain {
+    fn delete(&self, id: &str, _: &str) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.1 && id == "second" {
+            state.1 = false;
+            return Err("keychain interrupted".into());
+        }
+        state.0.retain(|kept| kept != id);
+        Ok(())
+    }
+    fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
+        unreachable!()
+    }
+    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>> {
+        unreachable!()
+    }
+    fn add(&self, _: &str, _: &Secret) -> Result<()> {
+        unreachable!()
+    }
+}
+#[test]
+fn sign_out_agent_key_removal_resumes_after_an_interruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut first = agent(dir.path());
+    first.credential_id = "first".into();
+    let mut second = agent(dir.path());
+    second.id = agent_id(&"ab".repeat(32), "wss://relay.example");
+    second.pubkey = "ab".repeat(32);
+    second.credential_id = "second".into();
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![first, second])
+        .unwrap();
+    let keychain = Keychain(std::sync::Mutex::new((
+        vec!["first".into(), "second".into()],
+        true,
+    )));
+    // Interrupted between the two deletions: the first key is gone, the registry stays.
+    assert!(delete_local_agent_keys(root.clone(), &keychain).is_err());
+    assert_eq!(keychain.0.lock().unwrap().0, ["second"]);
+    // Repeating it, including the already-deleted key, finishes the job.
+    delete_local_agent_keys(root.clone(), &keychain).unwrap();
+    assert!(keychain.0.lock().unwrap().0.is_empty());
+    assert_eq!(Store::open(root).unwrap().agents().unwrap().len(), 2);
+}
+#[test]
+fn sign_out_agent_key_removal_includes_imported_remote_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut remote = agent(dir.path());
+    remote.credential_id = "second".into();
+    remote.imported = serde_json::json!({"record": {"backend": {"type": "provider"}, "backend_agent_id": "deployed"}});
+    assert!(remote.deployed_remote());
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![remote])
+        .unwrap();
+    let keychain = Keychain(std::sync::Mutex::new((vec!["second".into()], false)));
+    delete_local_agent_keys(root.clone(), &keychain).unwrap();
+    assert!(keychain.0.lock().unwrap().0.is_empty());
+    // Only the local key copy goes; the record (and its deployment) is the wipe's.
+    assert!(Store::open(root).unwrap().agents().unwrap()[0].deployed_remote());
+}
+#[test]
 fn delete_refuses_stale_revision_and_removes_stopped_agent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("config");
@@ -183,6 +278,7 @@ fi
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s' "$BUZZ_ACP_AGENTS" > worker-count
+printf '%s' "$BUZZ_ACP_MCP_COMMAND" > mcp-command
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
@@ -1158,20 +1254,44 @@ fn launch_path_puts_bundled_tools_before_platform_tools() {
         .unwrap();
     let env: BTreeMap<_, _> = command.get_envs().collect();
     let path = env[std::ffi::OsStr::new("PATH")].unwrap();
-    let mut expected = vec![tools.path().to_owned()];
+    let paths = std::env::split_paths(path).collect::<Vec<_>>();
+    assert_eq!(paths.first(), Some(&tools.path().to_owned()));
     if cfg!(windows) {
-        // Native PATH is where Git Bash and user tools live; system keys come along.
+        let mut expected = vec![tools.path().to_owned()];
         expected.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
         assert!(env.contains_key(std::ffi::OsStr::new("SystemRoot")));
+        assert_eq!(paths, expected);
     } else {
-        if cfg!(target_os = "linux") {
-            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-            expected.extend(home.map(|home| home.join(".local/bin")));
-            expected.push("/usr/local/bin".into());
+        for dir in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ] {
+            assert!(paths.contains(&PathBuf::from(dir)), "launch omitted {dir}");
         }
-        expected.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(Into::into));
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|h| h.is_absolute())
+        {
+            assert!(paths.contains(&home.join(".local/bin")));
+        }
+        for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|p| p.is_absolute())
+        {
+            assert!(
+                paths.contains(&dir),
+                "launch omitted inherited directory {dir:?}"
+            );
+        }
+        assert!(paths.iter().all(|p| p.is_absolute()));
+        assert_eq!(
+            paths.iter().collect::<std::collections::HashSet<_>>().len(),
+            paths.len()
+        );
     }
-    assert_eq!(std::env::split_paths(path).collect::<Vec<_>>(), expected);
 }
 
 #[test]
@@ -1281,6 +1401,7 @@ fn external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides()
         return;
     };
     let root = PathBuf::from(root);
+    crate::prepare_tools_path();
     let runtime = bundle(&root);
     let bin = root.join("tools");
     fs::create_dir_all(&bin).unwrap();
@@ -1981,6 +2102,84 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
 }
 
 #[test]
+#[cfg(unix)]
+fn opted_in_harnesses_receive_the_developer_mcp() {
+    for (selection, bundled, expects_mcp) in [
+        ("buzz-agent", true, true),
+        ("buzz-agent", false, true),
+        ("buzz-agent.exe", false, true),
+        ("goose", true, false),
+        ("goose-acp", true, false),
+        ("goose-acp", false, false),
+        ("buzz-pi-acp", false, false),
+        ("claude-agent-acp", false, false),
+        ("codex-acp", false, false),
+        ("hermes-acp", false, true),
+        ("hermes-acp.exe", false, true),
+        ("hermes-acp.cmd", false, true),
+        ("hermes-acp.bat", false, true),
+        ("custom-acp", false, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let runtime = bundle(tools.path());
+        let worker = tools.path().join(selection);
+        if !worker.exists() {
+            fs::copy(tools.path().join("buzz-agent"), &worker).unwrap();
+        }
+        for name in ["pi", "node"] {
+            crate::test_executable::write_executable(
+                &tools.path().join(name),
+                "#!/bin/sh\nprintf '0.99.1\\n'\n",
+            );
+        }
+        let mut saved = agent(dir.path());
+        saved.harness.command = if bundled {
+            selection.into()
+        } else {
+            worker.display().to_string()
+        };
+        saved.harness.provider.clear();
+        saved.harness.model.clear();
+        if selection == "claude-agent-acp" {
+            saved.environment.insert(
+                "CLAUDE_CODE_EXECUTABLE".into(),
+                tools.path().join("claude").display().to_string(),
+            );
+        }
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        store.insert(vec![saved.clone()]).unwrap();
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(runtime),
+            dir.path().join("ownership"),
+        );
+        let expected = expects_mcp.then(|| tools.path().join("buzz-dev-mcp").display().to_string());
+        assert_eq!(
+            controller.snapshot().unwrap().agents[0].mcp_command,
+            expected,
+            "{selection}: reported MCP server"
+        );
+        let key = Secret::parse(KEY, PUB).unwrap();
+        let mut command = controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&saved, &key)
+            .unwrap();
+        fs::write(dir.path().join("exit-listener"), "").unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success(), "{selection}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("mcp-command")).unwrap(),
+            expected.unwrap_or_default(),
+            "{selection}: launched MCP server"
+        );
+    }
+}
+
+#[test]
 #[cfg(unix)] // Windows: see windows_refuses_databricks_before_workspace_validation_or_start
 fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -2134,6 +2333,32 @@ fn pi_version_probe_times_out_and_retires_helpers() {
         }
         assert!(Instant::now() < deadline, "Helper still running: {state}");
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn explicit_snapshot_worker_counts_reach_listener_without_imported_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    a.imported = serde_json::Value::Null;
+    let key = Secret::parse(KEY, PUB).unwrap();
+    fs::write(dir.path().join("exit-listener"), "").unwrap();
+    for count in [1, 4] {
+        a.environment
+            .insert("BUZZ_ACP_AGENTS".into(), count.to_string());
+        a.validate().unwrap();
+        let mut command = runtime
+            .command_with_defaults(&a, &key, &deployment_defaults())
+            .unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("worker-count")).unwrap(),
+            count.to_string()
+        );
     }
 }
 
@@ -3717,4 +3942,204 @@ fn mesh_replacement_stops_captured_consumer_without_changing_saved_restore() {
     let snapshot = controller.snapshot().unwrap();
     assert!(snapshot.agents[0].enabled);
     assert!(snapshot.agents[0].start_on_app_launch);
+}
+
+#[test]
+fn saved_shared_compute_discovery_validates_edit_without_mutating_saved_agent() {
+    let root = tempfile::tempdir().unwrap();
+    let mut saved = agent(root.path());
+    saved.harness.provider = "relay-mesh".into();
+    let mut store = Store::open(root.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let before = fs::read(root.path().join("config/agents.json")).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("Runtime bundle is missing".into()),
+        root.path().join("ownership"),
+    );
+    let edit = AgentEdit {
+        name: "Model discovery".into(),
+        picture: None,
+        system_prompt: String::new(),
+        session_policy: Some(None),
+        workspace: saved.workspace.clone(),
+        harness: HarnessEdit {
+            model: String::new(),
+            ..saved.harness.clone()
+        },
+        environment: BTreeMap::new(),
+    };
+    // The old picker payload fails at the real saved-agent validation boundary.
+    let mut invalid = edit.clone();
+    invalid.name.clear();
+    assert!(controller
+        .model_context(&saved.id, saved.revision, invalid)
+        .err()
+        .unwrap()
+        .contains("Agent name is required"));
+    // Repeated Browse/Retry succeeds without changing name, prompt or revision.
+    for _ in 0..2 {
+        let context = controller
+            .model_context(&saved.id, saved.revision, edit.clone())
+            .unwrap();
+        assert!(context.mesh);
+        assert_eq!(context.relay.as_deref(), Some("wss://relay.example"));
+    }
+    assert!(controller
+        .model_context(&saved.id, saved.revision + 1, edit)
+        .is_err());
+    assert_eq!(
+        fs::read(root.path().join("config/agents.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn launch_discovers_login_shell_tools_without_inheriting_credentials() {
+    const FIXTURE: &str = "BUZZ_TOOL_PATH_FIXTURE";
+    let Some(root) = std::env::var_os(FIXTURE) else {
+        let dir = tempfile::Builder::new()
+            .prefix("Installed tools ")
+            .tempdir()
+            .unwrap();
+        let tools = dir.path().join("custom tools");
+        fs::create_dir_all(&tools).unwrap();
+        crate::test_executable::write_executable(
+            &tools.join("installed-helper"),
+            "#!/bin/sh\nprintf 'discovered'\n",
+        );
+        let shell = dir.path().join("login-shell");
+        crate::test_executable::write_executable(&shell, format!(
+            "#!/bin/sh\n[ \"${{OPENAI_API_KEY-unset}}\" = unset ] || exit 1\n[ \"${{BUZZ_PRIVATE_KEY-unset}}\" = unset ] || exit 1\nexport SHELL_EXPORTED_SECRET=from-shell\nexport PATH='{}:/usr/bin:/bin'\n/bin/sh -c \"$2\"\n", tools.display()));
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::tests::launch_discovers_login_shell_tools_without_inheriting_credentials",
+                "--nocapture",
+            ])
+            .env(FIXTURE, dir.path())
+            .env("SHELL", shell)
+            .env("PATH", "/usr/bin:/bin")
+            .env("BUZZ_PRIVATE_KEY", "parent-key")
+            .env("NOSTR_PRIVATE_KEY", "parent-key")
+            .env("BUZZ_RELAY_URL", "wss://parent.example")
+            .env("OPENAI_API_KEY", "parent-provider-secret")
+            .env("BUZZ_ACP_REPLAY_FLOOR", "parent-replay")
+            .env("GIT_CONFIG_COUNT", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    };
+    let root = PathBuf::from(root);
+    crate::prepare_tools_path();
+    let runtime = bundle(&root);
+    let mut saved = agent(&root);
+    // An explicit tool path adds tools without displacing the bundled runtime.
+    saved.environment.insert(
+        "PATH".into(),
+        root.join("owner tools").display().to_string(),
+    );
+    let command = runtime
+        .command(&saved, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    let paths = command
+        .get_envs()
+        .find(|(name, _)| *name == "PATH")
+        .unwrap()
+        .1
+        .unwrap();
+    let paths = std::env::split_paths(paths).collect::<Vec<_>>();
+    assert_eq!(paths[0], root);
+    assert!(paths.contains(&root.join("owner tools")));
+    assert_eq!(
+        installed("installed-helper"),
+        Some(root.join("custom tools/installed-helper"))
+    );
+    // Exercise the resulting environment, including env_clear, in a real child.
+    let mut child = command;
+    crate::test_executable::write_executable(
+        &root.join("buzz-acp"),
+        r#"#!/bin/sh
+installed-helper || exit 1
+printf '\n%s\n%s\n%s\n' "$BUZZ_PRIVATE_KEY" "$NOSTR_PRIVATE_KEY" "$BUZZ_RELAY_URL"
+for name in OPENAI_API_KEY SHELL_EXPORTED_SECRET BUZZ_ACP_REPLAY_FLOOR GIT_CONFIG_COUNT; do
+    eval "value=\${$name-unset}"
+    [ "$value" = unset ] || exit 2
+done
+"#,
+    );
+    child.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = child.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("discovered\n{KEY}\n{KEY}\nwss://relay.example\n")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn pi_saved_tool_path_is_shared_by_context_and_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = dir.path().join("saved tools");
+    fs::create_dir(&tools).unwrap();
+    crate::test_executable::write_executable(
+        &tools.join("saved-path-helper"),
+        "#!/bin/sh\nprintf '0.99.1\\n'\n",
+    );
+    let runtime = bundle(dir.path());
+    for name in ["node", "buzz-pi-acp"] {
+        crate::test_executable::write_executable(&dir.path().join(name), "#!/bin/sh\nexit 0\n");
+    }
+    crate::test_executable::write_executable(
+        &dir.path().join("pi"),
+        "#!/bin/sh\nsaved-path-helper\n",
+    );
+    let mut selected = agent(dir.path());
+    selected.harness.command = dir.path().join("buzz-pi-acp").display().to_string();
+    selected
+        .environment
+        .insert("PATH".into(), tools.display().to_string());
+    let context = crate::pi::PiContext::new(
+        &selected.harness,
+        &selected.workspace,
+        &selected.environment,
+    )
+    .unwrap();
+    let paths = std::env::split_paths(&context.path).collect::<Vec<_>>();
+    assert_eq!(paths[0], dir.path());
+    assert!(paths.contains(&tools), "Pi context omitted saved PATH");
+    let version = context.version_command().output().unwrap();
+    assert!(version.status.success());
+    assert_eq!(String::from_utf8_lossy(&version.stdout), "0.99.1\n");
+    let mut command = runtime
+        .command(&selected, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    crate::test_executable::write_executable(
+        &dir.path().join("buzz-acp"),
+        "#!/bin/sh\nsaved-path-helper\n",
+    );
+    let result = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "0.99.1\n");
 }

@@ -12,25 +12,47 @@ test.use({
   developmentReact: true,
 });
 
-const channelActivity = (page) =>
-  page.getByRole("region", {
-    name: "Agent activity in this channel",
-    exact: true,
-  });
-const expandChannelActivity = async (page) => {
-  const disclosure = channelActivity(page).locator("details");
-  await expect(disclosure).toBeVisible();
-  if (!(await disclosure.evaluate((element) => element.open)))
-    await disclosure.locator("summary").click();
+// The channel composer's context is the form's preceding sibling.
+const channelComposer = (page) =>
+  page
+    .getByRole("form", { name: "Send a message to Alpha", exact: true })
+    .locator("..");
+// Floating avatars above a composer; its accessible name summarizes who works.
+const activityTrigger = (scope) =>
+  scope.getByRole("button", { name: /^Activity: .+ working$/ });
+const workingNow = (page) =>
+  page.getByRole("dialog", { name: "Working now", exact: true });
+// Hover is the pointer path; keyboard opening is exercised explicitly below.
+const openWorkingNow = async (page, scope) => {
+  await activityTrigger(scope).hover();
+  const popup = workingNow(page);
+  await expect(popup).toBeVisible();
+  return popup;
 };
-const agentEntry = (page, agent) =>
-  channelActivity(page).getByRole("button", {
+// Agents without a loaded profile fall back to their key prefix.
+const agentRow = (popup, agent) =>
+  popup.getByRole("button", {
     name: new RegExp(
-      `^View activity for .+ ${agent.slice(0, 12)}(?:, Presence: (?:online|away|offline))?$`,
+      `^Open (?:thread|conversation) for .*${agent.slice(0, 10)}`,
     ),
   });
+const agentActivityAction = (popup, agent) =>
+  popup.getByRole("button", {
+    name: new RegExp(`^View .*${agent.slice(0, 10)}.* activity$`),
+  });
+// The activity icon is revealed by hovering or focusing its row, like the sidebar.
+const viewAgentActivity = async (page, scope, agent) => {
+  const popup = await openWorkingNow(page, scope);
+  await agentRow(popup, agent).hover();
+  await agentActivityAction(popup, agent).click();
+};
+const isFocused = (locator) =>
+  locator.evaluate((element) => element === document.activeElement);
 const activityPanel = (page) =>
   page.getByRole("region", { name: "Agent activity", exact: true });
+// Raw diagnostics sit behind the panel's Raw tab; the transcript is the default.
+const showRaw = (panel) =>
+  panel.getByRole("tab", { name: "Raw", exact: true }).click();
 const activity = (kind, channelId, turnId, payload) => ({
   kind,
   seq: 1,
@@ -94,14 +116,14 @@ test("mention picker demands the relay's protected archive snapshot", async ({
   ).toBe(true);
 });
 
-// The composer disclosure retains every channel launcher. Profile activity
-// remains the durable fallback after fresh evidence disappears (covered below).
+// The floating composer control lists every working agent in the channel.
+// Profile activity remains the durable fallback after fresh evidence disappears.
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and retains history on disable", async ({
   page,
   app,
 }) => {
   // Hold the first explicit profile read before broker admission so telemetry
-  // demand cannot coalesce into it; hold all upstream presence responses too,
+  // cannot coalesce into it; hold all upstream presence responses too,
   // including a replacement if that first request is cancelled.
   app.relay.holdPresence();
   const firstSnapshot = Promise.withResolvers();
@@ -117,9 +139,13 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   const secondKey = generateSecretKey();
   const first = getPublicKey(firstKey);
   const second = getPublicKey(secondKey);
-  const region = channelActivity(page);
-  const firstEntry = agentEntry(page, first);
-  const secondEntry = agentEntry(page, second);
+  const composer = channelComposer(page);
+  const trigger = activityTrigger(composer);
+  const popup = workingNow(page);
+  const onlyFirst = new RegExp(`^Activity: .*${first.slice(0, 10)}.* working$`);
+  const onlySecond = new RegExp(
+    `^Activity: .*${second.slice(0, 10)}.* working$`,
+  );
   let unsafe;
   try {
     await open(page, app);
@@ -155,29 +181,23 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
       },
       firstKey,
     );
-
-    await expect(region).toBeVisible();
-    await expect(firstEntry).toBeHidden();
-    await expandChannelActivity(page);
-    await expect(firstEntry).toBeVisible();
+    await expect(trigger).toHaveAccessibleName("Activity: 2 agents working");
+    // The compact control renders telemetry keys without demanding profile or
+    // presence reads, so neither can join the held explicit profile read.
     expect(firstAuthors).not.toContain(first);
     expect(firstAuthors).not.toContain(second);
-    // Neither agent publishes live presence in this fixture. Even if demand
-    // cancels and retries the held snapshot, neither response can label it yet.
-    await expect(firstEntry).not.toHaveAccessibleName(/, Presence:/);
   } finally {
     firstSnapshot.resolve();
     app.relay.releasePresence();
   }
+  // The released explicit read (or its replacement) settles before counting.
   await expect
-    .poll(() =>
-      app.report.presenceSnapshots.some(
-        ({ filter, pending, aborted }) =>
-          filter.authors.includes(first) && !pending && !aborted,
-      ),
+    .poll(
+      () =>
+        app.report.presenceSnapshots.length > 0 &&
+        app.report.presenceSnapshots.every(({ pending }) => !pending),
     )
     .toBe(true);
-  await expect(firstEntry).toHaveAccessibleName(/, Presence: online$/);
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   // A busy skip followed by a successful retry must not masquerade as recovery.
   expect(
@@ -185,48 +205,48 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
       url.endsWith("/presence-snapshot"),
     ),
   ).toHaveLength(app.report.presenceSnapshots.length);
-  await expect(firstEntry).toContainText("working");
-  await expect(secondEntry).toBeVisible();
-  await expect(region).toHaveCSS("border-top-width", "0px");
-  await expect(region).toHaveCSS("border-right-width", "0px");
-  await expect(region).toHaveCSS("border-bottom-width", "0px");
-  await expect(region).toHaveCSS("border-left-width", "0px");
-  const workingIndicator = firstEntry.locator("svg[data-working]");
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect(workingIndicator).not.toHaveCSS("animation-name", "none");
-  await expect(workingIndicator).toHaveCSS("animation-duration", "1.4s");
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(workingIndicator).toHaveCSS("animation-name", "none");
-  await expect(firstEntry).toContainText("working");
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-
-  await firstEntry.hover();
-  const tooltip = page.getByRole("tooltip").filter({ hasText: first });
-  await expect(tooltip).toContainText(
-    "1 working turn(s) in this channel, including threads.",
-  );
-  await expect(tooltip).toContainText(
-    "Owner-only activity. Select to inspect.",
-  );
-  await page.keyboard.press("Escape");
-  await expect(tooltip).toHaveCount(0);
+  // Bare avatars: no permanent container behind the resting control.
   await page.mouse.move(0, 0);
-  // Establish a starting point, then leave and re-enter using actual keyboard
-  // input. focus() alone neither clears Escape dismissal nor proves :focus-visible.
-  await firstEntry.focus();
-  await page.keyboard.press("Tab");
-  await expect(firstEntry).not.toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(firstEntry).toBeFocused();
-  await expect(tooltip).toContainText(first);
-  await expect(firstEntry).toHaveAccessibleDescription(/Owner-only activity/);
-  await firstEntry.press("Enter");
+  await expect(popup).toHaveCount(0);
+  await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  for (const side of ["top", "right", "bottom", "left"])
+    await expect(trigger).toHaveCSS(`border-${side}-width`, "0px");
+  await expect(trigger.locator(".buzz-avatar")).toHaveCount(2);
+
+  await openWorkingNow(page, composer);
+  await expect(
+    popup.getByRole("heading", { name: "Working now", exact: true }),
+  ).toBeVisible();
+  // Observer turns carry no thread identity: rows open the channel, not a guess.
+  for (const agent of [first, second]) {
+    await expect(agentRow(popup, agent)).toHaveAccessibleName(
+      /^Open conversation for /,
+    );
+    await expect(agentRow(popup, agent)).toContainText("Working");
+    await expect(agentRow(popup, agent)).toContainText(
+      "Work with unconfirmed thread",
+    );
+    await expect(agentActivityAction(popup, agent)).toBeVisible();
+  }
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  // Keyboard path: real key input opens the popup and reaches the activity icon.
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(popup).toBeVisible();
+  const firstAction = agentActivityAction(popup, first);
+  for (let step = 0; step < 3 && !(await isFocused(firstAction)); step++)
+    await page.keyboard.press("Tab");
+  await expect(firstAction).toBeFocused();
+  await page.keyboard.press("Enter");
 
   const panel = activityPanel(page);
+  await expect(popup).toHaveCount(0);
   await expect(panel.locator("code").first()).toHaveText(first);
   await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+    panel.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/^#Alpha · whole channel/);
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   // Telemetry supplies keys before any profile or directory facts exist.
   const agentSelect = panel.getByRole("combobox", {
@@ -250,6 +270,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     await choice.click();
     await expect(panel.locator("code").first()).toHaveText(key);
   }
+  await showRaw(panel);
   const unsafeDisclosure = panel.getByRole("button", { name: /turn_liveness/ });
   await unsafeDisclosure.focus();
   await unsafeDisclosure.press("Enter");
@@ -266,17 +287,17 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(panel.locator("pre code")).not.toContainText("other channel");
 
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  await expect(firstEntry).toBeFocused();
-  await secondEntry.click();
+  // The popup's action has unmounted; focus returns to its floating trigger.
+  await expect(trigger).toBeFocused();
+  await viewAgentActivity(page, composer, second);
   await expect(panel.locator("code").first()).toHaveText(second);
+  await showRaw(panel);
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  await expect(secondEntry).toBeFocused();
-  await secondEntry.click();
-  await expect(panel.locator("code").first()).toHaveText(second);
+  await expect(trigger).toBeFocused();
 
   const sockets = app.relay.sockets.length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
@@ -303,7 +324,10 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator('[data-channel-id="alpha"]').click();
-  await expect(region).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(trigger).toHaveCount(0);
 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -325,20 +349,24 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator('[data-channel-id="alpha"]').click();
-  await expandChannelActivity(page);
-  await expect(agentEntry(page, first)).toBeVisible();
-  await expect(agentEntry(page, second)).toHaveCount(0);
-  await agentEntry(page, first).click();
+  // Only the fresh agent returns; the disabled generation's evidence is gone.
+  await expect(trigger).toHaveAccessibleName(onlyFirst);
+  await viewAgentActivity(page, composer, first);
+  await showRaw(panel);
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toHaveCount(2);
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(1);
 
-  // Stale evidence is unknown, not completed; one terminal turn must not hide
-  // another active turn for the same agent. Capture survives closing the panel.
+  // One terminal turn must not hide another active turn for the same agent,
+  // and stale evidence is not working. The other agent's frames, observed in
+  // order, are the barrier for each transition. Capture survives closing the panel.
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  app.observer(activity("turn_liveness", "alpha", "parallel"), firstKey);
   app.observer(activity("turn_completed", "alpha", "after-reset"), firstKey);
-  await expect(agentEntry(page, first)).toHaveCount(0);
+  app.observer(activity("turn_liveness", "alpha", "barrier"), secondKey);
+  await expect(trigger).toHaveAccessibleName("Activity: 2 agents working");
+  app.observer(activity("turn_completed", "alpha", "parallel"), firstKey);
   app.observer(
     {
       ...activity("turn_liveness", "alpha", "stale"),
@@ -346,21 +374,18 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     },
     firstKey,
   );
-  await expandChannelActivity(page);
-  await expect(agentEntry(page, first)).toContainText("status unknown");
-  await expect(
-    agentEntry(page, first).locator(".navigation-item-trailing svg"),
-  ).toHaveCSS("animation-name", "none");
+  await expect(trigger).toHaveAccessibleName(onlySecond);
   app.observer(activity("turn_liveness", "alpha", "fresh"), firstKey);
-  await expect(agentEntry(page, first)).toContainText("working");
+  await expect(trigger).toHaveAccessibleName("Activity: 2 agents working");
   app.observer(activity("turn_completed", "alpha", "fresh"), firstKey);
-  await expect(agentEntry(page, first)).toContainText("status unknown");
+  await expect(trigger).toHaveAccessibleName(onlySecond);
   app.observer(activity("turn_completed", "alpha", "stale"), firstKey);
-  await expect(region).toHaveCount(0);
+  app.observer(activity("turn_completed", "alpha", "barrier"), secondKey);
+  await expect(trigger).toHaveCount(0);
 });
 
 for (const mode of ["light", "dark"]) {
-  test(`channel activity entry and raw disclosure fit wide and narrow layouts in ${mode}`, async ({
+  test(`channel activity control and raw disclosure fit wide and narrow layouts in ${mode}`, async ({
     page,
     app,
   }, testInfo) => {
@@ -384,8 +409,10 @@ for (const mode of ["light", "dark"]) {
       }),
       agentKey,
     );
-    await expandChannelActivity(page);
-    const entry = agentEntry(page, agent);
+    const composer = channelComposer(page);
+    const trigger = activityTrigger(composer);
+    const popup = workingNow(page);
+    await expect(trigger).toHaveAccessibleName("Activity: 2 agents working");
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
       // The shell applies its media-query change in React. Wait for that commit
@@ -394,13 +421,19 @@ for (const mode of ["light", "dark"]) {
         "aria-label",
         width <= 650 ? "Show navigation" : "Hide Channel sidebar",
       );
-      await expect(entry).toBeVisible();
-      const entryBox = await entry.boundingBox();
+      await expect(trigger).toBeVisible();
+      const triggerBox = await trigger.boundingBox();
       const formBox = await page
         .getByRole("form", { name: "Send a message to Alpha", exact: true })
         .boundingBox();
-      expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
-      const avatar = entry.locator(".buzz-avatar");
+      // Floats in its own lane above the composer, at the composer's end edge.
+      expect(triggerBox.y + triggerBox.height).toBeLessThanOrEqual(formBox.y);
+      expect(triggerBox.x).toBeGreaterThanOrEqual(formBox.x);
+      expect(triggerBox.x + triggerBox.width).toBeCloseTo(
+        formBox.x + formBox.width,
+        0,
+      );
+      const avatar = trigger.locator(".buzz-avatar").first();
       // Production CSS must retain a loadable SVG mask after bundling. A valid
       // mask-image string alone can still point to the HTML fallback route.
       await expect
@@ -418,18 +451,6 @@ for (const mode of ["light", "dark"]) {
           }),
         )
         .toBe(true);
-      const avatarBox = await avatar.boundingBox();
-      // Shared navigation owns its inset; the row still aligns with the composer.
-      const inset = await entry.evaluate((element) =>
-        parseFloat(getComputedStyle(element).paddingLeft),
-      );
-      expect(entryBox.x).toBeCloseTo(formBox.x, 0);
-      expect(avatarBox.x).toBeCloseTo(formBox.x + inset, 0);
-      const lastRow = await channelActivity(page)
-        .getByRole("button")
-        .last()
-        .boundingBox();
-      expect(formBox.y - lastRow.y - lastRow.height).toBeCloseTo(4, 0);
       await expect(page.locator("html")).toHaveAttribute(
         "data-color-mode",
         mode,
@@ -440,10 +461,16 @@ for (const mode of ["light", "dark"]) {
       // Escape suppresses hover until the pointer leaves the trigger. A viewport
       // resize can keep WebKit's pointer over it, so make the next entry explicit.
       await page.mouse.move(0, 0);
-      await entry.hover();
-      await expect(
-        page.getByRole("tooltip").filter({ hasText: agent }),
-      ).toContainText("in this channel, including threads.");
+      await openWorkingNow(page, composer);
+      await expect(agentRow(popup, agent)).toBeVisible();
+      await expect(popup).not.toHaveAttribute("data-starting-style", "");
+      const popupBox = await popup.boundingBox();
+      expect(popupBox.x).toBeGreaterThanOrEqual(0);
+      expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(width);
+      expect(popupBox.y + popupBox.height).toBeLessThanOrEqual(triggerBox.y);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(width);
       await page.screenshot({
         path: testInfo.outputPath(`activity-entry-${mode}-${width}.png`),
       });
@@ -451,12 +478,14 @@ for (const mode of ["light", "dark"]) {
       // Escape starts Base UI's asynchronous unmount. The closing portal still
       // has its wide-screen position and can overflow the next narrow viewport.
       await expect(
-        page.getByRole("tooltip", { includeHidden: true }),
+        page.getByRole("dialog", { name: "Working now", includeHidden: true }),
       ).toHaveCount(0);
     }
 
-    await entry.click();
+    await page.mouse.move(0, 0);
+    await viewAgentActivity(page, composer, agent);
     const panel = activityPanel(page);
+    await showRaw(panel);
     await panel.getByRole("button", { name: /acp_read/ }).click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -588,8 +617,9 @@ it("profile activity opens the exact agent and originating channel before its fi
   });
   await expect(panel.locator("code").first()).toHaveText(agent);
   await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(`Alpha · ${profileChannelId}`);
+    panel.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/^#Alpha · whole channel/);
+  await showRaw(panel);
   await expect(
     panel.getByText(/No captured records for this identity in this channel/),
   ).toBeVisible();
@@ -620,10 +650,12 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toHaveCount(0);
   await row.click();
   await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
-  await panel.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await panel
+    .getByRole("combobox", { name: "Conversation", exact: true })
+    .click();
   await page
     .getByRole("option", {
-      name: "All channels (including unscoped records)",
+      name: "All conversations (including unscoped records)",
       exact: true,
     })
     .click();
@@ -787,7 +819,7 @@ test.describe("thread activity", () => {
     historyCounts: { alpha: 2, beta: 1 }, // Thread fixtures replace the last two Alpha rows with roots.
   });
 
-  test("thread typing uses the existing route, stays isolated, and opens channel details above the composer", async ({
+  test("thread typing uses the existing route, stays isolated, and floats thread activity above the composer", async ({
     page,
     app,
   }, testInfo) => {
@@ -797,34 +829,41 @@ test.describe("thread activity", () => {
       .toBe(true);
     const key = generateSecretKey(),
       agent = getPublicKey(key);
+    const onlyAgent = new RegExp(
+      `^Activity: .*${agent.slice(0, 10)}.* working$`,
+    );
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content.startsWith("Thread root"));
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${root.id}"]`,
     );
-    await row.hover();
-    await row.getByRole("button", { name: /^View thread:/ }).click();
     const thread = page.getByRole("complementary", {
       name: "Thread",
       exact: true,
     });
-    await expect(
-      thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
-    ).toBeVisible();
-    const region = thread.getByRole("region", {
-      name: "Agent activity in this thread",
-      exact: true,
-    });
+    const openThread = async () => {
+      await row.hover();
+      await row.getByRole("button", { name: /^View thread:/ }).click();
+      await expect(
+        thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      ).toBeVisible();
+    };
+    await openThread();
+    const composer = channelComposer(page);
+    const channelTrigger = activityTrigger(composer);
+    const threadTrigger = activityTrigger(thread);
+    const threadStatus = thread.locator("[data-agent-working-status]");
+    const popup = workingNow(page);
     const marker = page
       .locator('[data-channel-id="alpha"]')
       .getByRole("img", { name: /working in Alpha$/ });
-    const sendTyping = (threadId, signingKey = key, secondsAgo = 0) => {
+    const sendEvent = (kind, threadId, signingKey = key, content = "") => {
       const event = finalizeEvent(
         {
-          kind: 20002,
-          created_at: Math.floor(Date.now() / 1000) - secondsAgo,
-          content: "",
+          kind,
+          created_at: Math.floor(Date.now() / 1000),
+          content,
           tags: [
             ["h", "alpha"],
             ...(threadId
@@ -840,40 +879,38 @@ test.describe("thread activity", () => {
       app.relay.publish("primary", event);
       return event;
     };
-    // Owner telemetry recognizes the agent without claiming a working channel turn.
+    const sendTyping = (threadId, signingKey) =>
+      sendEvent(20002, threadId, signingKey);
+    // Pointer exit closes the hover popup; Escape is covered separately.
+    const closePopup = async () => {
+      await page.mouse.move(0, 0);
+      await expect(popup).toHaveCount(0);
+    };
+    // Owner telemetry recognizes the agent; its channel-wide turn has no thread.
     app.observer(activity("turn_liveness", "alpha", "previous"), key);
-    await expect(channelActivity(page)).toBeVisible();
-    await expect(agentEntry(page, agent)).toBeHidden();
+    await expect(channelTrigger).toHaveAccessibleName(onlyAgent);
+    await expect(threadTrigger).toHaveCount(0);
     app.observer(activity("turn_completed", "alpha", "previous"), key);
-    await expect(agentEntry(page, agent)).toHaveCount(0);
+    await expect(channelTrigger).toHaveCount(0);
     const unrecognized = generateSecretKey();
+    const otherThread = "b".repeat(64);
     sendTyping(root.id, unrecognized);
-    sendTyping("b".repeat(64));
-    await expect(
-      thread.getByRole("status", { name: "Typing activity" }),
-    ).toBeVisible();
-    await expect(region).toHaveCount(0);
-    // Public typing from an unrecognized signer is a distinct status, not the
-    // agent row's duplicate. Complete it before measuring agent-only layout.
-    app.relay.publish(
-      "primary",
-      finalizeEvent(
-        {
-          kind: 9,
-          created_at: Math.floor(Date.now() / 1000),
-          content: "Unrecognized participant finished",
-          tags: [
-            ["h", "alpha"],
-            ["e", root.id, "", "root"],
-            ["e", root.id, "", "reply"],
-          ],
-        },
-        unrecognized,
-      ),
+    sendTyping(otherThread);
+    // An unrecognized signer is ordinary typing, never an agent avatar.
+    await expect(threadStatus).toHaveText(/^\S+ is typing$/);
+    // Another thread's agent work lights the channel control with that thread's
+    // scope; arriving after the first event, it is also the barrier for it.
+    await openWorkingNow(page, composer);
+    await expect(agentRow(popup, agent)).toContainText(
+      `Thread · ${otherThread.slice(0, 8)}`,
     );
-    await expect(
-      thread.getByRole("status", { name: "Typing activity" }),
-    ).toHaveCount(0);
+    await expect(threadTrigger).toHaveCount(0);
+    await closePopup();
+    // A completed message ends public typing in both scopes.
+    sendEvent(9, root.id, unrecognized, "Unrecognized participant finished");
+    sendEvent(9, otherThread, key, "Other thread finished");
+    await expect(threadStatus).toBeEmpty();
+    await expect(channelTrigger).toHaveCount(0);
     // Finish panel entrance before starting the eight-second working signal.
     await page.locator("[data-panel-dock]").evaluate(async (element) => {
       await Promise.all(
@@ -881,139 +918,148 @@ test.describe("thread activity", () => {
       );
     });
     const typing = sendTyping(root.id);
-    await expect(region).toBeVisible();
+    await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
+    await expect(threadStatus).toHaveText(/ is working$/);
     await expect(marker).toHaveCount(0); // Thread-only fallback must not light channel scope.
-    await expect(channelActivity(page)).toHaveCount(0);
     await expect(page.locator(`[data-message-id="${typing.id}"]`)).toHaveCount(
       0,
     );
-    const entry = region.getByRole("button", {
-      name: new RegExp(agent.slice(0, 12)),
-    });
     const form = thread.getByRole("form", {
       name: "Reply to thread",
       exact: true,
     });
-    const typingIndicator = thread.getByRole("status", {
-      name: "Typing activity",
-    });
-    sendTyping(root.id);
-    await expect(entry).toBeVisible();
-    await expect(typingIndicator).toHaveCount(0);
-    const entryBox = await entry.boundingBox(),
-      formBox = await form.boundingBox();
-    expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
-    expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
-    const inset = await entry.evaluate((element) =>
-      parseFloat(getComputedStyle(element).paddingLeft),
+    const expectAboveForm = async () => {
+      const triggerBox = await threadTrigger.boundingBox(),
+        formBox = await form.boundingBox();
+      expect(triggerBox.y + triggerBox.height).toBeLessThanOrEqual(formBox.y);
+      expect(triggerBox.x).toBeGreaterThanOrEqual(formBox.x);
+      expect(triggerBox.x + triggerBox.width).toBeCloseTo(
+        formBox.x + formBox.width,
+        0,
+      );
+    };
+    await expectAboveForm();
+    // The thread control's row names the exact thread; no channel-wide guess.
+    await openWorkingNow(page, thread);
+    await expect(agentRow(popup, agent)).toHaveAccessibleName(
+      /^Open thread for /,
     );
-    expect(entryBox.x).toBeCloseTo(formBox.x, 0);
-    expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      formBox.x + inset,
-      0,
-    );
-    await entry.hover();
-    await expect(page.getByRole("tooltip")).toContainText(
-      "Details show channel activity",
-    );
+    await expect(agentRow(popup, agent)).not.toContainText("Thread ·");
+    await closePopup();
     // Same agent, two observer turns, and scoped thread typing. Do not infer
     // that either channel-wide turn belongs to this thread, or hide other work.
     app.observer(activity("turn_liveness", "alpha", "parallel-one"), key);
     app.observer(activity("turn_liveness", "alpha", "parallel-two"), key);
     sendTyping(root.id);
-    const summary = channelActivity(page).locator("summary");
-    await expect(summary).toHaveText("Channel-wide activity · 1 agent");
-    await expect(agentEntry(page, agent)).toBeHidden();
-    await expect(entry).toBeVisible();
-    await page.mouse.move(0, 0);
-    await expect(
-      page.getByRole("tooltip", { includeHidden: true }),
-    ).toHaveCount(0);
+    await openWorkingNow(page, composer);
+    await expect(agentRow(popup, agent)).toContainText(
+      "Work with unconfirmed thread",
+    );
+    await expect(agentRow(popup, agent)).toContainText(
+      `Thread · ${root.content.replace(/\s+/g, " ").trim().slice(0, 60)}`,
+    );
+    await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
     await page.screenshot({
       path: testInfo.outputPath("thread-activity-above-composer.png"),
     });
-    // Native disclosure semantics and keyboard operation need real browsers.
-    await summary.focus();
-    await summary.press("Enter");
-    await expect(agentEntry(page, agent)).toBeVisible();
-    await agentEntry(page, agent).hover();
-    await expect(page.getByRole("tooltip")).toContainText("2 working turn(s)");
-    await page.mouse.move(0, 0);
-    await summary.focus();
-    await summary.press("Space");
-    await expect(agentEntry(page, agent)).toBeHidden();
-    await page.mouse.move(0, 0);
-    // A closing tooltip retains its desktop position until its exit completes.
+    // Mixed scopes: channel activity stays whole-channel, thread activity exact.
+    await agentRow(popup, agent).hover();
+    await agentActivityAction(popup, agent).click();
+    const panel = activityPanel(page);
+    const conversation = panel.getByRole("combobox", {
+      name: "Conversation",
+      exact: true,
+    });
+    await expect(panel.locator("code").first()).toHaveText(agent);
+    await expect(conversation).toHaveText(/^#Alpha · whole channel/);
+    await page
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
+      .click();
+    // Activity and Thread share the detail pane; return to the thread.
+    await openThread();
+    // Popup semantics and keyboard operation need real browsers.
+    await threadTrigger.focus();
+    await page.keyboard.press("Enter");
+    await expect(popup).toBeVisible();
+    await expect(agentRow(popup, agent)).toBeVisible();
+    // WebKit focuses the first row on open; Chromium leaves it one Tab away.
+    const keyboardRow = agentRow(popup, agent);
+    for (let step = 0; step < 2 && !(await isFocused(keyboardRow)); step++)
+      await page.keyboard.press("Tab");
+    await expect(keyboardRow).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(popup).toHaveCount(0);
     await expect(
-      page.getByRole("tooltip", { includeHidden: true }),
-    ).toHaveCount(0);
+      thread.getByRole("region", { name: "Thread messages", exact: true }),
+    ).toContainText(root.content);
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
-    await expect(entry).toBeVisible();
+    await expect(threadTrigger).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(390);
-    await expect(typingIndicator).toHaveCount(0);
-    const narrowEntry = await entry.boundingBox(),
-      narrowForm = await form.boundingBox();
-    expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(
-      narrowForm.y,
-    );
-    expect(narrowForm.y - narrowEntry.y - narrowEntry.height).toBeCloseTo(4, 0);
-    expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      narrowForm.x +
-        (await entry.evaluate((element) =>
-          parseFloat(getComputedStyle(element).paddingLeft),
-        )),
-      0,
-    );
+    await expectAboveForm();
     await page.screenshot({
       path: testInfo.outputPath("thread-activity-narrow.png"),
     });
     await page.setViewportSize({ width: 1440, height: 950 });
-    await entry.click();
-    await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
-    await expect(
-      activityPanel(page).getByRole("combobox", {
-        name: "Channel",
-        exact: true,
-      }),
-    ).toHaveText(/Alpha.*alpha/);
+    await viewAgentActivity(page, thread, agent);
+    await expect(panel.locator("code").first()).toHaveText(agent);
+    // The thread composer opens this thread's scope, not channel-wide details.
+    await expect(conversation).toHaveText(/^#Alpha › /);
     await page
       .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
       .click();
+    // The channel row opens the agent's one known thread.
+    await openThread();
+    await page
+      .getByRole("button", { name: "Close Thread tab", exact: true })
+      .click();
+    await expect(thread).toHaveCount(0);
+    sendTyping(root.id);
+    await openWorkingNow(page, composer);
+    await expect(agentRow(popup, agent)).toHaveAccessibleName(
+      /^Open thread for /,
+    );
+    await agentRow(popup, agent).click();
+    await expect(popup).toHaveCount(0);
+    await expect(
+      thread.getByRole("region", { name: "Thread messages", exact: true }),
+    ).toContainText(root.content);
     app.observer(activity("turn_completed", "alpha", "parallel-one"), key);
     app.observer(activity("turn_completed", "alpha", "parallel-two"), key);
+    sendEvent(9, root.id, key, "Thread work finished");
+    await expect(threadTrigger).toHaveCount(0);
     sendTyping();
     await expect(marker).toBeVisible();
     const workingBox = await marker.boundingBox();
     expect(workingBox).toEqual(
       expect.objectContaining({ width: 26, height: 15 }),
     );
-    await expect(channelActivity(page)).toBeVisible();
-    await expandChannelActivity(page);
-    const channelBox = await channelActivity(page)
-      .getByRole("button")
-      .first()
-      .boundingBox();
-    const channelForm = await page
-      .getByRole("form", { name: "Send a message to Alpha", exact: true })
-      .boundingBox();
-    const channelTyping = page
-      .getByRole("form", { name: "Send a message to Alpha", exact: true })
-      .locator("..")
-      .getByRole("status", { name: "Typing activity" });
-    await expect(channelTyping).toHaveCount(0);
+    // Channel-level work opens the channel conversation, never an inferred thread.
+    await openWorkingNow(page, composer);
+    await expect(agentRow(popup, agent)).toHaveAccessibleName(
+      /^Open conversation for /,
+    );
+    await expect(agentRow(popup, agent)).toContainText("Channel conversation");
+    const channelStatus = composer.locator("[data-agent-working-status]");
+    await expect(channelStatus).toHaveText(/ is working$/);
     await page.screenshot({
       path: testInfo.outputPath("channel-agent-single-presentation.png"),
     });
-    expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(channelForm.y);
+    // Escape dismisses only the popup, never the conversation pane beneath it.
+    await expect(thread).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+    await expect(thread).toBeVisible();
+    await page.mouse.move(0, 0);
     await expect(marker).toHaveCount(0, { timeout: 10_000 });
-    await expect(channelActivity(page)).toHaveCount(0);
+    await expect(channelTrigger).toHaveCount(0);
+    await expect(channelStatus).toBeEmpty();
   });
-  // Browser-only: real composer/accessory wiring through signed relay traffic,
+  // Browser-only: real composer wiring through signed relay traffic,
   // mixed-status geometry at narrow width, and navigation across live scopes.
-  test("thread working rows deduplicate agents while preserving human typing and scope transitions", async ({
+  test("thread working avatars deduplicate agents while preserving human typing and scope transitions", async ({
     page,
     app,
   }, testInfo) => {
@@ -1022,7 +1068,6 @@ test.describe("thread activity", () => {
       .poll(() => app.relay.hasRoute("primary", "observer"))
       .toBe(true);
     const keys = [generateSecretKey(), generateSecretKey()];
-    const agents = keys.map(getPublicKey);
     const roots = app.histories
       .get("primary/alpha")
       .filter((row) => row.content.startsWith("Thread root"));
@@ -1030,12 +1075,12 @@ test.describe("thread activity", () => {
       name: "Thread",
       exact: true,
     });
-    const region = thread.getByRole("region", {
-      name: "Agent activity in this thread",
-      exact: true,
-    });
-    const indicator = thread.getByRole("status", { name: "Typing activity" });
+    const threadTrigger = activityTrigger(thread);
     const workingStatus = thread.locator("[data-agent-working-status]");
+    // Visible human typing is presentation; the status above announces it.
+    const humanTyping = (scope) =>
+      scope.locator('[aria-hidden="true"]').filter({ hasText: /is typing$/ });
+    const popup = workingNow(page);
     const openThread = async (root) => {
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -1067,45 +1112,69 @@ test.describe("thread activity", () => {
         ),
       );
     };
+    // Pointer exit closes the hover popup; Escape is covered separately.
+    const closePopup = async () => {
+      await page.mouse.move(0, 0);
+      await expect(popup).toHaveCount(0);
+    };
     await openThread(roots[0]);
+    // The live region exists before the first transition, without visible layout.
     await expect(workingStatus).toBeAttached();
     await expect(workingStatus).toBeEmpty();
+    await expect(threadTrigger).toHaveCount(0);
+    const composer = channelComposer(page);
+    const channelTrigger = activityTrigger(composer);
+    // Names come from already-loaded profiles; the control itself reads none.
+    // Ordinary channel messages load them before any activity starts.
     for (const [index, key] of keys.entries()) {
       app.serveProfile(key, { name: `Worker ${index + 1}`, is_agent: true });
+      publish(key, undefined, 9);
+      await expect(
+        page
+          .locator("[data-channel-timeline]")
+          .getByText(`Worker ${index + 1}`, { exact: true }),
+      ).toBeVisible();
       app.observer(
         activity("turn_liveness", "alpha", `recognize-${index}`),
         key,
       );
     }
-    await expect(channelActivity(page).locator("summary")).toHaveText(
-      "Channel-wide activity · 2 agents",
+    await expect(channelTrigger).toHaveAccessibleName(
+      "Activity: 2 agents working",
     );
     for (const [index, key] of keys.entries())
       app.observer(
         activity("turn_completed", "alpha", `recognize-${index}`),
         key,
       );
-    await expect(channelActivity(page)).toHaveCount(0);
+    await expect(channelTrigger).toHaveCount(0);
     publish(keys[0], roots[0]);
-    await expect(region.getByRole("button")).toHaveCount(1);
-    await expect(workingStatus).toContainText("Worker 1 is working");
-    await expect(indicator).toHaveCount(0);
-    publish(keys[1], roots[0]);
-    await expect(region.getByRole("button")).toHaveCount(2);
-    await expect(workingStatus).toContainText(
-      /Worker [12], Worker [12] are working/,
+    await expect(threadTrigger).toHaveAccessibleName(
+      /^Activity: Worker 1 working$/,
     );
-    for (const agent of agents)
+    await expect(workingStatus).toHaveText("Worker 1 is working");
+    await expect(humanTyping(thread)).toHaveCount(0);
+    publish(keys[1], roots[0]);
+    await expect(threadTrigger).toHaveAccessibleName(
+      "Activity: 2 agents working",
+    );
+    await expect(workingStatus).toHaveText(
+      /^Worker [12], Worker [12] are working$/,
+    );
+    await expect(threadTrigger.locator(".buzz-avatar")).toHaveCount(2);
+    await openWorkingNow(page, thread);
+    for (const name of ["Worker 1", "Worker 2"])
       await expect(
-        region.getByRole("button", { name: new RegExp(agent.slice(0, 12)) }),
+        popup.getByRole("button", { name: `Open thread for ${name}` }),
       ).toHaveCount(1);
-    await expect(indicator).toHaveCount(0);
+    await closePopup();
+    await expect(humanTyping(thread)).toHaveCount(0);
     const human = generateSecretKey();
     app.serveProfile(human, { name: "Human typer" });
     publish(human, roots[0]);
-    await expect(indicator).toHaveCount(1);
-    await expect(indicator).not.toContainText("Worker");
-    await expect(workingStatus).toContainText("are working");
+    await expect(humanTyping(thread)).toHaveCount(1);
+    await expect(humanTyping(thread)).not.toContainText("Worker");
+    await expect(workingStatus).toHaveText(/ are working\. .+ is typing$/);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator("[data-panel-dock]").evaluate(async (element) => {
       await Promise.all(
@@ -1114,17 +1183,22 @@ test.describe("thread activity", () => {
     });
     for (const key of keys) publish(key, roots[0]);
     publish(human, roots[0]);
-    await expect(region.getByRole("button")).toHaveCount(2);
-    await expect(indicator).toBeVisible();
-    const typingBox = await indicator.boundingBox();
-    const rowBox = await region.getByRole("button").first().boundingBox();
+    await expect(threadTrigger).toHaveAccessibleName(
+      "Activity: 2 agents working",
+    );
+    await expect(humanTyping(thread)).toBeVisible();
+    // Human typing and agent avatars share one floating lane without overlap.
+    const typingBox = await humanTyping(thread).boundingBox();
+    const triggerBox = await threadTrigger.boundingBox();
     const formBox = await thread
       .getByRole("form", { name: "Reply to thread", exact: true })
       .boundingBox();
-    expect(typingBox.y + typingBox.height).toBeLessThan(rowBox.y);
+    expect(typingBox.y + typingBox.height).toBeLessThanOrEqual(formBox.y);
+    expect(triggerBox.y + triggerBox.height).toBeLessThanOrEqual(formBox.y);
     expect(typingBox.x).toBeGreaterThanOrEqual(formBox.x);
-    expect(typingBox.x + typingBox.width).toBeLessThanOrEqual(
-      formBox.x + formBox.width,
+    expect(typingBox.x + typingBox.width).toBeLessThanOrEqual(triggerBox.x);
+    expect(triggerBox.x + triggerBox.width).toBeLessThanOrEqual(
+      formBox.x + formBox.width + 0.5,
     );
     await page.screenshot({
       path: testInfo.outputPath(
@@ -1133,7 +1207,7 @@ test.describe("thread activity", () => {
     });
     await page.setViewportSize({ width: 1440, height: 950 });
     publish(human, roots[0], 9);
-    await expect(indicator).toHaveCount(0);
+    await expect(humanTyping(thread)).toHaveCount(0);
     await page
       .getByRole("button", { name: "Close Thread tab", exact: true })
       .click();
@@ -1141,73 +1215,73 @@ test.describe("thread activity", () => {
     await expect(
       thread.getByRole("region", { name: "Thread messages", exact: true }),
     ).toContainText(roots[1].content);
-    await expect(region).toHaveCount(0);
-    await expect(indicator).toHaveCount(0);
+    await expect(threadTrigger).toHaveCount(0);
+    await expect(workingStatus).toBeEmpty();
     await page
       .getByRole("button", { name: "Close Thread tab", exact: true })
       .click();
     await openThread(roots[0]);
     // Fresh pulses avoid making the navigation assertions depend on fixture speed.
     for (const key of keys) publish(key, roots[0]);
-    await expect(region.getByRole("button")).toHaveCount(2);
+    await expect(threadTrigger).toHaveAccessibleName(
+      "Activity: 2 agents working",
+    );
     publish(keys[0], roots[0], 9);
-    await expect(region.getByRole("button")).toHaveCount(1);
+    await expect(threadTrigger).toHaveAccessibleName(
+      "Activity: Worker 2 working",
+    );
     publish(keys[1], roots[0], 9);
-    await expect(region).toHaveCount(0);
+    await expect(threadTrigger).toHaveCount(0);
     await expect(workingStatus).toBeAttached();
     await expect(workingStatus).toBeEmpty();
-    await expect(indicator).toHaveCount(0);
+    await expect(humanTyping(thread)).toHaveCount(0);
     await page
       .getByRole("button", { name: "Close Thread tab", exact: true })
       .click();
-    // Channel uses the same rows behind an existing visible disclosure.
-    const channelStatus = page
-      .getByRole("form", { name: "Send a message to Alpha", exact: true })
-      .locator("..")
-      .locator("[data-agent-working-status]");
-    const channelTyping = page
-      .getByRole("form", { name: "Send a message to Alpha", exact: true })
-      .locator("..")
-      .getByRole("status", { name: "Typing activity" });
+    // The channel composer uses the same floating control and popup rows.
+    const channelStatus = composer.locator("[data-agent-working-status]");
     publish(keys[0]);
-    await expect(channelActivity(page).locator("summary")).toHaveText(
-      "Channel-wide activity · 1 agent",
+    await expect(channelTrigger).toHaveAccessibleName(
+      "Activity: Worker 1 working",
     );
-    await expect(channelStatus).toContainText("Worker 1 is working");
-    await expect(channelTyping).toHaveCount(0);
+    await expect(channelStatus).toHaveText("Worker 1 is working");
+    await expect(humanTyping(composer)).toHaveCount(0);
     publish(keys[1]);
-    await expect(channelActivity(page).locator("summary")).toHaveText(
-      "Channel-wide activity · 2 agents",
+    await expect(channelTrigger).toHaveAccessibleName(
+      "Activity: 2 agents working",
     );
-    await expect(channelStatus).toContainText(
-      /Worker [12], Worker [12] are working/,
+    await expect(channelStatus).toHaveText(
+      /^Worker [12], Worker [12] are working$/,
     );
-    await expect(channelActivity(page).locator("details")).not.toHaveAttribute(
-      "open",
-    );
-    await expandChannelActivity(page);
-    await expect(channelActivity(page).getByRole("button")).toHaveCount(2);
-    await expect(channelTyping).toHaveCount(0);
+    await expect(popup).toHaveCount(0);
+    await openWorkingNow(page, composer);
+    for (const name of ["Worker 1", "Worker 2"])
+      await expect(
+        popup.getByRole("button", { name: `Open conversation for ${name}` }),
+      ).toHaveCount(1);
+    await closePopup();
     publish(human);
-    await expect(channelTyping).toBeVisible();
-    await expect(channelTyping).not.toContainText("Worker");
-    await expect(channelStatus).toContainText("are working");
+    await expect(humanTyping(composer)).toBeVisible();
+    await expect(humanTyping(composer)).not.toContainText("Worker");
+    await expect(channelStatus).toHaveText(/ are working\. .+ is typing$/);
     await page.screenshot({
       path: testInfo.outputPath("channel-multiple-agents-human-typing.png"),
     });
     publish(human, undefined, 9);
-    await expect(channelTyping).toHaveCount(0);
+    await expect(humanTyping(composer)).toHaveCount(0);
     publish(keys[0], undefined, 9);
-    await expect(channelActivity(page).getByRole("button")).toHaveCount(1);
+    await expect(channelTrigger).toHaveAccessibleName(
+      "Activity: Worker 2 working",
+    );
     publish(keys[1], undefined, 9);
-    await expect(channelActivity(page)).toHaveCount(0);
+    await expect(channelTrigger).toHaveCount(0);
     await page.locator('[data-channel-id="beta"]').click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
-    await expect(channelActivity(page)).toHaveCount(0);
+    await expect(page.locator("[data-agent-activity-trigger]")).toHaveCount(0);
     await expect(
-      page.getByRole("status", { name: "Typing activity" }),
+      page.locator("[data-agent-working-status]:not(:empty)"),
     ).toHaveCount(0);
   });
 });
@@ -1233,9 +1307,16 @@ test.describe("host archive durability", () => {
       }),
       key,
     );
-    await expandChannelActivity(page);
-    await agentEntry(page, agent).click();
+    const composer = channelComposer(page);
+    const popup = await openWorkingNow(page, composer);
+    // The served profile may name this row; there is exactly one agent.
+    await popup
+      .getByRole("button", { name: /^Open conversation for / })
+      .hover();
+    await popup.getByRole("button", { name: /^View .+ activity$/ }).click();
     const panel = activityPanel(page);
+    await expect(panel.locator("code").first()).toHaveText(agent);
+    await showRaw(panel);
     await expect(
       panel.getByText("Saved history loaded.", { exact: true }),
     ).toBeVisible();
@@ -1276,13 +1357,14 @@ test.describe("host archive durability", () => {
     await page
       .getByRole("button", { name: "View activity", exact: true })
       .click();
+    await showRaw(panel);
     await expect(
       panel.getByText("Saved history loaded.", { exact: true }),
     ).toBeVisible();
     await expect(
       panel.getByText("No fresh working evidence.", { exact: true }),
     ).toBeVisible();
-    await expect(agentEntry(page, agent)).toHaveCount(0);
+    await expect(activityTrigger(composer)).toHaveCount(0);
     await panel.getByRole("button", { name: /turn_liveness/ }).click();
     await expect(panel.locator("pre code")).toContainText(
       "secret-history-marker",

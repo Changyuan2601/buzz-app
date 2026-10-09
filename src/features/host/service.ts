@@ -21,8 +21,36 @@ export type NipOaAuthorization = readonly [
   conditions: string,
   signature: string,
 ];
+export type HostProcessOptions = Readonly<{
+  /** Follow the arguments the manifest declares. */
+  args?: readonly string[];
+  /** An absolute directory or one under home written `~/…`; created if missing. */
+  cwd?: string;
+  /** Added to the app's environment; `null` removes a variable. */
+  env?: Readonly<Record<string, string | null>>;
+  /** Runs as this agent of the plugin's own type: its key, community and owner
+   * attestation are in the environment and the bundled `buzz` CLI is on PATH. */
+  agent?: string;
+  onStdout?(data: string): void;
+  onStderr?(data: string): void;
+}>;
+export type HostProcess = Readonly<{
+  write(data: string): Promise<void>;
+  /** Writes any final `data`, then closes stdin. */
+  end(data?: string): Promise<void>;
+  /** Asks it to stop, then kills it and its descendants. */
+  kill(): Promise<void>;
+  /** The exit code once it exits; null when a signal ended it. */
+  exited: Promise<number | null>;
+}>;
+type ProcessEvent =
+  | { type: "stdout" | "stderr"; data: string }
+  | { type: "exit"; code: number | null };
 export interface Host {
   runCommand(id: string): Promise<string | null>;
+  /** Starts a process the manifest declares in `host.processes`. It lives until
+   * it exits, is killed, or the plugin unloads. Desktop only. */
+  spawn?: (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
   request(input: HostRequest): Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
@@ -124,6 +152,69 @@ export class HostService extends Service implements Host {
     } catch {
       return null;
     }
+  }
+
+  // A method, not a field: `this.ctx` is then the calling plugin's scope.
+  async spawn(
+    id: string,
+    { onStdout, onStderr, ...options }: HostProcessOptions = {},
+  ): Promise<HostProcess> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Processes require an installed desktop plugin");
+    let exit!: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      exit = resolve;
+    });
+    const onEvent = new Channel<ProcessEvent>((event) => {
+      if (event.type === "exit") return exit(event.code);
+      // A throw here would stall the channel, so no later output or exit
+      // would arrive.
+      try {
+        if (event.type === "stdout") onStdout?.(event.data);
+        else onStderr?.(event.data);
+      } catch (error) {
+        console.error(`Process ${id} output handler failed`, error);
+      }
+    });
+    const handle = await invoke<number>("plugin_host_process_spawn", {
+      id: owner.id,
+      revision: owner.revision,
+      processId: id,
+      args: options.args ?? [],
+      cwd: options.cwd ?? null,
+      env: options.env ?? null,
+      agent: options.agent ?? null,
+      onEvent,
+    });
+    const write = (data: string, close: boolean) =>
+      invoke<void>("plugin_host_process_write", {
+        id: owner.id,
+        handle,
+        data,
+        close,
+      });
+    const kill = () =>
+      invoke<void>("plugin_host_process_kill", { id: owner.id, handle }).catch(
+        // Already gone.
+        () => undefined,
+      );
+    // The plugin's processes end with it, including one that started as it
+    // was unloading.
+    let release: () => void;
+    try {
+      release = this.ctx.effect(() => () => void kill(), `process ${id}`);
+    } catch (error) {
+      void kill();
+      throw error;
+    }
+    void exited.then(() => release());
+    return Object.freeze({
+      write: (data: string) => write(data, false),
+      end: (data = "") => write(data, true),
+      kill,
+      exited,
+    });
   }
 
   async request(input: HostRequest): Promise<HostResponse> {

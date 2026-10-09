@@ -19,7 +19,16 @@ const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
+  vi.stubGlobal("navigator", {
+    platform: "MacIntel",
+    locks: {
+      request: async (
+        _name: string,
+        _options: unknown,
+        work: () => Promise<void>,
+      ) => work(),
+    },
+  });
 });
 afterEach(() => {
   cleanup();

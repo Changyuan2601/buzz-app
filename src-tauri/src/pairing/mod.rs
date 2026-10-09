@@ -7,7 +7,10 @@ use futures_util::FutureExt;
 use nostr_pairing::Event;
 use serde::Serialize;
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -48,8 +51,10 @@ struct Active {
     status: Status,
     payload_sent: bool,
 }
+/// The live attempt, and whether sign-out has closed pairing for good. The flag
+/// is only read and written under the attempt lock.
 #[derive(Clone, Default)]
-pub struct Pairing(Arc<Mutex<Option<Active>>>);
+pub struct Pairing(Arc<Mutex<Option<Active>>>, Arc<AtomicBool>);
 // Cancels the attempt and returns its teardown signal and visible outcome. After
 // possible publication, the attempt stays registered as its terminal outcome so
 // later status reads cannot report an unsent cancellation.
@@ -70,6 +75,30 @@ fn stop(active: &mut Option<Active>) -> Option<(CancellationToken, Status)> {
 impl Pairing {
     pub fn cancel_all(&self) {
         stop(&mut self.0.lock().unwrap_or_else(|error| error.into_inner()));
+    }
+
+    /// Signing out: cancel the live attempt before it can publish the key, and
+    /// admit none until Buzz restarts. A payload already published stays uncertain.
+    pub(crate) fn close(&self) {
+        let mut active = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        self.1.store(true, Ordering::Relaxed);
+        stop(&mut active);
+    }
+
+    /// Replace any live attempt, unless sign-out has closed pairing.
+    fn admit(&self, attempt: Active) -> Result<(), String> {
+        let mut active = self
+            .0
+            .lock()
+            .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
+        if self.1.load(Ordering::Relaxed) {
+            return Err("Buzz is signing out.".into());
+        }
+        if let Some(old) = active.take() {
+            old.cancel.cancel();
+        }
+        *active = Some(attempt);
+        Ok(())
     }
 
     fn update(&self, id: &str, status: Status) {
@@ -219,23 +248,14 @@ pub fn pairing_start(
     let (tx, rx) = mpsc::channel(1);
     let cancel = CancellationToken::new();
     let finished = CancellationToken::new();
-    {
-        let mut active = pairing
-            .0
-            .lock()
-            .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
-        if let Some(old) = active.take() {
-            old.cancel.cancel();
-        }
-        *active = Some(Active {
-            id: id.clone(),
-            cancel: cancel.clone(),
-            finished: finished.clone(),
-            confirm: tx,
-            status: Status::Connecting,
-            payload_sent: false,
-        });
-    }
+    pairing.admit(Active {
+        id: id.clone(),
+        cancel: cancel.clone(),
+        finished: finished.clone(),
+        confirm: tx,
+        status: Status::Connecting,
+        payload_sent: false,
+    })?;
     let host = host.inner().clone();
     let pairing = pairing.inner().clone();
     tauri::async_runtime::spawn(async move {

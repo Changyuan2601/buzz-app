@@ -16,6 +16,7 @@ use browser::{
 };
 mod agent_models;
 mod agents;
+mod app_agents;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -27,6 +28,7 @@ mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
+mod host_process;
 mod host_request;
 mod mesh_compute;
 use mesh_compute::widget::{
@@ -34,6 +36,7 @@ use mesh_compute::widget::{
 };
 use mesh_compute::{mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, MeshHost};
 mod identity;
+mod image_clipboard;
 
 mod notifications;
 mod os_idle;
@@ -41,17 +44,20 @@ mod window_controls;
 mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
+mod sign_out;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
-    relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
-    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
-    relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
+    media_copy_image, media_download, media_snapshot_read, media_stream_base, relay_agent_library,
+    relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
+    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
+    relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
+    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
     relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_sidebar, relay_upload, relay_upload_cancel, relay_workflow_runs,
+    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
+    relay_upload_chunk, relay_workflow_runs,
 };
 mod terminal;
 #[cfg(test)]
@@ -69,7 +75,9 @@ use agents::{
     agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
-    agent_control_snapshot, agent_control_start_on_app_launch, agent_control_use_here, AgentHost,
+    agent_control_snapshot, agent_control_snapshot_memory_write, agent_control_start_on_app_launch,
+    agent_control_team_capture, agent_control_team_export, agent_control_team_instructions,
+    agent_control_team_preview, agent_control_use_here, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -80,6 +88,9 @@ use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
+use host_process::{
+    plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
+};
 use host_request::{plugin_host_fetch, plugin_host_fetch_cancel, plugin_host_request, HostStreams};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
@@ -258,6 +269,27 @@ async fn prepare_import(
     .await
     .map_err(|e| e.to_string())?
 }
+#[tauri::command]
+async fn workspace_pick_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose a source repository")
+            .blocking_pick_folder()
+            .map(|folder| {
+                folder
+                    .into_path()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -444,16 +476,24 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_direct_message,
         relay_decode_sidebar,
         relay_sign_sidebar,
+        relay_decode_reminders,
+        relay_sign_reminder,
         relay_agent_resolve,
         relay_agent_log_proof,
         relay_archive,
         relay_agent_observer,
         relay_agent_memories_read,
         relay_agent_library,
+        relay_upload_begin,
+        relay_upload_chunk,
         relay_upload,
         relay_upload_cancel,
         media_download,
+        media_copy_image,
+        media_stream_base,
+        media_snapshot_read,
         get_os_idle_seconds,
+        workspace_pick_folder,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,
@@ -465,15 +505,30 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_host_process_spawn,
+        plugin_host_process_write,
+        plugin_host_process_kill,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
         plugin_host_fetch,
         plugin_host_fetch_cancel,
         agent_control_create_prepare,
+        app_agents::app_agent_list,
+        app_agents::app_agent_create,
+        app_agents::app_agent_rename,
+        app_agents::app_agent_delete,
+        app_agents::app_agent_forget,
+        app_agents::app_agent_publish,
+        app_agents::app_agent_publish_profile,
         agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
+        agent_control_snapshot_memory_write,
+        agent_control_team_preview,
+        agent_control_team_instructions,
+        agent_control_team_capture,
+        agent_control_team_export,
         agent_control_snapshot,
         agent_control_log_challenge,
         agent_control_read_log,
@@ -512,7 +567,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_resize,
         terminal_close,
         terminal_close_owner,
-        update_restart
+        update_restart,
+        sign_out::sign_out,
+        sign_out::sign_out_wipe_refusal
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -534,6 +591,25 @@ pub fn run() {
             return;
         }
     };
+    let context = app_context();
+    // A pending Sign out finishes before any window, webview storage, service or
+    // identity read; if it can't, Buzz explains and exits without opening.
+    let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
+        sign_out::boot(
+            &paths,
+            |registry| {
+                buzz_agent_controller::delete_local_agent_keys(
+                    registry.to_path_buf(),
+                    &buzz_agent_controller::PlatformCredentials::default(),
+                )
+            },
+            identity::remove_saved_key,
+        )
+        .unwrap_or_else(|message| sign_out::exit_with(&message))
+    });
+    let identity = IdentityHost::default();
+    let agent_identity = identity.clone();
+
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -553,7 +629,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
                     eprintln!("Could not restore Buzz window: {error}");
@@ -569,6 +645,31 @@ pub fn run() {
                     .map(|root| root.join("mesh-sharing.json"))
                     .map_err(|error| error.to_string()),
             );
+            app.manage(relay::Spools::new(
+                app.path()
+                    .app_cache_dir()
+                    .map(|path| path.join("upload-spools"))
+                    .map_err(|_| "Media preparation could not access temporary storage".to_owned()),
+            ));
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                loop {
+                    interval.tick().await;
+                    handle
+                        .state::<relay::Spools>()
+                        .reap(&handle.state::<relay::Uploads>());
+                }
+            });
+            // Relay `<video>` and `<audio>` load from this listener; without it
+            // they show as unavailable.
+            match relay::MediaStream::start(app.state::<IdentityHost>().inner().clone()) {
+                Ok(stream) => {
+                    app.manage(stream);
+                }
+                Err(error) => eprintln!("Could not start the media listener: {error}"),
+            }
+
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -599,11 +700,25 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
+            app.manage(app_agents::AppAgentHost::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _, _)| root.with_file_name("agents2").join("identities.json"))
+                    .map_err(Clone::clone),
+            ));
+            let agent_owner = agents::owner::Owner::select(
+                agent_identity,
+                tauri::is_dev(),
+                std::env::var("BUZZ_DEV_VIEWER").ok().as_deref(),
+                app.config().build.dev_url.as_ref(),
+            );
             app.manage(AgentHost::initialize(
                 paths,
                 resources,
+                agent_owner,
                 app.handle().clone(),
             ));
+
             Ok(())
         });
     #[cfg(target_os = "macos")]
@@ -618,9 +733,15 @@ pub fn run() {
     } else {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
+    let builder = match instance {
+        Some(instance) => builder.manage(instance),
+        None => builder,
+    };
     builder
-        .manage(IdentityHost::default())
+        .manage(image_clipboard::ImageClipboard::default())
+        .manage(identity)
         .manage(MeshHost::default())
+
         .manage(archive::ArchiveHost::default())
         .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
@@ -628,6 +749,7 @@ pub fn run() {
         .manage(Imports::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())
+        .manage(HostProcesses::default())
         .manage(OAuthCallbackHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
@@ -667,11 +789,15 @@ pub fn run() {
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
+                webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
+                // Processes belong to the page that started them.
+                webview.state::<HostProcesses>().stop_all();
             }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -685,7 +811,7 @@ pub fn run() {
             }
             browser::window_event(window, event);
         })
-        .build(app_context())
+        .build(context)
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
@@ -700,18 +826,28 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
-                app.state::<MeshHost>().shutdown();
-                app.state::<HarnessSetup>().shutdown();
-                browser::shutdown();
-                if let Err(error) = app.state::<Terminals>().shutdown() {
-                    eprintln!("Terminal shutdown failed: {error}");
-                }
-                app.state::<ModelHost>().shutdown();
-                if app.state::<AgentHost>().shutdown().is_err() {
-                    eprintln!("Native agent shutdown could not be confirmed");
-                }
+                shut_down(app);
+
             }
         });
+}
+
+/// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
+pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<MeshHost>().shutdown();
+    app.state::<relay::Spools>()
+        .cancel_all(&app.state::<relay::Uploads>());
+    app.state::<image_clipboard::ImageClipboard>().release();
+    app.state::<HarnessSetup>().shutdown();
+    app.state::<HostProcesses>().shutdown();
+    browser::shutdown();
+    if let Err(error) = app.state::<Terminals>().shutdown() {
+        eprintln!("Terminal shutdown failed: {error}");
+    }
+    app.state::<ModelHost>().shutdown();
+    if app.state::<AgentHost>().shutdown().is_err() {
+        eprintln!("Native agent shutdown could not be confirmed");
+    }
 }
 
 fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {

@@ -7,7 +7,6 @@ test.use({
   productionBroker: true,
   readState: true,
   sessionChannels: ["alpha"],
-  sessionParents: { alpha: "11111111-1111-4111-8111-111111111111" },
 });
 
 async function resolvedColor(locator, expression) {
@@ -123,49 +122,29 @@ for (const mode of ["light", "dark"]) {
   }) => {
     await page.emulateMedia({ colorScheme: mode });
     await page.goto(app.origin);
-    await openPage(page, "Messages");
-    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
-    const sidebar = page.getByRole("navigation", {
-      name: "Subscribed channels",
-    });
-    const child = sidebar.locator('[data-channel-id="alpha"]');
-    const parent = sidebar.locator(
-      '[data-channel-id="11111111-1111-4111-8111-111111111111"]',
-    );
-    await child.click();
+    await openPage(page, "Sessions");
+    const sidebar = page.getByRole("navigation", { name: "Session sections" });
+    const session = sidebar
+      .getByRole("button", { name: /Alpha/ })
+      .filter({ hasNot: page.locator("svg") });
+    await session.click();
+    const row = session.locator("..");
     await page.mouse.move(1, 1);
     const selected = mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)";
-    await expect(child).toHaveAttribute("aria-current", "page");
-    await expect(child).toHaveCSS("background-color", selected);
-    await child.hover();
-    await expect(child).toHaveCSS("background-color", selected);
-    await parent.click({ button: "right" });
-    await page
-      .getByRole("menuitem", { name: "New session", exact: true })
+    await expect(session).toHaveAttribute("aria-current", "page");
+    await expect(row).toHaveCSS("background-color", selected);
+    await expect(session).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await session.hover();
+    await expect(row).toHaveCSS("background-color", selected);
+    await expect(session).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await sidebar
+      .getByRole("button", { name: "New session", exact: true })
       .click();
-    const draft = sidebar.getByRole("button", { name: /New session draft in/ });
-    await expect(draft).toHaveAttribute("aria-current", "page");
-    await page.mouse.move(1, 1);
-    await expect(draft).toHaveCSS("background-color", selected);
-    await draft.hover();
-    await expect(draft).toHaveCSS("background-color", selected);
-    await expect(child).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await child.hover();
-    await expect(child).toHaveCSS(
+    await expect(session).not.toHaveAttribute("aria-current", "page");
+    await session.hover();
+    await expect(row).toHaveCSS(
       "background-color",
-      await resolvedColor(sidebar, "var(--affordance-navigation-quiet)"),
+      await resolvedColor(sidebar, "var(--affordance-panel-hover)"),
     );
-    await parent.click();
-    await page.mouse.move(1, 1);
-    const parentRow = parent.locator(
-      "xpath=ancestor::*[@data-channel-sidebar-row]",
-    );
-    await expect
-      .poll(() =>
-        parentRow.evaluate(
-          (element) => getComputedStyle(element, "::before").backgroundColor,
-        ),
-      )
-      .toBe(selected);
   });
 }

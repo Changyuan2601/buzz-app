@@ -7,6 +7,7 @@
 .workspace {
   display: grid;
   grid-template-columns: 15.5rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   color: var(--text-standard);
@@ -22,14 +23,7 @@
 .sidebar {
   display: flex;
   flex-direction: column;
-  padding: var(--space-3);
-}
-
-.historyHeading {
-  margin: var(--space-6) var(--space-3) var(--space-2);
-  color: var(--text-subtle);
-  font-size: var(--text-caption);
-  font-weight: var(--type-weight-medium);
+  padding-block: 0;
 }
 
 .history {
@@ -37,7 +31,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-chip-inset);
+  gap: 0;
 }
 
 .sessionRow {
@@ -107,14 +101,246 @@
     border-inline-start: 0;
     border-block-start: 1px solid var(--border-standard);
   }
-
-  .historyHeading {
-    display: none;
-  }
 }
 
 .historyLabel {
   display: grid;
   gap: var(--space-1);
   overflow-wrap: anywhere;
+}
+
+.section {
+  margin-block: var(--space-2);
+}
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-unavailable);
+  min-height: var(--size-control-sm);
+  padding: var(--space-half) var(--space-2);
+  font: inherit;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+  text-align: start;
+  cursor: pointer;
+}
+.newSessionHeading {
+  color: var(--text-standard);
+}
+.sectionHeading span {
+  overflow-wrap: anywhere;
+}
+.sectionHeading svg {
+  flex-shrink: 0;
+}
+.organizedRow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+/* The enclosing row owns the hover and selection surface, including actions. */
+.organizedRow > :first-child {
+  --interaction-row-hover: transparent;
+  --interaction-selected: transparent;
+  flex: 1;
+  min-width: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.sectionHeader .sectionHeading {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  padding-inline-end: var(--space-1);
+}
+
+.sidebar {
+  --section-icon-size: 0.9375rem;
+}
+.sectionIcon {
+  display: grid;
+  flex-shrink: 0;
+  width: var(--space-5);
+  height: var(--space-6);
+  place-items: center;
+}
+.sectionIcon svg {
+  width: var(--section-icon-size);
+  height: var(--section-icon-size);
+}
+.sectionIcon > * {
+  grid-area: 1 / 1;
+}
+.chevronGlyph {
+  display: flex;
+  opacity: 0;
+}
+[data-session-row-action] {
+  opacity: 0;
+  pointer-events: auto;
+}
+.organizedRow [data-session-row-action] {
+  width: var(--session-action-size);
+  height: var(--session-action-size);
+}
+.sectionHeader [data-session-row-action],
+.organizedRow [data-session-row-action] {
+  color: var(--text-unavailable);
+}
+.sectionHeader:is(
+    :hover,
+    :focus-within,
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  )
+  [data-session-row-action],
+.organizedRow:is(
+    :hover,
+    :focus-within,
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  )
+  [data-session-row-action] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.sectionHeader:is(:hover, :focus-within) .folderGlyph {
+  opacity: 0;
+}
+.sectionHeader:is(:hover, :focus-within) .chevronGlyph {
+  opacity: 1;
+}
+@media (hover: none) {
+  [data-session-row-action] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.organizedRow,
+.sectionHeader {
+  border-radius: var(--radius-row);
+}
+.organizedRow:is(
+  :hover,
+  :focus-within,
+  :has([aria-expanded="true"][aria-haspopup="menu"])
+):not(:has([aria-current="page"])),
+.sectionHeader:is(
+  :hover,
+  :focus-within,
+  :has([aria-expanded="true"][aria-haspopup="menu"])
+) {
+  background: var(--affordance-panel-hover);
+}
+.organizedRow:has([aria-current="page"]) {
+  background: var(--interaction-selected);
+}
+
+.organizedRow {
+  margin-bottom: var(--space-half);
+}
+.historyLabel {
+  min-width: 0;
+}
+.sessionRow {
+  overflow: hidden;
+  white-space: nowrap;
+}
+.sectionHeading > span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sectionActions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+}
+.sectionPanel {
+  height: var(--collapsible-panel-height);
+  overflow: hidden;
+}
+.section[data-animate] .sectionPanel {
+  transition: height 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.sectionPanel:is([data-starting-style], [data-ending-style]) {
+  height: 0;
+}
+.sectionHeading[aria-expanded="false"] .genericChevron {
+  transform: rotate(-90deg);
+}
+.chevronGlyph svg {
+  transform: rotate(-90deg);
+}
+.sectionHeading[aria-expanded="true"] .chevronGlyph svg {
+  transform: rotate(0deg);
+}
+.section[data-animate] .chevronGlyph svg {
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .section[data-animate] .sectionPanel,
+  .section[data-animate] .chevronGlyph svg {
+    transition: none;
+  }
+}
+
+/* Match row text to the actual folder artwork inside its centered icon slot. */
+.organizedRow {
+  --space-control-inset: calc(
+    var(--space-2) +
+    (var(--space-5) - var(--section-icon-size)) /
+    2
+  );
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sidebar [data-session-row-action]:hover:not(:disabled, [data-disabled]) {
+    color: var(--text-standard);
+  }
+}
+.sidebar
+  [data-session-row-action]:is(:focus-visible, [aria-expanded="true"]):not(
+    :disabled,
+    [data-disabled]
+  ) {
+  color: var(--text-standard);
+}
+
+/* Activity and the row menu share a fixed trailing slot. */
+.organizedRow {
+  position: relative;
+  --session-action-size: var(--size-control);
+}
+.organizedRow :is([data-channel-priority], [data-channel-activity]) {
+  position: absolute;
+  inset-inline-end: calc((var(--session-action-size) - 0.375rem) / 2);
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  pointer-events: none;
+}
+.organizedRow:is(
+    :hover,
+    :focus-within,
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  )
+  :is([data-channel-priority], [data-channel-activity]) {
+  opacity: 0;
+}
+@media (hover: none) {
+  .organizedRow :is([data-channel-priority], [data-channel-activity]) {
+    opacity: 0;
+  }
 }

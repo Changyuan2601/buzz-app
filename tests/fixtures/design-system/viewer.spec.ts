@@ -5,6 +5,18 @@ import { TABLER_ICONS } from "../../../src/shared/design-system/icons/inventory"
 
 const viewer = "/tests/fixtures/design-system.html";
 
+/**
+ * The keyboard focus ring: 2px solid, drawn 2px outside the control, or inset
+ * where a scrolling list would clip an outside ring. Every recipe is gated on
+ * html[data-keyboard-navigation], so pointer and programmatic focus assert
+ * `outline-style: none` instead of calling this.
+ */
+const expectKeyboardRing = async (control: Locator, offset = "2px") => {
+  await expect(control).toHaveCSS("outline-style", "solid");
+  await expect(control).toHaveCSS("outline-width", "2px");
+  await expect(control).toHaveCSS("outline-offset", offset);
+};
+
 test("floating fills nest with their painted owner across themes, widths and text scales", async ({
   page,
 }) => {
@@ -665,12 +677,13 @@ test("switch keyboard activation matches pointer state and focus in both modes",
       await expect(control).not.toBeChecked();
       await control.click();
       await expect(control).toBeChecked();
+      // Pointer activation stays quiet; the keyboard pass below asserts the ring.
       await expect(control).toHaveCSS("outline-style", "none");
       await page.keyboard.press(tab);
       await expect(switches.nth(1)).toBeFocused();
       await page.keyboard.press(`Shift+${tab}`);
       await expect(control).toBeFocused();
-      await expect(control).toHaveCSS("outline-style", "none");
+      await expectKeyboardRing(control);
       await page.keyboard.press("Space");
       await expect(control).not.toBeChecked();
       await page.keyboard.press("Enter");
@@ -678,6 +691,94 @@ test("switch keyboard activation matches pointer state and focus in both modes",
       await control.click();
       await expect(control).not.toBeChecked();
     }
+  }
+});
+
+// A scrolling tab list clips in both axes, so only a real engine can show
+// whether the ring it draws survives its own overflow.
+test("tab variants keep the whole keyboard focus ring inside their scrolling list", async ({
+  page,
+  browserName,
+}) => {
+  await page.goto(`${viewer}#/design/components/tabs`);
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  // Arm the modality fact the focus recipes are gated on.
+  await page.keyboard.press(tab);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.press("Enter");
+    const checked: string[] = [];
+    for (const [variant, selector, offset] of [
+      ["panel", ".buzz-tabs-tab", "2px"],
+      ["navigation", ".navigation-item", "-2px"],
+      ["chrome", ".buzz-tabs-tab", "2px"],
+      ["workspace", ".buzz-tabs-tab", "2px"],
+    ] as const) {
+      const strip = page
+        .locator(`.buzz-tabs[data-variant="${variant}"]`)
+        .first();
+      if (!(await strip.count())) continue;
+      const focused = strip.locator(selector).first();
+      // Chromium only matches :focus-visible for a real keyboard arrival, so
+      // step out of the strip and Tab back into its active tab.
+      await focused.evaluate((element: HTMLElement) => element.focus());
+      await page.keyboard.press(`Shift+${tab}`);
+      await page.keyboard.press(tab);
+      await expect(focused).toBeFocused();
+      await expectKeyboardRing(focused, offset);
+      // Compare the painted ring against every clipping ancestor it sits in.
+      const cuts = await focused.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const spread =
+          Number.parseFloat(style.outlineOffset) +
+          Number.parseFloat(style.outlineWidth);
+        const box = element.getBoundingClientRect();
+        const ring = {
+          top: box.top - spread,
+          bottom: box.bottom + spread,
+          left: box.left - spread,
+          right: box.right + spread,
+        };
+        const found: Record<string, number>[] = [];
+        for (
+          let node = element.parentElement;
+          node;
+          node = node.parentElement
+        ) {
+          const owner = getComputedStyle(node);
+          if (
+            !/hidden|auto|scroll|clip/.test(owner.overflowX + owner.overflowY)
+          )
+            continue;
+          const edge = node.getBoundingClientRect();
+          found.push({
+            top: Math.max(0, Math.round(edge.top - ring.top)),
+            bottom: Math.max(0, Math.round(ring.bottom - edge.bottom)),
+            left: Math.max(0, Math.round(edge.left - ring.left)),
+            right: Math.max(0, Math.round(ring.right - edge.right)),
+          });
+        }
+        return found;
+      });
+      expect(
+        cuts.length,
+        `${variant} tab has no clipping ancestor`,
+      ).toBeGreaterThan(0);
+      for (const cut of cuts) {
+        expect(cut, `${mode} ${variant} tab ring is clipped`).toEqual({
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+        });
+      }
+      checked.push(variant);
+    }
+    // Every documented variant must be measured, or this test proves nothing.
+    expect(checked).toEqual(["panel", "navigation", "chrome", "workspace"]);
   }
 });
 
@@ -1197,7 +1298,8 @@ test("button loading keeps focus and labels stay single-line in constrained layo
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(save).toBeFocused();
-  await expect(save).toHaveCSS("outline-style", "none");
+  // Tab reached this button, so the busy state must keep its keyboard ring.
+  await expectKeyboardRing(save);
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await page
@@ -1205,6 +1307,7 @@ test("button loading keeps focus and labels stay single-line in constrained layo
     .click();
   await expect(save).not.toHaveAttribute("aria-busy", "true");
   await save.click();
+  // A pointer press drops the modality fact, so the ring goes away.
   await expect(save).toHaveCSS("outline-style", "none");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(save.locator(".buzz-button-spinner")).toHaveCSS(
@@ -1368,7 +1471,7 @@ test("dialog motion retains exit presence and respects immediate interaction pat
 });
 
 // Real engines own :focus-visible, input modality and portal focus transfer.
-test("menu items retain keyboard navigation with hidden focus outlines in both modes", async ({
+test("menu items show a keyboard focus ring and stay quiet under pointer input in both modes", async ({
   page,
   browserName,
 }) => {
@@ -1431,7 +1534,8 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
     await page.keyboard.press("ArrowDown");
     for (const item of [action, checkbox, submenu]) {
       await expect(item).toBeFocused();
-      await expect(item).toHaveCSS("outline-style", "none");
+      // Inset, so the scrolling popup cannot clip the ring at its edge.
+      await expectKeyboardRing(item, "-2px");
       if (item !== submenu) await page.keyboard.press("ArrowDown");
     }
     await page.keyboard.press("ArrowRight");
@@ -1440,10 +1544,10 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
       await page.setViewportSize({ width, height: 900 });
       for (const item of [recent, alpha]) await expectRounded(item);
     }
-    await expect(recent).toHaveCSS("outline-style", "none");
+    await expectKeyboardRing(recent, "-2px");
     await page.keyboard.press("ArrowDown");
     await expect(alpha).toBeFocused();
-    await expect(alpha).toHaveCSS("outline-style", "none");
+    await expectKeyboardRing(alpha, "-2px");
     await page.keyboard.press("Escape");
     await expect(submenu).toBeFocused();
     await page.keyboard.press("Escape");

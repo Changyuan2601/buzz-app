@@ -71,6 +71,11 @@ export function createIdentity() {
     importKey: (nsec: string) => run("identity_import", nsec),
     create: () => run("identity_create"),
     exportKey: () => invoke<string>("identity_export"),
+    /** Why this build can't wipe, if it can't; `sign_out` enforces it either way. */
+    wipeRefusal: () => invoke<string | null>("sign_out_wipe_refusal"),
+    /** Stops agents and restarts; the key (and data, with wipe) goes on next launch. */
+    signOut: (choices: { wipe: boolean; removeAgents: boolean }) =>
+      invoke<void>("sign_out", choices),
     dispose() {
       disposed = true;
       listeners.clear();

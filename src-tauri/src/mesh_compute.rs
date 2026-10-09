@@ -239,19 +239,20 @@ async fn start_prepared(
             discovery_began.elapsed().as_millis()
         ),
     );
-    start_with_evidence(app, host, identity, lease, owners, targets, evidence).await
+    start_with_evidence(app, identity, lease, owners, targets, evidence, false).await
 }
 
 #[cfg(feature = "mesh")]
 async fn start_with_evidence(
     app: &tauri::AppHandle,
-    host: &MeshHost,
     identity: &crate::identity::IdentityHost,
     lease: &str,
     mut owners: Vec<String>,
     targets: Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>,
     evidence: Vec<nostr::event::Event>,
+    recovering_admission: bool,
 ) -> Result<(), String> {
+    let host = app.state::<MeshHost>();
     let community = host.lease.community(lease)?;
     let viewer = identity.viewer().await?;
     let sharing = host
@@ -264,7 +265,7 @@ async fn start_with_evidence(
         buzz_mesh_compute::identity::ensure_owner_at(&path).map_err(|error| error.to_string())?;
     // Never dial this machine's own advert; it can outlive the runtime it names.
     let targets = buzz_mesh_compute::discovery::peer_join_tokens(targets, &owner);
-    if targets.is_empty() && sharing.is_none() {
+    if targets.is_empty() && sharing.is_none() && !recovering_admission {
         return Err(
             "No live community member is sharing compute; start serving on a member first".into(),
         );
@@ -346,6 +347,45 @@ fn mesh_port(name: &str, fallback: u16) -> Result<u16, String> {
 }
 
 #[cfg(feature = "mesh")]
+pub(crate) async fn retire_selection(
+    host: &MeshHost,
+    agents: &crate::agents::AgentHost,
+    community: &str,
+    viewer: &str,
+) -> Result<(), String> {
+    let changing = host
+        .preferences
+        .lock()
+        .map_err(|_| "Mesh settings unavailable")?
+        .requires_retirement(
+            host.lease
+                .current()?
+                .as_ref()
+                .map(|(_, community)| community.as_str()),
+            community,
+            viewer,
+        );
+    if changing {
+        // Retire pending launches first; running agents must exit before port reuse.
+        let previous = host.lease.current()?;
+        host.lease.clear();
+        let stopped = async {
+            agents.stop_mesh_consumers().await?;
+            host.lifecycle
+                .stop_and_wait()
+                .await
+                .map_err(|error| error.to_string())
+        }
+        .await;
+        if let Err(error) = stopped {
+            host.lease.restore(previous)?;
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_select(
     app: tauri::AppHandle,
@@ -369,30 +409,13 @@ pub async fn mesh_compute_select(
             return Ok(lease);
         }
     }
-    let changing = host
-        .lease
-        .current()?
-        .map_or(true, |(_, current)| current != community)
-        || viewer_changed;
-    if changing {
-        // Retire pending launches first; running agents must exit before port reuse.
-        let previous = host.lease.current()?;
-        host.lease.clear();
-        let stopped = async {
-            app.state::<crate::agents::AgentHost>()
-                .stop_mesh_consumers()
-                .await?;
-            host.lifecycle
-                .stop_and_wait()
-                .await
-                .map_err(|error| error.to_string())
-        }
-        .await;
-        if let Err(error) = stopped {
-            host.lease.restore(previous)?;
-            return Err(error);
-        }
-    }
+    retire_selection(
+        &host,
+        &app.state::<crate::agents::AgentHost>(),
+        &community,
+        &viewer,
+    )
+    .await?;
     let lease = host
         .lease
         .try_select_with(community.clone(), viewer_changed, || {
@@ -592,6 +615,51 @@ pub async fn mesh_compute_catalog() -> Result<buzz_mesh_compute::catalog::Catalo
 mod persistence_tests {
     use super::*;
     use tauri::Manager;
+
+    #[tokio::test]
+    async fn revoked_selection_retries_failed_cleanup_before_reusing_binding() {
+        use serde_json::{json, Value};
+        let (dir, agents, _app, view) = crate::agents::tests::fixture();
+        let id = crate::agents::tests::seed(dir.path());
+        let path = dir.path().join("store/agents.json");
+        let mut data: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        data["agents"][0]["harness"]["provider"] = json!("relay-mesh");
+        data["agents"][0]["startOnAppLaunch"] = json!(true);
+        let saved = serde_json::to_vec(&data).unwrap();
+        std::fs::write(&path, &saved).unwrap();
+        agents.restore().await;
+        let host = MeshHost::default();
+        host.preferences
+            .lock()
+            .unwrap()
+            .select("viewer".into(), "https://a.example".into());
+        let lease = host.lease.select("https://a.example".into()).unwrap();
+        host.lease.revoke(&lease).unwrap();
+        // Simulate the exact cleanup error boundary: persisted inventory unreadable.
+        std::fs::write(&path, b"invalid").unwrap();
+        assert!(agents.stop_mesh_consumers().await.is_err());
+        assert!(
+            retire_selection(&host, &agents, "https://b.example", "viewer")
+                .await
+                .is_err()
+        );
+        assert!(host.lease.current().unwrap().is_none());
+        std::fs::write(&path, &saved).unwrap();
+        retire_selection(&host, &agents, "https://b.example", "viewer")
+            .await
+            .unwrap();
+        // A cancelled restore cannot restart when its old community returns.
+        agents.restore_mesh("https://relay.example".into()).await;
+        let snapshot =
+            crate::agents::tests::invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        let agent = snapshot["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["id"] == id)
+            .unwrap();
+        assert_eq!(agent["status"], "stopped");
+    }
 
     #[test]
     fn hash_only_adverts_use_known_names_or_an_honest_fallback() {

@@ -372,7 +372,7 @@ describe("mounted Markdown preparation", () => {
     view.rerender(
       <MessageMarkdown
         {...initial}
-        row={{ ...initial.row, attachmentContentRemoved: true }}
+        row={{ ...initial.row, attachmentSeams: [12] }}
         participantProfiles={new Map([[mic, { name: "Renamed" }]])}
       />,
     );
@@ -833,7 +833,7 @@ it("renders tagged agent library names and profile names with the same agent ico
   for (const patch of [
     { mentions: [] },
     { edited: true as const },
-    { attachmentContentRemoved: true as const },
+    { attachmentSeams: [3] },
   ])
     expect(
       render("@Fast Fizz", {

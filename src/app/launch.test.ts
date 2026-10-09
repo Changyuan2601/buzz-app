@@ -28,6 +28,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.resetModules();
   document.body.replaceChildren();
 });
@@ -210,4 +211,26 @@ it("notifies window chrome only when launch releases the inert root", async () =
   expect(observations).toEqual([false]);
   expect(removedListener).not.toHaveBeenCalled();
   unsubscribe();
+});
+
+it("fades when the cycle-boundary timer wakes late", async () => {
+  const { setLaunchReady } = await import("./launch");
+  setLaunchReady(true);
+  await Promise.resolve();
+  // Throttling delivers the boundary timer a second after its deadline.
+  const now = performance.now.bind(performance);
+  vi.spyOn(performance, "now").mockImplementation(() => now() + 1000);
+  vi.advanceTimersByTime(1760);
+  expect(launch).toHaveClass("buzz-launch--leaving");
+});
+
+it("fades even if animation frames never arrive", async () => {
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  const { setLaunchReady } = await import("./launch");
+  setLaunchReady(true);
+  // The frame fallback lands on the first boundary, which fades next turn.
+  vi.advanceTimersByTime(1761);
+  expect(launch).toHaveClass("buzz-launch--leaving");
+  vi.advanceTimersByTime(240);
+  expect(launch.isConnected).toBe(false);
 });

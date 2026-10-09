@@ -69,6 +69,25 @@ web and desktop frontend builds substitute the value into compiled code: changin
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
 
+## Whole-video limit
+
+The desktop app reads relay video from its origin one bounded `Range` at a
+time. When an origin ignores it and answers a video with a whole `200`, the app
+copies that video to a temporary file, up to the development broker's 500 MiB
+video limit, and answers the player's requests from the file as bytes arrive.
+The limit is the compile-time constant `WHOLE_VIDEO_MAX` in
+`src-tauri/src/relay.rs`; edit it and rebuild to change it.
+
+- A video of exactly the limit plays. A larger `Content-Length` is rejected with
+  413 before any download; without one, the download stops and is rejected once
+  it passes the limit. Without a `Content-Length`, playback starts once the
+  whole video has arrived, since a range answer needs the total size.
+- At most two such files exist at once, each anonymous and deleted by the OS
+  when it closes. Opening a third drops the least recently used one. A file is
+  kept while a player's connection to it is open or a read waits for its
+  bytes, and for 60 seconds after; then it is dropped, stopping its download,
+  and playing the video again downloads it again.
+
 ## Deliberate exclusions
 
 Inventory source: `block/buzz-releases` at

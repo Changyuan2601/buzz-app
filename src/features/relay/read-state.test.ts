@@ -539,11 +539,13 @@ describe("durable read-state owner", () => {
         state: { frontiers, overrides: {} },
       });
       const owner = f.make();
-      owner.setCoverage((key, frontier) =>
-        key === read && (frontier(cover) ?? -1) >= (frontier(read) ?? 0)
-          ? cover
-          : undefined,
-      );
+      owner.setCoverage({
+        covered: (key, frontier) =>
+          key === read && (frontier(cover) ?? -1) >= (frontier(read) ?? 0)
+            ? cover
+            : undefined,
+        home: () => undefined,
+      });
       await owner.ready;
       await owner.read(read, 50, () => true);
       // A peer's blob: 401 thread marks this device never used. The one that
@@ -573,6 +575,27 @@ describe("durable read-state owner", () => {
       expect(stillRead(published)).toBe(true);
     }
   }, 15000);
+  it("keeps saved mark channels only for messages a kept mark names", () => {
+    const f = fixture();
+    const id = "a".repeat(64);
+    const saved = readJournal(
+      {
+        ...newReadJournal(),
+        state: { frontiers: { [`msg:${id}`]: 10 }, overrides: {} },
+        reserve: { [`thread-activity:${"b".repeat(64)}`]: 9 },
+        homes: {
+          [id]: "room",
+          ["b".repeat(64)]: "side",
+          ["c".repeat(64)]: "gone",
+        },
+      },
+      f.key.pubkey,
+    );
+    expect(saved.homes).toEqual({ [id]: "room", ["b".repeat(64)]: "side" });
+    expect(() =>
+      readJournal({ ...newReadJournal(), homes: { [id]: 5 } }, f.key.pubkey),
+    ).toThrow("mark channels");
+  });
   it("rejects saved corruption and changed signatures without overwriting it", () => {
     const f = fixture();
     expect(() =>

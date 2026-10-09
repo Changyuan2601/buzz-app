@@ -3,10 +3,7 @@ import { LightningIcon } from "../../shared/design-system/icons";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  EnvelopeOpenIcon,
-  ListBulletsIcon,
-} from "../../shared/design-system/icons";
+import { EnvelopeOpenIcon } from "../../shared/design-system/icons";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -29,6 +26,8 @@ import { Avatar } from "../../shared/Avatar";
 import { Avatar as WorkflowAvatar } from "../../shared/design-system/ui/Avatar";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import styles from "./Channels.module.css";
+import activityStyles from "../../features/agents/ActivityRows.module.css";
+import { AgentActivityRow } from "../../features/agents/AgentActivityRow";
 import { workingAgentDetails } from "./working-agents";
 
 const elapsed = (createdAt: number, now = Date.now()) => {
@@ -100,7 +99,9 @@ function ActivityRow({
     }
   };
   return (
-    <div className={`${styles.activityItem} ${styles.activityItemWithAction}`}>
+    <div
+      className={`${activityStyles.activityItem} ${activityStyles.activityItemWithAction}`}
+    >
       <NavigationItem
         type="button"
         aria-label={`Open unread thread from ${name}: ${item.preview}`}
@@ -120,15 +121,15 @@ function ActivityRow({
                 profile?.picture ? session.media(profile.picture) : undefined
               }
               shape={isAgent ? "squircle" : "circle"}
-              className={styles.activityAvatar ?? ""}
+              className={activityStyles.activityAvatar ?? ""}
             />
           )
         }
         label={
-          <span className={styles.activityItemBody}>
-            <span className={styles.activityItemHeading}>
+          <span className={activityStyles.activityItemBody}>
+            <span className={activityStyles.activityItemHeading}>
               <strong>{name}</strong>
-              <span className={styles.activityTimestamp}>
+              <span className={activityStyles.activityTimestamp}>
                 {elapsed(item.createdAt)}
               </span>
             </span>
@@ -136,7 +137,7 @@ function ActivityRow({
           </span>
         }
       />
-      <span className={styles.activityItemAction}>
+      <span className={activityStyles.activityItemAction}>
         <IconButton
           size="toolbar"
           icon={<EnvelopeOpenIcon />}
@@ -289,79 +290,57 @@ export function ChannelActivityPopover({
         aria-label={`Activity in ${channelName}`}
       >
         {open && (
-          <div className={styles.activityList}>
+          <div className={activityStyles.activityList}>
             {stale && (
               <p className={styles.activityStale}>May be out of date</p>
             )}
             {activeAgents.length > 0 && (
               <section aria-label="Agents working now">
-                <h2 className={styles.activitySectionLabel}>Working now</h2>
+                <h2 className={activityStyles.activitySectionLabel}>
+                  Working now
+                </h2>
                 {activeAgents.map((agent, index) => {
                   const profile = agentProfiles?.get(agent);
                   const name = profile?.name ?? keyLabels.get(agent) ?? "Agent";
                   const { messageId, startedAt } = details[index] ?? {};
                   return (
-                    <div
+                    <AgentActivityRow
                       key={agent}
-                      className={`${styles.activityItem} ${openAgentActivity ? styles.activityItemWithAction : ""}`}
-                    >
-                      <NavigationItem
-                        type="button"
-                        aria-label={`Open ${messageId ? "thread" : "conversation"} for ${name} in ${channelName}`}
-                        onClick={() => {
-                          setOpen(false);
-                          onOpenWorkingAgent?.(channelId, agent, messageId);
-                        }}
-                        icon={
-                          <Avatar
-                            name={name}
-                            src={
-                              profile?.picture
-                                ? session.media(profile.picture, "small")
-                                : undefined
-                            }
-                            shape="squircle"
-                            className={styles.activityAvatar ?? ""}
-                          />
-                        }
-                        label={
-                          <span className={styles.activityItemBody}>
-                            <span className={styles.activityItemHeading}>
-                              <strong>{name}</strong>
-                              <span className={styles.activityTimestamp}>
-                                {startedAt === undefined
-                                  ? "—"
-                                  : workingDuration(startedAt, now)}
-                              </span>
-                            </span>
-                            <span className={styles.activityItemMeta}>
-                              Working
-                            </span>
-                          </span>
-                        }
-                      />
-                      {openAgentActivity && (
-                        <span className={styles.activityItemAction}>
-                          <IconButton
-                            size="toolbar"
-                            icon={<ListBulletsIcon />}
-                            aria-label={`View ${name} activity`}
-                            title="View activity"
-                            onClick={() => {
+                      name={name}
+                      picture={
+                        profile?.picture
+                          ? session.media(profile.picture, "small")
+                          : undefined
+                      }
+                      status="Working"
+                      meta={
+                        startedAt === undefined
+                          ? "—"
+                          : workingDuration(startedAt, now)
+                      }
+                      openLabel={`Open ${messageId ? "thread" : "conversation"} for ${name} in ${channelName}`}
+                      onOpen={() => {
+                        setOpen(false);
+                        onOpenWorkingAgent?.(channelId, agent, messageId);
+                      }}
+                      onOpenActivity={
+                        openAgentActivity
+                          ? () => {
                               setOpen(false);
                               openAgentActivity(channelId, agent);
-                            }}
-                          />
-                        </span>
-                      )}
-                    </div>
+                            }
+                          : undefined
+                      }
+                    />
                   );
                 })}
               </section>
             )}
             {items.length > 0 && (
               <section aria-label="Unread threads">
-                <h2 className={styles.activitySectionLabel}>Unread threads</h2>
+                <h2 className={activityStyles.activitySectionLabel}>
+                  Unread threads
+                </h2>
                 {items.map((item) => (
                   <ActivityRow
                     key={item.rootId}

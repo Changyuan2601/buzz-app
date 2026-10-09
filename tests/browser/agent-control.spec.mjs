@@ -389,13 +389,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     });
     await page.getByRole("button", { name: "Toggle appearance" }).click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "Create agent" }).blur();
+    await page.getByRole("button", { name: "Add agent", exact: true }).blur();
     await page.mouse.move(0, 0);
     // The compact header action uses the approved subtle dark surface.
-    await expect(page.getByRole("button", { name: "Create agent" })).toHaveCSS(
-      "background-color",
-      "rgb(35, 35, 35)",
-    );
+    await expect(
+      page.getByRole("button", { name: "Add agent", exact: true }),
+    ).toHaveCSS("background-color", "rgb(35, 35, 35)");
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),
       fullPage: true,
@@ -411,9 +410,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await closeEditor(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
     // Library-only entries no longer pretend to be managed cards with Edit.
-    await expect(page.getByText("Create agent", { exact: true })).toHaveCount(
-      0,
-    );
+    await expect(page.getByText("Add agent", { exact: true })).toHaveCount(0);
     await page.getByText(/^Other agents \(/).click();
     const libraryCard = page.getByRole("article", {
       name: "Agent Fixture agent",

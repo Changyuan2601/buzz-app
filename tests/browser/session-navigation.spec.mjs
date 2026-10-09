@@ -326,8 +326,8 @@ test("Sessions keeps new and selected conversations usable at 200%", async ({
   };
   await expectReachable();
   await workspace
-    .getByRole("navigation", { name: "Previous sessions" })
-    .getByRole("button", { name: /Alpha/ })
+    .getByRole("navigation", { name: "Session sections" })
+    .getByRole("button", { name: "Alpha", exact: true })
     .click();
   await expect(
     workspace.getByRole("heading", { name: "Alpha", exact: true }),

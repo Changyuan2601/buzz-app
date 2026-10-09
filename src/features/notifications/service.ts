@@ -18,7 +18,7 @@ import {
   resolveCategorySound,
   type SoundName,
 } from "./sound";
-import type { NotificationText } from "./content";
+import { pluginNotificationText, type NotificationText } from "./content";
 
 export type NotificationCategoryDescriptor = Readonly<{
   id: string;
@@ -27,6 +27,9 @@ export type NotificationCategoryDescriptor = Readonly<{
 export type NotificationInput = Readonly<{
   sourceKey: string;
   target: OpenTarget;
+  /** Optional display text; the host flattens and bounds it before the OS sees it. */
+  title?: string;
+  body?: string;
 }>;
 export interface Notifications {
   register(
@@ -297,11 +300,20 @@ export class NotificationsService extends Service implements Notifications {
       submit: (input: NotificationInput) => {
         const current = entry();
         if (disposed || !current) return Promise.resolve(false);
+        if (
+          [input?.title, input?.body].some(
+            (value) => value !== undefined && typeof value !== "string",
+          )
+        )
+          return Promise.reject(new Error("Invalid notification text"));
+        const text = pluginNotificationText(input, current.label);
         return this.admit(
           current.key,
           current.label,
           input,
           () => !disposed && entry() === current,
+          undefined,
+          () => text,
         );
       },
     });

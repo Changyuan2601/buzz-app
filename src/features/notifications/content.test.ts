@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { messageNotificationText, messagePreview } from "./content";
+import {
+  messageNotificationText,
+  messagePreview,
+  plainText,
+  pluginNotificationText,
+} from "./content";
 
 const message = {
   channelId: "room",
@@ -88,4 +93,31 @@ it("labels workflow ownership without making the owner the sender, preserving na
   expect(
     messageNotificationText(workflow, "thread", undefined, undefined).title,
   ).toBe("Workflow · owned by bbbbbbbbbb replied in #room");
+});
+
+it("cuts the source on a whole code point when an emoji straddles the cap", () => {
+  // A stripped link leaves room in the 200-point preview for the emoji at
+  // UTF-16 unit 4095, whose pair the 4096-unit cut would split.
+  const link = `[a](https://example.com/${"x".repeat(4000)})`;
+  const text = plainText(`${link}${" ".repeat(4095 - link.length)}😀`);
+  expect(() => encodeURIComponent(text)).not.toThrow();
+  expect(text).toBe("a");
+  const whole = plainText(`${link}${" ".repeat(4094 - link.length)}😀`);
+  expect(whole).toBe("a 😀");
+});
+
+it("replaces lone surrogates already in the text and keeps valid pairs", () => {
+  expect(plainText("a \ud83d b")).toBe("a \uFFFD b");
+  expect(plainText("a \ude00 b")).toBe("a \uFFFD b");
+  expect(plainText("a \ude00\ud83d")).toBe("a \uFFFD\uFFFD");
+  expect(plainText("a 😀 b")).toBe("a 😀 b");
+  // At the source cut, after a stripped link leaves room in the preview.
+  const link = `[a](https://example.com/${"x".repeat(4000)})`;
+  const space = (end: number) => " ".repeat(end - link.length);
+  expect(plainText(`${link}${space(4095)}\ude00`)).toBe("a \uFFFD");
+  expect(plainText(`${link}${space(4094)}\ud83dz`)).toBe("a \uFFFDz");
+  expect(plainText(`${link}${space(4093)}😀z`)).toBe("a 😀z");
+  expect(pluginNotificationText({ title: "t \ud83d" }, "Reminders").title).toBe(
+    "t \uFFFD",
+  );
 });

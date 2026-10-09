@@ -18,6 +18,7 @@ export type UploadedAttachment = Readonly<{
   type: string;
   size: number;
   sha256: string;
+  voice?: Readonly<{ duration: number; waveform: readonly number[] }>;
 }>;
 /** Bytes of the transferred file handed to the connection so far. */
 export type UploadProgress = (sent: number, total: number) => void;
@@ -308,6 +309,7 @@ export function attachmentMessage(
       `size ${result.size}`,
       `x ${result.sha256}`,
       `filename ${name}`,
+      ...(item.voice ? voiceMetadataTags(item.voice) : []),
     ]);
     return attachmentMarkdown(name, result);
   });
@@ -315,4 +317,18 @@ export function attachmentMessage(
     content: [content.trim(), ...links].filter(Boolean).join("\n\n"),
     tags,
   };
+}
+
+function voiceMetadataTags(voice: NonNullable<UploadedAttachment["voice"]>) {
+  if (
+    !Number.isFinite(voice.duration) ||
+    voice.duration <= 0 ||
+    voice.duration > 300.1 ||
+    !Array.isArray(voice.waveform) ||
+    !voice.waveform.length ||
+    voice.waveform.length > 100 ||
+    voice.waveform.some((n) => !Number.isInteger(n) || n < 0 || n > 100)
+  )
+    throw new UploadError("invalid");
+  return [`duration ${voice.duration}`, `waveform ${voice.waveform.join(" ")}`];
 }

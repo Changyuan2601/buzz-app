@@ -188,41 +188,70 @@ fn output_size(path: &Path, limit: u64) -> Result<(), &'static str> {
     }
 }
 
-fn private_tempdir_in(parent: &Path) -> std::io::Result<tempfile::TempDir> {
-    let builder = tempfile::Builder::new();
-    #[cfg(unix)]
-    let mut builder = builder;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // Set permissions during creation: the source must never become readable
-        // through a shared temporary parent, even briefly.
-        builder.permissions(std::fs::Permissions::from_mode(0o700));
-    }
-    builder.tempdir_in(parent)
+#[cfg(test)]
+use super::upload_spool::private_tempdir_in;
+
+pub(super) async fn prepare_file(
+    source: &Path,
+    size: usize,
+    directory: &Path,
+    mode: &str,
+    cancelled: &mut oneshot::Receiver<()>,
+) -> Result<(std::path::PathBuf, &'static str), PreparationError> {
+    let path = crate::host_command::effective_path();
+    let program = crate::host_command::resolve_program("ffmpeg", &path);
+    prepare_file_with_program(source, size, directory, mode, cancelled, &program).await
 }
 
+#[cfg(test)]
 pub(super) async fn prepare(
     body: Vec<u8>,
     mode: &str,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<(Vec<u8>, &'static str), PreparationError> {
-    let path = crate::host_command::effective_path();
-    let program = crate::host_command::resolve_program("ffmpeg", &path);
+    let program =
+        crate::host_command::resolve_program("ffmpeg", &crate::host_command::effective_path());
     prepare_with_program(body, mode, cancelled, &program).await
 }
 
+#[cfg(test)]
 async fn prepare_with_program(
     body: Vec<u8>,
     mode: &str,
     cancelled: &mut oneshot::Receiver<()>,
     program: &Path,
 ) -> Result<(Vec<u8>, &'static str), PreparationError> {
-    if body.is_empty() || body.len() > MAX_INPUT {
+    let directory = private_tempdir_in(&std::env::temp_dir()).map_err(|_| PreparationError::Io)?;
+    let source = directory.path().join("source");
+    std::fs::write(&source, &body).map_err(|_| PreparationError::Io)?;
+    let (output, kind) = prepare_file_with_program(
+        &source,
+        body.len(),
+        directory.path(),
+        mode,
+        cancelled,
+        program,
+    )
+    .await?;
+    Ok((
+        std::fs::read(output).map_err(|_| PreparationError::Io)?,
+        kind,
+    ))
+}
+
+async fn prepare_file_with_program(
+    source: &Path,
+    size: usize,
+    directory: &Path,
+    mode: &str,
+    cancelled: &mut oneshot::Receiver<()>,
+    program: &Path,
+) -> Result<(std::path::PathBuf, &'static str), PreparationError> {
+    if size == 0 || size > MAX_INPUT {
         return Err(PreparationError::Size);
     }
     let (demuxer, image, voice) =
-        allowed_mode(mode, body.len()).ok_or(if mode.starts_with("image:") {
+        allowed_mode(mode, size).ok_or(if mode.starts_with("image:") {
             PreparationError::Image
         } else {
             PreparationError::Video
@@ -234,21 +263,11 @@ async fn prepare_with_program(
         .get_or_init(|| Semaphore::new(2))
         .try_acquire()
         .map_err(|_| PreparationError::Capacity)?;
-    let directory = private_tempdir_in(&std::env::temp_dir()).map_err(|_| PreparationError::Io)?;
-    let source = directory.path().join("source");
-    let output = directory.path().join(if image {
+    let output = directory.join(if image {
         "prepared.jpg"
     } else {
         "prepared.mp4"
     });
-    // File writes can be large; keep the async executor responsive.
-    tokio::task::spawn_blocking(move || std::fs::write(source, body))
-        .await
-        .map_err(|_| PreparationError::Io)?
-        .map_err(|_| PreparationError::Io)?;
-    if cancelled.try_recv().is_ok() {
-        return Err(PreparationError::Cancelled);
-    }
     if image {
         require_heic_grid_support(&mut ffmpeg_command(program), cancelled).await?;
     }
@@ -261,7 +280,7 @@ async fn prepare_with_program(
     if demuxer == "mov" {
         cmd.args(["-enable_drefs", "0", "-use_absolute_path", "0"]);
     }
-    cmd.arg("-i").arg(directory.path().join("source"));
+    cmd.arg("-i").arg(source);
     if image {
         // Automatic selection assembles HEIC tile grids. Mapping 0:v:0
         // selects the first tile and silently crops the image.
@@ -339,17 +358,10 @@ async fn prepare_with_program(
     if size == 0 || size > limit {
         return Err(PreparationError::Size);
     }
-    let bytes = tokio::task::spawn_blocking(move || std::fs::read(output))
-        .await
-        .map_err(|_| PreparationError::Io)?
-        .map_err(|_| PreparationError::Io)?;
-    if bytes.len() as u64 != size {
-        return Err(PreparationError::Io);
-    }
     if cancelled.try_recv().is_ok() {
         return Err(PreparationError::Cancelled);
     }
-    Ok((bytes, if image { "image/jpeg" } else { "video/mp4" }))
+    Ok((output, if image { "image/jpeg" } else { "video/mp4" }))
 }
 
 #[cfg(test)]

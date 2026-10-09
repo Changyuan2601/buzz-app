@@ -7,6 +7,7 @@ import {
   type MentionChoice,
 } from "./mention-ranking";
 import { fixtureChoice, mentionConformance } from "./mention-rules.conformance";
+import { matchPerson } from "../../features/search/person-match";
 const choice = (
   key: string,
   name: string,
@@ -231,10 +232,19 @@ it("orders mixed people and agents the same way from every input order", () => {
 });
 
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(1);
+  expect(mentionConformance.version).toBe(2);
+  expect(mentionConformance.matching.length).toBeGreaterThan(0);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);
 });
+it.each(mentionConformance.matching)(
+  "conforms to the portable matching contract: $name",
+  (fixture) => {
+    expect(matchPerson(fixture.label, fixture.query)?.tier ?? null).toBe(
+      fixture.expected,
+    );
+  },
+);
 it.each(mentionConformance.ranking)(
   "conforms to the portable ranking contract: $name",
   (fixture) => {

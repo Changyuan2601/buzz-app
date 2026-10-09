@@ -55,7 +55,7 @@ export function useAgentOwnerEvidence(
   // Subscribed, so any head change (live, read or disk restore) re-renders.
   // Without a live view nothing can signal an auth-only change, so show nothing.
   const directoryHead = useSyncExternalStore(
-    session.profiles.subscribe,
+    pubkey ? session.profiles.subscribe : noSubscribe,
     () => (pubkey ? session.profiles.event?.(pubkey) : undefined),
     () => (pubkey ? session.profiles.event?.(pubkey) : undefined),
   );

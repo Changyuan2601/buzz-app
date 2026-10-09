@@ -73,11 +73,17 @@ beforeEach(() => {
       ) => run({}),
     },
   });
+  // jsdom lacks scrollIntoView; the mention picker keeps its highlight in view.
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator, "locks");
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
 function harness(
@@ -147,7 +153,9 @@ function harness(
         }),
       channelKit: {
         prepare: async (value) => {
-          stored.set("fixture", value);
+          if (value.value.type === "team-payload")
+            throw new Error("Unexpected fixture payload");
+          stored.set("fixture", value as KitRecord);
           return "fixture";
         },
         decode: async (events) =>

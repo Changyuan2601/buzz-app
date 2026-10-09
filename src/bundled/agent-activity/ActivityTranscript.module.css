@@ -1,0 +1,140 @@
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.session {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-standard);
+  color: var(--text-subtle);
+  text-align: center;
+}
+.turnHeader {
+  color: var(--text-subtle);
+}
+.turnHeader [data-state="working"] {
+  color: var(--affordance-accent-prominent);
+}
+.turnHeader [data-state="error"],
+.error {
+  color: var(--text-danger);
+}
+.item {
+  min-width: 0;
+}
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+}
+.row > svg {
+  flex-shrink: 0;
+  margin-top: var(--space-half);
+}
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.tool > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.tool[data-status="failed"] > summary {
+  color: var(--text-danger);
+}
+.summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subject,
+.path {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+}
+.path {
+  color: var(--text-secondary);
+}
+.status {
+  color: var(--text-subtle);
+}
+.tool[data-status="failed"] .status {
+  color: var(--text-danger);
+}
+.reply {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.plain {
+  white-space: pre-wrap;
+}
+.markdown :is(p, ul, ol, pre, blockquote, table) {
+  margin: var(--space-2) 0;
+}
+.markdown :is(ul, ol) {
+  padding-left: var(--space-5);
+}
+.markdown ul {
+  list-style: disc;
+}
+.markdown ol {
+  list-style: decimal;
+}
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+}
+.markdown pre {
+  overflow-x: auto;
+}
+.markdown a {
+  text-decoration: underline;
+}
+.diff {
+  margin: var(--space-1) 0 0;
+}
+.removed {
+  color: var(--text-danger);
+}
+.added {
+  color: var(--text-success);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.section {
+  margin-left: var(--space-4);
+}
+.pre {
+  max-height: 24rem;
+  overflow: auto;
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.plan {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

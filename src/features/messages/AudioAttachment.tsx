@@ -1,3 +1,4 @@
+import { claimAudio, releaseAudio } from "../../shared/audio-playback";
 import {
   useCallback,
   useLayoutEffect,
@@ -6,7 +7,10 @@ import {
   type CSSProperties,
 } from "react";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
-import { PauseIcon, PlayIcon } from "../../shared/design-system/icons/index";
+import {
+  PauseFilledIcon,
+  PlayFilledIcon,
+} from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
@@ -14,8 +18,9 @@ import {
 } from "../relay/contracts";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
+import { useMediaElementSource } from "./use-media-element-source";
+import mediaStyles from "./VideoPlayer.module.css";
 
-let playing: HTMLAudioElement | null = null;
 const ENDED_DURATION_CORRECTION_MIN_SECONDS = 0.05;
 // Old Buzz voice notes include a 1 fps 16x16 video track, so container
 // duration can overshoot the real audio by about one frame; allow headroom.
@@ -49,8 +54,11 @@ export function AudioAttachment({
     finiteDuration(attachment.duration),
   );
   const [isPlaying, setIsPlaying] = useState(false);
+  const [hover, setHover] = useState<number>();
   const [failedSource, setFailedSource] = useState<string | null>(null);
-  const failed = failedSource === source;
+  const element = useMediaElementSource(source);
+  const elementSource = element.src;
+  const failed = failedSource === source || element.unavailable;
   const playLabel = attachment.name ? `Play ${attachment.name}` : "Play audio";
   const pauseLabel = attachment.name
     ? `Pause ${attachment.name}`
@@ -65,8 +73,8 @@ export function AudioAttachment({
   const seekProgress = duration ? (seekValue / duration) * 100 : 0;
 
   const setAudio = useCallback((element: HTMLAudioElement | null) => {
-    // Callback refs are required because React detaches refs before passive effect cleanup, so cleanup cannot clear the module playback singleton.
-    if (playing === audio.current) playing = null;
+    // Callback refs are required because React detaches refs before passive effect cleanup, so cleanup cannot release playback ownership.
+    releaseAudio(audio.current);
     audio.current = element;
   }, []);
 
@@ -76,6 +84,7 @@ export function AudioAttachment({
     setCurrentTime(0);
     setDuration(finiteDuration(attachment.duration));
     setIsPlaying(false);
+    setHover(undefined);
   }
 
   if (failed)
@@ -103,11 +112,14 @@ export function AudioAttachment({
   };
 
   return (
-    <div className={styles.audioAttachment}>
+    <fieldset
+      className={`${styles.audioAttachment} ${mediaStyles.controls}`}
+      aria-label={attachment.name || "Audio playback"}
+    >
       {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
       <audio
         ref={setAudio}
-        src={source}
+        src={elementSource}
         preload="metadata"
         onLoadedMetadata={(event) => syncDuration(event.currentTarget)}
         onDurationChange={(event) => syncDuration(event.currentTarget)}
@@ -115,14 +127,12 @@ export function AudioAttachment({
           setCurrentTime(event.currentTarget.currentTime)
         }
         onPlay={(event) => {
-          // Set the singleton after pausing the previous element so exclusivity is correct for both synchronous jsdom and asynchronous browser pause events.
-          if (playing && playing !== event.currentTarget) playing.pause();
-          playing = event.currentTarget;
+          claimAudio(event.currentTarget);
           setCurrentTime(event.currentTarget.currentTime);
           setIsPlaying(true);
         }}
         onPause={(event) => {
-          if (playing === event.currentTarget) playing = null;
+          releaseAudio(event.currentTarget);
           setIsPlaying(false);
         }}
         onEnded={(event) => {
@@ -145,18 +155,17 @@ export function AudioAttachment({
             setDuration(measured);
           }
           if (nextDuration !== undefined) setCurrentTime(nextDuration);
-          if (playing === event.currentTarget) playing = null;
+          releaseAudio(event.currentTarget);
           setIsPlaying(false);
         }}
         onError={(event) => {
-          if (playing === event.currentTarget) playing = null;
+          releaseAudio(event.currentTarget);
           setFailedSource(source);
         }}
       />
       <IconButton
-        size="compact"
-        variant="solid"
-        shape="round"
+        size="sm"
+        variant="ghost"
         type="button"
         aria-label={isPlaying ? pauseLabel : playLabel}
         onClick={() => {
@@ -165,31 +174,68 @@ export function AudioAttachment({
           if (element.paused) void element.play().catch(() => {});
           else element.pause();
         }}
-        icon={isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+        icon={isPlaying ? <PauseFilledIcon /> : <PlayFilledIcon />}
       />
-      <input
-        className={styles.audioSeek}
-        style={{ "--audio-progress": `${seekProgress}%` } as CSSProperties}
-        type="range"
-        aria-label={seekLabel}
-        min={0}
-        max={duration ?? 0}
-        step="any"
-        value={seekValue}
-        disabled={duration === undefined}
-        aria-valuetext={valueText}
-        onChange={(event) => {
-          const next = Number(event.currentTarget.value);
-          const element = audio.current;
-          if (element) element.currentTime = next;
-          setCurrentTime(next);
+      <span className={mediaStyles.time}>
+        {formatMediaTime(currentTime).padStart(5, "0")}
+      </span>{" "}
+      <div
+        className={mediaStyles.timeline}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "mouse" || duration === undefined) {
+            setHover(undefined);
+            return;
+          }
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setHover(
+            Math.max(
+              0,
+              Math.min(
+                1,
+                (event.clientX - bounds.left - 1) /
+                  Math.max(1, bounds.width - 2),
+              ),
+            ),
+          );
         }}
-      />
-      <span className={styles.audioTime}>
+        onPointerLeave={() => setHover(undefined)}
+      >
+        <input
+          className={styles.audioSeek}
+          style={{ "--progress": `${seekProgress}%` } as CSSProperties}
+          type="range"
+          aria-label={seekLabel}
+          min={0}
+          max={duration ?? 0}
+          step="any"
+          value={seekValue}
+          disabled={duration === undefined}
+          aria-valuetext={valueText}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value);
+            const element = audio.current;
+            if (element) element.currentTime = next;
+            setCurrentTime(next);
+          }}
+        />
+        {hover !== undefined && duration !== undefined && (
+          <span
+            className={mediaStyles.seekPreview}
+            style={{ left: `calc(1px + (100% - 2px) * ${hover})` }}
+            aria-hidden="true"
+            data-seek-preview=""
+          >
+            <span className={mediaStyles.hoverTime}>
+              {formatMediaTime(hover * duration).padStart(5, "0")}
+            </span>
+          </span>
+        )}
+      </div>
+      <span className={`${mediaStyles.time} ${mediaStyles.duration}`}>
         {duration !== undefined
-          ? `${formatMediaTime(currentTime)} / ${formatMediaTime(duration)}`
-          : formatMediaTime(currentTime)}
+          ? formatMediaTime(duration).padStart(5, "0")
+          : "—:—"}
       </span>
-    </div>
+    </fieldset>
   );
 }

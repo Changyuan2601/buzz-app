@@ -103,8 +103,9 @@ alert or trigger additional reads. Previews use at most the first 4,096 source
 characters, flatten CommonMark to at most 200 Unicode code points, omit raw HTML
 and link destinations, and label images without fetching them. Empty or overly
 deep content falls back to “New message”. This is an arrival preview, not a live
-copy of subsequent edits. Plugin categories without message details retain their
-generic category text.
+copy of subsequent edits. Plugin categories may pass an optional `title` and
+`body`, which the host flattens and bounds the same way; without them the banner
+keeps its generic category text.
 
 ## Current acceptance limits
 

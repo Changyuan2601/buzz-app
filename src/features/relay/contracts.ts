@@ -63,6 +63,8 @@ export type Attachment = Readonly<{
   name?: string;
   /** Sender/relay-claimed duration in seconds; display hint, corrected by the element. */
   duration?: number;
+  waveform?: readonly number[];
+  voiceNote?: true;
   dimensions?: Readonly<{ width: number; height: number }>;
   /** Validated message-carried BlurHash; decoded locally only for presentation. */
   blurhash?: string;
@@ -105,8 +107,9 @@ export type ChannelMessage = Readonly<{
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
-  /** Attachment removal changed the signed body; new text adjacency cannot bind identities. */
-  attachmentContentRemoved?: true;
+  /** Offsets in `content` where attachment removal joined once-separate text; a
+   * bound name never spans one. */
+  attachmentSeams?: readonly number[];
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
   /** Signed two-field mention tags bind display only; never notification recipients. */

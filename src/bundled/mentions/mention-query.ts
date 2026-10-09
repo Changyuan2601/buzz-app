@@ -1,4 +1,5 @@
 import { profileKey } from "../../features/profiles/target";
+import { foldName, normalizeName } from "../../features/search/person-match";
 
 /** Syntax only. Multi-word queries are admitted separately against current names. */
 export function mentionQuery(text: string, caret: number) {
@@ -20,11 +21,11 @@ export function mentionQuery(text: string, caret: number) {
 
 export function matchesMentionQuery(query: string, names: readonly string[]) {
   if (!query.includes(" ")) return true;
-  const lower = query.toLowerCase();
+  const lower = foldName(query);
   if (
     lower.endsWith(" ") &&
-    names.some((name) => name.toLowerCase() === lower.trimEnd())
+    names.some((name) => normalizeName(name) === lower.trimEnd())
   )
     return false;
-  return names.some((name) => name.toLowerCase().startsWith(lower));
+  return names.some((name) => normalizeName(name).startsWith(lower));
 }

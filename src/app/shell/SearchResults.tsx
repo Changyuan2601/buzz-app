@@ -16,10 +16,17 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
-import { matchName, matchRank, SearchChoices } from "./SearchChoices";
-import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
+import { SearchChoices } from "./SearchChoices";
+import { matchName, matchRank } from "../../features/search/match";
+import {
+  noSearchUsage,
+  readSearchUsage,
+  recordChoice,
+  searchOrder,
+} from "../../features/search/usage";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
+import { matchPerson } from "../../features/search/person-match";
 import {
   isChannelUuid,
   isHexPubkey,
@@ -202,11 +209,26 @@ export function SearchResults({
   const operatorChannelId = isChannelUuid(operatorChannel)
     ? operatorChannel
     : (localChannel?.id ?? operatorPublicChannels.channels[0]?.id);
+  // The author picker also matches a selectable agent by its own name, so a
+  // completed from: name resolves against the same names.
+  const agentSnapshot = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
+  );
   const search = useSearchMessages(
     session,
     query,
     scopedChannelId,
     operatorChannelId,
+    new Map(
+      agentSnapshot.selectable
+        .filter(
+          (agent) =>
+            !archiveHides(session.archives, agent.pubkey, session.viewer),
+        )
+        .map((agent) => [agent.pubkey, agent.name]),
+    ),
   );
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
@@ -298,12 +320,19 @@ export function SearchResults({
       authorSuggestions?.query === query ? authorSuggestions.remote : [],
     ),
   ]);
+  // A selectable agent also matches by its own name, as in @ mentions.
+  const authorTier = (pubkey: string, name: string) =>
+    Math.min(
+      ...[name, selectableAgents.get(pubkey)?.name].map((alias) =>
+        alias === undefined
+          ? Infinity
+          : (matchPerson(alias, authorNeedle)?.tier ?? Infinity),
+      ),
+    );
   const authorChoices =
     authorToken && showAuthorPicker && authorSuggestions?.query === query
       ? [...candidates]
-          .filter(([, profile]) =>
-            profile.name.toLowerCase().startsWith(authorNeedle),
-          )
+          .filter(([pubkey, profile]) => authorTier(pubkey, profile.name) < 4)
           .filter(
             ([pubkey]) =>
               !archiveHides(session.archives, pubkey, session.viewer) &&
@@ -312,10 +341,8 @@ export function SearchResults({
           // Exact names survive the cap when the resolver reports ambiguity.
           .sort(
             ([left, leftProfile], [right, rightProfile]) =>
-              Number(rightProfile.name.trim().toLowerCase() === authorNeedle) -
-                Number(
-                  leftProfile.name.trim().toLowerCase() === authorNeedle,
-                ) ||
+              Number(authorTier(right, rightProfile.name) === 0) -
+                Number(authorTier(left, leftProfile.name) === 0) ||
               Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                 Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
               Number(members.includes(right)) - Number(members.includes(left)),
@@ -429,14 +456,11 @@ export function SearchResults({
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
   // The relay matches public channels itself; keep its matches, ranked last.
-  // Archived channels follow live ones of the same rank. An exact name leads,
-  // then the viewer's earlier choice for this text; otherwise usage lifts a
-  // match past a slightly better one, but never past a much better one.
+  // The shared search order, with archived channels half a step behind live
+  // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
-    const rank = matchRank(label, needle);
-    if (rank === 0) return archived ? -1.5 : -2;
-    if (key === picked) return -1;
-    return (rank ?? 6) + (archived ? 0.5 : 0) - usage.boost(key);
+    const rank = matchRank(label, needle) ?? 6;
+    return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
   const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows

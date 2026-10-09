@@ -4,12 +4,15 @@ import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { foldProfiles } from "../../features/relay/profiles";
+import { normalizeName } from "../../features/search/person-match";
 import {
   isHexPubkey,
   normalizeFromHandle,
   normalizeInChannel,
   parseSearchOperators,
 } from "./parseSearchOperators";
+
+const noAgentNames: ReadonlyMap<string, string> = new Map();
 
 export type SearchMessage = Readonly<{
   id: string;
@@ -32,8 +35,18 @@ export function useSearchMessages(
   query: string,
   scopedChannelId?: string,
   operatorChannelId?: string | null,
+  /** Selectable agents' own names, by public key. The author picker matches
+   * an agent by its own name too, so a completed author name resolves the
+   * same way. */
+  agentNames: ReadonlyMap<string, string> = noAgentNames,
 ) {
   const parsed = useMemo(() => parseSearchOperators(query), [query]);
+  // Rerun the search only when the names change, not on every new map.
+  const agentKey = JSON.stringify([...agentNames]);
+  const agents = useMemo(
+    () => new Map<string, string>(JSON.parse(agentKey)),
+    [agentKey],
+  );
   const channelId = scopedChannelId ?? operatorChannelId;
   const unresolvedChannel =
     !scopedChannelId &&
@@ -90,7 +103,8 @@ export function useSearchMessages(
           if (isHexPubkey(parsed.from)) {
             author = parsed.from.toLowerCase();
           } else {
-            const handle = normalizeFromHandle(parsed.from).toLowerCase();
+            const typed = normalizeFromHandle(parsed.from).trim();
+            const handle = normalizeName(typed);
             if (!handle) return { events: [] };
             const knownMembers = channelId
               ? (session.channels.get?.(channelId)?.members ?? [])
@@ -99,26 +113,37 @@ export function useSearchMessages(
               await session.profiles.ensure(knownMembers, "foreground");
               controller.signal.throwIfAborted();
             }
-            const scoped = knownMembers.filter(
-              (pubkey) =>
-                session.profiles
-                  .snapshot()
-                  .get(pubkey)
-                  ?.name.trim()
-                  .toLowerCase() === handle,
+            // A key matches by its profile name or, for a selectable agent,
+            // by the agent's own name.
+            const named = (pubkey: string, profileName = "") =>
+              normalizeName(profileName) === handle ||
+              normalizeName(agents.get(pubkey) ?? "") === handle;
+            // Selectable agents are offered wherever the picker runs, so they
+            // are always candidates, alongside members or relay matches.
+            const agentMatches = [...agents.keys()].filter((pubkey) =>
+              named(pubkey, session.profiles.snapshot().get(pubkey)?.name),
             );
-            if (scoped.length === 1) {
-              author = scoped[0];
-            } else if (scoped.length > 1) {
-              return { events: [], ambiguousAuthor: true };
+            const scoped = knownMembers.filter((pubkey) =>
+              named(pubkey, session.profiles.snapshot().get(pubkey)?.name),
+            );
+            const resolve = (keys: readonly string[]) => {
+              const unique = [...new Set(keys)];
+              if (unique.length > 1) return { ambiguous: true };
+              return { author: unique[0] };
+            };
+            if (scoped.length) {
+              const found = resolve([...scoped, ...agentMatches]);
+              if (found.ambiguous) return { events: [], ambiguousAuthor: true };
+              author = found.author;
             } else {
               // The signed kind-0 index is prefix-based and limited. A match
               // outside its first page is unknown; duplicate names are ambiguous.
+              // The relay does not fold accents, so it gets the typed text.
               const candidates = await session.read(
                 [
                   {
                     kinds: [0],
-                    search: handle,
+                    search: typed.toLowerCase(),
                     search_mode: "prefix",
                     limit: 40,
                   },
@@ -129,14 +154,15 @@ export function useSearchMessages(
                   fresh: true,
                 },
               );
-              const matches = [...foldProfiles(candidates)].filter(
-                ([pubkey, profile]) =>
-                  profile.name.trim().toLowerCase() === handle ||
-                  pubkey === handle,
-              );
-              if (matches.length !== 1)
-                return { events: [], ambiguousAuthor: matches.length > 1 };
-              author = matches[0]?.[0];
+              const matches = [...foldProfiles(candidates)]
+                .filter(
+                  ([pubkey, profile]) =>
+                    named(pubkey, profile.name) || pubkey === handle,
+                )
+                .map(([pubkey]) => pubkey);
+              const found = resolve([...matches, ...agentMatches]);
+              if (found.ambiguous) return { events: [], ambiguousAuthor: true };
+              author = found.author;
             }
             if (!author) return { events: [] };
           }
@@ -235,6 +261,7 @@ export function useSearchMessages(
     owner,
     replace,
     scopedChannelId,
+    agents,
   ]);
   const current = result?.owner === owner ? result : undefined;
   return {

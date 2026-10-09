@@ -74,6 +74,8 @@ import TablerArrowsInIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMin
 export const ArrowsInIcon = defineIcon("tabler", TablerArrowsInIcon);
 import TablerArrowsOutIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMaximize.mjs";
 export const ArrowsOutIcon = defineIcon("tabler", TablerArrowsOutIcon);
+import TablerAlarmIcon from "@tabler/icons-react/dist/esm/icons/IconAlarm.mjs";
+export const AlarmIcon = defineIcon("tabler", TablerAlarmIcon);
 import TablerAtIcon from "@tabler/icons-react/dist/esm/icons/IconAt.mjs";
 export const AtIcon = defineIcon("tabler", TablerAtIcon);
 import TablerBellIcon from "@tabler/icons-react/dist/esm/icons/IconBell.mjs";
@@ -236,6 +238,8 @@ import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
 export const TableIcon = defineIcon("tabler", TablerTableIcon);
 import TablerTimerIcon from "@tabler/icons-react/dist/esm/icons/IconStopwatch.mjs";
 export const TimerIcon = defineIcon("tabler", TablerTimerIcon);
+import TablerBulbIcon from "@tabler/icons-react/dist/esm/icons/IconBulb.mjs";
+export const BulbIcon = defineIcon("tabler", TablerBulbIcon);
 import TablerTerminalWindowIcon from "@tabler/icons-react/dist/esm/icons/IconTerminal2.mjs";
 export const TerminalWindowIcon = defineIcon(
   "tabler",
@@ -413,3 +417,6 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
     { width: 48, height: 48 },
   ],
 });
+
+import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
+export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);

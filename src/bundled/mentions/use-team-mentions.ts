@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { useMentionChoices } from "./use-mention-choices";
 import { mentionCandidates } from "./mention-candidates";
+import { extendsName, normalizeName } from "../../features/search/person-match";
 import { mentionMatch } from "./mention-ranking";
 
 const empty = { status: "unavailable", entries: [] } as const;
@@ -171,16 +172,14 @@ export function useTeamMentions(
       },
     );
     const names = teams.map(({ value }) => value.name);
-    const needle = query.trim().toLowerCase();
+    const needle = normalizeName(query);
     return {
       choices,
       includeLegacy: hasTeams,
       names,
       // A saved team with the same/longer name must not auto-select a person on Space.
       blocksSpace: names.some(
-        (name) =>
-          name.toLowerCase() === needle ||
-          name.toLowerCase().startsWith(`${needle} `),
+        (name) => normalizeName(name) === needle || extendsName(name, needle),
       ),
       status:
         open && (catalog.status === "idle" || catalog.status === "loading")

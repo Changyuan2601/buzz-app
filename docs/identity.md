@@ -29,8 +29,10 @@ and may roam under Windows policy; locks do not coordinate machines.
 Neither Windows Credential Manager nor Secret Service supplies per-app access
 isolation from other programs running as the same OS user.
 
-There is no file/environment fallback, automatic legacy migration, human key
-replacement or human delete command. The existing **explicit agent import** may
+There is no file/environment fallback, automatic legacy migration or human key
+replacement. The human key is deleted from this device only by
+[Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
+delete it. The existing **explicit agent import** may
 read only the selected old Buzz service/account and copy the selected agent key
 into this app's separate agent namespace; it never writes the old blob. Agent
 import remains macOS-only; Create also saves new agent keys through the
@@ -62,6 +64,129 @@ The main app and its same-origin plugins are trusted, not isolated security
 principals; plugin JavaScript can invoke `identity_export` directly. Not registering
 a plugin key service is an API ownership choice, not a sandbox. The main-webview
 command permission is not proof of a human gesture.
+
+## Sign out of Buzz
+
+Settings → Profile → **Sign out of Buzz** removes the private key from this
+device only; the npub and its history stay on relays. The dialog presents two
+layers: the key always goes, and settings, agents and other Buzz data stay unless
+the user erases them. It embeds the private-key controls above. Confirm stays
+disabled until the user reveals or copies the key and ticks "I have my key".
+**Also erase everything else Buzz stores on this device** (internally, wipe)
+requires typing `erase all my data`; **Also remove my agents** appears only with
+it; the button then reads **Sign out and erase**. Wipe clears
+this app's data, local data, WebView storage, caches and plugin storage. It cannot
+reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
+is unavailable with the development broker (`BUZZ_DEV_VIEWER`). Development
+builds can sign out but not wipe: they have their own human key, but share agent
+keys and plugin storage with the installed app, so the native command refuses
+wipe. The dialog asks the native side (`sign_out_wipe_refusal`) whether wipe is
+available and, when it isn't, disables wipe up front with the reason; this holds
+for any Rust debug build, including a debug bundle with a production frontend. A development-build sign-out signs out every
+development build, which share the debug key, and leaves the installed app
+signed in. Wipe is unavailable while
+`BUZZODZ_HOME` moves plugin storage out of app data.
+
+Every running instance, debug or release under any identifier, holds two locks
+shared in the user data folder (created first if a first launch finds none)
+before it looks for a pending sign-out:
+
+- a **key lock** named for its human key store (`.<service>.instance.lock`), shared
+  by every copy using that key whatever its identifier; and
+- the **all-Buzz lock** (`.dev.local.buzz.foundation.instance.lock`), named for
+  the storage all builds share (the default plugin folder and the agent key
+  service), not for the app identifier.
+
+A sign-out needs its key lock alone, so every other copy using that key must be
+closed. A wipe also needs the all-Buzz lock alone, so every other Buzz must be
+closed. A development-build sign-out therefore needs only other development
+worktrees closed, not the installed app, and the installed app's plain sign-out
+doesn't need development builds closed. Locks are taken key first, then
+all-Buzz, released in reverse, and never waited for while one is held alone.
+Whenever an instance takes its locks shared again (after finishing a pending
+sign-out, or after a refused sign-out), it looks for the marker again: at launch
+a new marker is finished in turn; in a running instance it means another process
+committed a sign-out, and Buzz exits natively (see below). A running instance
+also exits if the sign-out record (`.<service>.sign-outs-finished`, kept forever
+and shared by every identifier using the key) changed since launch: another
+process finished a sign-out of its key while it let go. Retaking them
+shared is bounded too; on timeout, or if a lock can't be let go, Buzz exits the
+same way. These locks
+coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
+human key without them, and older Buzz versions don't take them, so close those
+before signing out. The native
+`sign_out` command deletes nothing: it admits one sign-out per instance, refuses
+unless it can hold the locks it needs alone, writes a marker beside (not inside)
+app data recording the wipe and agent choices, stops agents as Quit does, and
+restarts. The marker is named for the exact human key store (debug or release),
+so another build never acts on it. If the marker can't be written nothing has
+changed; if agents can't be stopped, Buzz exits natively, and the next launch
+finishes the sign-out.
+
+Once the marker is written, and before any native exit, the native signer is
+closed for the rest of the process: the cached key is dropped, and every key
+operation (signing, agent authorization, export, restore, import or create)
+refuses when it runs, including calls that started before it closed. Pairing
+closes in the same close step: the live attempt is cancelled before it can publish a
+payload it already prepared, and no new attempt starts. Work admitted before
+the close isn't recalled: a payload admitted before pairing closes may still be
+sent or delivered (an outcome not yet known is reported as uncertain), and signatures and agent authorizations
+already issued remain valid. A native exit runs the same best-effort teardown as Quit, then shows a native
+alert and exits however that went; the dialog never offers a retry or Cancel
+once this instance's locks or agents are in an unknown state. Agents don't
+outlive Buzz: each runs under a supervisor that stops it when Buzz's socket
+closes, holding that agent's ownership lock (`dev.local.buzz.agent-ownership`
+in the user data folder) until it has stopped. A supervisor that can't stop its
+agent keeps the lock.
+
+A launch that finds the marker takes its key lock alone, and for a wipe the
+all-Buzz lock too, waiting briefly for the exiting instance, then reads the
+marker once more and runs only choices those locks cover: if it has meanwhile
+become a wipe, the launch lets go and starts over to take every lock. Before a
+wipe, it tries every agent ownership lock; if any is still held, it removes
+nothing and exits with a native alert that an agent is still stopping, so a
+later launch retries. A plain sign-out skips this: it removes only the human
+key, and the ownership folder is shared with every Buzz, so another copy's
+running agents would block it. A marker
+that can't be read or parsed fails closed. It finishes before any window,
+webview storage, service or identity read:
+
+1. With remove agents, every agent's locally stored key is deleted, read from
+   the agent registry, which stays in place until all are gone. That includes
+   imported deployed-remote agents, whose import kept a local copy; the remote
+   deployment itself is not stopped or deleted.
+2. With wipe, app data, local data, WebView storage and caches are renamed
+   aside. App data's agent folder (`agent-controller`) is put back unless agents
+   were removed.
+3. The human item is deleted and a fresh read must find it absent.
+4. The renamed folders and anything recreated in place are deleted, then the
+   sign-out record advances, then the marker is removed. Kept agents keep only
+   what they need to be identified and start again: the agent list with their
+   settings (`agents.json`), the shared agent defaults (`defaults.json`),
+   including any API keys entered in their settings, and their keys in the
+   keychain. Everything else in `agent-controller`, including saved Databricks
+   logins, logs and anything added there later, is deleted; a kept Databricks
+   agent must reconnect through **Browse models**. The dialog says both.
+
+Every step is safe to repeat: deleting an absent key succeeds, and an agent
+registry confirmed absent means its keys are already gone; failing to check it
+stops before anything moves. The wipe never acts through a link at Buzz's own
+folders: every wiped folder, its `.sign-out-trash` sibling, the kept
+`agent-controller` in both, and the agent list when agents are removed must be a
+real folder or absent. This is checked before the marker is written, before
+anything moves, and again right before every move, rollback and delete. The OS
+storage folders above them (`Application Support`, `Caches`, `~/Library/WebKit`)
+are trusted as the app already trusts them, so if one is a link the wipe removes
+only Buzz's folder under it. The wipe is not designed to resist another program
+swapping folders while it runs. Every other presence check in the wipe is fallible
+too: one that can't look fails the attempt, keeping the marker. If renaming or the key delete fails, the renames are rolled back. On any failure
+the marker is kept and Buzz shows a native error and exits without opening a
+window, so nothing recreates wiped storage and the next launch retries. Without
+wipe, local data stays: it is already scoped by public key, so signing back in
+with the same key finds it. Builderlab and hosted-community logins live only in
+memory and end with the restart. Kept agents start only while the signed-in key
+matches the owner in their saved attestation, checked before their key is read
+(see [local agent controls](agent-control.md)).
 
 ## Packaged connection
 
@@ -99,8 +224,12 @@ the user must inspect the conversation before explicitly sending a new message.
 Protected media and uploads are native, because the webview cannot attach Blossom
 (kind 24242) authentication itself: `<img>`, `<video>` and `<audio>` send no custom
 headers, and the CSP keeps `connect-src` closed to general HTTPS. Relay `/media/`
-URLs selected by shared TypeScript render through the `buzz-media` URI scheme,
-which validates HTTPS and the `/media/<hash>` URL shape but does not enforce
+URLs selected by shared TypeScript render through the `buzz-media` URI scheme;
+`<video>` and `<audio>` instead load the same URLs from a native listener on
+`127.0.0.1`, since WebKitGTK cannot play a custom scheme. It authorizes each
+request by a random per-launch path token given only to the main window, the
+bound `Host` and the app's `Origin`, and serves one request per connection.
+Both validate HTTPS and the `/media/<hash>` URL shape but do not enforce
 saved-community membership; the selected server receives a short-lived token
 scoped to its origin. The scheme signs a fresh 60-second `get` token per request
 and forwards only a bounded single `Range`; non-image/video/audio types (and SVG)
@@ -120,10 +249,21 @@ separate limitations.
 
 Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
 (Vite derives `VITE_BUZZ_LIVE=1`), even inside `just desktop`, and does not offer
-native private-key controls. Without the pin, supported desktop development uses
+native private-key controls. `just desktop` passes Vite's effective public pin
+(including an explicitly empty shell override) to the native agent host. Agent
+starts in this mode read the existing broker's signer-derived public identity
+from the final configured loopback development URL and require it to match both
+the pin and the saved agent owner. Unavailable or mismatched broker identity
+blocks startup without falling back to native credentials. The public pin alone
+is not authorization. Packaged builds always use native identity, ignoring the
+pin. This reuses the broker's trusted-local-process boundary; it does not copy
+keys or introduce another signing protocol.
+
+Without the pin, supported desktop development uses
 the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
-synchronize copies automatically; neither operation is in this scope.
+synchronize copies automatically; neither operation is in this scope. Sign out
+does not touch that old blob.
 
 ## Try the UI without credentials
 

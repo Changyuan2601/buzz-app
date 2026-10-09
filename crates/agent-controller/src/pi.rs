@@ -73,15 +73,20 @@ impl PiContext {
             resolve("node")
         }
         .ok_or("Install Node.js for the Pi ACP adapter")?;
-        let path = std::env::join_paths([
-            node.parent().unwrap(),
-            command.parent().unwrap(),
-            Path::new("/usr/bin"),
-            Path::new("/bin"),
-            Path::new("/usr/sbin"),
-            Path::new("/sbin"),
-        ])
-        .map_err(|_| "Invalid Pi tools path")?;
+        let path = crate::runtime::path::compose(
+            [
+                node.parent().unwrap().to_path_buf(),
+                command.parent().unwrap().to_path_buf(),
+            ]
+            .into_iter()
+            .chain(std::env::split_paths(&crate::runtime::path::tools_path()?))
+            .chain(
+                environment
+                    .get("PATH")
+                    .into_iter()
+                    .flat_map(std::env::split_paths),
+            ),
+        )?;
         let mut environment = environment.clone();
         environment.insert(
             "PI_ACP_PI_COMMAND".into(),

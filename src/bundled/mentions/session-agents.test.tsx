@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
@@ -44,9 +44,17 @@ import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
 import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
+// jsdom lacks scrollIntoView; the search highlight keeps its row in view.
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 function setup(parent: boolean | null = true, archived = false) {
   const key = "b".repeat(64),
@@ -270,7 +278,7 @@ it("focuses search on open and supports clear, Escape, and outside dismissal", a
   view.unmount();
   test.library.dispose();
 });
-it("navigates namesakes with arrows and selects the focused exact identity with Enter", async () => {
+it("navigates namesakes with arrows and selects the highlighted exact identity with Enter", async () => {
   const test = setup(),
     user = userEvent.setup(),
     select = vi.fn(() => true);
@@ -292,18 +300,69 @@ it("navigates namesakes with arrows and selects the focused exact identity with 
   const last = await screen.findByRole("button", {
     name: `Outside agent ${test.key}`,
   });
-  await user.keyboard("{ArrowDown}");
-  expect(first).toHaveFocus();
+  // Focus stays in search; the first row is highlighted before typing, and
+  // the arrows wrap.
+  const search = screen.getByRole("searchbox");
+  expect(search).toHaveFocus();
+  expect(search).toHaveAttribute("aria-activedescendant", first.id);
+  expect(first).toHaveAttribute("data-selected");
   await user.keyboard("{ArrowUp}");
-  expect(last).toHaveFocus();
+  expect(search).toHaveAttribute("aria-activedescendant", last.id);
+  expect(first).not.toHaveAttribute("data-selected");
   await user.keyboard("{ArrowDown}");
-  expect(first).toHaveFocus();
-  await user.keyboard("{ArrowDown}{Enter}");
+  expect(search).toHaveAttribute("aria-activedescendant", first.id);
+  await user.keyboard("{ArrowDown}");
+  expect(search).toHaveAttribute("aria-activedescendant", last.id);
+  expect(search).toHaveFocus();
+  await user.keyboard("{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith({
     pubkey: test.key,
     name: "Outside agent",
   });
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("keeps focus on the highlighted row after Tab, for arrows and pointer", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  test.profiles.set(test.member, { name: "Outside agent" });
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const first = await screen.findByRole("button", {
+    name: `Outside agent ${test.member}`,
+  });
+  const last = await screen.findByRole("button", {
+    name: `Outside agent ${test.key}`,
+  });
+  for (let i = 0; i < 10 && document.activeElement !== first; i += 1)
+    await user.tab();
+  expect(first).toHaveFocus();
+  // Down on a focused row moves the highlight and focus together.
+  await user.keyboard("{ArrowDown}");
+  expect(last).toHaveFocus();
+  expect(last).toHaveAttribute("data-selected");
+  expect(first).not.toHaveAttribute("data-selected");
+  // A pointer highlight moves focus too, so Enter chooses the highlighted row.
+  fireEvent.pointerMove(first, { clientX: 1, clientY: 1 });
+  fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
+  expect(first).toHaveAttribute("data-selected");
+  expect(first).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith({
+    pubkey: test.member,
+    name: "Outside agent",
+  });
   test.library.dispose();
 });
 
@@ -1930,7 +1989,6 @@ it("keeps still-matching directory people across the inline host's per-keystroke
       disconnect() {}
     },
   );
-  HTMLElement.prototype.scrollIntoView = vi.fn();
   const t = setup();
   const larry = { pubkey: "f".repeat(64), name: "Larry Outside" };
   const lara = { pubkey: "e".repeat(64), name: "Lara" };
@@ -2017,7 +2075,6 @@ it("keeps still-matching directory people across the inline host's per-keystroke
   expect(options()).toEqual([]);
   input.remove();
   vi.unstubAllGlobals();
-  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
 it("the persistent toolbar picker reads an empty search again after close and reopen", async () => {
@@ -2254,6 +2311,12 @@ function teamFixture(
   const listeners = new Set<() => void>();
   const channelKit: NonNullable<RelaySession["channelKit"]> = {
     available: true,
+    loadTeam: vi.fn(async () => {
+      throw new Error("No portable fixture team");
+    }),
+    savePortable: vi.fn(async () => {
+      throw new Error("No portable fixture save");
+    }),
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);
@@ -2447,6 +2510,70 @@ it.each([
       await waitFor(() => expect(h.choice()?.detail).toContain(detail));
     } finally {
       h.view.unmount();
+      h.library.dispose();
+    }
+  },
+);
+it.each([
+  { found: [], hasMore: false, space: true },
+  {
+    found: [{ pubkey: "f".repeat(64), name: "Jose" }],
+    hasMore: false,
+    space: false,
+  },
+  { found: [], hasMore: true, space: false },
+])(
+  "Space waits for the full directory before it selects an exact name (%j)",
+  async ({ found, hasMore, space }) => {
+    const h = setup();
+    h.profiles.set(h.member, { name: "José" });
+    let finish: (value: { people: typeof found; hasMore: boolean }) => void =
+      () => {};
+    const people = vi.fn(
+      () =>
+        new Promise<{ people: typeof found; hasMore: boolean }>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const publish = vi.fn();
+    const result = () =>
+      publish.mock.lastCall?.[0] as CompletionResult | undefined;
+    const view = render(
+      <MentionCompletion
+        session={
+          {
+            ...h.session,
+            directMessages: { ...h.session.directMessages, people },
+          } as unknown as RelaySession
+        }
+        scope="space-test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@jose", start: 5, end: 5 }}
+        query={{ start: 0, end: 5, query: "jose" }}
+        publish={publish}
+      />,
+    );
+    try {
+      await waitFor(() =>
+        expect(people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      // The member José is shown, but an outside Jose may still arrive.
+      const member = result()?.items.find((item) => item.id === h.member);
+      expect(member).toBeDefined();
+      expect(result()?.spaceId).toBeUndefined();
+      expect(member?.canSelect?.(" ")).toBe(false);
+      expect(member?.canSelect?.("Enter")).toBe(true);
+      await act(async () => finish({ people: found, hasMore }));
+      await waitFor(() =>
+        expect(result()?.spaceId).toBe(space ? h.member : undefined),
+      );
+      expect(
+        result()
+          ?.items.find((item) => item.id === h.member)
+          ?.canSelect?.(" "),
+      ).toBe(space);
+    } finally {
+      view.unmount();
       h.library.dispose();
     }
   },

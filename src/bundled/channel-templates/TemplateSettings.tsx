@@ -1,3 +1,4 @@
+import type { AgentControl } from "../../features/agents/control";
 import { useState } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -57,14 +58,17 @@ function Library({
 export function AgentTeams({
   session,
   active,
+  control,
 }: {
   session: RelaySession;
+  control?: AgentControl | undefined;
   active(): boolean;
 }) {
   const catalog = useTemplateCatalog(session);
   return (
     <TemplateLibrary
       section="team"
+      control={control}
       session={session}
       kit={session.channelKit}
       catalog={catalog}

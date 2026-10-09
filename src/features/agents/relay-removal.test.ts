@@ -11,9 +11,9 @@ const viewer = keypair(),
   relay = keypair(),
   agent = keypair(),
   stranger = keypair();
-const owners: ReturnType<typeof createRelaySession>[] = [];
-afterEach(() => {
-  for (const owner of owners.splice(0)) owner.dispose();
+const owners: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const dispose of owners.splice(0)) await dispose();
 });
 function attested(owner: Key) {
   const digest = createHash("sha256")
@@ -44,10 +44,40 @@ function setup(
   const instance = createRelaySession(fixture.transport, {
     outboxStorage: { load: () => [], save: () => {} },
   });
-  owners.push(instance);
-  const remove = (signal = new AbortController().signal) =>
-    removeRelayAgent(instance.session, viewer.pubkey, agent.pubkey, signal);
-  return { fixture, instance, remove };
+  const operations: {
+    controller: AbortController;
+    release(): void;
+    outcome: Promise<PromiseSettledResult<void>[]>;
+  }[] = [];
+  const dispose = async () => {
+    for (const operation of operations) {
+      operation.controller.abort();
+      operation.release();
+    }
+    await Promise.all(operations.map(({ outcome }) => outcome));
+    instance.dispose();
+  };
+  owners.push(dispose);
+  const remove = (
+    signal = new AbortController().signal,
+    release = () => {},
+  ) => {
+    const controller = new AbortController();
+    const removal = removeRelayAgent(
+      instance.session,
+      viewer.pubkey,
+      agent.pubkey,
+      AbortSignal.any([signal, controller.signal]),
+    );
+    // Observe rejection immediately; retain it for the caller's assertion.
+    operations.push({
+      controller,
+      release,
+      outcome: Promise.allSettled([removal]),
+    });
+    return removal;
+  };
+  return { fixture, instance, remove, dispose };
 }
 const coordinate = () => `30177:${viewer.pubkey}:${agent.pubkey}`;
 
@@ -150,7 +180,8 @@ it("waits for every channel removal before finishing, and leaves no outbox work"
   );
   let finished = false;
   try {
-    const removal = remove().then(() => {
+    const removal = remove(undefined, release);
+    void Promise.allSettled([removal]).then(() => {
       finished = true;
     });
     await expect.poll(() => fixture.deleted.size).toBe(1);
@@ -219,7 +250,8 @@ it("settles already enqueued channel removals when a later enqueue throws", asyn
     outbox.snapshot().filter(({ event }) => event.kind === 9001);
   let finished = false;
   try {
-    const removal = remove().then(() => {
+    const removal = remove(undefined, release);
+    void Promise.allSettled([removal]).then(() => {
       finished = true;
     });
     // One removal is enqueued and still sending; the next enqueue threw.
@@ -235,6 +267,49 @@ it("settles already enqueued channel removals when a later enqueue throws", asyn
   }
   expect(removals()).toEqual([]);
   expect(outbox.snapshot()).toHaveLength(255);
+});
+
+it("settles a gated removal before disposing its session after early assertion failure", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const { fixture, instance, remove, dispose } = setup(
+    viewer,
+    undefined,
+    ({ transport }) => {
+      const query = transport.query;
+      transport.query = async (filters, signal) => {
+        if (filters.some(({ kinds }) => kinds?.includes(0))) {
+          started();
+          await held;
+          signal?.throwIfAborted();
+        }
+        return query(filters, signal);
+      };
+    },
+  );
+  const removal = remove(undefined, release);
+  let archiveStatusAtSettlement: string | undefined;
+  const outcome = Promise.allSettled([removal]).then(([result]) => {
+    archiveStatusAtSettlement = instance.session.archives.snapshot().status;
+    return result;
+  });
+  await reading;
+  try {
+    expect("early failure").toBe("completed removal");
+  } catch {
+    // Exercise the fixture teardown directly, independently of callback finally.
+    await dispose();
+  }
+  expect(await outcome).toMatchObject({ status: "rejected" });
+  expect(archiveStatusAtSettlement).toBe("idle");
+  expect(instance.session.archives.snapshot().status).toBe("unavailable");
+  expect(fixture.published).toEqual([]);
 });
 
 it("a cancelled removal signs and publishes nothing", async () => {

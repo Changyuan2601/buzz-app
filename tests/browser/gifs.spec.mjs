@@ -136,6 +136,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     16,
     1,
   );
+  await expect(initialScroll).toHaveCSS(
+    "scrollbar-color",
+    await page
+      .locator("body")
+      .evaluate((el) => getComputedStyle(el).scrollbarColor),
+  );
   const emojiResultsBox = await picker
     .locator("em-emoji-picker .scroll")
     .boundingBox();
@@ -272,7 +278,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(gifResults).toHaveCSS("scrollbar-width", "thin");
   await expect(gifResults).toHaveCSS(
     "scrollbar-color",
-    "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
+    await page
+      .locator("body")
+      .evaluate((el) => getComputedStyle(el).scrollbarColor),
   );
   expect(gifGridBox.y).toBeGreaterThanOrEqual(
     gifSearchPosition.y + gifSearchPosition.height,

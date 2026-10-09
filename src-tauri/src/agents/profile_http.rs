@@ -4,7 +4,7 @@ use buzz_agent_controller::{CreationProfile, Secret};
 use serde_json::Value;
 
 type Result<T> = std::result::Result<T, String>;
-fn authorization(event: Value) -> Result<String> {
+pub(crate) fn authorization(event: Value) -> Result<String> {
     Ok(format!(
         "Nostr {}",
         base64::engine::general_purpose::STANDARD
@@ -89,3 +89,38 @@ pub(super) async fn publish<F: std::future::Future<Output = Result<()>>>(
 
 #[cfg(test)]
 mod tests;
+
+/// Publish an agent-signed owner-addressed memory event; no event bytes are supplied by the renderer.
+pub(super) async fn publish_memory(
+    client: &reqwest::Client,
+    profile: &CreationProfile,
+    key: &Secret,
+    event: Value,
+) -> Result<()> {
+    let expected = event
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("Invalid memory event")?
+        .to_owned();
+    let bytes = serde_json::to_vec(&event).map_err(|_| "Could not encode memory event")?;
+    let response = client
+        .post(&profile.url)
+        .header("Content-Type", "application/json")
+        .header(
+            "Authorization",
+            authorization(profile.authenticate(key, &bytes)?)?,
+        )
+        .header("x-auth-tag", &profile.auth)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|_| "Memory publication unconfirmed; inspect the new agent before retrying")?;
+    let receipt: Value = serde_json::from_slice(&body(response, 16 * 1024).await?)
+        .map_err(|_| "Invalid memory receipt; inspect the new agent before retrying")?;
+    if receipt.get("accepted").and_then(Value::as_bool) != Some(true)
+        || receipt.get("event_id").and_then(Value::as_str) != Some(&expected)
+    {
+        return Err("Memory was not confirmed; inspect the new agent before retrying".into());
+    }
+    Ok(())
+}

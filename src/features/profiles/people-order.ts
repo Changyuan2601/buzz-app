@@ -1,11 +1,12 @@
+import { matchPerson } from "../search/person-match";
+
 type Person = { name: string; pubkey: string };
 
-/** Shared by recipient and mention pickers; eligibility stays with each caller. */
+/** Match quality by the shared name rule, then name, then key. */
 export function peopleOrder(query: string) {
-  const needle = query.trim().toLowerCase();
+  const tier = (person: Person) => matchPerson(person.name, query)?.tier ?? 4;
   return (a: Person, b: Person) =>
-    Number(!a.name.toLowerCase().startsWith(needle)) -
-      Number(!b.name.toLowerCase().startsWith(needle)) ||
+    tier(a) - tier(b) ||
     a.name.localeCompare(b.name) ||
     a.pubkey.localeCompare(b.pubkey);
 }

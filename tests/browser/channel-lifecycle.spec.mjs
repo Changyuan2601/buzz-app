@@ -78,7 +78,6 @@ test("archive confirmation returns focus on cancel and retains the conversation 
     // the menu stays divider-free before and after permission resolution.
     await expect(menu.getByRole("separator")).toHaveCount(0);
     await expect(menu.getByRole("menuitem")).toHaveText([
-      "New session",
       "Move channel",
       "Mute",
       "Mark as Unread",
@@ -92,7 +91,6 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   ).toBeVisible();
   await expect(menu.getByRole("separator")).toHaveCount(0);
   await expect(menu.getByRole("menuitem")).toHaveText([
-    "New session",
     "Move channel",
     "Mute",
     "Mark as Unread",

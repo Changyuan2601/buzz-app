@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -10,6 +11,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { AgentControl } from "../../features/agents/control";
+import type { TeamSnapshot } from "../../features/agents/team-bundles";
+import type { RelaySession } from "../../features/relay/session";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import type {
   KitEntry,
@@ -57,6 +61,12 @@ function fixture(
   const save = vi.fn<ChannelKit["save"]>();
   const kit: ChannelKit = {
     available: true,
+    loadTeam: vi.fn(async () => {
+      throw new Error("No portable fixture team");
+    }),
+    savePortable: vi.fn(async () => {
+      throw new Error("No portable fixture save");
+    }),
     snapshot: () => state,
     subscribe: () => () => {},
     ensure: vi.fn(),
@@ -132,6 +142,84 @@ it("shows the library on the page and returns from editing without a library dia
   );
   await waitFor(() => expect(trigger).toHaveFocus());
 });
+it("shows preview rejection beside import and clears it on retry", async () => {
+  const previewTeam = vi.fn(async (_content: string): Promise<TeamSnapshot> => {
+    throw new Error("Invalid team snapshot");
+  });
+  const state = { status: "ready" as const, entries: [entry] };
+  const kit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure: vi.fn(),
+    refresh: vi.fn(),
+    save: vi.fn(),
+  } as unknown as ChannelKit;
+  const { container } = render(
+    <TemplateLibrary
+      section="team"
+      kit={kit}
+      active={() => true}
+      catalog={{
+        kit: state,
+        agents: [],
+        agentsReady: true,
+        agentsComplete: true,
+        agentsPending: false,
+        error: undefined,
+        refresh: vi.fn(),
+      }}
+      control={{ previewTeam, create: vi.fn() } as unknown as AgentControl}
+      session={
+        {
+          viewer: "ab".repeat(32),
+          scope: `https://relay.example.test:${"ab".repeat(32)}`,
+          communityCatalog: { available: () => false },
+        } as RelaySession
+      }
+    />,
+    { wrapper: ToastProvider },
+  );
+  const input = container.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement;
+  const file = new File(['{"broken":true}'], "team.json", {
+    type: "application/json",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid team snapshot",
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  previewTeam.mockResolvedValueOnce({
+    format: "buzz-team-snapshot",
+    version: 1,
+    team: { name: "Recovered" },
+    members: [],
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(
+    await screen.findByRole("dialog", { name: /Import team snapshot/i }),
+  ).toBeInTheDocument();
+  expect(previewTeam).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("opens team creation directly without a chooser", async () => {
+  const user = userEvent.setup();
+  fixture(false, [], "ready", true, "team");
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const dialog = screen.getByRole("dialog", { name: "Add team" });
+  expect(
+    within(dialog).getByRole("button", { name: "Save team" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeVisible();
+});
+
 it("delete cancellation leaves the page and saved data intact", async () => {
   const user = userEvent.setup();
   const { save } = fixture(false, [entry], "ready", true, "team");
@@ -394,6 +482,12 @@ it("closes the save-as-template editor after successful creation", async () => {
   const close = vi.fn();
   const kit: ChannelKit = {
     available: true,
+    loadTeam: vi.fn(async () => {
+      throw new Error("No portable fixture team");
+    }),
+    savePortable: vi.fn(async () => {
+      throw new Error("No portable fixture save");
+    }),
     snapshot: () => state,
     subscribe: () => () => {},
     ensure() {},
@@ -537,3 +631,212 @@ it("keeps a team editor free of template-only or empty-search fields", async () 
     within(editor).getByText(/No agents from the Agents page/),
   ).toBeVisible();
 });
+
+it("edits portable metadata without reconstructing or dropping member definitions", async () => {
+  const user = userEvent.setup();
+  const pubkey = "a".repeat(64);
+  const snapshot: TeamSnapshot = {
+    format: "buzz-team-snapshot",
+    version: 1,
+    team: {
+      name: "Portable",
+      description: "Shared purpose",
+      instructions: "TEAM_A",
+    },
+    members: [
+      {
+        format: "buzz-agent-snapshot",
+        version: 1,
+        definition: {
+          name: "Member",
+          systemPrompt: "INDIVIDUAL_A",
+          runtime: "goose",
+          model: "model-a",
+          provider: "provider-a",
+          sessionPolicy: "thread",
+          respondTo: "allowlist",
+          respondToAllowlist: ["b".repeat(64)],
+          parallelism: 3,
+          idleTimeoutSeconds: 60,
+          maxTurnDurationSeconds: 120,
+          namePool: ["Alias"],
+        },
+        profile: {
+          displayName: "Member",
+          about: "Profile",
+          avatarUrl: "https://example.test/a.png",
+        },
+        memory: { level: "none", entries: [] },
+      },
+    ],
+  };
+  const value: Team = {
+    type: "team",
+    id: "portable",
+    name: "Portable",
+    agents: [pubkey],
+    portable: {
+      version: 1,
+      owner: "c".repeat(64),
+      revision: crypto.randomUUID(),
+      digest: "d".repeat(64),
+      bytes: 100,
+      chunks: 1,
+    },
+  };
+  const savePortable = vi
+    .fn<ChannelKit["savePortable"]>()
+    .mockResolvedValue("new-head");
+  const save = vi.fn<ChannelKit["save"]>();
+  const state = { status: "ready" as const, entries: [] };
+  const kit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure: vi.fn(),
+    refresh: vi.fn(),
+    save,
+    loadTeam: vi.fn(async () => snapshot),
+    savePortable,
+  } as ChannelKit;
+  const captureTeam = vi.fn();
+  const control = {
+    previewTeam: vi.fn(async () => structuredClone(snapshot)),
+    snapshot: () => ({ data: { agents: [] } }),
+    captureTeam,
+  } as unknown as AgentControl;
+  const viewer = "c".repeat(64);
+  const session = {
+    viewer,
+    scope: `https://relay.example.test:${viewer}`,
+  } as RelaySession;
+  render(
+    <ChannelTemplatesDialog
+      open
+      onOpenChange={vi.fn()}
+      kit={kit}
+      initial={value}
+      expected="old-head"
+      active={() => true}
+      session={session}
+      control={control}
+      agents={[{ pubkey, name: "Member", avatar: undefined }]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const instructions = await screen.findByRole("textbox", {
+    name: "Team Instructions",
+  });
+  await waitFor(() => expect(instructions).toHaveValue("TEAM_A"));
+  await user.clear(instructions);
+  await user.type(instructions, "TEAM_B");
+  await user.click(screen.getByRole("button", { name: "Save team" }));
+  expect(savePortable).toHaveBeenCalledOnce();
+  expect(savePortable.mock.calls[0]?.[1]).toEqual({
+    ...snapshot,
+    team: { ...snapshot.team, instructions: "TEAM_B" },
+  });
+  expect(savePortable.mock.calls[0]?.[0].agents).toEqual([pubkey]);
+  expect(savePortable.mock.calls[0]?.[2]).toBe("old-head");
+  expect(captureTeam).not.toHaveBeenCalled();
+  expect(save).not.toHaveBeenCalled();
+});
+
+it.each(
+  [
+    [],
+    ["a".repeat(64)],
+    ["a".repeat(64), "b".repeat(64)],
+    ["b".repeat(64)],
+  ].map((selected) => ({ selected })),
+)(
+  "routes new-team metadata and save through the same membership eligibility (%j)",
+  async ({ selected }) => {
+    const user = userEvent.setup();
+    const viewer = "c".repeat(64);
+    const member = {
+      format: "buzz-agent-snapshot",
+      version: 1,
+      definition: { name: "Local", systemPrompt: "INDIVIDUAL" },
+      profile: { displayName: "Local" },
+      memory: { level: "none", entries: [] },
+    };
+    const captureTeam = vi.fn(async () => ({
+      format: "buzz-team-snapshot",
+      version: 1,
+      team: { name: "New" },
+      members: [member],
+    }));
+    const save = vi.fn();
+    const savePortable = vi.fn();
+    const state = { status: "ready", entries: [] };
+    const kit = {
+      available: true,
+      snapshot: () => state,
+      subscribe: () => () => {},
+      ensure: vi.fn(),
+      save,
+      savePortable,
+    } as unknown as ChannelKit;
+    const control = {
+      captureTeam,
+      snapshot: () => ({
+        data: {
+          agents: [
+            { pubkey: "a".repeat(64), relayUrl: "wss://relay.example.test" },
+          ],
+        },
+      }),
+    } as unknown as AgentControl;
+    render(
+      <ChannelTemplatesDialog
+        open
+        onOpenChange={vi.fn()}
+        kit={kit}
+        active={() => true}
+        initial={{ type: "team", id: "new", name: "New", agents: selected }}
+        agents={[]}
+        session={
+          {
+            viewer,
+            scope: `https://relay.example.test:${viewer}`,
+          } as RelaySession
+        }
+        control={control}
+      />,
+      { wrapper: ToastProvider },
+    );
+    const eligible = selected.length === 1 && selected[0] === "a".repeat(64);
+    if (eligible) {
+      await user.type(
+        screen.getByRole("textbox", { name: "Description" }),
+        "Purpose",
+      );
+      await user.type(
+        screen.getByRole("textbox", { name: "Team Instructions" }),
+        "TEAM",
+      );
+    } else {
+      expect(
+        screen.queryByRole("textbox", { name: "Description" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("textbox", { name: "Team Instructions" }),
+      ).not.toBeInTheDocument();
+    }
+    await user.click(screen.getByRole("button", { name: "Save team" }));
+    if (eligible) {
+      expect(save).not.toHaveBeenCalled();
+      expect(savePortable).toHaveBeenCalledOnce();
+      expect(savePortable.mock.calls[0]?.[1].team).toEqual({
+        name: "New",
+        description: "Purpose",
+        instructions: "TEAM",
+      });
+    } else {
+      expect(save).toHaveBeenCalledOnce();
+      expect(savePortable).not.toHaveBeenCalled();
+      expect(captureTeam).not.toHaveBeenCalled();
+    }
+  },
+);

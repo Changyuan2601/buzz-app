@@ -383,7 +383,8 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
     await expect(history.locator("[data-message-id]")).toHaveCount(62);
-    await expect(panel.getByRole("status")).toHaveCount(0);
+    // Loading belongs to history; the composer retains its live region idle.
+    await expect(history.getByRole("status")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Load more replies", exact: true }),
     ).toHaveCount(0);

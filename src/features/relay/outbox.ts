@@ -7,6 +7,12 @@ import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { channelRowKind } from "./membership";
 import { MessageClock } from "./message-order";
+import {
+  bytes,
+  isCatalogKind,
+  MAX_CONTENT_BYTES,
+  MAX_EVENT_BYTES,
+} from "../agents/catalog-envelope";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -45,7 +51,10 @@ export interface Outbox {
   supports(kind: number): boolean;
   ready(): Promise<void>;
   send(
-    input: Pick<EventTemplate, "kind" | "content" | "tags">,
+    input: Pick<EventTemplate, "kind" | "content" | "tags"> & {
+      /** NIP-AP: created_at of the newest observed head this event replaces. */
+      supersedes?: number;
+    },
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
@@ -626,7 +635,12 @@ export function createOutbox(
       await persist(id, "acknowledge");
     },
     send(
-      input: Pick<EventTemplate, "kind" | "content" | "tags">,
+      {
+        supersedes,
+        ...input
+      }: Pick<EventTemplate, "kind" | "content" | "tags"> & {
+        supersedes?: number;
+      },
       recovery?: OutboxRecovery,
       active?: () => boolean,
     ) {
@@ -648,9 +662,14 @@ export function createOutbox(
         !outbox.supports(input.kind)
       )
         throw new Error("This relay connection cannot publish that event kind");
+      const catalog = isCatalogKind(input.kind);
       if (
         (input.kind === 9 && !input.content.trim()) ||
-        byteSize(input) > OUTBOX_INPUT_MAX_BYTES
+        // NIP-AP admits larger public definitions than ordinary input.
+        (catalog
+          ? bytes(input.content) > MAX_CONTENT_BYTES ||
+            byteSize(input) > MAX_EVENT_BYTES
+          : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
       )
         throw new Error("Message is empty or too large");
       if (snapshot.length >= MAX_PENDING)
@@ -686,6 +705,24 @@ export function createOutbox(
         if (createdAt > Math.floor(ms / 1000) + 60)
           throw new Error(
             "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
+          );
+      }
+      if (catalog) {
+        // NIP-AP: max(now, head + 1) over the observed relay head and this
+        // device's retained writes, so a replacement can never lose or tie.
+        if (supersedes !== undefined)
+          createdAt = Math.max(createdAt, supersedes + 1);
+        const d = input.tags.find(([name]) => name === "d")?.[1];
+        for (const { event } of visible)
+          if (
+            event.kind === input.kind &&
+            event.pubkey === viewer &&
+            event.tags.some(([name, value]) => name === "d" && value === d)
+          )
+            createdAt = Math.max(createdAt, event.created_at + 1);
+        if (createdAt > Math.floor(ms / 1000) + 60)
+          throw new Error(
+            "Sharing is changing too quickly or your clock changed. Wait a moment and try again.",
           );
       }
       const template = {

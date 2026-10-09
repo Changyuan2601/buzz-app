@@ -21,6 +21,10 @@ export function sidebarSections<T extends ChannelSummary>(
     (channel) =>
       channel.channelType !== "dm" && channel.channelType !== "forum",
   );
+  const dms = active.filter(
+    (channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id),
+  );
+  const movable = [...streams, ...dms];
   const stars = new Set(preferences?.starred);
   const groups = preferences?.sections ?? [];
   const ids = new Set(groups.map((group) => group.id));
@@ -53,7 +57,7 @@ export function sidebarSections<T extends ChannelSummary>(
       title: "Starred",
       icon: "★",
       rows: sort(
-        streams.filter((channel) => stars.has(channel.id)),
+        movable.filter((channel) => stars.has(channel.id)),
         "starred",
       ),
     },
@@ -62,7 +66,7 @@ export function sidebarSections<T extends ChannelSummary>(
       title: group.name,
       icon: group.icon,
       rows: sort(
-        streams.filter(
+        movable.filter(
           (channel) =>
             !stars.has(channel.id) && assignment(channel.id) === group.id,
         ),
@@ -95,9 +99,9 @@ export function sidebarSections<T extends ChannelSummary>(
       title: "Direct messages",
       icon: undefined,
       rows: sort(
-        active.filter(
+        dms.filter(
           (channel) =>
-            channel.channelType === "dm" && !hiddenDms.has(channel.id),
+            !stars.has(channel.id) && !ids.has(assignment(channel.id) ?? ""),
         ),
         "dms",
       ),

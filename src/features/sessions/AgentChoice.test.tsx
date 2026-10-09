@@ -43,7 +43,7 @@ it("reloads the selected agent after the connection clears the library", async (
   library.dispose();
 });
 
-it("opens the avatar menu and changes the chosen agent without submitting", async () => {
+it("searches agents and selects with Enter without submitting the composer", async () => {
   const user = userEvent.setup();
   const pubkey = "a".repeat(64);
   const library = createAgentLibrary(async () => ({
@@ -72,10 +72,19 @@ it("opens the avatar menu and changes the chosen agent without submitting", asyn
   await user.click(
     await screen.findByRole("button", { name: "Choose an agent" }),
   );
-  await user.click(await screen.findByRole("menuitemradio", { name: "Fizz" }));
-  expect(onChange).toHaveBeenCalledWith(pubkey, expect.anything());
+  const search = await screen.findByRole("searchbox", {
+    name: "Search agents",
+  });
+  await user.type(search, "no match");
+  expect(screen.getByText("No matching agents.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Fizz" })).toBeNull();
+  await user.clear(search);
+  await user.type(search, "fIzZ");
+  expect(screen.getByRole("button", { name: "Fizz" })).toBeVisible();
+  await user.keyboard("{Enter}");
+  expect(onChange).toHaveBeenCalledWith(pubkey);
   expect(onSubmit).not.toHaveBeenCalled();
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   library.dispose();
 });
 
@@ -118,7 +127,7 @@ it("names known agent presence on the selected trigger and choices", async () =>
   });
   await user.click(trigger);
   expect(
-    await screen.findByRole("menuitemradio", { name: "Fizz, away" }),
+    await screen.findByRole("button", { name: "Fizz, away" }),
   ).toBeTruthy();
   act(() => {
     status = "unknown";
@@ -127,7 +136,7 @@ it("names known agent presence on the selected trigger and choices", async () =>
   expect(
     screen.getByRole("button", { name: "Change agent: Fizz" }),
   ).toBeTruthy();
-  expect(screen.getByRole("menuitemradio", { name: "Fizz" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Fizz" })).toBeTruthy();
   view.rerender(
     <AgentChoice
       session={session}
@@ -137,14 +146,14 @@ it("names known agent presence on the selected trigger and choices", async () =>
     />,
   );
   expect(
-    screen.getByRole("menuitemradio", { name: "Fizz Adds to channel" }),
+    screen.getByRole("button", { name: "Fizz — adds to channel" }),
   ).toHaveTextContent("Adds to channel");
   act(() => {
     status = "online";
     for (const listener of listeners) listener();
   });
   expect(
-    screen.getByRole("menuitemradio", {
+    screen.getByRole("button", {
       name: "Fizz, online — adds to channel",
     }),
   ).toHaveTextContent("Adds to channel");
@@ -213,10 +222,10 @@ it("does not offer an archived agent, and demands archive evidence on mount", as
     await screen.findByRole("button", { name: "Choose an agent" }),
   );
   expect(
-    await screen.findByRole("menuitemradio", { name: "Fizz" }),
+    await screen.findByRole("button", { name: "Fizz" }),
   ).toBeInTheDocument();
   expect(
-    screen.queryByRole("menuitemradio", { name: "Retired" }),
+    screen.queryByRole("button", { name: "Retired" }),
   ).not.toBeInTheDocument();
   library.dispose();
 });
@@ -282,26 +291,24 @@ it("shows an archive read failure and removes the archived agent after Retry", a
   );
   // Fail open: the choices stay, and the failure and its recovery are visible.
   expect(
-    await screen.findByRole("menuitemradio", { name: "Retired" }),
+    await screen.findByRole("button", { name: "Retired" }),
   ).toBeInTheDocument();
   expect(
     screen.getByText(/Couldn’t check which agents are archived/),
   ).toBeInTheDocument();
   fail = false;
-  await user.click(screen.getByRole("menuitem", { name: "Retry agent list" }));
+  await user.click(screen.getByRole("button", { name: "Retry agent list" }));
   await waitFor(() =>
     expect(
-      screen.queryByRole("menuitemradio", { name: "Retired" }),
+      screen.queryByRole("button", { name: "Retired" }),
     ).not.toBeInTheDocument(),
   );
-  expect(
-    screen.getByRole("menuitemradio", { name: "Fizz" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Fizz" })).toBeInTheDocument();
   expect(
     screen.queryByText(/Couldn’t check which agents are archived/),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("menuitem", { name: "Retry agent list" }),
+    screen.queryByRole("button", { name: "Retry agent list" }),
   ).not.toBeInTheDocument();
   library.dispose();
 });

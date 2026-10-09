@@ -544,3 +544,52 @@ it("a cover admitted on refill drops the marks it covers", () => {
   });
   expect(kept.recent["thread:a"]).toBe(8000);
 });
+
+it("covered marks leave the reserve as well as the journal", () => {
+  // `msg:<channel>.<n>` belongs to `<channel>`, read through its event time.
+  const covered = (
+    key: string,
+    frontier: (key: string) => number | undefined,
+  ) => {
+    const [, channel, time] = /^msg:(\w+)\.(\d+)$/.exec(key) ?? [];
+    if (!channel) return undefined;
+    return (frontier(channel) ?? -1) >= Number(time) ? channel : undefined;
+  };
+  // The journal drops `msg:room.10`; it must not move to the reserve.
+  const kept = retainLocalRead(
+    [{ frontiers: { room: 20, "msg:room.10": 10 }, overrides: {} }],
+    {},
+    "fixture",
+    {
+      // Already archived, and covered by the journal's channel mark.
+      "msg:room.5": 5,
+      // Covered by an archived channel mark.
+      quiet: 50,
+      "msg:quiet.40": 40,
+      // Not covered: later than its channel mark, or no channel mark at all.
+      "msg:room.30": 30,
+      "msg:loose.1": 1,
+    },
+    covered,
+  );
+  expect(kept.state.frontiers).toEqual({ room: 20 });
+  expect(kept.reserve).toEqual({
+    quiet: 50,
+    "msg:room.30": 30,
+    "msg:loose.1": 1,
+  });
+  // With an override, ancestry is load-bearing, so nothing is pruned.
+  const withOverride = retainLocalRead(
+    [
+      {
+        frontiers: { room: 20 },
+        overrides: { other: { set: 0, clear: 9, baseline: 0 } },
+      },
+    ],
+    {},
+    "fixture",
+    { "msg:room.5": 5 },
+    covered,
+  );
+  expect(withOverride.reserve).toEqual({ "msg:room.5": 5 });
+});

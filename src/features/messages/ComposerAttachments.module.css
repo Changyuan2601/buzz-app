@@ -181,3 +181,11 @@
     animation: none;
   }
 }
+
+.voiceItem {
+  position: relative;
+  flex: 0 1 21rem;
+  min-width: 0;
+  width: 21rem;
+  max-width: 100%;
+}

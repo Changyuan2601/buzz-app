@@ -145,9 +145,21 @@ it("validates and freezes launcher metadata without changing target resolution",
         ctx.panels.register({ ...base, channelPlacement } as never),
       ).toThrow("placement");
     }
+    for (const channelMenu of [
+      null,
+      {},
+      { label: "", eligible: () => true },
+      { label: "Usage", eligible: true },
+    ]) {
+      expect(() =>
+        ctx.panels.register({ ...base, channelMenu } as never),
+      ).toThrow("channel menu");
+    }
     const launcher = { icon: "/icon.png", target: "" };
-    ctx.panels.register({ ...base, launcher });
+    const channelMenu = { label: "Usage", eligible: () => true };
+    ctx.panels.register({ ...base, launcher, channelMenu });
     launcher.icon = "/mutated.png";
+    channelMenu.label = "mutated";
   });
   await fiber.await();
   expect(panels.snapshot()[0]?.launcher).toEqual({
@@ -155,6 +167,8 @@ it("validates and freezes launcher metadata without changing target resolution",
     target: "",
   });
   expect(Object.isFrozen(panels.snapshot()[0]?.launcher)).toBe(true);
+  expect(panels.snapshot()[0]?.channelMenu?.label).toBe("Usage");
+  expect(Object.isFrozen(panels.snapshot()[0]?.channelMenu)).toBe(true);
   expect(panels.resolve("")).toBeUndefined();
   await fiber.dispose();
   expect(panels.snapshot()).toEqual([]);

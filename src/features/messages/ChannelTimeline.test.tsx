@@ -123,6 +123,7 @@ function setup({
   status = "ready" as ChannelWindow["status"],
   blocked = undefined as boolean | undefined,
   session = undefined as RelaySession | undefined,
+  historyControl = "button" as "button" | "scroll",
   hasMore = false,
   loadingOlder = false,
   historyLimited = false,
@@ -281,6 +282,7 @@ function setup({
     hooks.ref = hooks.state = hooks.memo = hooks.effect = 0;
     const scoped = ChannelTimeline({
       channelId,
+      historyControl,
       scope: "scope",
       queries,
       window: session?.channels.window(channelId) ?? {
@@ -376,6 +378,12 @@ function setup({
       if ("hasMore" in patch) hasMore = !!patch.hasMore;
       if ("historyLimited" in patch) historyLimited = !!patch.historyLimited;
       render();
+    },
+    hasHistoryButton() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement[];
+      }>;
+      return edge.props.children.some((child) => child?.type === Button);
     },
     retry() {
       const edge = section.props.children[0] as ReactElement<{
@@ -1667,3 +1675,20 @@ it.each([false, true])(
     h.unmount();
   },
 );
+
+it("pages session history on scroll without an initial button and keeps error recovery", () => {
+  const h = setup({ hasMore: true, historyControl: "scroll" });
+  expect(h.hasHistoryButton()).toBe(false);
+  h.scroll();
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  h.unmount();
+  const failed = setup({
+    hasMore: true,
+    historyControl: "scroll",
+    error: "Read failed",
+  });
+  expect(failed.hasHistoryButton()).toBe(true);
+  failed.retry();
+  expect(failed.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  failed.unmount();
+});

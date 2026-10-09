@@ -15,6 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createIdentity, nativeIdentityEnabled } from "./service";
 import { IdentitySetup } from "./IdentitySetup";
 import { PrivateKey } from "./PrivateKey";
+import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => true),
@@ -300,3 +301,159 @@ it.each(["Linux x86_64", "Win32"])(
     identity.dispose();
   },
 );
+
+it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phrase when wiping", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  const confirm = () => screen.getByRole("button", { name: /^Sign out/ });
+  const haveKey = screen.getByRole("checkbox", { name: "I have my key" });
+  expect(haveKey).toHaveAttribute("aria-disabled", "true");
+  expect(confirm()).toBeDisabled();
+  vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  vi.mocked(invoke).mockResolvedValueOnce(key);
+  await user.click(screen.getByRole("button", { name: "Copy private key" }));
+  expect(confirm()).toBeDisabled();
+  await user.click(haveKey);
+  expect(confirm()).toBeEnabled();
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "Also erase everything else Buzz stores on this device",
+    }),
+  );
+  expect(confirm()).toBeDisabled();
+  await user.click(
+    screen.getByRole("checkbox", { name: "Also remove my agents" }),
+  );
+  await user.type(screen.getByLabelText(/to confirm/), WIPE_PHRASE);
+  expect(confirm()).toBeEnabled();
+  vi.mocked(invoke).mockResolvedValueOnce(undefined);
+  await user.click(confirm());
+  expect(invoke).toHaveBeenLastCalledWith("sign_out", {
+    wipe: true,
+    removeAgents: true,
+  });
+  identity.dispose();
+});
+
+it("disables wipe with the native reason when the build can't wipe", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockResolvedValueOnce(
+    "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz",
+  );
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  expect(
+    await screen.findByText(/Erasing is unavailable in development builds/),
+  ).toBeVisible();
+  expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Also erase everything else Buzz stores on this device",
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
+  identity.dispose();
+});
+
+it("offers wipe once the native side says it's available", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  const wipe = screen.getByRole("checkbox", {
+    name: "Also erase everything else Buzz stores on this device",
+  });
+  await waitFor(() =>
+    expect(wipe).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  expect(screen.queryByText(/Erasing is unavailable/)).toBeNull();
+  identity.dispose();
+});
+
+it("keeps wipe disabled while the native answer is pending", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  const answer = deferred<string | null>();
+  vi.mocked(invoke).mockReturnValueOnce(answer.promise);
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  const wipe = screen.getByRole("checkbox", {
+    name: "Also erase everything else Buzz stores on this device",
+  });
+  try {
+    expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
+    expect(wipe).toHaveAttribute("aria-disabled", "true");
+  } finally {
+    answer.resolve(null);
+  }
+  await waitFor(() =>
+    expect(wipe).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  identity.dispose();
+});
+
+it("keeps wipe disabled when the native check fails", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("ipc failed"));
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  expect(
+    await screen.findByText(/Couldn’t check whether erasing is available/),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Also erase everything else Buzz stores on this device",
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
+  identity.dispose();
+});
+
+it("keeps the dialog open and shows the error when native sign out refuses", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  vi.mocked(invoke).mockResolvedValueOnce(key);
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  await user.click(screen.getByRole("checkbox", { name: "I have my key" }));
+  vi.mocked(invoke).mockRejectedValueOnce("Agents didn't stop");
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Agents didn't stop",
+  );
+  expect(invoke).toHaveBeenLastCalledWith("sign_out", {
+    wipe: false,
+    removeAgents: false,
+  });
+  identity.dispose();
+});
+
+it("shows a native refusal's message and offers a retry", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  vi.mocked(invoke).mockResolvedValueOnce(key);
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  await user.click(screen.getByRole("checkbox", { name: "I have my key" }));
+  vi.mocked(invoke).mockRejectedValueOnce({
+    message: "Quit every other Buzz window using this sign-in.",
+  });
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Quit every other Buzz window using this sign-in.",
+  );
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  identity.dispose();
+});

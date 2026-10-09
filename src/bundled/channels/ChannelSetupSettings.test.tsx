@@ -38,6 +38,12 @@ function fixture({
   const listeners = new Set<() => void>();
   const kit: ChannelKit = {
     available: true,
+    loadTeam: vi.fn(async () => {
+      throw new Error("No portable fixture team");
+    }),
+    savePortable: vi.fn(async () => {
+      throw new Error("No portable fixture save");
+    }),
     snapshot: () => state,
     subscribe: (listener) => {
       listeners.add(listener);

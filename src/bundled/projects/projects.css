@@ -81,9 +81,6 @@
 .project-markdown img {
   max-width: 100%;
 }
-.projects-page .buzz-tabs {
-  overflow-x: auto;
-}
 @media (max-width: 40rem) {
   .projects-page {
     padding: var(--space-4);

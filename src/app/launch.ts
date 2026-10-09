@@ -124,12 +124,12 @@ function schedule() {
   const now = performance.now();
   const cycles = Math.max(1, Math.ceil((now - startedAt) / CYCLE_MS));
   const deadline = startedAt + cycles * CYCLE_MS;
+  // A backgrounded webview may wake well past the boundary; nobody saw that
+  // cycle, so fade then rather than waiting for another throttled timer.
   timer = window.setTimeout(
     () => {
       timer = undefined;
-      // A backgrounded tab can wake well past the boundary. Let that cycle finish.
-      if (performance.now() - deadline > 50) schedule();
-      else fade(launch);
+      fade(launch);
     },
     Math.max(0, deadline - now),
   );
@@ -154,14 +154,20 @@ function syncContent() {
   if (!next) return;
   // Let the first history rows, virtualizer measurements, and fonts paint
   // underneath the overlay before choosing the animation boundary.
+  let painted = false;
+  const afterPaint = () => {
+    if (painted) return;
+    painted = true;
+    if (current === revision && ready && !hasPendingContent()) schedule();
+    else syncContent();
+  };
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      void (document.fonts?.ready ?? Promise.resolve()).then(() => {
-        if (current === revision && ready && !hasPendingContent()) schedule();
-        else syncContent();
-      });
+      void (document.fonts?.ready ?? Promise.resolve()).then(afterPaint);
     }),
   );
+  // A webview behind other windows may never deliver frames.
+  window.setTimeout(afterPaint, CYCLE_MS);
 }
 
 export function setLaunchReady(next: boolean, terminal = false) {

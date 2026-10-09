@@ -77,6 +77,16 @@ function fixture(t) {
   env.PATH = `${tools}${path.delimiter}${env.PATH}`;
   for (const cwd of [main, linked]) {
     runtimeFixture(cwd);
+    const vite = path.join(cwd, "node_modules/vite");
+    mkdirSync(vite, { recursive: true });
+    writeFileSync(
+      path.join(vite, "package.json"),
+      JSON.stringify({ type: "module", exports: "./index.mjs" }),
+    );
+    writeFileSync(
+      path.join(vite, "index.mjs"),
+      `export { loadEnv } from ${JSON.stringify(import.meta.resolve("vite"))};\n`,
+    );
     for (const file of [
       "desktop-build.mjs",
       "desktop-config.mjs",

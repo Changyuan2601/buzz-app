@@ -801,7 +801,7 @@ it("foreground A to B to A preserves compute and requires explicit replacement",
   );
 });
 
-it("unsupported native builds report unavailable without invoking missing select", async () => {
+it("unsupported native builds never show bindings or load inventory across navigation", async () => {
   native.invoke.mockImplementation((command) => {
     if (command !== "mesh_compute_status")
       throw new Error("Unknown native command");
@@ -811,14 +811,19 @@ it("unsupported native builds report unavailable without invoking missing select
     });
   });
   let Component!: React.ComponentType;
+  let snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  const listeners = new Set<() => void>();
   apply({
     relay: {
-      snapshot: () => ({
-        status: "ready",
-        viewer: "viewer",
-        scope: "https://fixture.example:viewer",
-      }),
-      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
     },
     effect: () => {},
     settingsCards: {
@@ -827,17 +832,24 @@ it("unsupported native builds report unavailable without invoking missing select
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
-  // Use a stable snapshot for React subscription reads.
-  // Activation itself must never call the absent command.
-  await act(async () => {
-    await Promise.resolve();
+  render(<Component />);
+  await screen.findByText("Shared compute isn’t available in this build.");
+  act(() => {
+    snapshot = { ...snapshot, scope: "https://other.example:viewer" };
+    for (const listener of listeners) listener();
   });
+  await screen.findByText("Shared compute isn’t available in this build.");
+  expect(screen.queryByText(/Compute connected/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", {
+      name: "Use compute in this community instead",
+    }),
+  ).not.toBeInTheDocument();
   expect(
     native.invoke.mock.calls.every(
       ([command]) => command === "mesh_compute_status",
     ),
   ).toBe(true);
-  expect(Component).toBeDefined();
 });
 
 it.each([

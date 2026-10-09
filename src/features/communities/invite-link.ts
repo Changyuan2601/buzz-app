@@ -8,13 +8,14 @@ export type InviteLink = Readonly<{
 /** Parse a relay invite without treating its URL as authority to join. */
 export function parseInviteLink(input: string): InviteLink | null {
   if (input.length > 4096) return null;
-  if (!input.startsWith("buzz://join?")) return null;
+  // Windows can supply an explicit root path before the query.
+  if (!/^buzz:\/\/join\/?\?/.test(input)) return null;
   try {
     const url = new URL(input);
     if (
       url.protocol !== "buzz:" ||
       url.host !== "join" ||
-      url.pathname ||
+      (url.pathname !== "" && url.pathname !== "/") ||
       url.username ||
       url.password ||
       url.hash

@@ -299,7 +299,7 @@ test("gifMarkdown folds to an image attachment without visible markdown body tex
   ]);
 
   expect(row?.content).toBe("");
-  expect(row?.attachmentContentRemoved).toBe(true);
+  expect(row?.attachmentSeams).toBeUndefined();
   expect(row?.attachments).toEqual([
     { url: "https://cdn.example/wave.gif", kind: "image" },
   ]);

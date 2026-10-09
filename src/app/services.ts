@@ -13,7 +13,7 @@ import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
-import { bindSearchUsage } from "./shell/search-usage";
+import { bindSearchUsage } from "../features/search/usage";
 import { communityDestination } from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
 import {
@@ -22,6 +22,7 @@ import {
 } from "../features/notifications/messages";
 import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
+import { Agents2Service } from "../features/agents2/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
@@ -74,6 +75,7 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
+  const agents2 = new Agents2Service(ctx, relay);
   ctx.effect(() => bindAgentMentions(agentControl, communities));
   const notifications = new NotificationsService(
     ctx,
@@ -111,6 +113,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
+    agents2,
     accountActions,
     shortcutBindings,
     conversation,

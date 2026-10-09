@@ -16,6 +16,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   context,
   app,
 }, testInfo) => {
+  // Fix the page's clock near the fixture dates. Relative dates ("6 days
+  // ago" vs "on Oct 1") change header wrapping, which the layout checks
+  // below measure.
+  await page.clock.install({ time: new Date("2026-10-02T12:00:00Z") });
   const requests = [];
   // Exercise browser menu wiring without writing to the machine's clipboard.
   await page.addInitScript(() => {
@@ -437,7 +441,9 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       await expect(trigger).toHaveAttribute("aria-expanded", "true");
       await expect.poll(caretPosition).toEqual(collapsed);
       await expect.poll(baseline).toEqual(collapsedBaseline);
-      await trigger.click();
+      // In narrow/enlarged headers the button's center can be the author link,
+      // which deliberately stays independently clickable. Use the visible caret.
+      await trigger.locator(":scope > svg").click();
       await expect(trigger).toHaveAttribute("aria-expanded", "false");
       await expect.poll(caretPosition).toEqual(collapsed);
     }

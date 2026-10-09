@@ -1162,6 +1162,25 @@ function NavigationItemSpecimen() {
           ))}
         </div>
       </SpecimenGroup>
+      <SpecimenGroup
+        label="Chrome route navigation (not tabs)"
+        code={`<nav aria-label="Destinations" className="chrome-navigation">
+  <NavigationItem label="Me" variant="pill" selected />
+  <NavigationItem label="Messages" variant="pill" />
+</nav>`}
+      >
+        <nav aria-label="Destinations" className="chrome-navigation">
+          {["Me", "Messages"].map((label) => (
+            <NavigationItem
+              key={label}
+              label={label}
+              variant="pill"
+              selected={selectedPill === label}
+              onClick={() => setSelectedPill(label)}
+            />
+          ))}
+        </nav>
+      </SpecimenGroup>
     </div>
   );
 }

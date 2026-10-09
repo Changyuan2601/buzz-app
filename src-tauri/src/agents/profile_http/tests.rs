@@ -89,6 +89,7 @@ fn profile(origin: &str) -> CreationProfile {
         auth: json!(["auth", "owner", "", "signature"]).to_string(),
         name: "Fixture".into(),
         picture: Some("https://images.example/a.png".into()),
+        about: None,
         revision: 1,
     }
 }
@@ -288,4 +289,37 @@ async fn native_owner_blocks_overlap_during_held_post_and_keeps_newer_save_pendi
 fn test_attestation() -> String {
     // Public test owner key 2 signs authorization for public test agent key 1.
     json!(["auth", "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5", "", "84b950c7e85f31970af2891d7660a938eab65681a1c1603f93efa99184a3766c86e506a34be52aec64d73f9375311729a44c2841f7b0873643d24dee4d8f361e"]).to_string()
+}
+
+#[tokio::test]
+async fn snapshot_memory_publication_authenticates_body_and_requires_matching_receipt() {
+    for mode in ["accepted", "rejected", "wrong-id", "oversized"] {
+        let origin_ref = Arc::new(Mutex::new(String::new()));
+        let expected = origin_ref.clone();
+        let (origin, worker) = server(1, move |_, request| {
+            assert_eq!(request.path, "/events");
+            auth(&request, &expected.lock().unwrap());
+            let event: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(event["kind"], 30174);
+            assert_ne!(event["content"], "private fixture core");
+            match mode {
+                "oversized" => Reply {
+                    status: 200,
+                    body: vec![b' '; 16 * 1024 + 1],
+                },
+                _ => json_reply(json!({
+                    "accepted": mode != "rejected",
+                    "event_id": if mode == "wrong-id" { json!("00".repeat(32)) } else { event["id"].clone() }
+                })),
+            }
+        });
+        *origin_ref.lock().unwrap() = origin.clone();
+        let key = Secret::parse(KEY, PUB).unwrap();
+        let event = key
+            .memory_event(PUB, "core", "private fixture core", 1_700_000_000)
+            .unwrap();
+        let result = publish_memory(&client(), &profile(&origin), &key, event).await;
+        assert_eq!(result.is_ok(), mode == "accepted", "{mode}");
+        worker.join().unwrap();
+    }
 }

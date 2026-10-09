@@ -1,3 +1,4 @@
+import type { RelayEvent } from "./events";
 /** Verified live-route message only. Not an activity feed, replay, or read intent. */
 export type IncomingMessage = Readonly<{
   channelId: string;
@@ -9,3 +10,10 @@ export type IncomingMessage = Readonly<{
   previewContent: string;
 }>;
 export type IncomingListener = (messages: readonly IncomingMessage[]) => void;
+/** Verified live-phase events from one delivery. `channelId` is the route's channel
+ * when the wire scope was unambiguous; global routes (profiles, #p hints) omit it. */
+export type LiveBatch = Readonly<{
+  events: readonly RelayEvent[];
+  channelId?: string;
+}>;
+export type LiveListener = (batch: LiveBatch) => void;

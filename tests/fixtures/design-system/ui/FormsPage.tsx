@@ -274,10 +274,10 @@ ${workspaceComboboxCode}`}
             appearance.
           </li>
           <li>
-            Outer focus outlines remain hidden. Shared fields fade their active
-            1px perimeter stroke in and out over 150ms with ease, with one
-            stroke around composite controls. Keyboard focus and reduced motion
-            make this immediate. Navigation and focus restoration remain intact.
+            Shared fields replace the outer ring with their active 1px perimeter
+            stroke, fading in and out over 150ms with ease, with one stroke
+            around composite controls. Keyboard focus and reduced motion make
+            this immediate. Navigation and focus restoration remain intact.
           </li>
           <li>
             Select and Combobox chevrons rotate with the open state using the
