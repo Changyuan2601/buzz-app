@@ -8,7 +8,6 @@ import type { RelayFetch } from "./find-community";
 
 const url = "https://relay.example.com:8443";
 const host = "relay.example.com:8443";
-const viewer = "ab".repeat(32);
 const buzz = {
   name: "Buzz Relay",
   software: "https://github.com/block/buzz",
@@ -114,9 +113,8 @@ it("shows the host while finding, then only published facts, gating Join on ever
     host,
     icon: "https://cdn.example.com/icon.png",
     policy,
-    member: false,
   });
-  // No key was given, so nothing was signed.
+  // The two unauthenticated reads are the only pre-join traffic: nothing is signed.
   expect(request.mock.calls.map(([origin, path]) => [origin, path])).toEqual([
     [url, "/"],
     [url, "/api/join-policy"],
@@ -150,65 +148,6 @@ it("without a policy Join needs no consent, and without onJoin it stays a placeh
   expect(await screen.findByRole("button", { name: "Join" })).toBeEnabled();
 });
 
-it("a key the relay already admits skips Join Community", async () => {
-  const request = relay(() => ({
-    "/": Response.json(buzz),
-    "/api/join-policy": new Response("missing", { status: 404 }),
-    "/query": Response.json([]),
-  }));
-  const onAlreadyMember = vi.fn();
-  render(
-    <FindCommunity
-      url={url}
-      viewer={viewer}
-      onCancel={vi.fn()}
-      onJoin={vi.fn()}
-      onAlreadyMember={onAlreadyMember}
-      request={request}
-    />,
-  );
-  await vi.waitFor(() =>
-    expect(onAlreadyMember).toHaveBeenCalledWith({
-      url,
-      host,
-      icon: "https://cdn.example.com/icon.png",
-      policy: null,
-      member: true,
-    }),
-  );
-  expect(request).toHaveBeenCalledWith(url, "/query", expect.any(AbortSignal), [
-    { kinds: [0], authors: [viewer], limit: 1 },
-  ]);
-  expect(joinCommunity()).toBeNull();
-  expect(screen.queryByRole("button", { name: /join/i })).toBeNull();
-});
-
-it.each([
-  ["refuses the key", new Response("denied", { status: 403 })],
-  ["cannot be reached for the probe", new TypeError("fetch failed")],
-])("Join Community is shown when the relay %s", async (_label, answer) => {
-  const request = relay(() => ({
-    "/": Response.json(buzz),
-    "/api/join-policy": new Response("missing", { status: 404 }),
-    "/query": answer,
-  }));
-  const onAlreadyMember = vi.fn();
-  render(
-    <FindCommunity
-      url={url}
-      viewer={viewer}
-      onCancel={vi.fn()}
-      onAlreadyMember={onAlreadyMember}
-      request={request}
-    />,
-  );
-  expect(
-    await screen.findByRole("heading", { name: "Join Community" }),
-  ).toBeVisible();
-  expect(onAlreadyMember).not.toHaveBeenCalled();
-  expect(request).toHaveBeenCalledTimes(3);
-});
-
 it("Cancel while finding leaves at once and discards the late answer", async () => {
   const info = deferred<Response>();
   let signal: AbortSignal | undefined;
@@ -227,40 +166,6 @@ it("Cancel while finding leaves at once and discards the late answer", async () 
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: /join/i })).toBeNull();
-});
-
-it("Cancel during the membership probe aborts it and a late admission changes nothing", async () => {
-  const admission = deferred<Response>();
-  let probe: AbortSignal | undefined;
-  const request = vi.fn<RelayFetch>((_origin, path, signal) => {
-    if (path === "/query") {
-      probe = signal;
-      return admission.promise;
-    }
-    return Promise.resolve(
-      path === "/" ? Response.json(buzz) : new Response(null, { status: 404 }),
-    );
-  });
-  const onCancel = vi.fn();
-  const onAlreadyMember = vi.fn();
-  const user = userEvent.setup();
-  render(
-    <FindCommunity
-      url={url}
-      viewer={viewer}
-      onCancel={onCancel}
-      onAlreadyMember={onAlreadyMember}
-      request={request}
-    />,
-  );
-  await vi.waitFor(() => expect(probe).toBeDefined());
-  expect(probe?.aborted).toBe(false);
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(onCancel).toHaveBeenCalledTimes(1);
-  expect(probe?.aborted).toBe(true);
-  await act(async () => admission.resolve(Response.json([])));
-  expect(onAlreadyMember).not.toHaveBeenCalled();
-  expect(joinCommunity()).toBeNull();
 });
 
 it("an unreachable relay offers Retry, which looks again", async () => {

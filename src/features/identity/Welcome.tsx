@@ -8,7 +8,6 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import { firstRunCredential } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
 import { FindCommunity } from "../communities/FindCommunity";
-import type { FoundCommunity } from "../communities/find-community";
 import { CircleNotchIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -41,7 +40,6 @@ export function Welcome({
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
   const [finding, setFinding] = useState<string>();
-  const [member, setMember] = useState<FoundCommunity>();
   useEffect(
     () => () => {
       if (login.snapshot().status === "pending") login.cancel();
@@ -75,23 +73,12 @@ export function Welcome({
             </Button>
           </>
         ) : progress.status === "done" ? (
-          member ? (
-            <AlreadyMember
-              host={member.host}
-              onBack={() => {
-                setMember(undefined);
-                setFinding(undefined);
-              }}
-            />
-          ) : finding ? (
+          finding ? (
             // No onJoin yet: joining needs the Communities service, which app
-            // composition creates only after identity is ready. Setup made
-            // the key, so the viewer is known here.
+            // composition creates only after identity is ready.
             <FindCommunity
               url={finding}
-              viewer={state.status === "ready" ? state.viewer : undefined}
               onCancel={() => setFinding(undefined)}
-              onAlreadyMember={setMember}
               titleId="welcome-title"
             />
           ) : (
@@ -172,27 +159,6 @@ export function Welcome({
         )}
       </div>
     </main>
-  );
-}
-
-/**
- * The current end of first run for a key the relay already admits. Nothing to
- * join, and the app cannot open on this community until the Communities
- * service exists, so Back is the only action.
- */
-function AlreadyMember({ host, onBack }: { host: string; onBack: () => void }) {
-  return (
-    <>
-      <h1 id="welcome-title" className="text-title text-primary">
-        Already a member
-      </h1>
-      <p className="text-body text-secondary">
-        You’re already a member of <span className="font-mono">{host}</span>.
-      </p>
-      <div>
-        <Button onClick={onBack}>Back</Button>
-      </div>
-    </>
   );
 }
 

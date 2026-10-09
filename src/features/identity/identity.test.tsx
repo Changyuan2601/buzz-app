@@ -864,7 +864,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   identity.dispose();
 });
 
-it("a community that already admits the new key shows Already a member instead of Join Community", async () => {
+it("a found community shows Join Community after exactly the two unauthenticated GETs", async () => {
   const origin = "https://relay.example.com:8443";
   const relayCalls: unknown[] = [];
   const answer = (status: number, body = "") =>
@@ -881,7 +881,6 @@ it("a community that already admits the new key shows Already a member instead o
           JSON.stringify({ name: "Buzz Relay", read_state_snapshot: {} }),
         );
       if (path === "/api/join-policy") return answer(404);
-      if (path === "/query") return answer(200, "[]");
     }
     throw new Error("Unexpected command");
   });
@@ -905,29 +904,16 @@ it("a community that already admits the new key shows Already a member instead o
     "relay.example.com:8443{Enter}",
   );
   expect(
-    await screen.findByRole("heading", { name: "Already a member" }),
+    await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
-  expect(screen.getByText(/You’re already a member of/)).toHaveTextContent(
-    "relay.example.com:8443",
-  );
-  expect(screen.queryByRole("heading", { name: "Join Community" })).toBeNull();
+  expect(screen.getByText("relay.example.com:8443")).toHaveClass("font-mono");
   expect(screen.queryByText("Signed in")).toBeNull();
-  // The probe is the key setup just created, signed by the host: a POST /query
-  // for the viewer's own profile after the two unauthenticated GETs.
-  expect(relayCalls[2]).toEqual({
-    community: origin,
-    path: "/query",
-    method: "POST",
-    body: JSON.stringify([{ kinds: [0], authors: [viewer], limit: 1 }]),
-  });
-  expect(relayCalls).toHaveLength(3);
-  await user.click(screen.getByRole("button", { name: "Back" }));
-  expect(
-    screen.getByRole("heading", { name: "Join a community" }),
-  ).toBeVisible();
-  expect(screen.getByRole("textbox", { name: "Community URL" })).toHaveValue(
-    "relay.example.com:8443",
-  );
+  // Nothing is signed with the key setup just created: the two unauthenticated
+  // GETs are the only pre-join traffic, with no POST before the user opts in.
+  expect(relayCalls).toEqual([
+    { community: origin, path: "/", method: "GET", body: null },
+    { community: origin, path: "/api/join-policy", method: "GET", body: null },
+  ]);
   identity.dispose();
 });
 

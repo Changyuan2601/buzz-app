@@ -33,18 +33,10 @@ Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
 reusable by later flows): the hostname with a spinner and **Cancel**, which
 returns to Join a community with the typed address intact and discards any
 late answer. The page reads the relay's NIP-11 document and `/api/join-policy`
-in parallel through the identity-free native `relay_http` GET path. Once NIP-11
-confirms a Buzz relay, it also asks whether this device's key is already a
-member: a relay publishes no unauthenticated membership signal, so the page sends
-a `relay_http` POST `/query` for the viewer's own profile, signed with the key
-setup just created, and reads a refusal as "not a member" and any successful
-read as admitted (a relay that doesn't enforce membership admits every key). A
-member skips the next page and sees **Already a member** — *You're already a
-member of {host}* — with **Back** to Join a community; this is the current end
-of first run for members. A probe that fails for any other reason, or has no key
-to sign with, falls through to the normal page.
-
-Otherwise success shows **Join Community**: only what the relay publishes — the
+in parallel through the identity-free native `relay_http` GET path. Those two
+unauthenticated GETs are the only pre-join traffic: nothing is signed with the
+device's key until the user chooses to join. On success it shows **Join
+Community**: only what the relay publishes — the
 icon if set and the hostname — plus, when the deployment has a join policy, *I am
 18 years of age or older.* (if age attestation is required) and *I agree to the
 Buzz Terms of Service and Privacy Policy.*, whose links open the relay's

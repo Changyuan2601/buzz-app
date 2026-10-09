@@ -31,27 +31,20 @@ const FAILURES: Record<FindFailure, { message: string; retry: boolean }> = {
 };
 
 /**
- * Looks up a community at a canonical secure origin before any session exists.
- * Owns nothing beyond the probe: the caller decides what Join does, and leaving
- * it out keeps Join a disabled placeholder. With a `viewer`, a key the relay
- * already admits reports through `onAlreadyMember` instead of showing Join;
- * without that handler an admitted key still sees Join, which is harmless.
+ * Looks up a community at a canonical secure origin before any identity or
+ * session exists. Owns nothing beyond the lookup: the caller decides what Join
+ * does, and leaving it out keeps Join a disabled placeholder.
  */
 export function FindCommunity({
   url,
   onCancel,
   onJoin,
-  onAlreadyMember,
-  viewer,
   request = nativeRelayFetch,
   titleId,
 }: {
   url: string;
   onCancel: () => void;
   onJoin?: (found: FoundCommunity) => void;
-  onAlreadyMember?: (found: FoundCommunity) => void;
-  /** The device's human key, hex; enables the signed membership probe. */
-  viewer?: string | undefined;
   request?: RelayFetch;
   titleId?: string;
 }) {
@@ -64,11 +57,9 @@ export function FindCommunity({
     if (state.status !== "finding") return;
     const controller = new AbortController();
     inFlight.current = controller;
-    findCommunity(url, request, controller.signal, viewer).then(
+    findCommunity(url, request, controller.signal).then(
       (found) => {
-        if (controller.signal.aborted) return;
-        if (found.member && onAlreadyMember) onAlreadyMember(found);
-        else setState({ status: "found", found });
+        if (!controller.signal.aborted) setState({ status: "found", found });
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
@@ -80,7 +71,7 @@ export function FindCommunity({
       },
     );
     return () => controller.abort();
-  }, [url, request, viewer, onAlreadyMember, state.status]);
+  }, [url, request, state.status]);
   const cancel = () => {
     // Nothing from this lookup may land after leaving, even if we stay mounted.
     inFlight.current?.abort();
