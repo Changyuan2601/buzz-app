@@ -90,7 +90,7 @@ function setup(thread: readonly EventData[] = []) {
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
       workingUntil,
-    } as Delivery);
+    } as unknown as Delivery);
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
   return {

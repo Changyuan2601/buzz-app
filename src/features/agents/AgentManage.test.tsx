@@ -19,6 +19,7 @@ const agent = {
   attention: {},
   skipped: {},
   timers: {},
+  attentionEnabled: true,
 } satisfies Agent;
 
 it("deletes after confirming, and keeps the dialog open with the error when Delete fails", async () => {
