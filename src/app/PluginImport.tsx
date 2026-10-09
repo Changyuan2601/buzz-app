@@ -12,6 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   FolderOpenIcon,
+  GearIcon,
   GlobeIcon,
   PlugIcon,
   TerminalWindowIcon,
@@ -141,6 +142,23 @@ function hostDeclarations(manifest: PluginManifest) {
               <p className="m-0">
                 Reads files and resolves folders with your account’s full
                 access.
+              </p>
+            ),
+          },
+        ]
+      : []),
+    ...(manifest.host?.plugins
+      ? [
+          {
+            signature:
+              "Manage plugins: install, turn on or off, and remove plugins",
+            title: "Plugin management:",
+            label: "Install and remove plugins",
+            hint: "Can install, turn on or off, and remove other plugins.",
+            icon: GearIcon,
+            details: (
+              <p className="m-0">
+                Install, turn on or off, and remove plugins.
               </p>
             ),
           },

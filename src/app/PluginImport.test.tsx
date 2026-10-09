@@ -173,6 +173,7 @@ it("shows exact declared access and changes before an enabled update", async () 
             ],
             processes: [{ id: "worker", program: "example-worker" }],
             mcp: true,
+            plugins: true,
           },
         },
       },
@@ -231,6 +232,9 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(screen.getByText(/^Run example-cli/)).toBeVisible();
   expect(screen.getByText(/^Start example-worker/)).toBeVisible();
   expect(screen.getByText(/^Provide tools to local agents/)).toBeVisible();
+  expect(
+    screen.getByText(/^Install and remove plugins \(new or changed\)/),
+  ).toBeVisible();
   const computer = screen.getByRole("button", { name: /^Computer access/ });
   expect(computer).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("region", { name: "Plugin safety" })).toBeNull();
@@ -248,6 +252,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(scopes.getByText(/account’s full access/)).toBeVisible();
   expect(scopes.getAllByText(/HTTPS requests to this address/)).toHaveLength(2);
   expect(scopes.getByText(/Buzz’s local MCP server/)).toBeVisible();
+  expect(scopes.getByText(/remove other plugins/)).toBeVisible();
   expect(screen.getByText(/beyond these declarations/)).toBeVisible();
   expect(
     screen.getByText(/Computer access changes with this update/),

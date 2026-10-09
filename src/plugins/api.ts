@@ -41,6 +41,8 @@ export type PluginManifest = Readonly<{
     /** The plugin may read files with `host.readFile` and resolve directories
      * with `host.resolveDirectory`, with the user's own access. */
     files?: boolean;
+    /** Manage plugins through `ctx.host.plugins`. */
+    plugins?: boolean;
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.
