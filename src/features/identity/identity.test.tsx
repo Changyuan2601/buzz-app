@@ -864,6 +864,73 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   identity.dispose();
 });
 
+it("a community that already admits the new key shows Already a member instead of Join Community", async () => {
+  const origin = "https://relay.example.com:8443";
+  const relayCalls: unknown[] = [];
+  const answer = (status: number, body = "") =>
+    Promise.resolve({ status, headers: {}, body });
+  vi.mocked(invoke).mockImplementation((command, args) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    if (command === "relay_http") {
+      relayCalls.push(args);
+      const { path } = args as { path: string };
+      if (path === "/")
+        return answer(
+          200,
+          JSON.stringify({ name: "Buzz Relay", read_state_snapshot: {} }),
+        );
+      if (path === "/api/join-policy") return answer(404);
+      if (path === "/query") return answer(200, "[]");
+    }
+    throw new Error("Unexpected command");
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={vi.fn().mockResolvedValue(undefined)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await screen.findByRole("heading", { name: "Join a community" });
+  await user.type(
+    screen.getByRole("textbox", { name: "Community URL" }),
+    "relay.example.com:8443{Enter}",
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Already a member" }),
+  ).toBeVisible();
+  expect(screen.getByText(/You’re already a member of/)).toHaveTextContent(
+    "relay.example.com:8443",
+  );
+  expect(screen.queryByRole("heading", { name: "Join Community" })).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  // The probe is the key setup just created, signed by the host: a POST /query
+  // for the viewer's own profile after the two unauthenticated GETs.
+  expect(relayCalls[2]).toEqual({
+    community: origin,
+    path: "/query",
+    method: "POST",
+    body: JSON.stringify([{ kinds: [0], authors: [viewer], limit: 1 }]),
+  });
+  expect(relayCalls).toHaveLength(3);
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Community URL" })).toHaveValue(
+    "relay.example.com:8443",
+  );
+  identity.dispose();
+});
+
 it("a key creation failure stops setup and Back returns to the first-launch screen", async () => {
   vi.mocked(invoke)
     .mockResolvedValueOnce(null)

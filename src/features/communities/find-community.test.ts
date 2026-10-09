@@ -6,6 +6,7 @@ import {
 } from "./find-community";
 
 const url = "https://relay.example.com:8443";
+const viewer = "ab".repeat(32);
 const buzz = {
   name: "Buzz Relay",
   software: "https://github.com/block/buzz",
@@ -22,8 +23,8 @@ const policy = {
 type Answer = Response | Error;
 const html = (status = 200) =>
   new Response("<html><body>Hi</body></html>", { status });
-function fetcher(answers: Record<string, Answer>): RelayFetch {
-  return vi.fn((_origin: string, path: string) => {
+function fetcher(answers: Record<string, Answer>) {
+  return vi.fn<RelayFetch>((_origin, path) => {
     const answer = answers[path];
     if (!answer) throw new Error(`Unexpected path ${path}`);
     return answer instanceof Error
@@ -31,8 +32,8 @@ function fetcher(answers: Record<string, Answer>): RelayFetch {
       : Promise.resolve(answer);
   });
 }
-const find = (answers: Record<string, Answer>) =>
-  findCommunity(url, fetcher(answers), new AbortController().signal);
+const find = (answers: Record<string, Answer>, who?: string) =>
+  findCommunity(url, fetcher(answers), new AbortController().signal, who);
 const failure = (answers: Record<string, Answer>) =>
   find(answers).then(
     () => "found",
@@ -50,13 +51,13 @@ it("reports only what the relay publishes, with the icon sanitized", async () =>
     url,
     host: "relay.example.com:8443",
     icon: "https://cdn.example.com/icon.png",
-    version: "1.4.2",
     policy: {
       version: "v1",
       terms_markdown: "# Terms",
       privacy_markdown: undefined,
       age_attestation_required: true,
     },
+    member: false,
   });
   await expect(
     find({
@@ -72,8 +73,8 @@ it("reports only what the relay publishes, with the icon sanitized", async () =>
     url,
     host: "relay.example.com:8443",
     icon: undefined,
-    version: undefined,
     policy: null,
+    member: false,
   });
 });
 
@@ -130,6 +131,68 @@ it.each([
   },
 );
 
+it("asks a confirmed Buzz relay whether the viewer's key is already admitted", async () => {
+  const request = fetcher({
+    "/": Response.json(buzz),
+    "/api/join-policy": html(404),
+    "/query": Response.json([]),
+  });
+  const found = await findCommunity(
+    url,
+    request,
+    new AbortController().signal,
+    viewer,
+  );
+  expect(found.member).toBe(true);
+  expect(request).toHaveBeenCalledWith(url, "/query", expect.any(AbortSignal), [
+    { kinds: [0], authors: [viewer], limit: 1 },
+  ]);
+});
+
+it.each([
+  ["a 403", new Response("denied", { status: 403 })],
+  ["a 401", new Response("auth", { status: 401 })],
+  ["a 5xx", html(502)],
+  ["a network failure", new TypeError("fetch failed")],
+])(
+  "a membership probe answered by %s is not membership",
+  async (_label, answer) => {
+    await expect(
+      find(
+        {
+          "/": Response.json(buzz),
+          "/api/join-policy": html(404),
+          "/query": answer,
+        },
+        viewer,
+      ),
+    ).resolves.toMatchObject({ member: false });
+  },
+);
+
+it("never signs a query without a key or for a host NIP-11 does not vouch for", async () => {
+  const anonymous = fetcher({
+    "/": Response.json(buzz),
+    "/api/join-policy": html(404),
+  });
+  await findCommunity(url, anonymous, new AbortController().signal);
+  const stranger = fetcher({
+    "/": Response.json({ name: "strfry" }),
+    "/api/join-policy": html(404),
+  });
+  await findCommunity(
+    url,
+    stranger,
+    new AbortController().signal,
+    viewer,
+  ).catch(() => {});
+  for (const request of [anonymous, stranger])
+    expect(request.mock.calls.map(([, path]) => path)).toEqual([
+      "/",
+      "/api/join-policy",
+    ]);
+});
+
 it("reads both documents at once and lets the NIP-11 verdict win", async () => {
   const paths: string[] = [];
   const release: Array<() => void> = [];
@@ -154,6 +217,23 @@ it("passes the caller's abort through instead of calling it unreachable", async 
       signal.addEventListener("abort", () => reject(signal.reason)),
     );
   const found = findCommunity(url, request, controller.signal);
+  controller.abort(new Error("left the page"));
+  await expect(found).rejects.toThrow("left the page");
+});
+
+it("an abort during the membership probe is the caller's, not a verdict", async () => {
+  const controller = new AbortController();
+  const paths: string[] = [];
+  const request: RelayFetch = (_origin, path, signal) => {
+    paths.push(path);
+    return path === "/query"
+      ? new Promise((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason)),
+        )
+      : Promise.resolve(path === "/" ? Response.json(buzz) : html(404));
+  };
+  const found = findCommunity(url, request, controller.signal, viewer);
+  await vi.waitFor(() => expect(paths).toContain("/query"));
   controller.abort(new Error("left the page"));
   await expect(found).rejects.toThrow("left the page");
 });

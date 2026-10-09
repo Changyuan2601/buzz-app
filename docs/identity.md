@@ -33,23 +33,34 @@ Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
 reusable by later flows): the hostname with a spinner and **Cancel**, which
 returns to Join a community with the typed address intact and discards any
 late answer. The page reads the relay's NIP-11 document and `/api/join-policy`
-in parallel through the identity-free native `relay_http` GET path. On success it
-shows only what the relay publishes — the icon if set, the hostname, and *Buzz
-relay v…* when a version is advertised — plus, when the deployment has a join
-policy, *I am 18 years of age or older.* (if age attestation is required) and
-*I agree to the Buzz Terms of Service and Privacy Policy.*, whose links open the
-relay's `/api/join-policy/terms` and `/privacy` pages outside the app. No name,
+in parallel through the identity-free native `relay_http` GET path. Once NIP-11
+confirms a Buzz relay, it also asks whether this device's key is already a
+member: a relay publishes no unauthenticated membership signal, so the page sends
+a `relay_http` POST `/query` for the viewer's own profile, signed with the key
+setup just created, and reads a refusal as "not a member" and any successful
+read as admitted (a relay that doesn't enforce membership admits every key). A
+member skips the next page and sees **Already a member** — *You're already a
+member of {host}* — with **Back** to Join a community; this is the current end
+of first run for members. A probe that fails for any other reason, or has no key
+to sign with, falls through to the normal page.
+
+Otherwise success shows **Join Community**: only what the relay publishes — the
+icon if set and the hostname — plus, when the deployment has a join policy, *I am
+18 years of age or older.* (if age attestation is required) and *I agree to the
+Buzz Terms of Service and Privacy Policy.*, whose links open the relay's
+`/api/join-policy/terms` and `/privacy` pages outside the app. No name,
 description, member count, owner or invite badge is shown: none is knowable
-before joining. **Join** (or **Accept and join** when consent is shown) requires
-every shown box ticked and a join handler; first run passes none, so it is a
-disabled *Coming soon* placeholder — actual joining needs the Communities
-service, which exists only after identity is ready. Failures are classified, not
-echoed: an unreachable relay or an unusable policy answer offers **Retry** and
-**Cancel** (a missing policy counts as "none" only once NIP-11 confirmed a Buzz
-relay); a non-Buzz address or a Buzz relay with no community bound to that host
-offers **Cancel** only. The page is the end of first run for now; the app itself
-opens on the next launch. Denied/unavailable/corrupt storage is not first run and
-keeps the **Retry secure storage access** path.
+before joining. **Join** (or **Accept and join** when consent is shown) sits to
+the right of **Cancel**, as in every dialog footer; it requires every shown box
+ticked and a join handler, and first run passes none, so it is a disabled *Coming
+soon* placeholder — actual joining needs the Communities service, which exists
+only after identity is ready. Failures are classified, not echoed: an
+unreachable relay or an unusable policy answer offers **Cancel** and **Retry** (a
+missing policy counts as "none" only once NIP-11 confirmed a Buzz relay); a
+non-Buzz address or a Buzz relay with no community bound to that host offers
+**Cancel** only. The page is the end of first run for now; the app itself opens
+on the next launch. Denied/unavailable/corrupt storage is not first run and keeps
+the **Retry secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an
