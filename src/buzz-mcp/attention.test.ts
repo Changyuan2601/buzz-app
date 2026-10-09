@@ -430,6 +430,13 @@ describe("the attention tools", () => {
       call("watch_enable", { id: "nudge", expected_state: off.expected_state }),
     ).rejects.toThrow(/^invalid-operation: use watch_rearm/);
     await expect(
+      call("watch_update", {
+        id: "nudge",
+        enabled: true,
+        expected_state: off.expected_state,
+      }),
+    ).rejects.toThrow(/^invalid-operation: use watch_rearm/);
+    await expect(
       call("watch_rearm", {
         id: "nudge",
         at: NOW - 1,
@@ -447,6 +454,35 @@ describe("the attention tools", () => {
       status: "armed",
       used: 0,
       next_due: NOW + 36_000 + 3600,
+    });
+  });
+
+  it("sets a new deadline on every rearm, even in the second it was armed", async () => {
+    const { call } = agent();
+    await call("interest_set", {
+      id: "triage",
+      instructions: "T.",
+      expected_state: ABSENT,
+    });
+    const added = await call("watch_add", {
+      interest: "triage",
+      id: "nudge",
+      type: "timer",
+      prompt: "Check.",
+      interval_secs: 3600,
+      max_occurrences: 5,
+      expected_state: ABSENT,
+    });
+    expect(added.object).toMatchObject({ next_due: NOW + 3600 });
+    const rearmed = await call("watch_rearm", {
+      id: "nudge",
+      interval_secs: 60,
+      expected_state: added.expected_state,
+    });
+    expect(rearmed.object).toMatchObject({
+      armed_at: NOW,
+      used: 0,
+      next_due: NOW + 60,
     });
   });
 });

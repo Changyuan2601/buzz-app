@@ -245,6 +245,9 @@ export type WriteOptions = Readonly<{
   /** The Interest the caller works for. A watch of another, or another
    * Interest, is `wrong-scope`. */
   interest?: string;
+  /** A timer rearm: its deadline is set from `armed_at` even when that is
+   * unchanged, keeping the occurrences used. */
+  rearm?: boolean;
 }>;
 
 /** The record after one checked write: replaces (or with `null` removes) the
@@ -253,7 +256,7 @@ export async function checkedWrite(
   record: AgentRecord,
   slug: string,
   value: AttentionValue | null,
-  { expected, interest }: WriteOptions,
+  { expected, interest, rearm }: WriteOptions,
   now: number,
 ): Promise<AgentRecord> {
   const parsed = parseSlug(slug);
@@ -338,7 +341,7 @@ export async function checkedWrite(
   }
   let after: AgentRecord;
   try {
-    after = setAttention(record, slug, value, now);
+    after = setAttention(record, slug, value, now, rearm ? "rearm" : undefined);
   } catch (error) {
     throw new AttentionError(
       "invalid",

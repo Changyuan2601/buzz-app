@@ -9,7 +9,10 @@ import type {
   EventWatch,
   TimerWatch,
 } from "../features/agents/attention";
-import type { ShownObject } from "../features/agents/attention-objects";
+import type {
+  ShownObject,
+  WriteOptions,
+} from "../features/agents/attention-objects";
 import type { AgentAttention } from "../features/agents/service";
 import type { Tool } from "./tools";
 
@@ -258,6 +261,7 @@ async function run(
       value: EventWatch | TimerWatch,
       shown: Readonly<{ used?: number }>,
     ) => object,
+    write: Partial<WriteOptions> = {},
   ) => {
     const slug = watch("id");
     const current = (await attention.show(slug, scoped)).object;
@@ -267,7 +271,12 @@ async function run(
       stored(current) as EventWatch | TimerWatch,
       current.type === "timer" ? { used: current.used } : {},
     );
-    return shown(attention.write(slug, value as AttentionValue, options()));
+    return shown(
+      attention.write(slug, value as AttentionValue, {
+        ...options(),
+        ...write,
+      }),
+    );
   };
   switch (name) {
     case "interest_set":
@@ -325,6 +334,9 @@ async function run(
         const clear = Array.isArray(args.clear) ? args.clear : [];
         if (value.type === "timer" && clear.length)
           refuse("a timer has no optional fields to clear");
+        // Janet's rule: only a rearm arms a timer, with a new deadline.
+        if (value.type === "timer" && !value.enabled && fields.enabled === true)
+          refuse("use watch_rearm to turn a timer on");
         const next: Record<string, unknown> = { ...value, ...fields };
         for (const key of clear) delete next[String(key)];
         return next;
@@ -342,25 +354,28 @@ async function run(
       const now = seconds();
       if (at !== undefined && (typeof at !== "number" || at < now))
         fail("at must be a Unix time no earlier than now");
-      return edit((value, status) => {
-        if (value.type !== "timer") refuse("only a timer can be rearmed");
-        const next = { ...value, ...timerFields(rest) } as TimerWatch;
-        // Janet's rule: rearming never resets usage, so a spent timer stays
-        // spent until its limits are raised.
-        const used = status.used ?? 0;
-        if (
-          (next.max_occurrences !== null && used >= next.max_occurrences) ||
-          (next.expires_at !== null && now >= next.expires_at)
-        )
-          refuse(
-            "the timer is spent; raise max_occurrences or expires_at to rearm it",
-          );
-        return {
-          ...next,
-          enabled: true,
-          armed_at: typeof at === "number" ? at : now,
-        };
-      });
+      return edit(
+        (value, status) => {
+          if (value.type !== "timer") refuse("only a timer can be rearmed");
+          const next = { ...value, ...timerFields(rest) } as TimerWatch;
+          // Janet's rule: rearming never resets usage, so a spent timer stays
+          // spent until its limits are raised.
+          const used = status.used ?? 0;
+          if (
+            (next.max_occurrences !== null && used >= next.max_occurrences) ||
+            (next.expires_at !== null && now >= next.expires_at)
+          )
+            refuse(
+              "the timer is spent; raise max_occurrences or expires_at to rearm it",
+            );
+          return {
+            ...next,
+            enabled: true,
+            armed_at: typeof at === "number" ? at : now,
+          };
+        },
+        { rearm: true },
+      );
     }
     case "watch_remove":
       return attention.write(watch("id"), null, options());
