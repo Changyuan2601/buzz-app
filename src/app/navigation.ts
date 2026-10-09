@@ -43,19 +43,6 @@ export function useAppNavigation(
     services.plugins.snapshot,
   );
 
-  // The startup visit's deadline can run out while the first-run gate hides every
-  // presenter. That expiry carries no information, so restart the visit once, before
-  // paint, now that a presenter exists. Ingress failures keep their own retry.
-  useLayoutEffect(() => {
-    const current = navigation.snapshot();
-    if (
-      current.status === "failed" &&
-      current.reason === "timeout" &&
-      !current.ingress
-    )
-      void navigation.retry();
-  }, [navigation]);
-
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
