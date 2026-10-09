@@ -204,6 +204,32 @@ it("bundled Links registers, withdraws, and restores a fresh renderer", async ()
   expect(h.service.links.snapshot()[0]?.revision).toBe("two");
 });
 
+it("rejects a link renderer order that is neither a number nor a function", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      const base = { id: "link", title: "Link", matches: () => true };
+      for (const order of [null, "100", {}, true]) {
+        expect(() =>
+          ctx.conversation.registerLink({
+            ...base,
+            order,
+            component: Component,
+          } as never),
+        ).toThrow("order");
+      }
+      ctx.conversation.registerLink({
+        ...base,
+        order: (url) => (url.startsWith("https://") ? 100 : 0),
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() => expect(h.service.links.snapshot()).toHaveLength(1));
+  expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("active");
+});
+
 it("withdraws link presentation when plugin activation fails", async () => {
   const h = harness({
     inject: ["conversation"],

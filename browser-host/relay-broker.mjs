@@ -67,6 +67,7 @@ import {
   signReadState,
   READ_STATE_DECODE_BYTES,
 } from "./read-state.mjs";
+import { READ_STATE_TIMESTAMP_REFUSAL } from "../src/features/relay/read-state-host.ts";
 import { READ_STATE_EVENT_BYTES } from "../src/features/relay/read-state-model.ts";
 import {
   isReadSnapshotFilter,
@@ -2610,7 +2611,9 @@ export function relayBrokerPlugin({
               return json(res, conflict ? 409 : 503, {
                 error:
                   failure?.sent === false &&
-                  failure.refusal?.startsWith("rate-limited:")
+                  (failure.refusal?.startsWith("rate-limited:") ||
+                    (readPublishing &&
+                      failure.refusal === READ_STATE_TIMESTAMP_REFUSAL))
                     ? failure.refusal
                     : "Socket publication could not be confirmed",
                 ...(error instanceof SocketRequestError && !error.sent

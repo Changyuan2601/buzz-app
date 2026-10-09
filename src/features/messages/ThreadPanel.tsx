@@ -48,6 +48,9 @@ export type ThreadPanelProps = {
   channelName: string;
   channelId: string;
   sessionConversation?: boolean | undefined;
+  personalConversation?: boolean | undefined;
+  activityClickOpensPanel?: boolean | undefined;
+  disabled?: boolean | undefined;
   messageId: string;
   replyRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
@@ -156,6 +159,9 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  personalConversation,
+  activityClickOpensPanel,
+  disabled,
   replyRequest,
   active = true,
   revealSelected,
@@ -213,6 +219,9 @@ function OwnedThreadPanel({
   ) : view ? (
     <ThreadMessages
       sessionConversation={sessionConversation}
+      personalConversation={personalConversation}
+      activityClickOpensPanel={activityClickOpensPanel}
+      disabled={disabled}
       extensions={extensions}
       session={session}
       scope={scope}
@@ -249,6 +258,9 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  personalConversation,
+  activityClickOpensPanel,
+  disabled,
   replyRequest,
   active,
   revealSelected,
@@ -256,6 +268,9 @@ function ThreadMessages({
   onDraftSaved,
 }: {
   sessionConversation?: boolean | undefined;
+  personalConversation?: boolean | undefined;
+  activityClickOpensPanel?: boolean | undefined;
+  disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -1066,6 +1081,8 @@ function ThreadMessages({
             snapshot.targetStatus === "ready")) && (
           <MessageComposer
             sessionConversation={sessionConversation}
+            personalConversation={personalConversation}
+            activityClickOpensPanel={activityClickOpensPanel}
             key={`${scope}:${channelId}:${snapshot.root.id}`}
             extensions={extensions}
             session={session}
@@ -1076,6 +1093,7 @@ function ThreadMessages({
             threadRootId={snapshot.root.id}
             replyParentId={replyParent}
             disabled={
+              disabled ||
               (requireReadyRoot &&
                 (snapshot.status !== "ready" || !!snapshot.error)) ||
               (!!replyParent && !selectedParent)

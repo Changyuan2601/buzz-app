@@ -1,3 +1,7 @@
+import {
+  ReadStateTimestampRejected,
+  READ_STATE_TIMESTAMP_REFUSAL,
+} from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -1698,6 +1702,37 @@ it("exposes read-state only for advertised snapshots and keeps signing purpose-b
   await transport.readState.publish?.(event, signal);
   expect(requests.every((r) => r.path !== "/events")).toBe(true);
 });
+
+it.each([
+  [400, READ_STATE_TIMESTAMP_REFUSAL, true],
+  [400, "invalid: other", false],
+  [503, READ_STATE_TIMESTAMP_REFUSAL, false],
+])(
+  "native read-state preserves only definitive timestamp refusal (%s %s)",
+  async (status, error, timestamp) => {
+    const transport = await connectNativeTransport("https://read-expiry.test");
+    assert.exists(transport.readState);
+    const event = signed(viewer, {
+      kind: 30078,
+      created_at: 1700000010,
+      tags: [
+        ["d", `read-state:${"a".repeat(32)}`],
+        ["t", "read-state"],
+      ],
+      content: "ciphertext",
+    });
+    vi.mocked(invoke).mockResolvedValueOnce({
+      status,
+      headers: {},
+      body: JSON.stringify({ error }),
+    });
+    const failure = await transport.readState
+      .publish?.(event, new AbortController().signal)
+      .catch((value: unknown) => value);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure instanceof ReadStateTimestampRejected).toBe(timestamp);
+  },
+);
 
 it("native snapshot quota pauses reads and publication on the same principal", async () => {
   discovery = {

@@ -3,11 +3,27 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LockIcon, TableIcon } from "../../shared/design-system/icons/index";
 import styles from "../../shared/InlineReference.module.css";
 import { InlineLink, LinkLabel, linkKind } from "./InlineLink";
+import { apply } from "./index";
+import type { LinkRenderer } from "../../features/conversation/contracts";
 import {
   LinkLabelContext,
   LinkContentContext,
   LinkChannelPrivateContext,
 } from "../../features/conversation/LinkLabelContext";
+
+it("claims recognised services and Buzz entities by default and unknown websites as a catch-all", () => {
+  let renderer: LinkRenderer | undefined;
+  apply({
+    conversation: { registerLink: (value: LinkRenderer) => (renderer = value) },
+  } as never);
+  const order = renderer?.order;
+  if (typeof order !== "function")
+    throw new Error("expected an order function");
+  expect(order("https://github.com/block/buzz")).toBe(0);
+  expect(order("https://docs.google.com/document/d/1")).toBe(0);
+  expect(order("buzz://channel/general")).toBe(0);
+  expect(order("https://example.com/")).toBe(100);
+});
 
 it("identifies exact GitHub hosts, ordinary websites, and Buzz entity links", () => {
   expect(linkKind("https://github.com/block/buzz")).toBe("github");

@@ -147,3 +147,29 @@ test("companion remains usable while Channels connection is pending", async ({
     release();
   }
 });
+
+// The page promises companion placement even before a conversation exists.
+// Real shell placement and plugin disposal cannot be established by a hook test.
+test("Me places companion plugins in its new-conversation state and removes disabled cards", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  await expect(
+    page.getByRole("heading", { name: "New conversation", exact: true }),
+  ).toBeVisible();
+  await button(page, "Notes").click();
+  await expect(card(page, "Notes")).toHaveCount(1);
+  await companionLauncher(page, "Companion fixture").click();
+  await expect(card(page, "Notes")).toHaveCount(0);
+  await expect(card(page, "Companion fixture")).toHaveCount(1);
+  await button(page, "Notes").click();
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await button(page, "Plugins").click();
+  await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  await openPage(page, "Me");
+  await expect(card(page, "Notes")).toHaveCount(0);
+  await expect(button(page, "Notes")).toHaveCount(0);
+});

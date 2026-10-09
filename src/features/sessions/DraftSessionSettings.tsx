@@ -16,12 +16,14 @@ import {
 export function DraftSessionSettings({
   session,
   sectionId,
+  personal = false,
   canvas,
   save,
   close,
 }: {
   session: RelaySession;
   sectionId?: string | undefined;
+  personal?: boolean;
   canvas?: string | undefined;
   save(canvas: string): void;
   close(): void;
@@ -40,7 +42,7 @@ export function DraftSessionSettings({
         const content =
           canvas ??
           (sectionId
-            ? (await loadSessionSetup(session, sectionId)).canvas
+            ? (await loadSessionSetup(session, sectionId, personal)).canvas
             : "");
         if (!active) return;
         try {
@@ -57,7 +59,7 @@ export function DraftSessionSettings({
     return () => {
       active = false;
     };
-  }, [session, sectionId, canvas, attempt]);
+  }, [session, sectionId, personal, canvas, attempt]);
   return (
     <Dialog
       open

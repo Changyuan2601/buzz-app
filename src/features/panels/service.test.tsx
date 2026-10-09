@@ -66,7 +66,7 @@ it("independently unloads panels without removing the page or shared data", asyn
   }
 });
 
-it("skips faulty matchers, chooses the first match, and removes disposed contributions", async () => {
+it("skips faulty matchers, resolves by order then key, and removes disposed contributions", async () => {
   const root = new Context();
   let active = false;
   const listeners = new Set<() => void>();
@@ -81,6 +81,7 @@ it("skips faulty matchers, chooses the first match, and removes disposed contrib
   });
   const panels = new PanelsService(root);
   const scope = root.extend({ pluginOwner: { id: "test", revision: "one" } });
+  const component = () => null;
   const fiber = scope.plugin((ctx) => {
     ctx.panels.register({
       id: "broken",
@@ -88,28 +89,113 @@ it("skips faulty matchers, chooses the first match, and removes disposed contrib
       matches: () => {
         throw new Error("bad matcher");
       },
-      component: () => null,
+      component,
     });
+    // Registered first, yet the catch-all band loses to every default-band match.
     ctx.panels.register({
-      id: "first",
-      title: "First",
-      matches: (target) => target.startsWith("buzz:"),
-      component: () => null,
-    });
-    ctx.panels.register({
-      id: "second",
-      title: "Second",
+      id: "fallback",
+      title: "Fallback",
       matches: () => true,
-      component: () => null,
+      order: 100,
+      component,
+    });
+    ctx.panels.register({
+      id: "zeta",
+      title: "Zeta",
+      matches: (target) => target.startsWith("buzz:"),
+      component,
+    });
+    // Same band as zeta, registered later: the key decides, not registration.
+    ctx.panels.register({
+      id: "alpha",
+      title: "Alpha",
+      matches: (target) => target.startsWith("buzz:"),
+      component,
+    });
+    // A throwing order counts as the default band rather than being skipped.
+    ctx.panels.register({
+      id: "shaky",
+      title: "Shaky",
+      matches: (target) => target.startsWith("shaky:"),
+      order: () => {
+        throw new Error("bad order");
+      },
+      component,
+    });
+    // One registration, specific on threads and a catch-all elsewhere.
+    ctx.panels.register({
+      id: "threads",
+      title: "Threads",
+      matches: () => true,
+      order: (target) => (target.startsWith("buzz:thread") ? -10 : 100),
+      component,
     });
   });
   await fiber.await();
   expect(panels.resolve("buzz:object")).toBeUndefined();
   active = true;
   for (const listener of listeners) listener();
-  expect(panels.resolve("buzz:object")?.id).toBe("first");
+  expect(panels.resolve("buzz:object")?.id).toBe("alpha");
+  expect(panels.resolve("buzz:thread/1")?.id).toBe("threads");
+  expect(panels.resolve("shaky:1")?.id).toBe("shaky");
+  // Two catch-alls tie at 100; the key breaks it.
+  expect(panels.resolve("https://example.org/")?.id).toBe("fallback");
   await fiber.dispose();
   expect(panels.resolve("buzz:object")).toBeUndefined();
+  await root.fiber.dispose();
+});
+
+it("keeps the specific panel ahead of a catch-all after it is disabled and re-enabled", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const panels = new PanelsService(root);
+  const component = () => null;
+  const browser = root
+    .extend({ pluginOwner: { id: "browser", revision: "one" } })
+    .plugin((ctx) => {
+      ctx.panels.register({
+        id: "site",
+        title: "Site",
+        matches: (target) => target.startsWith("https://"),
+        order: 100,
+        component,
+      });
+    });
+  const github = (revision: string) =>
+    root.extend({ pluginOwner: { id: "github", revision } }).plugin((ctx) => {
+      ctx.panels.register({
+        id: "github",
+        title: "GitHub",
+        matches: (target) => target.startsWith("https://github.com/"),
+        component,
+      });
+    });
+  const pull = "https://github.com/block/buzz/pull/23";
+  const site = "https://example.org/";
+  const first = github("one");
+  await Promise.all([browser.await(), first.await()]);
+  expect(panels.snapshot().map((panel) => panel.key)).toEqual([
+    "browser/site",
+    "github/github",
+  ]);
+  expect(panels.resolve(pull)?.key).toBe("github/github");
+  expect(panels.resolve(site)?.key).toBe("browser/site");
+  await first.dispose();
+  expect(panels.resolve(pull)?.key).toBe("browser/site");
+  const second = github("two");
+  await second.await();
+  expect(panels.snapshot().map((panel) => panel.key)).toEqual([
+    "browser/site",
+    "github/github",
+  ]);
+  expect(panels.resolve(pull)?.key).toBe("github/github");
+  expect(panels.resolve(pull)?.revision).toBe("two");
+  expect(panels.resolve(site)?.key).toBe("browser/site");
+  await second.dispose();
+  await browser.dispose();
   await root.fiber.dispose();
 });
 
@@ -144,6 +230,11 @@ it("validates and freezes launcher metadata without changing target resolution",
       expect(() =>
         ctx.panels.register({ ...base, channelPlacement } as never),
       ).toThrow("placement");
+    }
+    for (const order of [null, "100", {}, true]) {
+      expect(() => ctx.panels.register({ ...base, order } as never)).toThrow(
+        "order",
+      );
     }
     for (const channelMenu of [
       null,

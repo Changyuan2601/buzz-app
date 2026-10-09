@@ -28,6 +28,24 @@ export function canAddMembers(session: RelaySession, channel?: ChannelSummary) {
   );
 }
 
+/** A session share adds only to this session. It never opens ordinary Members UI
+ * or inherits parent-channel membership. */
+export function canShareSession(
+  session: RelaySession,
+  channel?: ChannelSummary,
+) {
+  return !!(
+    session.viewer &&
+    session.outbox?.supports(9000) &&
+    channel?.channelType === "session" &&
+    channel.private &&
+    !channel.readOnly &&
+    !channel.cached &&
+    !channel.archived &&
+    channel.members?.includes(session.viewer)
+  );
+}
+
 /** Reuse the outbox's durable operation on retry, including an unknown result. */
 function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
@@ -76,6 +94,8 @@ export async function addChannelMember(
   signal: AbortSignal,
   intent: MemberAdditionIntent = {},
   receipts: LocalEvents | undefined = session.outbox,
+  sessionParticipant = false,
+  allowSessionAgents = false,
 ) {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
@@ -84,7 +104,11 @@ export async function addChannelMember(
     session.channels.get?.(channelId);
   const check = () => {
     signal.throwIfAborted();
-    if (!canAddMembers(session, channel()))
+    if (
+      !(sessionParticipant
+        ? canShareSession(session, channel())
+        : canAddMembers(session, channel()))
+    )
       throw new Error(
         "This channel cannot add members right now. Refresh and try again.",
       );
@@ -92,6 +116,15 @@ export async function addChannelMember(
       throw new Error(
         "Archived identities cannot be added. Choose someone else.",
       );
+    if (
+      sessionParticipant &&
+      !allowSessionAgents &&
+      (session.agentChoices
+        .snapshot()
+        .identities.some((agent) => agent.pubkey === pubkey) ||
+        session.profiles.snapshot().get(pubkey)?.isAgent)
+    )
+      throw new Error("Add agents with the session agent picker instead.");
   };
   check();
   const outbox = session.outbox;

@@ -5,7 +5,9 @@ import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import {
   createContributions,
+  resolveMatch,
   type Contribution,
+  type MatchOrder,
 } from "../../plugins/contributions";
 
 export type PanelContext = Readonly<{
@@ -45,6 +47,8 @@ export type Panel = Readonly<{
   id: string;
   title: string;
   matches: (url: string) => boolean;
+  /** Claim strength when several panels match a target; see `MatchOrder`. */
+  order?: MatchOrder | undefined;
   // Optional host launcher; placement stays with the current page or host fallback.
   launcher?: Readonly<{ icon: string; target: string }>;
   // Optional channel-header launcher. The page supplies context and owns placement.
@@ -78,14 +82,7 @@ export class PanelsService extends Service implements Panels {
   }
   snapshot = () => this.panels.snapshot();
   subscribe = (listener: () => void) => this.panels.subscribe(listener);
-  resolve = (target: string) =>
-    this.panels.snapshot().find((panel) => {
-      try {
-        return panel.matches(target);
-      } catch {
-        return false;
-      }
-    });
+  resolve = (target: string) => resolveMatch(this.panels.snapshot(), target);
   register(panel: Panel) {
     if (
       !panel ||
@@ -98,6 +95,12 @@ export class PanelsService extends Service implements Panels {
     ) {
       throw new Error("A panel needs an id, title, matcher, and component");
     }
+    if (
+      panel.order !== undefined &&
+      typeof panel.order !== "number" &&
+      typeof panel.order !== "function"
+    )
+      throw new Error("A panel order must be a number or function");
     if (
       panel.launcher !== undefined &&
       (!panel.launcher ||

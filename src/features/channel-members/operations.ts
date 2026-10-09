@@ -38,26 +38,9 @@ export function createMemberAdditions(
     }
   >();
   const intents = new Map<string, MemberAdditionIntent>();
-  const deliveries = new WeakMap<MemberAdditionIntent, Delivery>();
-  const stopReceipts = receipts?.subscribe(() => {
-    const current = new Map(
-      receipts.snapshot().map((item) => [item.event.id, item.delivery]),
-    );
-    for (const intent of intents.values()) {
-      if (!intent.id) continue;
-      const delivery = current.get(intent.id);
-      // Failed outstanding records are removed only by durable explicit dismissal.
-      // Completed echoes can be evicted, so their absence never permits a new send.
-      if (
-        !delivery &&
-        !intent.confirmed &&
-        deliveries.get(intent) === "failed"
-      ) {
-        deliveries.delete(intent);
-        intent.dismissed = true;
-      } else if (delivery) deliveries.set(intent, delivery);
-    }
-  });
+  const stopReceipts = trackMemberAdditionReceipts(receipts, () =>
+    intents.values(),
+  );
   function publish(next: readonly Addition[]) {
     snapshot = next;
     for (const listener of listeners) listener();
@@ -147,5 +130,33 @@ export function createMemberAdditions(
       update({ channelId, pubkey, pending: true, confirmed });
       return operation;
     },
+  });
+}
+
+/** Only observed failed receipts can become explicit dismissals. Missing accepted
+ * or unknown evidence must never authorize a replacement membership write. */
+export function trackMemberAdditionReceipts(
+  receipts: LocalEvents | undefined,
+  intents: () => Iterable<MemberAdditionIntent>,
+) {
+  const deliveries = new WeakMap<MemberAdditionIntent, Delivery>();
+  return receipts?.subscribe(() => {
+    const current = new Map(
+      receipts.snapshot().map((item) => [item.event.id, item.delivery]),
+    );
+    for (const intent of intents()) {
+      if (!intent.id) continue;
+      const delivery = current.get(intent.id);
+      // Failed outstanding records are removed only by durable explicit dismissal.
+      // Completed echoes can be evicted, so their absence never permits a new send.
+      if (
+        !delivery &&
+        !intent.confirmed &&
+        deliveries.get(intent) === "failed"
+      ) {
+        deliveries.delete(intent);
+        intent.dismissed = true;
+      } else if (delivery) deliveries.set(intent, delivery);
+    }
   });
 }

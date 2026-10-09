@@ -551,12 +551,6 @@ test.describe("Inbox session reply admission", () => {
     const detail = inbox.getByRole("region", { name: "Inbox detail" });
     const editor = detail.getByRole("textbox", { name: "Reply to thread" });
     await expect(editor).toBeVisible();
-    await expect(
-      detail.getByRole("button", {
-        name: "Change selected agent",
-        exact: true,
-      }),
-    ).toBeVisible();
     const root = app.histories
       .get("primary/alpha")
       .find((event) => event.content === "Thread root 1");

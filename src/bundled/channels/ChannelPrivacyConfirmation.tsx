@@ -23,7 +23,9 @@ export function ChannelPrivacyConfirmation({
   visibility,
   checked,
   onCheckedChange,
+  hidePreference = false,
 }: {
+  hidePreference?: boolean;
   visibility: Visibility;
   checked: boolean;
   onCheckedChange(checked: boolean): void;
@@ -35,11 +37,13 @@ export function ChannelPrivacyConfirmation({
           ? "Only channel members will have access."
           : "Everyone in this community will be able to view this channel’s full history."}
       </BaseDialog.Description>
-      <Checkbox
-        label="Don’t show me this again"
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-      />
+      {!hidePreference && (
+        <Checkbox
+          label="Don’t show me this again"
+          checked={checked}
+          onCheckedChange={onCheckedChange}
+        />
+      )}
     </div>
   );
 }

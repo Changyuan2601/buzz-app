@@ -201,3 +201,40 @@ it("does not add temporary cleanup to Sessions metadata", () => {
   };
   expect(validChannelCommand(create)).toBe(false);
 });
+
+it("rejects plugin placement metadata in channel creation", () => {
+  const base = {
+    kind: 9007,
+    created_at: 1700000000,
+    content: "",
+    tags: [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["name", "Me"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", "Buzz session (buzz.sessions/v1)"],
+    ],
+  };
+  const personal = ["buzz-space", "personal"];
+  expect(validChannelCommand({ ...base, tags: [...base.tags, personal] })).toBe(
+    false,
+  );
+  for (const extra of [
+    [["buzz-space", "me"]],
+    [["buzz-space"]],
+    [["buzz-space", "personal", "extra"]],
+    [personal, personal],
+    [["ttl", "60"], personal],
+  ])
+    expect(
+      validChannelCommand({ ...base, tags: [...base.tags, ...extra] }),
+    ).toBe(false);
+  expect(
+    validChannelCommand({
+      ...base,
+      tags: base.tags
+        .map((tag) => (tag[0] === "visibility" ? ["visibility", "open"] : tag))
+        .concat([personal]),
+    }),
+  ).toBe(false);
+});

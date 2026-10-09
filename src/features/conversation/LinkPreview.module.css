@@ -1,3 +1,31 @@
+.sessionLink {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  padding: var(--space-half) var(--space-1);
+  border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
+  color: var(--text-standard);
+  text-decoration: none;
+  vertical-align: baseline;
+}
+.sessionLink:hover {
+  background: var(--affordance-subtle-hover);
+}
+html[data-keyboard-navigation] .sessionLink:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.sessionChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  white-space: nowrap;
+  font-size: var(--text-body-sm);
+}
+.sessionChip svg {
+  flex-shrink: 0;
+}
 .popup {
   /* Content layout; the shared PreviewCard owns surface, border and elevation. */
   width: min(21.25rem, calc(100vw - 1.5rem));

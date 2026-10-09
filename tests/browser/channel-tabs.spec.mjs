@@ -1,3 +1,4 @@
+import { chooseConversationTab } from "./conversation-tabs.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -109,23 +110,10 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(
     main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeFocused();
-  const add = async (name) => {
-    await workspace
-      .getByRole("button", { name: "Add tab", exact: true })
-      .click();
-    const picker = workspace.getByRole("region", { name: "Choose a tab" });
-    const search = picker.getByRole("searchbox", {
-      name: "Find a channel or person",
+  const add = (name) =>
+    chooseConversationTab(page, name, {
+      category: name === "Alice Fixture" ? "DMs" : "Channels",
     });
-    await expect(search).toBeFocused();
-    if (name === "Alice Fixture")
-      await picker.getByRole("tab", { name: "DMs", exact: true }).click();
-    await search.fill(name);
-    await picker.getByRole("button", { name, exact: true }).click();
-    await expect(
-      workspace.getByRole("tab", { name, exact: true }),
-    ).toBeFocused();
-  };
   await add("Beta");
   const beta = workspace.getByRole("region", {
     name: "Conversation in Beta",

@@ -80,9 +80,9 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .find((page) => page.key === "buzz.me/me");
     assert.equal(me.primary, true);
     assert.equal(me.placement, "topbar");
-    assert.equal(
+    assert.match(
       renderToStaticMarkup(createElement(me.component)),
-      "<h1>Me</h1>",
+      /Connect to a community to work with your agents\./,
     );
     const messages = services.pages
       .snapshot()
@@ -402,11 +402,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const sessionsPage = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.sessions");
-    assert.equal(sessionsPage.title, "Sessions");
-    assert.equal(sessionsPage.primary, true);
+    assert.equal(sessionsPage.title, "Sessions (now in Me)");
+    assert.equal(sessionsPage.primary, false);
     assert.match(
       renderToStaticMarkup(createElement(sessionsPage.component)),
-      /Connect to a community/,
+      /Opening Me/,
     );
     await services.plugins.change("disable", "buzz.sessions");
     assert.equal(

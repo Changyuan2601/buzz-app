@@ -46,3 +46,9 @@
 .conversation > aside {
   flex: 1;
 }
+.conversation > [data-session-column] {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin-inline: 0;
+}

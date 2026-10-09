@@ -1,6 +1,24 @@
 import type { RelayEvent } from "./events.ts";
 import type { ReadBlob } from "./read-state-model.ts";
 
+export const READ_STATE_TIMESTAMP_REFUSAL =
+  "invalid: event timestamp too far from server time";
+/** Exact public relay reason only; never forward arbitrary rejection text. */
+export function readStateRefusal(body: unknown): string | undefined {
+  if (
+    body &&
+    typeof body === "object" &&
+    "error" in body &&
+    body.error === READ_STATE_TIMESTAMP_REFUSAL
+  )
+    return READ_STATE_TIMESTAMP_REFUSAL;
+}
+export class ReadStateTimestampRejected extends Error {
+  constructor() {
+    super(READ_STATE_TIMESTAMP_REFUSAL);
+  }
+}
+
 export type ReadStateSigning = Readonly<{
   slot: string;
   createdAt: number;

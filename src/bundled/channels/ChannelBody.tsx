@@ -80,7 +80,10 @@ export const ChannelBody = memo(function ChannelBody({
   }, [cached, navigation, window.status]);
   if (window.status === "error" && !window.rows.length)
     return (
-      <div className={styles.empty} role="alert">
+      <div
+        className={`${styles.empty} ${styles.timelinePlaceholder}`}
+        role="alert"
+      >
         <p>{window.error}</p>
         <Button
           type="button"
@@ -93,7 +96,7 @@ export const ChannelBody = memo(function ChannelBody({
   if (window.status !== "ready" && !window.rows.length)
     return (
       <div
-        className={styles.empty}
+        className={`${styles.empty} ${styles.timelinePlaceholder}`}
         role="status"
         data-buzz-launch-pending={!cached ? "required" : undefined}
       >

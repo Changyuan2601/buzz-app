@@ -208,7 +208,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
 });
 
 // Actual grid geometry and resize input need a browser, including the host fallback.
-for (const destination of ["Messages", "Projects"]) {
+for (const destination of ["Messages", "Projects", "Me"]) {
   test(`${destination} main and secondary panels resize without resetting content`, async ({
     page,
     app,
@@ -311,7 +311,7 @@ for (const destination of ["Messages", "Projects"]) {
   });
 }
 
-for (const destination of ["Messages", "Projects"]) {
+for (const destination of ["Messages", "Projects", "Me"]) {
   test(`${destination} desktop panel closes immediately and reopens at its saved width`, async ({
     page,
     app,

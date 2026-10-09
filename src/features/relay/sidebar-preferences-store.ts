@@ -46,6 +46,8 @@ export function createSidebarPreferencesStore(
   writeSort?: SidebarSortMutator,
   persistence?: HeadPersistence,
   removeSection?: SidebarSectionRemover,
+  /** Me groups have no Star coordinate; do not write Messages stars on moves. */
+  groupsOnly = false,
 ) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -65,7 +67,7 @@ export function createSidebarPreferencesStore(
     !!confirmed &&
     readFailure === undefined &&
     !!write &&
-    !!writeStar;
+    (groupsOnly || !!writeStar);
   let nextMove = 0;
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
@@ -247,7 +249,14 @@ export function createSidebarPreferencesStore(
     signal?: AbortSignal,
     source = confirmed?.groupSource,
   ): Promise<SidebarPreferences> {
-    if (!writable() || !snapshot.data || !confirmed || !writeStar || !write)
+    if (
+      !writable() ||
+      !snapshot.data ||
+      !confirmed ||
+      !write ||
+      (!writeStar && !groupsOnly) ||
+      (groupsOnly && "starred" in destination)
+    )
       return rejectMove(
         channelId,
         "Sidebar group moves are unavailable; refresh saved sidebar preferences before retrying",
@@ -287,10 +296,10 @@ export function createSidebarPreferencesStore(
                 ? write({ channelId, ...destination }, writeSignal, source)
                 : write({ channelId, ...destination }, writeSignal));
           check();
-          const stars = await writeStar(
-            { channelId, starred: starring },
-            writeSignal,
-          );
+          const stars =
+            !groupsOnly && writeStar
+              ? await writeStar({ channelId, starred: starring }, writeSignal)
+              : [];
           check();
           if (!confirmed)
             throw new Error("Sidebar group moves are unavailable");
@@ -548,7 +557,7 @@ export function createSidebarPreferencesStore(
         return move(channelId, { createSection: section }, signal);
       },
       get starWritable() {
-        return writable();
+        return !groupsOnly && writable();
       },
       async setStar(channelId: string, starred: boolean, signal?: AbortSignal) {
         const data = await move(

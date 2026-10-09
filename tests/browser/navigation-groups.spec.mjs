@@ -329,7 +329,7 @@ const sessionSidebar = test.extend({
   sessionParents: { alpha: sessionParent },
 });
 sessionSidebar(
-  "moving a channel does not expose its legacy child sessions",
+  "moving a channel leaves its legacy child as a standalone row",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -340,7 +340,7 @@ sessionSidebar(
     const parent = parentIn("channels");
     const child = sidebar(page).locator('[data-channel-id="alpha"]');
     await expect(parent).toBeVisible();
-    await expect(child).toHaveCount(0);
+    await expect(child).toBeVisible();
     await expect(
       page.getByRole("button", { name: /New session draft in/ }),
     ).toHaveCount(0);

@@ -14,7 +14,12 @@ import {
   signReadState,
   // @ts-expect-error Node-only host module
 } from "../../../browser-host/read-state.mjs";
-import type { ReadStateSigning } from "./read-state-host";
+import {
+  ReadStateTimestampRejected,
+  READ_STATE_TIMESTAMP_REFUSAL,
+  type ReadStateSigning,
+} from "./read-state-host";
+import { acceptReadStatePublish } from "./transport";
 
 const owners: ReturnType<typeof createReadState>[] = [];
 afterEach(() => {
@@ -121,6 +126,316 @@ describe("durable read-state owner", () => {
     expect(f.host.publish).toHaveBeenCalledTimes(3);
     expect(ownerStatus(second)).toBe("reconciled");
     expect(f.journal()?.lastCreatedAt).toBe(101);
+  });
+  it.each(
+    [900, 901].flatMap((elapsed) =>
+      [false, true].flatMap((originalStored) =>
+        [false, true].map((newerIntent) => ({
+          elapsed,
+          originalStored,
+          newerIntent,
+        })),
+      ),
+    ),
+  )(
+    "recovers after $elapsed seconds (original stored: $originalStored, newer intent: $newerIntent)",
+    async ({ elapsed, originalStored, newerIntent }) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      let now = 100;
+      f.host.sign.mockImplementation(async (intent) =>
+        signReadState(intent, f.key.secret, now),
+      );
+      const store = f.host.publish.getMockImplementation();
+      if (!store) throw new Error("Missing fixture publisher");
+      f.host.publish.mockImplementation(async (event) => {
+        // Buzz relay ingest checks ±900 seconds before storing the event.
+        // Match the browser broker's current proven-rejection response shape;
+        // use the real response parser rather than guessing its error type.
+        if (Math.abs(event.created_at - now) > 900) {
+          await acceptReadStatePublish(
+            Response.json(
+              {
+                error: READ_STATE_TIMESTAMP_REFUSAL,
+                sent: false,
+              },
+              { status: 503 },
+            ),
+            event.id,
+          );
+          throw new Error("Timestamp refusal unexpectedly accepted");
+        }
+        await store(event);
+      });
+      f.host.publish.mockImplementationOnce(async (event) => {
+        expect(f.journal()?.pending?.event).toEqual(event);
+        if (originalStored) await store(event);
+        throw new Error("response lost");
+      });
+
+      const first = f.make({ now: () => now });
+      await first.ready;
+      await first.read("room", 12, () => true);
+      await first.flush();
+      const saved = f.journal();
+      expect(saved?.pending?.event.created_at).toBe(100);
+      expect(saved?.acceptedRevision).toBe(0);
+      expect(first.snapshot()).toMatchObject({
+        status: "error",
+        error: "response lost",
+      });
+      first.dispose();
+      // Restart from serialized, validated storage, not an owner's cached state.
+      f.setJournal(
+        readJournal(JSON.parse(JSON.stringify(saved)), f.key.pubkey),
+      );
+      now += elapsed;
+      const second = f.make({ now: () => now });
+      await second.ready;
+      if (newerIntent) await second.read("room", 13, () => true);
+      // Include marker refresh as well as explicit retry, like Retry sync.
+      await second.refresh();
+      await second.flush();
+      await second.flush();
+
+      const remote = await f.reader.read();
+      const observed = decodeReadState(remote, f.key.secret)[0]?.blob;
+      const latest = newerIntent ? 13 : 12;
+      const revision = newerIntent ? 2 : 1;
+      expect({
+        status: second.snapshot().status,
+        pending: f.journal()?.pending?.event.id,
+        localFrontier: second.state().frontiers.room,
+        remoteFrontier: observed?.contexts.room,
+        revision: f.journal()?.revision,
+        acceptedRevision: f.journal()?.acceptedRevision,
+      }).toEqual({
+        status: "reconciled",
+        pending: undefined,
+        localFrontier: latest,
+        remoteFrontier: latest,
+        revision,
+        acceptedRevision: revision,
+      });
+    },
+  );
+  it.each(["readback", "decode", "storage", "sign", "replacement-save"])(
+    "preserves pending and newer intent when expired recovery fails at %s",
+    async (failure) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      let now = 100;
+      f.host.sign.mockImplementation(async (intent) =>
+        signReadState(intent, f.key.secret, now),
+      );
+      const owner = f.make({ now: () => now });
+      await owner.ready;
+      await owner.read("room", 12, () => true);
+      f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+      await owner.flush();
+      const pending = f.journal()?.pending;
+      if (!pending) throw new Error("Missing pending fixture");
+      now = 1001;
+      await owner.read("room", 13, () => true);
+      await owner.markLocalUnread("other", () => true);
+      f.host.publish.mockRejectedValueOnce(new ReadStateTimestampRejected());
+      const error = new Error(`failed ${failure}`);
+      if (failure === "readback") f.reader.read.mockRejectedValueOnce(error);
+      if (failure === "decode") f.host.decode.mockRejectedValueOnce(error);
+      if (failure === "sign") f.host.sign.mockRejectedValueOnce(error);
+      const update = vi.mocked(f.storage.update).getMockImplementation();
+      if (!update) throw new Error("Missing fixture storage");
+      if (failure === "storage" || failure === "replacement-save")
+        vi.mocked(f.storage.update).mockImplementation(async (change) =>
+          update((current) => {
+            const next = change(current);
+            // Flush first reloads unchanged storage, then readback saves, then
+            // the replacement save changes the event ID. Fail inside acceptance.
+            if (
+              failure === "storage"
+                ? next !== current
+                : next.pending?.event.id !== pending.event.id
+            )
+              throw error;
+            return next;
+          }),
+        );
+      await owner.flush();
+      expect(owner.snapshot()).toMatchObject({
+        status: "error",
+        error: error.message,
+      });
+      expect(f.journal()?.pending).toEqual(pending);
+      expect(f.journal()?.acceptedRevision).toBe(0);
+      expect(owner.state().frontiers.room).toBe(13);
+      expect(owner.localUnread("other")).toBeDefined();
+      expect(f.host.publish).toHaveBeenCalledTimes(2);
+      vi.mocked(f.storage.update).mockImplementation(update);
+      f.host.publish.mockRejectedValueOnce(new ReadStateTimestampRejected());
+      await owner.flush();
+      expect(owner.snapshot().status).toBe("reconciled");
+      expect(owner.state().frontiers.room).toBe(13);
+      expect(owner.localUnread("other")).toBeDefined();
+    },
+  );
+  it.each([
+    { now: 1001, error: new Error("outcome unknown") },
+    { now: 1001, error: new Error("rate-limited: quota exceeded") },
+    { now: 50, error: new ReadStateTimestampRejected() },
+    { now: 160, error: new ReadStateTimestampRejected() },
+  ])(
+    "does not renew unrelated failures or clock-skewed state: $now $error",
+    async ({ now, error }) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      let time = 100;
+      const owner = f.make({ now: () => time });
+      await owner.ready;
+      await owner.read("room", 12, () => true);
+      f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+      await owner.flush();
+      const pending = f.journal()?.pending;
+      time = now;
+      f.host.publish.mockRejectedValue(error);
+      await owner.flush();
+      await owner.flush();
+      expect(f.journal()?.pending).toEqual(pending);
+      expect(f.host.sign).toHaveBeenCalledTimes(1);
+      expect(
+        f.host.publish.mock.calls.slice(1).map(([event]) => event),
+      ).toEqual([pending?.event, pending?.event]);
+    },
+  );
+  it("stops after one replacement if the relay still refuses its timestamp", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    let now = 100;
+    f.host.sign.mockImplementation(async (intent) =>
+      signReadState(intent, f.key.secret, now),
+    );
+    const owner = f.make({ now: () => now });
+    await owner.ready;
+    await owner.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await owner.flush();
+    now = 1001;
+    f.host.publish.mockRejectedValue(new ReadStateTimestampRejected());
+    await owner.flush();
+    expect(f.host.sign).toHaveBeenCalledTimes(2);
+    expect(f.host.publish).toHaveBeenCalledTimes(3);
+    expect(f.journal()?.pending?.event.created_at).toBe(1001);
+    expect(f.journal()?.acceptedRevision).toBe(0);
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(f.host.publish).toHaveBeenCalledTimes(3);
+  });
+  it("merges peer intent saved during expired readback and keeps local-only data", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    let now = 100;
+    f.host.sign.mockImplementation(async (intent) =>
+      signReadState(intent, f.key.secret, now),
+    );
+    const owner = f.make({ now: () => now });
+    await owner.ready;
+    await owner.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await owner.flush();
+    const pending = f.journal()?.pending;
+    const peer = f.make({ now: () => now });
+    await peer.ready;
+    now = 1001;
+    f.host.publish.mockRejectedValueOnce(new ReadStateTimestampRejected());
+    let release!: () => void;
+    let began!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      began = resolve;
+    });
+    f.reader.read.mockImplementationOnce(async () => {
+      began();
+      await gate;
+      return [];
+    });
+    const flush = owner.flush();
+    try {
+      await started;
+      await peer.read("peer", 20, () => true);
+      await peer.markLocalUnread("manual", () => true);
+      const saved = f.journal();
+      if (!saved) throw new Error("Missing fixture journal");
+      f.setJournal({ ...saved, reserve: { archived: 8 } });
+      expect(f.journal()?.pending).toEqual(pending);
+    } finally {
+      release();
+    }
+    await flush;
+    expect(owner.snapshot().status).toBe("reconciled");
+    expect(owner.state().frontiers).toMatchObject({
+      room: 12,
+      peer: 20,
+      archived: 8,
+    });
+    expect(owner.localUnread("manual")).toBeDefined();
+    expect(f.journal()?.acceptedRevision).toBe(f.journal()?.revision);
+    expect(f.host.sign).toHaveBeenCalledTimes(2);
+    expect(f.host.publish).toHaveBeenCalledTimes(3);
+  });
+  it("blocks expired recovery on a conflicting slot client", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    let now = 100;
+    const owner = f.make({ now: () => now });
+    await owner.ready;
+    await owner.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await owner.flush();
+    const saved = f.journal();
+    if (!saved) throw new Error("Missing fixture journal");
+    now = 1001;
+    const conflict = eventDto(
+      signReadState(
+        {
+          slot: saved.slot,
+          createdAt: now,
+          blob: { v: 1, client_id: "another-client", contexts: { room: 13 } },
+        },
+        f.key.secret,
+        now,
+      ),
+    );
+    f.reader.read.mockResolvedValue([conflict]);
+    f.host.publish.mockRejectedValueOnce(new ReadStateTimestampRejected());
+    await owner.flush();
+    expect(owner.snapshot()).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("slot conflict"),
+    });
+    expect(f.journal()?.pending).toEqual(saved.pending);
+    expect(f.journal()?.acceptedRevision).toBe(0);
+    expect(f.host.sign).toHaveBeenCalledTimes(1);
+  });
+  it("does not replace expired pending bytes after disposal during readback", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    let now = 100;
+    const owner = f.make({ now: () => now });
+    await owner.ready;
+    await owner.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await owner.flush();
+    const pending = f.journal()?.pending;
+    now = 1001;
+    f.host.publish.mockRejectedValueOnce(new ReadStateTimestampRejected());
+    f.reader.read.mockImplementationOnce(async () => {
+      owner.dispose();
+      return [];
+    });
+    await owner.flush();
+    expect(f.journal()?.pending).toEqual(pending);
+    expect(f.host.sign).toHaveBeenCalledTimes(1);
+    expect(f.host.publish).toHaveBeenCalledTimes(2);
   });
   it("retains accepted-but-unobserved identity and surfaces the gap", async () => {
     const f = fixture();

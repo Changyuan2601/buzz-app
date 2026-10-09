@@ -12,6 +12,7 @@ export type PendingStart = {
   messageId?: string;
   setup?: SessionSetup;
   setupDone?: boolean;
+  placementDone?: boolean;
 };
 const sessionId =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -40,6 +41,11 @@ export function readPending(
     )
   )
     return;
+  if (
+    value.placementDone !== undefined &&
+    typeof value.placementDone !== "boolean"
+  )
+    return;
   return value as PendingStart;
 }
 
@@ -65,7 +71,12 @@ export function pendingSessionDraft(
       )
         continue;
       const draftKey = pair[1].endsWith(":pending") ? pair[1].slice(0, -8) : "";
-      if (draftKey !== "sessions" && !draftKey.startsWith("sessions:section:"))
+      if (
+        !["sessions", "me"].includes(draftKey) &&
+        !["sessions:section:", "me:section:"].some((prefix) =>
+          draftKey.startsWith(prefix),
+        )
+      )
         continue;
       if (readPending(scope, draftKey)?.id === channelId) return draftKey;
     }

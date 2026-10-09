@@ -1,20 +1,13 @@
+import { pendingSessionDraft } from "../../features/sessions/pending-start";
+import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import type { AgentControl } from "../../features/agents/control";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import {
-  ChannelTabPicker,
-  channelToolIcon,
-  isChannelTabTool,
-} from "./ChannelTabPicker";
-import { ConversationTab } from "./ConversationTab";
+import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { ChannelBody } from "./ChannelBody";
-import {
-  useChannelTabState,
-  panelTabId,
-  type PanelOpening,
-} from "./useChannelTabState";
+import { useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -29,7 +22,6 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useChannelPanels } from "./useChannelPanels";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
@@ -39,8 +31,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import {
   buzzLinkTarget,
   isBuzzLink,
+  parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { SessionShare } from "../sessions/SessionShare";
 import {
   SessionColumn,
   SessionHeading,
@@ -62,16 +56,14 @@ import {
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
-  BrowserIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type { Panels } from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
-import { PanelCard } from "../../features/panels/PanelCard";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -87,7 +79,7 @@ import {
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -284,7 +276,6 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
-  const panelTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels, profiles } = useChannelLabels(
     list.channels,
@@ -450,6 +441,35 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
+  const pendingStart = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => (currentId ? pendingSessionDraft(scope, currentId) : undefined),
+  );
+  useEffect(() => {
+    if (
+      !pendingStart ||
+      !current ||
+      current.cached ||
+      resolving ||
+      navigation?.signal.aborted ||
+      navigation?.target.kind !== "conversation"
+    )
+      return;
+    // Recovery replaces the timeline, so it owns completion of the plain route.
+    // An exact address cannot be claimed opened without revealing its message.
+    navigation.complete(
+      requestedMessage || requestedThread
+        ? { status: "failed", reason: "unavailable" }
+        : { status: "opened" },
+    );
+  }, [
+    pendingStart,
+    current,
+    resolving,
+    navigation,
+    requestedMessage,
+    requestedThread,
+  ]);
   const canvasOpen =
     !!canvasOrigin &&
     canvasOrigin.channelId === currentId &&
@@ -494,15 +514,8 @@ function ChannelWorkspace({
     committedVisit.current = { currentId, queries };
   }, [currentId, queries]);
   const tabState = useChannelTabState(queries, currentId);
-  const {
-    thread,
-    setThread,
-    settings,
-    setSettings,
-    entries,
-    setEntries,
-    retireMenuEntries,
-  } = tabState;
+  const { thread, setThread, settings, setSettings, retireMenuEntries } =
+    tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draftParent) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -515,7 +528,6 @@ function ChannelWorkspace({
 
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsFocus, requestSettingsFocus] = useState(0);
-  const splitTrigger = useRef<HTMLButtonElement>(null);
   const showingSettings =
     tabState.paneOpen &&
     !!settings &&
@@ -642,54 +654,66 @@ function ChannelWorkspace({
     () => ({ queries, scope, threadChannelId, threadMessageId }),
     [queries, scope, threadChannelId, threadMessageId],
   );
-  type Opening = PanelOpening;
-  const opened = entries.find(
-    (entry) => panelTabId(entry) === tabState.selected,
-  );
-  const entryList = useRef<Opening[]>(entries);
-  const opening = useRef<Opening | undefined>(opened);
-  const renderedChannel = useRef({ currentId, queries });
-  if (
-    renderedChannel.current.currentId !== currentId ||
-    renderedChannel.current.queries !== queries
-  ) {
-    renderedChannel.current = { currentId, queries };
-    entryList.current = entries;
-    opening.current = opened;
-  }
-  const selectOpening = useCallback(
-    (next: Opening | undefined) => {
-      opening.current = next;
-      tabState.select(next ? panelTabId(next) : "thread");
-    },
-    [tabState.select],
-  );
-  const open = useCallback(
-    (next: Opening | undefined, append = false) => {
-      const existing =
-        append && next
-          ? entryList.current.find(
-              (entry) =>
-                entry.panel === next.panel && entry.target === next.target,
-            )
-          : undefined;
-      const selected = existing || next;
-      // Timeline actions replace transient details, never retained channel tools.
-      const retained = append
-        ? entryList.current
-        : entryList.current.filter(
-            (entry) =>
-              entry.channelContext &&
-              (!selected || panelTabId(entry) !== panelTabId(selected)),
-          );
-      const updated =
-        selected && !existing ? [...retained, selected] : retained;
-      entryList.current = updated;
-      setEntries(updated);
-      selectOpening(selected);
-    },
-    [selectOpening, setEntries],
-  );
+  const conversationIcon = (item: (typeof channels)[number]) => {
+    const Icon = channelIcon(item);
+    const person = item.participants?.[0];
+    const picture = person ? profiles.get(person)?.picture : undefined;
+    return item.channelType === "dm" ? (
+      <span className={tabStyles.icon}>
+        <Avatar
+          alt=""
+          fallback={item.name}
+          size="fill"
+          src={picture ? queries.media(picture) : null}
+        />
+      </span>
+    ) : (
+      <Icon size="1rem" />
+    );
+  };
+  const secondary = useConversationTabs({
+    state: tabState,
+    relay,
+    session: queries,
+    panels,
+    current,
+    scope,
+    channels,
+    conversationIcon,
+    extensions,
+    leadingIds: [
+      ...(settings ? ["settings"] : []),
+      ...(showingThread ? ["thread"] : []),
+    ],
+    threadId: showingThread?.messageId,
+    onOpenDrawer: () => setSettings(undefined),
+    continuingVisit,
+    isLive: () => !destination.current.navigation?.signal.aborted,
+    openLink: (url) => openLink(url, true),
+    fallbackFocus: settingsTrigger,
+    eligible: (entry) =>
+      !entry.panel.channelMenu ||
+      !!(
+        current &&
+        current.id === entry.channelId &&
+        !cached &&
+        entry.panel.channelMenu.eligible(current, queries)
+      ),
+  });
+  const {
+    open,
+    selectOpening,
+    panelTabs,
+    drawer,
+    drawerContext,
+    rootTabIds,
+    selectedTab,
+    selectPanelTab,
+    afterClose,
+    addTab,
+    panelTrigger,
+    splitTrigger,
+  } = secondary;
   const previousThreadRoute = useRef({ currentId, requestedMessage });
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
@@ -761,27 +785,13 @@ function ChannelWorkspace({
     handoff?.activityAgent,
     current?.id,
     panels,
+    panelTrigger,
   ]);
   // Menu panels belong to one visit. Retire only this visit's keyed entries.
   useEffect(() => {
     if (!currentId) return;
     return () => retireMenuEntries();
   }, [currentId, retireMenuEntries]);
-  const panelTabs = entries.filter(
-    (entry) =>
-      available.includes(entry.panel) &&
-      (!entry.panel.channelMenu ||
-        (current &&
-          current.id === entry.channelId &&
-          !cached &&
-          entry.panel.channelMenu.eligible(current, queries))) &&
-      (!entry.channelContext ||
-        (current &&
-          !current.readOnly &&
-          !current.archived &&
-          current.id === entry.channelId)),
-  );
-  const panel = opened && panelTabs.includes(opened) ? opened.panel : undefined;
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {
@@ -793,13 +803,6 @@ function ChannelWorkspace({
       mounted.current = false;
     };
   }, []);
-  useEffect(() => {
-    if (entries.length !== panelTabs.length) {
-      entryList.current = panelTabs;
-      setEntries(panelTabs);
-    }
-    if (opened && !panel) selectOpening(undefined);
-  }, [entries.length, panelTabs, opened, panel, setEntries, selectOpening]);
   const [replyRequest, setReplyRequest] = useState<{
     channelId: string;
     messageId: string;
@@ -964,6 +967,34 @@ function ChannelWorkspace({
         navigation?.signal.aborted
       )
         return false;
+      const parsed = parseBuzzLink(url);
+      const linkedSession =
+        parsed?.format === "legacy" &&
+        !parsed.messageId &&
+        queries.channels
+          .list()
+          .channels.find(
+            (item) =>
+              item.id === parsed.channelId &&
+              item.channelType === "session" &&
+              !item.cached &&
+              !item.readOnly &&
+              !item.archived &&
+              item.members?.includes(queries.viewer ?? ""),
+          );
+      if (linkedSession && linkedSession.id !== current?.id) {
+        const id = `conversation:${linkedSession.id}`;
+        tabState.setTabs((tabs) =>
+          tabs.some((tab) => tab.id === id)
+            ? tabs
+            : [
+                ...tabs,
+                { id, kind: "conversation", channelId: linkedSession.id },
+              ],
+        );
+        tabState.select(id);
+        return true;
+      }
       if (isBuzzLink(url) && navigator && viewer) {
         const target = buzzLinkTarget(url, {
           viewer,
@@ -1020,248 +1051,14 @@ function ChannelWorkspace({
       scope,
       setSettings,
       setThread,
+      tabState,
+      panelTrigger,
     ],
   );
   const openThreadLink = useCallback(
     (url: string) => openLink(url, true),
     [openLink],
   );
-  const panelActive = (entry: Opening) => {
-    const connection = relay.snapshot();
-    return !!(
-      mounted.current &&
-      opened &&
-      panel &&
-      opening.current === entry &&
-      panels.snapshot().includes(panel) &&
-      connection.status === "ready" &&
-      connection.session === queries &&
-      !navigation?.signal.aborted
-    );
-  };
-  const panelContext = (entry: Opening) => ({
-    channelId: entry.channelId,
-    canOpen: (target: string) => !!panels.resolve(target),
-    open: (target: string) => {
-      if (!panelActive(entry)) return false;
-      const next = panels.resolve(target);
-      if (!next) return false;
-      const existing = entryList.current.find(
-        (item) => item.panel === next && item.target === target,
-      );
-      const replacement = existing ?? { ...entry, panel: next, target };
-      entryList.current = entryList.current
-        .map((item) => (item === entry ? replacement : item))
-        .filter((item, index, all) => all.indexOf(item) === index);
-      setEntries(entryList.current);
-      selectOpening(replacement);
-      return true;
-    },
-    push: (target: string) => {
-      if (!panelActive(entry)) return false;
-      const next = panels.resolve(target);
-      if (!next) return false;
-      open({ channelId: entry.channelId, panel: next, target }, true);
-      return true;
-    },
-  });
-  const tabId = panelTabId;
-  const closeTab = (entry: Opening) => {
-    const remaining = entryList.current.filter((item) => item !== entry);
-    entryList.current = remaining;
-    setEntries(remaining);
-    afterClose(tabId(entry), panelTrigger.current);
-  };
-  const drawerContext = useMemo(
-    () =>
-      current && !current.readOnly && viewer
-        ? {
-            scope,
-            viewer,
-            channelId: current.id,
-            channelName: current.name,
-            relayUrl: scope
-              .slice(0, -(viewer.length + 1))
-              .replace(/^https:/, "wss:")
-              .replace(/^http:/, "ws:"),
-            ...(showingThread && { threadId: showingThread.messageId }),
-          }
-        : undefined,
-    [scope, viewer, current, showingThread],
-  );
-  const drawer = useChannelPanels(
-    panels,
-    drawerContext,
-    () => {
-      setSettings(undefined);
-      tabState.setPaneOpen(true);
-    },
-    (panel) => {
-      const entry = panelTabs.find(
-        (entry) => entry.panel === panel && entry.channelContext,
-      );
-      if (!entry) return false;
-      if (tabState.paneOpen && tabState.selected === panelTabId(entry))
-        tabState.setPaneOpen(false);
-      else selectOpening(entry);
-      return true;
-    },
-  );
-  const tabTools =
-    drawerContext && !current?.archived
-      ? available.filter(isChannelTabTool)
-      : [];
-  const chooseTool = (id: string, panel: RegisteredPanel) => {
-    const connection = relay.snapshot();
-    if (
-      connection.status !== "ready" ||
-      connection.session !== queries ||
-      !drawerContext ||
-      !tabTools.includes(panel) ||
-      !panels.snapshot().includes(panel)
-    )
-      return;
-    // A terminal's screen/session has one presentation owner at a time.
-    drawer.close();
-    panelTrigger.current = splitTrigger.current;
-    tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
-    open(
-      {
-        panel,
-        target: drawerContext.channelId,
-        channelId: drawerContext.channelId,
-        channelContext: drawerContext,
-      },
-      true,
-    );
-  };
-  const tabDestinations = channels.filter(
-    (item) =>
-      item.id !== currentId &&
-      !item.cached &&
-      !item.readOnly &&
-      item.channelType !== "session",
-  );
-  const conversationIcon = (item: (typeof channels)[number]) => {
-    const Icon = channelIcon(item);
-    const person = item.participants?.[0];
-    const picture = person ? profiles.get(person)?.picture : undefined;
-    return item.channelType === "dm" ? (
-      <span className={tabStyles.icon}>
-        <Avatar
-          alt=""
-          fallback={item.name}
-          size="fill"
-          src={picture ? queries.media(picture) : null}
-        />
-      </span>
-    ) : (
-      <Icon size="1rem" />
-    );
-  };
-  const rootTabIds = [
-    ...(settings ? ["settings"] : []),
-    ...(showingThread ? ["thread"] : []),
-    ...tabState.tabs.map((tab) => tab.id),
-    ...panelTabs.map(tabId),
-  ];
-  const selectedTab = rootTabIds.includes(tabState.selected)
-    ? tabState.selected
-    : (rootTabIds[0] ?? "");
-  const selectPanelTab = (id: string) => {
-    opening.current = panelTabs.find((entry) => tabId(entry) === id);
-    tabState.select(id);
-  };
-  const afterClose = (id: string, trigger?: HTMLElement | null) => {
-    if (id !== selectedTab) return;
-    const index = rootTabIds.indexOf(id);
-    const remaining = rootTabIds.filter((tab) => tab !== id);
-    selectPanelTab(remaining[Math.min(index, remaining.length - 1)] ?? "");
-    if (!remaining.length)
-      (trigger?.isConnected ? trigger : settingsTrigger.current)?.focus({
-        preventScroll: true,
-      });
-  };
-  const addTab = () => {
-    const id = `new:${crypto.randomUUID()}`;
-    tabState.setTabs((tabs) => [...tabs, { id, kind: "new" }]);
-    selectPanelTab(id);
-  };
-  const closeConversationTab = (id: string) => {
-    tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
-    afterClose(id);
-    if (rootTabIds.length === 1)
-      splitTrigger.current?.focus({ preventScroll: true });
-  };
-  const chooseConversation = (id: string, channelId: string) => {
-    // Recheck current membership at activation, not just the rendered search result.
-    const target = queries.channels
-      .list()
-      .channels.find((item) => item.id === channelId);
-    if (
-      !target ||
-      target.cached ||
-      target.readOnly ||
-      target.archived ||
-      channelId === currentId
-    )
-      return;
-    const existing = tabState.tabs.find(
-      (tab) => tab.kind === "conversation" && tab.channelId === channelId,
-    );
-    const targetId = `conversation:${channelId}`;
-    tabState.setTabs((tabs) =>
-      existing
-        ? tabs.filter((tab) => tab.id !== id)
-        : tabs.map((tab) =>
-            tab.id === id
-              ? { id: targetId, kind: "conversation", channelId }
-              : tab,
-          ),
-    );
-    selectPanelTab(existing?.id ?? targetId);
-  };
-  const openConversationThread = (
-    channelId: string,
-    messageId: string,
-    rootId: string,
-    intent?: "reply",
-  ) => {
-    const id = `thread:${channelId}:${rootId}`;
-    tabState.setTabs((tabs) => {
-      const existing = tabs.find((tab) => tab.id === id);
-      const next = {
-        id,
-        kind: "thread" as const,
-        channelId,
-        messageId,
-        replyRequest:
-          intent === "reply"
-            ? ((existing?.kind === "thread" ? existing.replyRequest : 0) ?? 0) +
-              1
-            : undefined,
-      };
-      return existing
-        ? tabs.map((tab) => (tab.id === id ? next : tab))
-        : [...tabs, next];
-    });
-    selectPanelTab(id);
-  };
-  const openConversationLink = (channelId: string, url: string) => {
-    const connection = relay.snapshot();
-    if (connection.status !== "ready" || connection.session !== queries)
-      return false;
-    const candidate = panels.resolve(url);
-    if (candidate) {
-      panelTrigger.current =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null;
-      open({ channelId, panel: candidate, target: url }, true);
-      return true;
-    }
-    return openLink(url, true);
-  };
   const hasChannelPanel =
     !composingMessage &&
     (settings ||
@@ -1467,9 +1264,25 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
+          ) : pendingStart && currentId ? (
+            <NewSessionComposer
+              key={pendingStart}
+              personal={pendingStart === "me" || pendingStart.startsWith("me:")}
+              standalone
+              resumeDraftKey={pendingStart}
+              sectionId={
+                pendingStart.includes(":section:")
+                  ? pendingStart.split(":section:")[1]
+                  : undefined
+              }
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              onStarted={select}
+            />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new sessions from Sessions. Channel-nested sessions are no
+              Start new conversations from Me. Channel-nested sessions are no
               longer available.
             </p>
           ) : (
@@ -1482,7 +1295,14 @@ function ChannelWorkspace({
                       (parent) => parent.id === current.parentChannelId,
                     )?.name
                   }
-                />
+                >
+                  <SessionShare
+                    key={`${current.id}:${navigation?.entryId ?? ""}`}
+                    session={queries}
+                    channel={current}
+                    signal={navigation?.signal}
+                  />
+                </SessionHeading>
               ) : (
                 <PanelHeader
                   title={
@@ -1820,92 +1640,7 @@ function ChannelWorkspace({
                             },
                           ]
                         : []),
-                      ...tabState.tabs.map((tab) => {
-                        const target =
-                          tab.kind === "new"
-                            ? undefined
-                            : channels.find(
-                                (item) => item.id === tab.channelId,
-                              );
-                        const usable = target && !target.readOnly;
-                        return {
-                          id: tab.id,
-                          label:
-                            tab.kind === "new"
-                              ? "New tab"
-                              : tab.kind === "thread"
-                                ? `Thread · ${target?.name ?? "Unavailable"}`
-                                : (target?.name ?? "Unavailable conversation"),
-                          icon: target ? (
-                            conversationIcon(target)
-                          ) : (
-                            <BrowserIcon size="1rem" />
-                          ),
-                          close: () => closeConversationTab(tab.id),
-                          content:
-                            tab.kind === "new" ? (
-                              <ChannelTabPicker
-                                channels={tabDestinations}
-                                tools={tabTools}
-                                chooseTool={(panel) =>
-                                  chooseTool(tab.id, panel)
-                                }
-                                icon={conversationIcon}
-                                usageScope={scope}
-                                choose={(channelId) =>
-                                  chooseConversation(tab.id, channelId)
-                                }
-                              />
-                            ) : usable ? (
-                              <ConversationTab
-                                focusOnMount={continuingVisit}
-                                active={
-                                  tabState.paneOpen && selectedTab === tab.id
-                                }
-                                tab={tab}
-                                channel={target}
-                                session={queries}
-                                scope={scope}
-                                extensions={extensions}
-                                openLink={(url) =>
-                                  openConversationLink(target.id, url)
-                                }
-                                canOpenLink={canOpenLink}
-                                openThread={(id, root, intent) =>
-                                  openConversationThread(
-                                    target.id,
-                                    id,
-                                    root,
-                                    intent,
-                                  )
-                                }
-                                close={() => closeConversationTab(tab.id)}
-                              />
-                            ) : (
-                              <p role="status" className={styles.empty}>
-                                This conversation is no longer available.
-                              </p>
-                            ),
-                        };
-                      }),
-                      ...panelTabs.map((entry) => ({
-                        id: tabId(entry),
-                        instance: entry,
-                        label: entry.panel.title,
-                        ...(entry.channelContext && {
-                          icon: channelToolIcon(entry.panel),
-                        }),
-                        close: () => closeTab(entry),
-                        content: (
-                          <PanelCard
-                            panel={entry.panel}
-                            target={entry.target}
-                            context={panelContext(entry)}
-                            channelContext={entry.channelContext}
-                            close={() => closeTab(entry)}
-                          />
-                        ),
-                      })),
+                      ...secondary.items,
                     ]}
                   />
                 </div>

@@ -14,6 +14,11 @@ import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
 import { createReadState } from "../src/features/relay/read-state.ts";
 import { readJournal } from "../src/features/relay/read-state-storage.ts";
+import {
+  ReadStateTimestampRejected,
+  READ_STATE_TIMESTAMP_REFUSAL,
+} from "../src/features/relay/read-state-host.ts";
+import { signReadState } from "./read-state.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 
 const disposals = [];
@@ -39,7 +44,32 @@ async function harness(discovered = true) {
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
-    socketFactory: socket.factory,
+    socketFactory: () => {
+      const connection = socket.factory();
+      const send = connection.send;
+      connection.send = (text) => {
+        const [type, event] = JSON.parse(text);
+        if (
+          type === "EVENT" &&
+          Math.abs(event.created_at - Math.floor(Date.now() / 1000)) > 900
+        ) {
+          socket.publications.push(event);
+          queueMicrotask(() =>
+            connection.onmessage?.({
+              data: JSON.stringify([
+                "OK",
+                event.id,
+                false,
+                READ_STATE_TIMESTAMP_REFUSAL,
+              ]),
+            }),
+          );
+          return;
+        }
+        send.call(connection, text);
+      };
+      return connection;
+    },
     // Keep real NIP-11 discovery, signing, admission and broker routes. Only relay I/O is modeled.
     upstreamFetch: async (url, init) => {
       if (!init?.body)
@@ -165,6 +195,64 @@ it("real broker discovery -> reader snapshot and scoped encrypted signing/public
   expect(h.calls[0].body).toEqual([
     { kinds: [30078], authors: [h.viewer], read_state_snapshot: 1 },
   ]);
+});
+it("recovers expired saved state through broker HTTP, socket refusal and fresh coordinate readback", async () => {
+  const h = await harness();
+  await h.start();
+  const past = Math.floor(Date.now() / 1000) - 901;
+  const event = signReadState(
+    {
+      slot: "b".repeat(32),
+      createdAt: past,
+      blob: { v: 1, client_id: "fixture", contexts: { room: 12 } },
+    },
+    h.key,
+    past,
+  );
+  await expect(
+    h.transport.readState.publish(event, new AbortController().signal),
+  ).rejects.toBeInstanceOf(ReadStateTimestampRejected);
+  let journal = readJournal(
+    {
+      version: 1,
+      slot: "b".repeat(32),
+      clientId: "fixture",
+      state: { frontiers: { room: 13 }, overrides: {} },
+      localUnread: {},
+      revision: 2,
+      acceptedRevision: 0,
+      lastCreatedAt: past,
+      pending: { event, revision: 1 },
+    },
+    h.viewer,
+  );
+  const owner = createReadState({
+    viewer: h.viewer,
+    host: h.transport.readState,
+    reader: h.reader,
+    lock: async (_signal, work) => work(),
+    storage: {
+      async update(change) {
+        journal = readJournal(change(journal), h.viewer);
+        return journal;
+      },
+      close() {},
+    },
+  });
+  disposals.push(() => owner.dispose());
+  await owner.ready;
+  await owner.flush();
+  expect(owner.snapshot().status).toBe("reconciled");
+  expect(journal.pending).toBeUndefined();
+  expect(journal.acceptedRevision).toBe(2);
+  const observed = await h.reader.readStateSnapshot({ fresh: true });
+  expect(observed).toHaveLength(1);
+  expect(observed[0].id).not.toBe(event.id);
+  expect(
+    (
+      await h.transport.readState.decode(observed, new AbortController().signal)
+    )[0].blob.contexts.room,
+  ).toBe(13);
 });
 it.each([false, true])(
   "reconciles legacy maximum-size NIP-44 records without widening writes (snapshot: %s)",

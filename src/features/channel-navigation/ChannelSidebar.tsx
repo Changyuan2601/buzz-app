@@ -12,6 +12,7 @@ import {
 import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
+import { useMePlacement } from "../sessions/personal";
 import { personalGroups } from "../channel-templates/setup";
 import type { TemplateProviders } from "../channel-templates/provider";
 import type { RelayData } from "../relay/service";
@@ -90,6 +91,7 @@ type Props = {
   providers: TemplateProviders;
   target: OpenTarget;
   sessionsEnabled: boolean;
+  meEnabled?: boolean;
   children: ReactNode;
 };
 const noNestedSession = () => {};
@@ -188,6 +190,7 @@ function ReadySidebar({
   target,
   children,
   queries,
+  meEnabled = false,
   cached,
   connectionError,
   scope,
@@ -200,6 +203,7 @@ function ReadySidebar({
   viewer?: string | undefined;
 }) {
   const list = useChannelList(queries.channels);
+  const placement = useMePlacement(queries);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
@@ -286,11 +290,12 @@ function ReadySidebar({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      !preparingDm ||
-      preparingDm.existing.has(channel.id) ||
-      channel.channelType !== "dm" ||
-      channel.members?.length !== preparingDm.members.size ||
-      !channel.members.every((member) => preparingDm.members.has(member)),
+      (!meEnabled || !placement.ids.includes(channel.id)) &&
+      (!preparingDm ||
+        preparingDm.existing.has(channel.id) ||
+        channel.channelType !== "dm" ||
+        channel.members?.length !== preparingDm.members.size ||
+        !channel.members.every((member) => preparingDm.members.has(member))),
   );
   const current = channels.find(
     (channel) =>
@@ -998,6 +1003,14 @@ function ReadySidebar({
               {kitState.error}{" "}
               <Button onClick={() => void queries.channelKit.refresh()}>
                 Retry templates
+              </Button>
+            </p>
+          )}
+          {meEnabled && placement.status !== "ready" && (
+            <p role="status">
+              {placement.error ?? "Loading Me placement…"}{" "}
+              <Button onClick={() => void queries.mePlacement.refresh()}>
+                Retry Me
               </Button>
             </p>
           )}

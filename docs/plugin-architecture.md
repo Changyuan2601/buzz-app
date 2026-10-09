@@ -81,7 +81,7 @@ source imports are not a versioned external SDK. See
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
-`ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
+`ctx.panels.register({ id, title, matches, order?, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
@@ -134,13 +134,51 @@ External plugins ship no separate assets, so inline the art into `plugin.js`, fo
 example with a bundler `?inline` import.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
-contribution, the target string, and a close callback. The first active matcher
-wins; a throwing matcher is skipped. Panels receive `{ target, close }` plus
+contribution, the target string, and a close callback. Among active panels whose
+matcher accepts the target, the lowest `order` wins; a throwing matcher is
+skipped. Panels receive `{ target, close }` plus
 optional host context. A conversation host may supply
 `context: { channelId, canOpen, open }` for contextual panel-to-panel actions.
 `canOpen` is advisory active-target availability; `open` re-resolves at click time
 and returns false after the originating opening, channel, session or host
 presentation retires. This is not a global navigation API or an access grant.
+
+### Resolution order
+
+Panels and link renderers share one rule when several match the same target.
+It covers only those two: message renderers (`registerMessage`, rendered by
+`MessageBody`) keep first-active-match semantics and accept no `order`.
+`order` is optional and defaults to `0`; lower wins, and equal orders fall to
+ascending contribution key (`pluginId/contributionId`), so activation, load
+latency and disable/re-enable never decide the winner. `matches` stays boolean,
+so `canOpen` is unchanged. Three bands by convention:
+
+| Band | Meaning |
+| --- | --- |
+| `-10` | Specialises a target another plugin already handles (a richer GitHub PR view). |
+| `0` | Default: the plugin is specific to the targets it matches (GitHub, Profiles, Activity). |
+| `100` | Catch-all or fallback: anything under a scheme or host (a website panel, a globe icon). |
+
+Bundled catch-alls declare `100` themselves, so a third-party plugin specific to
+one service wins at the default without knowing the convention. A static number
+covers a plugin that is uniformly broad or specific. A plugin whose matcher already
+knows which class it hit can instead supply a function, evaluated per target; a
+throwing or non-finite result counts as `0`:
+
+```ts
+ctx.panels.register({
+  id: "docs",
+  title: "Docs",
+  matches: (target) => target.startsWith("https://docs.google.com/"),
+  // Previews Docs natively; embeds anything else under the host as a fallback.
+  order: (target) => (/\/document\//.test(target) ? 0 : 100),
+  component: DocsPanel,
+});
+```
+
+Same-band overlaps between two plugins that both consider themselves specific are
+not arbitrated; the key decides. Register a separate contribution per band when
+one plugin needs different titles for its specific and fallback views.
 Channel-header launchers use the separate public `channelContext` metadata
 contract described below; launcher/fallback panels need not have either context.
 A plugin that needs shared data declares `relay` in its
@@ -786,19 +824,23 @@ whose search index allowlist excludes that kind cannot return them. Metadata is
 untrusted presentation, not repository access authority. No sending, applying,
 repository fetching or sidebar panels are added.
 
-`registerLink({ id, title, matches, className?, component })` contributes optional
-presentation for links already recognized by messages. The host retains the anchor,
-destination, new-tab/modifier behavior and panel activation. Components receive
-`{ url }` and render non-interactive inline content inside that anchor. They must
-not nest links or buttons. The first active matching renderer wins; throwing
-matchers are skipped. A render failure or plugin removal restores the ordinary
-link, including its styling. Registration follows the existing plugin lifetime.
+`registerLink({ id, title, matches, order?, className?, component })` contributes
+optional presentation for links already recognized by messages. The host retains
+the anchor, destination, new-tab/modifier behavior and panel activation. Components
+receive `{ url }` and render non-interactive inline content inside that anchor.
+They must not nest links or buttons. Among matching renderers the lowest `order`
+wins under the panel [resolution order](#resolution-order); throwing matchers are
+skipped. A render failure or plugin removal restores the ordinary link, including
+its styling. Registration follows the existing plugin lifetime.
 
 The bundled Links plugin uses blue text, a blue fill only on hover, 2px padding
 4px corners, and service icons for GitHub, Google Drive, Figma, Notion, Slack,
 Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets and
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
+Its `order` is a function: recognised services and Buzz entities claim the default
+band, the globe case the catch-all band, so a renderer dedicated to one website
+wins it at the default.
 It does not fetch titles. Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`

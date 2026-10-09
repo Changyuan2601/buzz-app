@@ -2,6 +2,7 @@ use super::*;
 use serde_json::Value;
 
 const KIT_TAG: &str = "buzz-channel-kit-v1";
+const ME_KIT_TAG: &str = "buzz-me-kit-v1";
 const MANIFEST_TAG: &str = "buzz-channel-kit-v2";
 const PAYLOAD_TAG: &str = "buzz-team-payload-v1";
 fn portable(value: &Value) -> bool {
@@ -161,8 +162,27 @@ fn record(raw: &Value, community: &str) -> Result<String> {
                 && text(value.get("description"), 1000, false)
         }
         "groups" => {
-            if id != "personal" || !only(value, &["type", "id", "groups", "assignments"]) {
+            let fields: &[&str] = if id == "me" {
+                &["type", "id", "groups", "assignments", "channels"]
+            } else {
+                &["type", "id", "groups", "assignments"]
+            };
+            if !matches!(id, "personal" | "me") || !only(value, fields) {
                 return Err("Invalid channel recipe".into());
+            }
+            if let Some(channels) = value.get("channels") {
+                let Some(channels) = channels.as_array() else {
+                    return Err("Invalid Me placement".into());
+                };
+                let mut seen = std::collections::HashSet::new();
+                if channels.len() > 1000
+                    || channels.iter().any(|v| {
+                        !v.as_str()
+                            .is_some_and(|id| super::channel_writes::uuid(id) && seen.insert(id))
+                    })
+                {
+                    return Err("Invalid Me placement".into());
+                }
             }
             let Some(groups) = value.get("groups").and_then(Value::as_array) else {
                 return Err("Invalid channel recipe".into());
@@ -217,19 +237,30 @@ fn record(raw: &Value, community: &str) -> Result<String> {
             value["index"]
         ))
     } else {
-        let tag = if version == 2 { MANIFEST_TAG } else { KIT_TAG };
+        let tag = record_tag(raw);
         Ok(format!("{tag}:{encoded}:{kind}:{id}"))
+    }
+}
+fn record_tag(raw: &Value) -> &'static str {
+    let value = &raw["value"];
+    if value["type"] == "team-payload" {
+        PAYLOAD_TAG
+    } else if raw["version"] == 2 {
+        MANIFEST_TAG
+    } else if (value["type"] == "groups" && value["id"] == "me")
+        || (value["type"] == "template"
+            && value["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("me-section-")))
+    {
+        ME_KIT_TAG
+    } else {
+        KIT_TAG
     }
 }
 pub(super) fn admission(event: &Value, raw: &Value, community: &str) -> Result<()> {
     let coordinate = record(raw, community)?;
-    let expected_tag = if raw["value"]["type"] == "team-payload" {
-        PAYLOAD_TAG
-    } else if raw["version"] == 2 {
-        MANIFEST_TAG
-    } else {
-        KIT_TAG
-    };
+    let expected_tag = record_tag(raw);
     let tags = event
         .get("tags")
         .and_then(Value::as_array)
@@ -321,7 +352,7 @@ pub(crate) async fn current_team_members(
         "POST",
         Some(
             serde_json::json!([{"kinds":[30078], "authors":[owner],
-            "#t":[KIT_TAG, MANIFEST_TAG], "limit":500, "consistency":"strong"}])
+            "#t":[KIT_TAG, MANIFEST_TAG, ME_KIT_TAG], "limit":500, "consistency":"strong"}])
             .to_string(),
         ),
         true,
@@ -370,7 +401,7 @@ async fn decode_team_members(
             .and_then(|tags| tags.iter().find(|tag| tag[0] == "d"))
             .and_then(|tag| tag[1].as_str())
             .ok_or("Invalid team catalog coordinate")?;
-        if ![KIT_TAG, MANIFEST_TAG]
+        if ![KIT_TAG, MANIFEST_TAG, ME_KIT_TAG]
             .iter()
             .any(|tag| coordinate.starts_with(&format!("{tag}:{encoded}:")))
         {
@@ -421,6 +452,26 @@ async fn decode_team_members(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn me_placement_is_private_recipe_data_not_messages_group_data() {
+        let community = "https://community.test";
+        let mut raw = serde_json::json!({"version":1,"community":community,"deleted":false,"value":{
+            "type":"groups","id":"me","groups":[],"assignments":{},
+            "channels":["11111111-1111-4111-8111-111111111111"]
+        }});
+        assert!(record(&raw, community).unwrap().starts_with(ME_KIT_TAG));
+        raw["value"]["id"] = serde_json::json!("personal");
+        assert!(record(&raw, community).is_err());
+        raw["value"]["id"] = serde_json::json!("me");
+        raw["value"]["channels"] = serde_json::json!(["bad"]);
+        assert!(record(&raw, community).is_err());
+        raw["value"]["channels"] = serde_json::json!([
+            "11111111-1111-4111-8111-111111111111",
+            "11111111-1111-4111-8111-111111111111"
+        ]);
+        assert!(record(&raw, community).is_err());
+    }
+
     use super::*;
     #[test]
     fn recipe_boundary_rejects_cross_community_and_invalid_values() {

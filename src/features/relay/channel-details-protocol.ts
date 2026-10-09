@@ -80,7 +80,7 @@ export function validateDetailsDraft(
   base?: ChannelDetailsDraft,
 ): void {
   const metadata = sessionMetadata(base?.description);
-  if (metadata && !metadata.parentId) {
+  if (metadata && !metadata.parentId && draft.description !== "") {
     if (
       draft.description !== base?.description ||
       draft.visibility !== base.visibility ||
@@ -139,7 +139,10 @@ export function detailsTemplate(
   base: ChannelDetailsDraft,
 ): EventTemplate {
   validateDetailsDraft(draft, base);
-  if (sessionMetadata(base.description))
+  if (
+    sessionMetadata(base.description) &&
+    draft.description === base.description
+  )
     return {
       kind: 9002,
       created_at: Math.floor(Date.now() / 1000),

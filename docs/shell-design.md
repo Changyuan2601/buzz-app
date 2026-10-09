@@ -32,11 +32,12 @@ semantic tokens, UI authoring rules and the local component reference.
   activation/re-enable order. Primary pages choose `sidebar` (default), `topbar`
   (centered text) or `toolbar` (top-right icon) placement. Me and Messages start
   in the topbar; other primary bundled pages retain their sidebar rows. Me is an
-  optional, default-enabled empty page and does not change community scope.
-  Me replaces the channel list and sidebar page links with an empty dedicated
-  sidebar using the shared SidebarFrame and saved channel-sidebar width. Its list
-  contents remain undefined; it does not acquire a channel list or create another
-  navigation mode.
+  optional, default-enabled personal-conversation workspace in the current
+  community. Its dedicated SidebarFrame reuses saved channel-sidebar width and
+  shows New conversation plus personal history, replacing Messages navigation.
+  Scoped Me page routes own sidebar/content selection. The initial implementation
+  reuses the existing session transcript and composer; see [Sessions](sessions/README.md)
+  for placement rules, remaining ingress differences and the relay privacy boundary.
   Messages opens by default, from any channel row, its topbar button and search.
   Page search lists every active page, including non-primary pages.
   Disabling an optional plugin removes its navigation entry.

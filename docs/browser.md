@@ -15,6 +15,8 @@ export function apply(ctx: Context) {
     title: "Documentation",
     matches: (target) =>
       ctx.browser.available && target.startsWith("https://example.org/"),
+    // Catch-all band: a panel specific to one site on this host wins by default.
+    order: 100,
     component: ({ target }) =>
       ctx.react.createElement(ctx.browser.View, { url: target }),
   });
@@ -25,7 +27,7 @@ export function apply(ctx: Context) {
 
 `browser.available` is currently true only in the macOS desktop application. Web, Windows and Linux builds leave existing link handling unchanged. The Windows native positioning path is unverified; Linux needs a different embedding implementation. URLs must use HTTP(S), contain no credentials, and fit the 2,048-byte limit after URL normalization. Native validation also rejects Buzz's own application and development origins. Invalid addresses leave the existing page visible and show an error.
 
-The example only matches links when the capability is available. Existing first-match panel precedence remains: an earlier GitHub panel can still handle a GitHub link. Modifier-key clicks retain the host's existing behavior. This does not replace every external-link call site or the operating system's default browser.
+The example only matches links when the capability is available. It declares the catch-all `order: 100`, so a default-band panel such as GitHub handles the links it recognises regardless of which plugin activated first; see [resolution order](plugin-architecture.md#resolution-order). Modifier-key clicks retain the host's existing behavior. This does not replace every external-link call site or the operating system's default browser.
 
 One native website session is supported at a time. Closing or replacing the panel, changing community, or disabling the plugin unmounts the view and discards that session's website storage. Back/Forward retain history while the same panel remains open. There are no tabs, saved history or bookmarks. Temporarily hiding the website for an application dialog does not end its session or stop its network activity.
 
@@ -76,12 +78,13 @@ export function apply(ctx) {
     title: "Example site",
     matches: (target) =>
       ctx.browser.available && target.startsWith("https://example.org/"),
+    order: 100,
     component: ({ target }) =>
       ctx.react.createElement(ctx.browser.View, { url: target }),
   });
 }
 ```
 
-In Settings → Plugins → Load from folder, select that folder and enable **Browser example**. Click `https://example.org/` in a message. If no earlier panel handles it, the website and navigation controls should appear beside the conversation. Other links keep their existing behavior.
+In Settings → Plugins → Load from folder, select that folder and enable **Browser example**. Click `https://example.org/` in a message. The website and navigation controls should appear beside the conversation; a default-band panel that also matches the link, such as GitHub for a GitHub URL, wins instead. Other links keep their existing behavior.
 
 Check address entry, Back/Forward/Reload, resizing, opening an account menu, closing/reopening the panel, and disabling the plugin. Web, Windows and Linux keep their existing link handling. The example requires a host that provides `browser`; older hosts cannot activate it.

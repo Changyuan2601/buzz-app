@@ -34,7 +34,10 @@ export function ChannelGroupsDialog({
   }, []);
   const state = useSyncExternalStore(kit.subscribe, kit.snapshot);
   const entry = state.entries.find(
-    (e) => !e.record.deleted && e.record.value.type === "groups",
+    (e) =>
+      !e.record.deleted &&
+      e.record.value.type === "groups" &&
+      e.record.value.id === "personal",
   );
   // This editor is mounted per opening. Catalog refreshes must not rebase its draft.
   const [draft, setDraft] = useState<Groups>(() =>

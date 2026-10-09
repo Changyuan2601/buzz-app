@@ -326,7 +326,14 @@ before sending it. Plugins receive no generic encryption or arbitrary-kind signi
 capability. Both transports use scoped NIP-98 for reads and writes.
 
 Accepted local intent is saved before signing; the exact signed event is saved
-before sending. Lost responses/readback retain that event identity for retry.
+before sending. Lost responses/readback retain that event identity for retry. An exact timestamp
+refusal on an old pending read-state event permits recovery under the same publisher
+lock: read back and merge the own coordinate, reconcile if it covers the pending
+state, otherwise persist a newly signed snapshot before sending it. The old envelope
+remains saved until reconciliation or replacement commits; recovery does not
+acknowledge rejected intent. Unknown outcomes and other refusals retain exact-byte
+retries. Recent/future timestamps are not renewed, signing retains its bounded
+monotonic clock, and a flush attempts at most one replacement (no re-sign loop).
 `accepted` is a publish receipt, not observed coordinate state; `reconciled` also
 requires readback. A failed transaction is not acknowledged as saved. Timestamps
 are uint32 seconds; replaceable publication clocks advance monotonically with a

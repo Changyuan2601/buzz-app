@@ -14,7 +14,8 @@ import {
 import { StrictMode, useRef, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { SessionsPage } from "../../bundled/sessions/SessionsPage";
-import { writeView } from "../../shared/view-state";
+import type { PageNavigation } from "../navigation/service";
+import { meTarget } from "../../bundled/me/routes";
 import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, roster, signed } from "../relay/testing";
@@ -59,18 +60,28 @@ async function fixture(archived = false) {
   );
   const viewer = keypair(),
     relay = keypair();
-  const root = message(viewer, "work", "Image", 1, [
-    ["imeta", `url ${image.url}`, "m image/png"],
+  const root = message(
+    viewer,
+    "11111111-1111-4111-8111-111111111111",
+    "Image",
+    1,
+    [["imeta", `url ${image.url}`, "m image/png"]],
+  );
+  const comment = message(
+    viewer,
+    "11111111-1111-4111-8111-111111111111",
+    "Existing review comment",
+    2,
+    [["e", root.id, "", "reply"]],
+  );
+  const membership = roster(relay, "11111111-1111-4111-8111-111111111111", [
+    viewer.pubkey,
   ]);
-  const comment = message(viewer, "work", "Existing review comment", 2, [
-    ["e", root.id, "", "reply"],
-  ]);
-  const membership = roster(relay, "work", [viewer.pubkey]);
   const channel = signed(relay, {
     kind: 39000,
     content: "",
     tags: [
-      ["d", "work"],
+      ["d", "11111111-1111-4111-8111-111111111111"],
       ["name", "Work"],
       ["t", "stream"],
       ["private"],
@@ -176,12 +187,43 @@ it.each([false, true])(
   "the production Sessions timeline owns drops and rejects an unavailable composer (archived=%s)",
   async (archived) => {
     const h = await fixture(archived);
-    writeView(h.scope, "sessions:selected", "work");
+    const placement = {
+      ...h.owner.session.mePlacement.snapshot(),
+      status: "ready" as const,
+    };
+    const relaySnapshot = h.relayData.snapshot();
+    const session = {
+      ...relaySnapshot.session,
+      mePlacement: {
+        ...relaySnapshot.session.mePlacement,
+        snapshot: () => placement,
+      },
+    };
+    const snapshot = { ...relaySnapshot, session };
+    const relayData = { ...h.relayData, snapshot: () => snapshot };
+    const navigation: PageNavigation = {
+      entryId: "visit",
+      target: meTarget(h.scope, "11111111-1111-4111-8111-111111111111"),
+      signal: new AbortController().signal,
+      forSession: () => navigation,
+      complete: () => true,
+      resolve: () => true,
+    };
     const other = vi.fn();
     render(
       <StrictMode>
         <OuterComposer attach={other}>
-          <SessionsPage relay={h.relayData} extensions={extensions} />
+          <SessionsPage
+            panels={{
+              snapshot: () => empty,
+              subscribe: () => () => {},
+              register() {},
+              resolve: () => undefined,
+            }}
+            relay={relayData}
+            extensions={extensions}
+            navigation={navigation}
+          />
         </OuterComposer>
       </StrictMode>,
     );
@@ -233,7 +275,7 @@ it.each([false, true])(
             attachment={image}
             session={session}
             scope={h.scope}
-            channelId="work"
+            channelId="11111111-1111-4111-8111-111111111111"
             channelName="Work"
             messageId={h.root.id}
             initialTime={0}
@@ -289,7 +331,7 @@ it("announces queued files, then background preparation and upload, while editor
     <MessageComposer
       session={h.owner.session}
       scope={h.scope}
-      channelId="work"
+      channelId="11111111-1111-4111-8111-111111111111"
       channelName="Work"
     />,
   );

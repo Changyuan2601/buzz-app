@@ -24,7 +24,7 @@ import { WorkspaceFields } from "./WorkspaceFields";
 import styles from "./WorkspaceSettings.module.css";
 
 type Target =
-  | { kind: "section"; id: string; name: string }
+  | { kind: "section"; id: string; name: string; personal?: boolean }
   | { kind: "session"; id: string; name: string };
 export function WorkspaceSettings({
   session,
@@ -50,7 +50,8 @@ export function WorkspaceSettings({
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const alive = useRef(true);
   const inFlight = useRef(false);
-  const key = `sessions:workspace-draft:${target.kind}:${target.id}`;
+  const personal = target.kind === "section" && !!target.personal;
+  const key = `${personal ? "me" : "sessions"}:workspace-draft:${target.kind}:${target.id}`;
   const adopt = (canvas: string) => {
     try {
       setWorkspace(readWorkspace(canvas));
@@ -73,7 +74,7 @@ export function WorkspaceSettings({
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
           throw new Error(kit.error ?? "Section defaults are unavailable.");
-        const id = await sectionTemplateId(target.id);
+        const id = await sectionTemplateId(target.id, personal);
         if (!alive.current) return;
         // Tombstones still own the revision even though they supply no defaults.
         const entry = kit.entries.find(
@@ -81,7 +82,13 @@ export function WorkspaceSettings({
             entry.record.value.type === "template" &&
             entry.record.value.id === id,
         );
-        const template = sectionDefault(kit.entries, target.id, id);
+        const template = sectionDefault(
+          kit.entries,
+          target.id,
+          id,
+          false,
+          personal,
+        );
         setRecipeId(id);
         setEntries(kit.entries);
         setLineup(template ?? emptyLineup());
@@ -175,7 +182,8 @@ export function WorkspaceSettings({
   const templates = entries.flatMap((entry) =>
     !entry.record.deleted &&
     entry.record.value.type === "template" &&
-    !entry.record.value.id.startsWith("session-section-")
+    !entry.record.value.id.startsWith("session-section-") &&
+    !entry.record.value.id.startsWith("me-section-")
       ? [entry.record.value]
       : [],
   );

@@ -7,6 +7,7 @@ import {
   CANVAS_BYTES,
   coordinate,
   KIT_TAG,
+  ME_KIT_TAG,
   kitTag,
   parseKitRecord,
   type KitEntry,
@@ -109,7 +110,7 @@ export function createChannelKit({
           {
             kinds: [30078],
             authors: [viewer],
-            "#t": [KIT_TAG, TEAM_MANIFEST_TAG],
+            "#t": [KIT_TAG, TEAM_MANIFEST_TAG, ME_KIT_TAG],
             limit: 500,
           },
         ]);
@@ -122,7 +123,7 @@ export function createChannelKit({
           const d = event.tags.find((t) => t[0] === "d")?.[1];
           if (
             !d ||
-            ![KIT_TAG, TEAM_MANIFEST_TAG].some((tag) =>
+            ![KIT_TAG, TEAM_MANIFEST_TAG, ME_KIT_TAG].some((tag) =>
               d?.startsWith(`${tag}:${encodeURIComponent(community)}:`),
             )
           )

@@ -71,7 +71,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       ).toHaveLength(1);
   };
   const expectedProjection = [
-    { key: "starred", ids: ["star", "starred-dm"] },
+    { key: "starred", ids: ["session", "star", "starred-dm"] },
     { key: "group:channels", ids: ["grouped-dm", "work"] },
     { key: "channels", ids: ["other"] },
     { key: "forums", ids: ["forum"] },
@@ -97,7 +97,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       roster.filter((channel) => channel.id !== "starred-dm"),
       new Set(["hidden-dm"]),
     ).find(({ key }) => key === "starred")?.ids,
-  ).toEqual(["star"]);
+  ).toEqual(["session", "star"]);
   expect(sidebarSections([])).toEqual([
     { key: "channels", title: "Channels", icon: undefined, rows: [] },
     { key: "dms", title: "Direct messages", icon: undefined, rows: [] },
@@ -108,6 +108,7 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
     ),
   ).toEqual([
     "other",
+    "session",
     "star",
     "work",
     "forum",

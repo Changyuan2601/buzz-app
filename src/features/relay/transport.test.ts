@@ -1,9 +1,82 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { connectBrokerTransport, connectSignedTransport } from "./transport";
+import {
+  connectBrokerTransport,
+  connectSignedTransport,
+  acceptReadStatePublish,
+} from "./transport";
+import {
+  ReadStateTimestampRejected,
+  READ_STATE_TIMESTAMP_REFUSAL,
+} from "./read-state-host";
 import { PublishRejected } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
+it.each([
+  {
+    status: 503,
+    sent: false,
+    error: READ_STATE_TIMESTAMP_REFUSAL,
+    expired: true,
+  },
+  {
+    status: 400,
+    sent: undefined,
+    error: READ_STATE_TIMESTAMP_REFUSAL,
+    expired: true,
+  },
+  {
+    status: 503,
+    sent: undefined,
+    error: READ_STATE_TIMESTAMP_REFUSAL,
+    expired: false,
+  },
+  {
+    status: 503,
+    sent: false,
+    error: "invalid: something else",
+    expired: false,
+  },
+  {
+    status: 503,
+    sent: false,
+    error: `${READ_STATE_TIMESTAMP_REFUSAL}\nprivate`,
+    expired: false,
+  },
+  {
+    status: 429,
+    sent: false,
+    error: "rate-limited: quota exceeded; retry in 17s",
+    expired: false,
+  },
+  {
+    status: 401,
+    sent: false,
+    error: READ_STATE_TIMESTAMP_REFUSAL,
+    expired: false,
+  },
+])(
+  "bounds read-state refusal classification: $status $sent $error",
+  async ({ status, sent, error, expired }) => {
+    const failure = await acceptReadStatePublish(
+      Response.json({ sent, error }, { status }),
+      "event",
+    ).catch((value: unknown) => value);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure instanceof ReadStateTimestampRejected).toBe(expired);
+  },
+);
+it("read-state parser preserves bounded socket quota reporting", async () => {
+  await expect(
+    acceptReadStatePublish(
+      Response.json(
+        { sent: false, error: "rate-limited: shared admission unavailable" },
+        { status: 503 },
+      ),
+      "event",
+    ),
+  ).rejects.toThrow("rate-limited: shared admission unavailable");
+});
 it("publishes the unchanged signed event bytes through the host's /events request", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
   // The host mints NIP-98 for these exact bytes at dispatch; see the native

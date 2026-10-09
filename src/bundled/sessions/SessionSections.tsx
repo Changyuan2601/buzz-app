@@ -1,3 +1,4 @@
+import { SessionShare } from "./SessionShare";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
@@ -5,6 +6,7 @@ import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -17,6 +19,8 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Input } from "../../shared/design-system/ui/Input";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
   MenuRoot,
   MenuTrigger,
   MenuPopup,
@@ -33,6 +37,7 @@ import {
   PlusIcon,
   PencilSimpleIcon,
   CopyIcon,
+  GearIcon,
 } from "../../shared/design-system/icons";
 import type { SessionListItem } from "./SessionsWorkspace";
 import styles from "./SessionsWorkspace.module.css";
@@ -45,7 +50,13 @@ export function SessionSections({
   sessions,
   renderSession,
   onNew,
+  personal = false,
+  onShared,
+  visit,
 }: {
+  personal?: boolean;
+  onShared?: (id: string) => void;
+  visit?: AbortSignal;
   session: RelaySession;
   scope: string;
   sessions: readonly SessionListItem[];
@@ -73,25 +84,50 @@ export function SessionSections({
       copying.current = false;
     }
   };
-  const preferences = session.sidebarPreferences;
+  const preferences = personal
+    ? session.mePreferences
+    : session.sidebarPreferences;
+  const collapsedKey = `${personal ? "me" : "sessions"}:collapsed-sections`;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,
     preferences.snapshot,
   );
+  const channels = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
   useEffect(() => {
-    void preferences.ensure();
-  }, [preferences]);
+    if (!personal || channels.status === "ready") void preferences.ensure();
+  }, [preferences, personal, channels.status]);
   const [collapsed, setCollapsed] = useState<string[]>(() => {
-    const saved = readView<unknown>(scope, "sessions:collapsed-sections", []);
+    const saved = readView<unknown>(scope, collapsedKey, []);
     return Array.isArray(saved)
       ? saved.filter((id): id is string => typeof id === "string")
       : [];
   });
+  const [sharing, setSharing] = useState<{
+    id: string;
+    visit: AbortSignal | undefined;
+  }>();
+  const sharingChannel = channels.channels.find(
+    (channel) => channel.id === sharing?.id,
+  );
+  const currentVisit = useRef(visit);
+  currentVisit.current = visit;
+  const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
   const [renaming, setRenaming] = useState<SessionListItem>();
   const [deleting, setDeleting] = useState<string>();
   const [deleteError, setDeleteError] = useState("");
   const [animate, setAnimate] = useState(false);
+  const [rowFocus, setRowFocus] = useState<string>();
+  useLayoutEffect(() => {
+    if (!rowFocus) return;
+    document
+      .querySelector<HTMLElement>(`[data-session-menu-id="${rowFocus}"] button`)
+      ?.focus({ preventScroll: true });
+    setRowFocus(undefined);
+  }, [rowFocus]);
   const [creatingFor, setCreatingFor] = useState<SessionListItem>();
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
@@ -107,20 +143,30 @@ export function SessionSections({
     })),
     {
       id: "",
-      name: "Sessions",
+      name: personal ? "Conversations" : "Sessions",
       rows: sessions.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
   const move = (id: string, sectionId?: string) => {
-    void preferences.assign(id, sectionId).catch(() => {});
-    if (sectionId) toggle(sectionId, true);
+    const saving = preferences.assign(id, sectionId);
+    toggle(sectionId ?? "", true);
+    setRowFocus(id);
+    void saving.catch(() => {
+      // A rollback remounts the original row. Do not steal focus if the user moved on.
+      if (
+        !document.querySelector(`[data-session-menu-id="${id}"]`) ||
+        document.activeElement !== document.body
+      )
+        return;
+      setRowFocus(id);
+    });
   };
   const toggle = (id: string, open: boolean) => {
     const next = open
       ? collapsed.filter((key) => key !== id)
       : [...collapsed, id];
     setCollapsed(next);
-    writeView(scope, "sessions:collapsed-sections", next);
+    writeView(scope, collapsedKey, next);
   };
   const moves =
     snapshot.moves?.filter((move) =>
@@ -138,7 +184,7 @@ export function SessionSections({
             <span className={styles.sectionIcon} aria-hidden="true">
               <PlusIcon size={15} strokeWidth={2.5} />
             </span>
-            <span>New session</span>
+            <span>{personal ? "New conversation" : "New session"}</span>
           </button>
         </div>
       )}
@@ -160,193 +206,244 @@ export function SessionSections({
           {deleteError}
         </p>
       )}
-      {sections.map((section) => (
-        <Collapsible.Root
-          key={section.id}
-          className={styles.section}
-          open={!collapsed.includes(section.id)}
-          onOpenChange={(open) => toggle(section.id, open)}
-          data-animate={animate || undefined}
-        >
-          <div className={styles.sectionHeader}>
-            <Collapsible.Trigger
-              type="button"
-              className={styles.sectionHeading}
-              aria-expanded={!collapsed.includes(section.id)}
-              onClick={(event) => setAnimate(event.detail > 0)}
+      {sections
+        .filter((section) => !personal || section.id || section.rows.length)
+        .map((section) => (
+          <Collapsible.Root
+            key={section.id}
+            className={styles.section}
+            open={!collapsed.includes(section.id)}
+            onOpenChange={(open) => toggle(section.id, open)}
+            data-animate={animate || undefined}
+          >
+            <SessionActionsMenu
+              id={`section-${section.id}`}
+              title={section.name}
+              className={styles.sectionHeader}
+              enabled={!!section.id}
+              content={
+                <>
+                  <MenuItem onClick={() => setSettingsFor(section)}>
+                    Session settings…
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    data-delete-session-section=""
+                    disabled={!preferences.sectionRemovalWritable || !!deleting}
+                    onClick={() => {
+                      setDeleting(section.id);
+                      setDeleteError("");
+                      void preferences
+                        .removeSection(section.id)
+                        .catch((error: unknown) => {
+                          setDeleteError(
+                            error instanceof Error
+                              ? error.message
+                              : "Section could not be deleted. Try again.",
+                          );
+                        })
+                        .finally(() => setDeleting(undefined));
+                    }}
+                  >
+                    Delete section
+                  </MenuItem>
+                </>
+              }
             >
-              {section.id && (
-                <span className={styles.sectionIcon} aria-hidden="true">
-                  <FolderSimpleIcon className={styles.folderGlyph} size={15} />
-                  <span className={styles.chevronGlyph}>
+              <Collapsible.Trigger
+                type="button"
+                className={styles.sectionHeading}
+                aria-expanded={!collapsed.includes(section.id)}
+                onClick={(event) => setAnimate(event.detail > 0)}
+              >
+                {section.id && (
+                  <span className={styles.sectionIcon} aria-hidden="true">
+                    <FolderSimpleIcon
+                      className={styles.folderGlyph}
+                      size={15}
+                    />
+                    <span className={styles.chevronGlyph}>
+                      <CaretDownIcon size={15} strokeWidth={2.5} />
+                    </span>
+                  </span>
+                )}
+                <span>{section.name}</span>
+                {!section.id && (
+                  <span
+                    className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                    aria-hidden="true"
+                  >
                     <CaretDownIcon size={15} strokeWidth={2.5} />
                   </span>
-                </span>
-              )}
-              <span>{section.name}</span>
-              {!section.id && (
-                <span
-                  className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
-                  aria-hidden="true"
-                >
-                  <CaretDownIcon size={15} strokeWidth={2.5} />
-                </span>
-              )}
-            </Collapsible.Trigger>
-            <div className={styles.sectionActions}>
-              {onNew && section.id && (
-                <IconButton
-                  data-session-row-action=""
-                  size="compact"
-                  aria-label={`New session in ${section.name}`}
-                  title="New session"
-                  icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                  onClick={() => onNew(section.id || undefined)}
-                />
-              )}
-              {section.id && (
-                <MenuRoot>
-                  <MenuTrigger
-                    render={(props) => (
-                      <IconButton
-                        {...props}
-                        data-session-row-action=""
-                        size="compact"
-                        aria-label={`Actions for ${section.name}`}
-                        icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
-                      />
-                    )}
+                )}
+              </Collapsible.Trigger>
+              <div className={styles.sectionActions}>
+                {onNew && section.id && (
+                  <IconButton
+                    data-session-row-action=""
+                    size="compact"
+                    aria-label={`New session in ${section.name}`}
+                    title="New session"
+                    icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                    onClick={() => onNew(section.id || undefined)}
                   />
-                  <MenuPopup
-                    aria-label={`Actions for ${section.name}`}
-                    align="end"
-                  >
-                    <MenuItem onClick={() => setSettingsFor(section)}>
-                      Session settings…
-                    </MenuItem>
-                    <MenuItem
-                      tone="danger"
-                      data-delete-session-section=""
-                      disabled={
-                        !preferences.sectionRemovalWritable || !!deleting
-                      }
-                      onClick={() => {
-                        setDeleting(section.id);
-                        setDeleteError("");
-                        void preferences
-                          .removeSection(section.id)
-                          .catch((error: unknown) => {
-                            setDeleteError(
-                              error instanceof Error
-                                ? error.message
-                                : "Section could not be deleted. Try again.",
-                            );
-                          })
-                          .finally(() => setDeleting(undefined));
-                      }}
-                    >
-                      Delete section
-                    </MenuItem>
-                  </MenuPopup>
-                </MenuRoot>
-              )}
-            </div>
-          </div>
-          <Collapsible.Panel className={styles.sectionPanel}>
-            {section.rows.map((item) => (
-              <div key={item.id} className={styles.organizedRow}>
-                {renderSession(item)}
-                <MenuRoot>
-                  <MenuTrigger
-                    render={(props) => (
-                      <IconButton
-                        {...props}
-                        data-session-row-action=""
-                        size="compact"
-                        aria-label={`Actions for ${item.title}`}
-                        icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
-                      />
-                    )}
-                  />
-                  <MenuPopup
-                    aria-label={`Actions for ${item.title}`}
-                    align="end"
-                  >
-                    <MenuItem
-                      disabled={!session.channelDetails?.available}
-                      onClick={() => setRenaming(item)}
-                    >
-                      <MenuIcon>
-                        <PencilSimpleIcon size={16} />
-                      </MenuIcon>
-                      Rename
-                    </MenuItem>
-                    <MenuSubmenu>
-                      <MenuSubmenuTrigger disabled={!preferences.writable}>
-                        <MenuIcon>
-                          <FolderSimpleIcon size={16} />
-                        </MenuIcon>
-                        Section
-                      </MenuSubmenuTrigger>
-                      <MenuSubmenuPopup aria-label="Session section">
-                        {section.id && (
-                          <MenuItem onClick={() => move(item.id)}>
-                            Sessions
-                          </MenuItem>
-                        )}
-                        {groups.map((group) => (
-                          <MenuItem
-                            key={group.id}
-                            onClick={() => move(item.id, group.id)}
-                          >
-                            {group.name}
-                          </MenuItem>
-                        ))}
-                        <MenuItem onClick={() => setCreatingFor(item)}>
-                          New section…
-                        </MenuItem>
-                      </MenuSubmenuPopup>
-                    </MenuSubmenu>
-                    <MenuSubmenu>
-                      <MenuSubmenuTrigger>
-                        <MenuIcon>
-                          <CopyIcon size={16} />
-                        </MenuIcon>
-                        Copy
-                      </MenuSubmenuTrigger>
-                      <MenuSubmenuPopup aria-label="Copy session">
-                        <MenuItem
-                          onClick={() => void copy(item.title, "Session name")}
-                        >
-                          Copy session name
-                        </MenuItem>
-                        <MenuItem
-                          onClick={() => void copy(item.id, "Session ID")}
-                        >
-                          Copy session ID
-                        </MenuItem>
-                        <MenuItem
-                          onClick={() =>
-                            void copy(
-                              `buzz://channel/${encodeURIComponent(item.id)}`,
-                              "Session link",
-                            )
-                          }
-                        >
-                          Copy link to session
-                        </MenuItem>
-                      </MenuSubmenuPopup>
-                    </MenuSubmenu>
-                  </MenuPopup>
-                </MenuRoot>
+                )}
               </div>
-            ))}
-            {!section.rows.length && section.id && (
-              <p className={styles.listMessage}>No sessions in this section.</p>
-            )}
-          </Collapsible.Panel>
-        </Collapsible.Root>
-      ))}
+            </SessionActionsMenu>
+            <Collapsible.Panel className={styles.sectionPanel}>
+              {section.rows.map((item) => (
+                <SessionActionsMenu
+                  key={item.id}
+                  id={item.id}
+                  title={item.title}
+                  className={styles.organizedRow}
+                  content={
+                    <>
+                      {personal && (
+                        <MenuItem
+                          onClick={() => setSharing({ id: item.id, visit })}
+                        >
+                          Share…
+                        </MenuItem>
+                      )}
+                      <MenuItem
+                        disabled={
+                          !session.channelDetails?.available ||
+                          !!channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          )?.readOnly
+                        }
+                        onClick={() => setRenaming(item)}
+                      >
+                        <MenuIcon>
+                          <PencilSimpleIcon size={16} />
+                        </MenuIcon>
+                        Rename
+                      </MenuItem>
+                      <MenuSubmenu>
+                        <MenuSubmenuTrigger disabled={!preferences.writable}>
+                          <MenuIcon>
+                            <FolderSimpleIcon size={16} />
+                          </MenuIcon>
+                          {personal ? "Move to" : "Section"}
+                        </MenuSubmenuTrigger>
+                        <MenuSubmenuPopup aria-label="Session section">
+                          {section.id && (
+                            <MenuItem onClick={() => move(item.id)}>
+                              {personal ? "Conversations" : "Sessions"}
+                            </MenuItem>
+                          )}
+                          {groups.map((group) => (
+                            <MenuItem
+                              key={group.id}
+                              onClick={() => move(item.id, group.id)}
+                            >
+                              {group.name}
+                            </MenuItem>
+                          ))}
+                          <MenuItem onClick={() => setCreatingFor(item)}>
+                            {personal ? "New group…" : "New section…"}
+                          </MenuItem>
+                        </MenuSubmenuPopup>
+                      </MenuSubmenu>
+                      <MenuSubmenu>
+                        <MenuSubmenuTrigger>
+                          <MenuIcon>
+                            <CopyIcon size={16} />
+                          </MenuIcon>
+                          Copy
+                        </MenuSubmenuTrigger>
+                        <MenuSubmenuPopup aria-label="Copy session">
+                          <MenuItem
+                            onClick={() =>
+                              void copy(item.title, "Session name")
+                            }
+                          >
+                            Copy session name
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() => void copy(item.id, "Session ID")}
+                          >
+                            Copy session ID
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() =>
+                              void copy(
+                                `buzz://channel/${encodeURIComponent(item.id)}`,
+                                "Session link",
+                              )
+                            }
+                          >
+                            Copy link to session
+                          </MenuItem>
+                        </MenuSubmenuPopup>
+                      </MenuSubmenu>
+
+                      {personal && (
+                        <MenuItem
+                          disabled={
+                            !session.canvas.available ||
+                            !!channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            )?.readOnly
+                          }
+                          onClick={() => setSessionSettings(item)}
+                        >
+                          <MenuIcon>
+                            <GearIcon size={16} />
+                          </MenuIcon>
+                          Session settings…
+                        </MenuItem>
+                      )}
+                    </>
+                  }
+                >
+                  {renderSession(item)}
+                </SessionActionsMenu>
+              ))}
+              {!section.rows.length && section.id && (
+                <p className={styles.listMessage}>
+                  No sessions in this section.
+                </p>
+              )}
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        ))}
+      {sharing && sharingChannel && (
+        <SessionShare
+          key={sharing.id}
+          session={session}
+          channel={sharingChannel}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${sharing.id}"] button`,
+            ) ?? false
+          }
+          direct
+          initialOpen
+          renderTrigger={() => null}
+          onClose={() => setSharing(undefined)}
+          onShared={() => {
+            const id = sharing.id;
+            const sameVisit =
+              sharing.visit === currentVisit.current && !sharing.visit?.aborted;
+            setSharing(undefined);
+            if (sameVisit) onShared?.(id);
+          }}
+        />
+      )}
+      {sessionSettings && (
+        <WorkspaceSettings
+          session={session}
+          scope={scope}
+          target={{
+            kind: "session",
+            id: sessionSettings.id,
+            name: sessionSettings.title,
+          }}
+          close={() => setSessionSettings(undefined)}
+        />
+      )}
       {moves.some((move) => move.pending) && (
         <p role="status" className={styles.listMessage}>
           Saving section…
@@ -385,7 +482,7 @@ export function SessionSections({
           key={settingsFor.id}
           session={session}
           scope={scope}
-          target={{ kind: "section", ...settingsFor }}
+          target={{ kind: "section", ...settingsFor, personal }}
           close={() => setSettingsFor(undefined)}
         />
       )}
@@ -478,5 +575,83 @@ function NewSection({
         </p>
       )}
     </Dialog>
+  );
+}
+
+/** Both entry points use one action list; right-click never selects the row. */
+function SessionActionsMenu({
+  id,
+  title,
+  className,
+  children,
+  content,
+  enabled = true,
+}: {
+  id: string;
+  title: string;
+  className: string | undefined;
+  children: ReactNode;
+  content: ReactNode;
+  enabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLElement>();
+  const restoreFocus = () =>
+    document.querySelector<HTMLElement>(
+      `[data-session-menu-id="${id}"] button`,
+    ) ?? false;
+  if (!enabled) return <div className={className}>{children}</div>;
+  return (
+    <ContextMenuRoot
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setAnchor(undefined);
+      }}
+    >
+      <ContextMenuTrigger
+        render={<div className={className} data-session-menu-id={id} />}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setAnchor(event.currentTarget);
+            setOpen(true);
+          }
+        }}
+      >
+        {children}
+        <MenuRoot>
+          <MenuTrigger
+            render={(props) => (
+              <IconButton
+                {...props}
+                data-session-row-action=""
+                size="compact"
+                aria-label={`Actions for ${title}`}
+                icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+              />
+            )}
+          />
+          <MenuPopup
+            aria-label={`Actions for ${title}`}
+            align="end"
+            finalFocus={restoreFocus}
+          >
+            {content}
+          </MenuPopup>
+        </MenuRoot>
+      </ContextMenuTrigger>
+      <MenuPopup
+        aria-label={`Actions for ${title}`}
+        anchor={anchor}
+        finalFocus={restoreFocus}
+      >
+        {content}
+      </MenuPopup>
+    </ContextMenuRoot>
   );
 }

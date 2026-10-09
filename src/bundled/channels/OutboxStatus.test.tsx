@@ -20,6 +20,7 @@ import {
 } from "../../features/agents/snapshot-recovery";
 import type { RelayWriter } from "../../features/relay/transport";
 import { createRelayProfiler } from "../../features/relay/profiling";
+import { sessionLinkMessage } from "../../features/sessions/share";
 import { OutboxStatus } from "./OutboxStatus";
 
 afterEach(cleanup);
@@ -91,7 +92,7 @@ it("preserves generic retry for legacy unguarded invitations", () => {
 
 // The recovery page deliberately has no source inventory or encoder: deleted
 // agents and teams must not be needed to finish an already journaled delivery.
-it.each(["agent", "team"] as const)(
+it.each(["agent", "team", "session"] as const)(
   "retries and acknowledges a restored %s share without its deleted source",
   async (kind) => {
     const viewer = keypair();
@@ -120,13 +121,26 @@ it.each(["agent", "team"] as const)(
     try {
       await first.outbox.ready();
       const id = first.outbox.send(
-        { kind: 9, content: "Snapshot attachment", tags: [["h", "dm"]] },
         {
-          key: snapshotRecoveryKey(kind, "deleted-source"),
-          value: snapshotRecoveryValue(
-            [{ pubkey: "b".repeat(64), name: "Recipient" }],
-            "none",
-          ),
+          kind: 9,
+          content:
+            kind === "session"
+              ? sessionLinkMessage("deleted-source")
+              : "Snapshot attachment",
+          tags: [["h", "dm"]],
+        },
+        {
+          key:
+            kind === "session"
+              ? "session-share-link:deleted-source:dm"
+              : snapshotRecoveryKey(kind, "deleted-source"),
+          value:
+            kind === "session"
+              ? "1"
+              : snapshotRecoveryValue(
+                  [{ pubkey: "b".repeat(64), name: "Recipient" }],
+                  "none",
+                ),
         },
       );
       await waitFor(() => expect(records[0]?.delivery).toBe("unknown"));
@@ -161,7 +175,7 @@ it.each(["agent", "team"] as const)(
       await waitFor(() => expect(records[0]?.delivery).toBe("accepted"));
       expect(publish.mock.calls[0]?.[0]).toEqual(original);
       expect(restoredSign).not.toHaveBeenCalled();
-      if (kind === "team") {
+      if (kind !== "agent") {
         const operation = outbox.snapshot()[0];
         assert.exists(operation);
         restored.observe([signed(viewer, operation.event)]);

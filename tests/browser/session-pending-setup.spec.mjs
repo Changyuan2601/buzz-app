@@ -44,27 +44,48 @@ test("ordinary session links cannot bypass a pending start receipt", async ({
   expect(
     await openTarget(page, { ...target(app), channelId: pendingChannel }),
   ).toEqual({ status: "opened" });
+  const recovered = page.getByRole("textbox", {
+    name: "Message this session",
+    exact: true,
+  });
+  await expect(recovered).toHaveText("Original first message");
+  await expect(recovered).not.toBeEditable();
+  // Retrying must reconcile the saved creation, never send around missing setup.
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "The saved operation could not be confirmed",
+  );
+  expect(
+    await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key),
+  ).toEqual({
+    ...JSON.parse(receipt),
+    draft: { text: "Original first message", recipients: [] },
+  });
+  expect(
+    app.report.publications.filter(({ event }) => event.kind === 9),
+  ).toHaveLength(0);
+  // Recovery cannot claim to have revealed an exact message it has not mounted.
+  expect(
+    await openTarget(page, {
+      ...target(app),
+      messageId: "d".repeat(64),
+    }),
+  ).toEqual({ status: "failed", reason: "unavailable" });
+  // A fresh load without a pending receipt exercises the ordinary route separately.
+  await page.evaluate((key) => localStorage.removeItem(key), key);
+  // Reload establishes the view-state boundary after this external storage edit.
+  await page.goto(`${app.origin}/`);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+    )
+    .toBe("opened");
+  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const composer = page.getByRole("textbox", {
     name: "Message this session",
     exact: true,
   });
   await composer.fill("Cannot skip setup");
-  await composer.press("Enter");
-  await expect(
-    page.getByText(
-      "Finish setting up this session in Sessions before sending messages.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await expect(composer).toHaveText("Cannot skip setup");
-  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
-    receipt,
-  );
-  expect(
-    app.report.publications.filter(({ event }) => event.kind === 9),
-  ).toHaveLength(0);
-  // Retiring the receipt represents successful recovery; the ordinary route is usable again.
-  await page.evaluate((key) => localStorage.removeItem(key), key);
   await composer.press("Enter");
   await expect(
     history(page).getByText("Cannot skip setup", { exact: true }),

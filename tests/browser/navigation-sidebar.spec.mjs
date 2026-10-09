@@ -204,7 +204,7 @@ sessionSidebar(
     await openPage(page, "Messages");
     const parent = page.locator(`[data-channel-id="${sessionParent}"]`);
     await expect(parent).toBeVisible();
-    await expect(page.locator('[data-channel-id="alpha"]')).toHaveCount(0);
+    await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
     await expect(page.getByRole("button", { name: /sessions in/ })).toHaveCount(
       0,
     );
@@ -220,7 +220,7 @@ sessionSidebar(
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    await expect(page.locator('[data-channel-id="alpha"]')).toHaveCount(0);
+    await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
 
     await openPage(page, "Projects");
     await expect(

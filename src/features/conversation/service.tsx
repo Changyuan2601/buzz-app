@@ -191,6 +191,12 @@ export class ConversationService extends Service implements Conversation {
     validate(value);
     if (typeof value.matches !== "function")
       throw new Error("A link renderer needs a matcher");
+    if (
+      value.order !== undefined &&
+      typeof value.order !== "number" &&
+      typeof value.order !== "function"
+    )
+      throw new Error("A link renderer order must be a number or function");
     if (value.className !== undefined && typeof value.className !== "string")
       throw new Error("A link renderer class must be a string");
     this.linkEntries.register(this.ctx, value);

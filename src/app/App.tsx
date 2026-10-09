@@ -178,13 +178,20 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 }}
               />
             ) : route.selected === "buzz.me/me" ? (
-              <MeSidebar relay={services.relay} />
+              <MeSidebar
+                relay={services.relay}
+                navigator={services.navigation}
+                target={route.target}
+              />
             ) : (
               <ChannelSidebar
                 relay={services.relay}
                 navigator={services.navigation}
                 providers={services.channelTemplates}
                 target={route.target}
+                meEnabled={route.pages.some(
+                  (page) => page.key === "buzz.me/me",
+                )}
                 sessionsEnabled={route.pages.some(
                   (page) => page.pluginId === "buzz.sessions",
                 )}

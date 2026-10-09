@@ -5,7 +5,10 @@ import {
   retainReadState,
   type CoveredFrontier,
 } from "./read-state-retention";
-import type { ReadStateHost } from "./read-state-host";
+import {
+  ReadStateTimestampRejected,
+  type ReadStateHost,
+} from "./read-state-host";
 import {
   effectiveFrontier,
   EMPTY_READ_STATE,
@@ -506,8 +509,8 @@ export function createReadState({
           await save((current) => current, false);
           if (!journal) throw new Error("Saved read state unavailable");
           attemptedRevision = journal.revision;
-          // An unknown previous outcome must retry the exact saved signed bytes first.
-          if (journal.pending) await publishPending(signal);
+          // Unknown outcomes retry exact bytes; only expired, rejected state may be renewed.
+          if (journal.pending) await publishPending(signal, true);
           if (journal.revision <= journal.acceptedRevision) return;
           const coordinate = `read-state:${journal.slot}`;
           const events = await reader.read(
@@ -587,16 +590,30 @@ export function createReadState({
     });
     return publishing;
   }
-  async function publishPending(signal: AbortSignal) {
+  async function publishPending(signal: AbortSignal, recover = false) {
     const before = journal;
     const pending = before?.pending;
     if (!pending || !before) return;
     if (!host?.publish) throw new Error("Read-state publication unavailable");
     health({ status: "pending", error: undefined });
-    await host.publish(pending.event, signal);
+    let expired = false;
+    try {
+      await host.publish(pending.event, signal);
+    } catch (error) {
+      // A timestamp refusal also covers future clock skew. Only renew old state,
+      // outside the signer's 60s clock allowance, and at most once per flush.
+      if (
+        !recover ||
+        !(error instanceof ReadStateTimestampRejected) ||
+        pending.event.created_at >= now() - 60
+      )
+        throw error;
+      expired = true;
+    }
     signal.throwIfAborted();
-    // Acknowledgement is not coordinate observation. Keep the same signed bytes until readback.
-    health({ status: "accepted" });
+    // Acknowledgement is not coordinate observation. An expired retry may also
+    // have been stored before its original response was lost.
+    if (!expired) health({ status: "accepted" });
     const events = await reader.read(
       [
         {
@@ -612,14 +629,31 @@ export function createReadState({
     const own = slots.get(`read-state:${before.slot}`);
     const payload = (await decode([pending.event], signal))[0]?.parsed;
     if (!payload) throw new Error("Saved read-state decode missing");
-    if (
-      !own ||
-      own.parsed.clientId !== before.clientId ||
-      !same(mergeReadStates(own.parsed.state, payload.state), own.parsed.state)
-    )
-      throw new Error(
-        "Read-state accepted; coordinate observation still pending",
-      );
+    if (own && own.parsed.clientId !== before.clientId)
+      throw new Error("Read-state slot conflict; publication blocked");
+    const observed =
+      !!own &&
+      same(mergeReadStates(own.parsed.state, payload.state), own.parsed.state);
+    if (!observed) {
+      if (!expired)
+        throw new Error(
+          "Read-state accepted; coordinate observation still pending",
+        );
+      // Keep the old envelope until its replacement is saved by flush. Merge its
+      // plaintext durably without acknowledging it or erasing newer local intent.
+      await save((current) => {
+        if (current.pending?.event.id !== pending.event.id) return current;
+        return {
+          ...current,
+          ...retainMarks(
+            current,
+            [current.state, payload.state],
+            current.recent ?? {},
+          ),
+        };
+      });
+      return;
+    }
     const saved = await save((current) => {
       if (current.pending?.event.id !== pending.event.id) return current;
       const { pending: _pending, ...rest } = current;

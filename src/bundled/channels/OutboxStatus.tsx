@@ -4,6 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
+import { isSessionLinkReceipt } from "../../features/sessions/share";
 import type { Outbox } from "../../features/relay/outbox";
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
@@ -71,15 +72,15 @@ export function OutboxStatus({
                 type="button"
                 onClick={async () => {
                   try {
-                    const snapshotReceipt =
+                    const shareReceipt =
                       item.event.kind === 9 &&
-                      /^snapshot-share:(agent|team):.+$/.test(
+                      (/^snapshot-share:(agent|team):.+$/.test(
                         item.recovery?.key ?? "",
-                      ) &&
+                      ) ||
+                        isSessionLinkReceipt(item)) &&
                       (item.delivery === "accepted" ||
                         item.delivery === "seen");
-                    if (snapshotReceipt)
-                      await outbox.acknowledge(item.event.id);
+                    if (shareReceipt) await outbox.acknowledge(item.event.id);
                     await outbox.dismiss(item.event.id);
                     setError(undefined);
                   } catch (reason) {

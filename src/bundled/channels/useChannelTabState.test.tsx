@@ -128,3 +128,31 @@ test("channel switches retire each visit's menu opening without copying retained
   expect(mounted.result.current.entries).toEqual([alphaTool]);
   expect(mounted.result.current.selected).toBe(panelTabId(alphaTool));
 });
+
+test("Me and Messages retain independent workspaces for the same conversation", () => {
+  const session = {} as RelaySession;
+  const messages = renderHook(() => useChannelTabState(session, "alpha"));
+  const me = renderHook(() => useChannelTabState(session, "alpha", "me"));
+  act(() => {
+    messages.result.current.setTabs(() => [
+      { id: "messages-tab", kind: "new" },
+    ]);
+    messages.result.current.select("messages-tab");
+    me.result.current.setTabs(() => [{ id: "me-tab", kind: "new" }]);
+    me.result.current.select("me-tab");
+    me.result.current.setPaneOpen(false);
+    me.result.current.retireMenuEntries();
+  });
+  expect(messages.result.current).toMatchObject({
+    selected: "messages-tab",
+    paneOpen: true,
+    tabs: [{ id: "messages-tab" }],
+  });
+  me.unmount();
+  const restored = renderHook(() => useChannelTabState(session, "alpha", "me"));
+  expect(restored.result.current).toMatchObject({
+    selected: "me-tab",
+    paneOpen: false,
+    tabs: [{ id: "me-tab" }],
+  });
+});

@@ -1,6 +1,6 @@
 // FOUNDATION: Preview conversation contribution contract; data and delivery stay session-owned.
 import type { ComponentType } from "react";
-import type { Contribution } from "../../plugins/contributions";
+import type { Contribution, MatchOrder } from "../../plugins/contributions";
 import type { VoiceRecording } from "../relay/voice-media";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -87,6 +87,8 @@ export type LinkRenderer = Readonly<{
   id: string;
   title: string;
   matches(url: string): boolean;
+  /** Claim strength when several renderers match a URL; see `MatchOrder`. */
+  order?: MatchOrder | undefined;
   className?: string | undefined;
   component: ComponentType<{ url: string }>;
 }>;

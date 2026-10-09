@@ -300,11 +300,12 @@ export const fixturePlugins: readonly BundledPlugin[] = [
     module: {
       inject: ["panels", "pages"],
       apply(ctx) {
-        // Registered first on purpose: a global resolve(target) launcher bug must hit this instead.
+        // Order -10 on purpose: a global resolve(target) launcher bug must hit this instead.
         ctx.panels.register({
           id: "catch-all",
           title: "Wrong panel",
           matches: () => true,
+          order: -10,
           component: DrillInFixture,
         });
         ctx.panels.register({

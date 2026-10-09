@@ -25,7 +25,6 @@ import { MessageComposer } from "../messages/MessageComposer";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
-import { AgentChoice } from "./AgentChoice";
 import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
 
@@ -36,13 +35,15 @@ export function NewSessionComposer({
   parent,
   sectionId,
   extensions,
+  personal = false,
   standalone = false,
   focusRequest = 0,
   resumeDraftKey,
 }: {
+  personal?: boolean;
   resumeDraftKey?: string | undefined;
   standalone?: boolean;
-  focusRequest?: number;
+  focusRequest?: number | AbortSignal;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -50,14 +51,14 @@ export function NewSessionComposer({
   parent?: ChannelSummary | undefined;
   sectionId?: string | undefined;
 }) {
-  const available = session.workSessions.available;
+  const namespace = personal ? "me" : "sessions";
   const draftKey =
     resumeDraftKey ??
     (parent
       ? `sessions:channel:${parent.id}`
       : sectionId
-        ? `sessions:section:${sectionId}`
-        : "sessions");
+        ? `${namespace}:section:${sectionId}`
+        : namespace);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftCanvas, setDraftCanvas] = useState<string | undefined>(() => {
     const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
@@ -71,13 +72,11 @@ export function NewSessionComposer({
         ?.focus();
   }, [focusRequest]);
   const [pending, setPending] = useState(() => readPending(scope, draftKey));
-  const [agent, setAgent] = useState(() => {
-    const saved = readView<unknown>(scope, `${draftKey}:new-agent`, "");
-    return (
-      pending?.agent ??
-      (typeof saved === "string" && /^[0-9a-f]{64}$/.test(saved) ? saved : "")
-    );
-  });
+  const available = pending?.messageId
+    ? session.workSessions.available
+    : personal
+      ? session.workSessions.available && session.mePlacement.available
+      : session.workSessions.available;
   const [channelId] = useState(() => pending?.id ?? crypto.randomUUID());
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -119,7 +118,6 @@ export function NewSessionComposer({
           id: channelId,
           text: composerMarkdown(draft),
           draft,
-          ...(agent ? { agent } : {}),
         };
 
     const mentions = mentionDraft(current.draft).recipients.map(
@@ -139,7 +137,7 @@ export function NewSessionComposer({
           );
       }
       if (sectionId && !current.setup && !current.creationId) {
-        current.setup = await loadSessionSetup(session, sectionId);
+        current.setup = await loadSessionSetup(session, sectionId, personal);
         if (!mounted.current) return;
       }
       if (!current.setup && !current.creationId && draftCanvas !== undefined) {
@@ -160,6 +158,21 @@ export function NewSessionComposer({
         });
       }
       save(current);
+      if (personal && !current.messageId) {
+        await session.agentChoices.refresh();
+        if (!mounted.current) return;
+        if (
+          [...recipients, ...(current.setup?.agents ?? [])].some(
+            (key) =>
+              !session.agentChoices
+                .snapshot()
+                .selectable.some((agent) => agent.pubkey === key),
+          )
+        )
+          throw new Error(
+            "Me can only use your available agents. Check mentions and section defaults.",
+          );
+      }
       if (parent && !current.messageId && recipients.length) {
         await session.agentChoices.refresh();
         if (!mounted.current) return;
@@ -171,6 +184,12 @@ export function NewSessionComposer({
         if (!mounted.current) return;
       }
       if (!current.creationId) {
+        if (personal) {
+          await session.mePlacement.admit(current.id, {
+            sectionId: current.setup?.sectionId,
+          });
+          if (!mounted.current) return;
+        }
         current.creationId = session.workSessions.create(
           current.id,
           [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
@@ -185,12 +204,30 @@ export function NewSessionComposer({
         parent ? { parent: parent.id } : undefined,
       );
       if (!mounted.current) return;
+      if (personal && !current.messageId) {
+        if (!current.placementDone) {
+          await session.mePlacement.set(current.id, true, {
+            sectionId: current.setup?.sectionId,
+          });
+          if (!mounted.current) return;
+          current.placementDone = true;
+          save({ ...current });
+        } else {
+          await session.mePlacement.refresh();
+          if (!mounted.current) return;
+          if (!session.mePlacement.has(current.id))
+            throw new Error(
+              "This conversation was moved out of Me. Review its placement before retrying.",
+            );
+        }
+      }
       if (current.setup && !current.setupDone && !current.messageId) {
         await applySessionSetup(
           session,
           current.id,
           current.setup,
           () => mounted.current,
+          personal,
         );
         if (!mounted.current) return;
         current.setupDone = true;
@@ -228,7 +265,7 @@ export function NewSessionComposer({
           );
           if (!mounted.current) return;
         }
-        if (!recipients.length) {
+        if (!personal && !recipients.length) {
           const channel = session.channels
             .list()
             .channels.find((item) => item.id === current.id);
@@ -253,6 +290,12 @@ export function NewSessionComposer({
             ),
           ];
         }
+        if (personal) {
+          if (!session.mePlacement.has(current.id))
+            throw new Error(
+              "This conversation is no longer personal. Open it in Messages.",
+            );
+        }
         current.messageId = session.messages.send(
           current.id,
           current.text,
@@ -266,7 +309,6 @@ export function NewSessionComposer({
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-agent`, "");
-      setAgent("");
       setPending(undefined);
       onStarted(current.id);
     } catch (reason) {
@@ -295,7 +337,6 @@ export function NewSessionComposer({
         if (failedId === next.invitationId) {
           delete next.invitationId;
           delete next.agent;
-          setAgent("");
           writeView(scope, `${draftKey}:new-agent`, "");
         } else delete next.messageId;
         save(next);
@@ -313,47 +354,25 @@ export function NewSessionComposer({
       {sectionId && (
         <p className={styles.availability}>
           New session in{" "}
-          {session.sidebarPreferences
+          {(personal ? session.mePreferences : session.sidebarPreferences)
             .snapshot()
             .data?.sections.find((section) => section.id === sectionId)?.name ??
             "this section"}
         </p>
       )}
       <MessageComposer
-        trailingTool={
-          <AgentChoice
-            session={session}
-            value={pending?.agent ?? agent}
-            allowed={parent ? (parent.members ?? []) : undefined}
-            parentName={parent?.name}
-            disabled={
-              busy ||
-              (!!pending &&
-                (!editing || !!pending.invitationId || !!pending.messageId))
-            }
-            onChange={(value) => {
-              setAgent(value);
-              writeView(scope, `${draftKey}:new-agent`, value);
-              if (pending) {
-                const next = { ...pending };
-                if (value) next.agent = value;
-                else delete next.agent;
-                save(next);
-              }
-              setError(undefined);
-            }}
-          />
-        }
+        personalConversation={personal}
         session={session}
         extensions={extensions}
         scope={scope}
         channelId={parent?.id ?? channelId}
         channelName={parent?.name ?? "this session"}
-        label="Message this session"
+        label={personal ? "Message your agents" : "Message this session"}
         inviteAgents
         submission={{
           draftKey: `${draftKey}:new-draft`,
           initialDraft: pending?.draft ?? pending?.text,
+          receiptOnly: !!pending?.messageId,
           locked: busy || (!!pending && !editing),
           disabled: busy || !available,
           submit: (draft) => {
@@ -363,7 +382,14 @@ export function NewSessionComposer({
       />
       {!available && (
         <p className={styles.availability} role="status">
-          This connection can’t send messages. Your draft is saved.
+          {personal
+            ? "Me preferences or channel creation are unavailable. Your draft is saved."
+            : "This connection can’t send messages. Your draft is saved."}
+        </p>
+      )}
+      {pending?.agent && (
+        <p className={styles.availability}>
+          Recovering an earlier send with a saved agent recipient.
         </p>
       )}
       {error && <p role="alert">{error}</p>}
@@ -401,6 +427,7 @@ export function NewSessionComposer({
   if (!standalone) return composer;
   return (
     <NewSessionView
+      personal={personal}
       actions={
         <MenuRoot>
           <MenuTrigger
@@ -431,6 +458,7 @@ export function NewSessionComposer({
       {composer}
       {settingsOpen && (
         <DraftSessionSettings
+          personal={personal}
           session={session}
           sectionId={sectionId}
           canvas={draftCanvas}

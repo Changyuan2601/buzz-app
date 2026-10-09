@@ -447,6 +447,10 @@
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
+/* Holds the timeline's slot while it loads, so the composer stays docked. */
+.timelinePlaceholder {
+  flex: 1;
+}
 .panelStack {
   position: relative;
   border-inline-start: 1px solid var(--border-standard);

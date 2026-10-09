@@ -1,0 +1,97 @@
+.form {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.newChannel {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.searchAnchor {
+  min-width: 0;
+  flex: 1;
+}
+/* The dialog owns the focus trap, but the nested anchored list must paint
+   outside its compact bounds; only the body scrolls if zoom makes it tall. */
+[role="dialog"]:has(.form) {
+  overflow: visible;
+  /* Glass is appropriate for the dialog itself, but its text must not show
+     through the nested results surface when it overlaps the footer. */
+  background: var(--surface-popover);
+  backdrop-filter: none;
+}
+[role="dialog"]:has(.form) > [class~="buzz-dialog-body"] {
+  min-height: 0;
+  overflow-y: auto;
+}
+[role="dialog"]:has(.form) [data-base-ui-portal] {
+  position: fixed;
+  z-index: var(--layer-popover);
+}
+/* Match the Add-tab search frame at rest, inside the elevated dialog. */
+.searchAnchor [class~="buzz-input-group"],
+.form [class~="buzz-select-trigger"] {
+  background: var(--affordance-subtle);
+}
+.searchAnchor [class~="buzz-input-group"] {
+  border-radius: var(--radius-pill);
+}
+.audienceRow {
+  min-height: var(--size-control);
+  display: flex;
+  align-items: center;
+}
+.count {
+  flex-shrink: 0;
+}
+.selection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+}
+.results {
+  /* Keep the shared floating boundary, but not its translucent glass fill:
+     this list can overlap the dialog actions at a narrow viewport. */
+  background: var(--surface-popover);
+  backdrop-filter: none;
+  width: var(--anchor-width);
+  max-width: min(var(--available-width), calc(100vw - var(--space-4)));
+  max-height: min(18rem, calc(var(--available-height) - var(--space-2)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.people {
+  min-height: 0;
+}
+.people > p {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+}
+.person {
+  display: grid;
+  width: 100%;
+  min-height: var(--size-row);
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--floating-inner-radius);
+  background: transparent;
+  color: var(--text-standard);
+  text-align: start;
+  cursor: pointer;
+}
+.person:is(:hover, [aria-selected="true"]):not(:disabled) {
+  background: var(--affordance-floating-hover);
+}
+.person:disabled {
+  color: var(--text-unavailable);
+  cursor: not-allowed;
+}
+.person small {
+  display: block;
+}

@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type MouseEvent,
 } from "react";
-import type { Contribution } from "../../plugins/contributions";
+import { resolveMatch, type Contribution } from "../../plugins/contributions";
 import type { ContributionReader, LinkRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import {
@@ -21,7 +21,11 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import { BrowserIcon, CopyIcon } from "../../shared/design-system/icons";
+import {
+  BrowserIcon,
+  CopyIcon,
+  FileTextIcon,
+} from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
@@ -39,20 +43,12 @@ const empty: readonly Contribution<LinkRenderer>[] = [];
 const snapshot = () => empty;
 const subscribe = () => () => {};
 
-/** First active match wins, like panels. A broken matcher leaves other candidates eligible. */
-export function resolveLink(
+/** Lowest `order` among active matches wins, like panels; a broken matcher
+ * leaves other candidates eligible and never prevents opening a link. */
+export const resolveLink = (
   url: string,
   renderers: readonly Contribution<LinkRenderer>[],
-) {
-  for (const renderer of renderers) {
-    try {
-      if (renderer.matches(url)) return renderer;
-    } catch {
-      // An optional renderer must not prevent opening a link.
-    }
-  }
-  return undefined;
-}
+) => resolveMatch(renderers, url);
 
 export function MessageLink({
   url,
@@ -120,6 +116,21 @@ export function MessageLink({
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
+  const sessionChip =
+    !!session &&
+    !!destination &&
+    !destination.messageId &&
+    !!session.channels
+      .list()
+      .channels.find(
+        (item) =>
+          item.id === destination.channelId &&
+          item.channelType === "session" &&
+          !item.cached &&
+          !item.readOnly &&
+          item.members?.includes(session.viewer ?? ""),
+      ) &&
+    label === `Session · ${destination.channelId.slice(0, 8)}`;
   const preview =
     session && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
@@ -169,11 +180,18 @@ export function MessageLink({
   };
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
-    const content = Content ? (
-      <Content url={url} />
-    ) : (
-      (children ?? display ?? url)
-    );
+    const content =
+      sessionChip && destination ? (
+        <span className={styles.sessionChip}>
+          <FileTextIcon size="1em" aria-hidden="true" />
+          <span className="text-subtle">Session</span>
+          <span>· {destination.channelId.slice(0, 8)}</span>
+        </span>
+      ) : Content ? (
+        <Content url={url} />
+      ) : (
+        (children ?? display ?? url)
+      );
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
@@ -182,7 +200,7 @@ export function MessageLink({
         aria-label={display}
         data-link-label={label ?? ""}
         title={!preview ? url : undefined}
-        className={entry?.className}
+        className={sessionChip ? styles.sessionLink : entry?.className}
         data-link-renderer={entry?.key}
         {...navigation}
       >

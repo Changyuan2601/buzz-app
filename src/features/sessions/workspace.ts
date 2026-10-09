@@ -137,12 +137,12 @@ export function readWorkspace(content: string): Workspace {
 }
 
 /** One existing encrypted template record per section; no migration of sidebar preferences. */
-export async function sectionTemplateId(sectionId: string) {
+export async function sectionTemplateId(sectionId: string, personal = false) {
   const hash = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(sectionId),
   );
-  return `session-section-${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return `${personal ? "me" : "session"}-section-${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 export function templateEntry(entries: readonly KitEntry[], id: string) {
   return entries.find(
@@ -157,11 +157,15 @@ export function sectionDefault(
   sectionId: string,
   overrideId: string,
   requireDefault = false,
+  personal = false,
 ) {
   const override = templateEntry(entries, overrideId);
   if (override?.record.value.type === "template") return override.record.value;
   const groups = entries.find(
-    (entry) => !entry.record.deleted && entry.record.value.type === "groups",
+    (entry) =>
+      !entry.record.deleted &&
+      entry.record.value.type === "groups" &&
+      entry.record.value.id === (personal ? "me" : "personal"),
   )?.record.value;
   const defaultId =
     groups?.type === "groups"
@@ -204,11 +208,13 @@ export function parseSessionSetup(raw: unknown): SessionSetup {
 export async function loadSessionSetup(
   session: RelaySession,
   sectionId: string,
+  personal = false,
 ): Promise<SessionSetup> {
-  await session.sidebarPreferences.refresh();
-  const preferences = session.sidebarPreferences.snapshot();
+  const store = personal ? session.mePreferences : session.sidebarPreferences;
+  await store.refresh();
+  const preferences = store.snapshot();
   if (
-    !session.sidebarPreferences.writable ||
+    !store.writable ||
     !preferences.data?.sections.some((section) => section.id === sectionId)
   )
     throw new Error(
@@ -224,8 +230,9 @@ export async function loadSessionSetup(
   const template = sectionDefault(
     kit.entries,
     sectionId,
-    await sectionTemplateId(sectionId),
+    await sectionTemplateId(sectionId, personal),
     true,
+    personal,
   );
   if (!template) return { sectionId, canvas: "", agents: [] };
   if (template.agents.length || template.teamIds.length) {
@@ -277,6 +284,7 @@ export async function applySessionSetup(
   channelId: string,
   setup: SessionSetup,
   active: () => boolean,
+  personal = false,
 ) {
   if (!active()) return;
   const head = await session.canvas.read(channelId);
@@ -289,9 +297,10 @@ export async function applySessionSetup(
     await session.canvas.save(channelId, setup.canvas, undefined);
   if (!active()) return;
   if (setup.sectionId) {
-    await session.sidebarPreferences.refresh();
+    const store = personal ? session.mePreferences : session.sidebarPreferences;
+    await store.refresh();
     if (!active()) return;
-    const preferences = session.sidebarPreferences.snapshot();
+    const preferences = store.snapshot();
     if (preferences.status !== "ready" || !preferences.data)
       throw new Error("Sections couldn’t load. Retry before continuing setup.");
     if (
@@ -300,11 +309,8 @@ export async function applySessionSetup(
       )
     )
       throw new Error(removedSectionMessage);
-    if (
-      session.sidebarPreferences.snapshot().data?.assignments[channelId] !==
-      setup.sectionId
-    )
-      await session.sidebarPreferences.assign(channelId, setup.sectionId);
+    if (store.snapshot().data?.assignments[channelId] !== setup.sectionId)
+      await store.assign(channelId, setup.sectionId);
   }
   if (!active()) return;
   if (setup.agents.length)

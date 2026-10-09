@@ -67,6 +67,7 @@ function createTabStore() {
 export function useChannelTabState(
   session: RelaySession,
   channelId: string | undefined,
+  page = "messages",
 ) {
   let store = sessions.get(session);
   if (!store) {
@@ -75,7 +76,7 @@ export function useChannelTabState(
   }
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const setChannels = store.update;
-  const key = channelId ?? "";
+  const key = JSON.stringify([page, channelId ?? ""]);
   const state = channels[key] ?? empty;
   const update = useCallback(
     (change: (previous: State) => State) => {

@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -481,4 +482,119 @@ it("hands navigation a retained trigger instead of the disposable popup action",
   await user.click(screen.getByRole("button", { name: "View Agent activity" }));
   expect(captured).toEqual([trigger]);
   expect(captured[0]).toBeInTheDocument();
+});
+
+it.each(["click", "Enter", "Space"])(
+  "Me single-agent %s opens Activity directly while hover retains its preview",
+  async (activation) => {
+    const f = fixture(),
+      user = userEvent.setup(),
+      open = vi.fn(() => true);
+    f.update([entry()]);
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        clickOpensPanel
+        canOpenActivity={() => true}
+        openActivity={open}
+      />,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Activity: Agent working",
+    });
+    await user.hover(trigger);
+    expect(
+      await screen.findByRole("dialog", { name: "Working now" }),
+    ).toBeVisible();
+    expect(open).not.toHaveBeenCalled();
+    if (activation === "click") await user.click(trigger);
+    else {
+      trigger.focus();
+      await user.keyboard(activation === "Enter" ? "{Enter}" : " ");
+    }
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      activityTarget(agent, "channel", root),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Working now" }),
+    ).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  },
+);
+
+it("Me multiple-agent activation keeps the chooser and unavailable Activity keeps status", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry(), entry(other)]);
+  const view = render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      clickOpensPanel
+      canOpenActivity={() => true}
+      openActivity={open}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Activity: 2 agents working" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Working now" }),
+  ).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  f.update([entry()]);
+  view.rerender(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      clickOpensPanel
+      canOpenActivity={() => false}
+      openActivity={open}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Working now" }),
+  ).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("Me ArrowDown exposes retained thread navigation without opening Activity", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry()]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      clickOpensPanel
+      canOpenActivity={() => true}
+      openActivity={open}
+    />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "ArrowDown", isComposing: true });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.keyboard("{ArrowDown}");
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
+  await waitFor(() => expect(dialog).toHaveFocus());
+  expect(open).not.toHaveBeenCalled();
+  await user.tab();
+  expect(
+    within(dialog).getByRole("button", { name: "Open thread for Agent" }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    `buzz://message?channel=channel&id=${root}&thread=${root}`,
+  );
+  expect(trigger).toHaveFocus();
 });

@@ -3234,7 +3234,7 @@ it.each([false, true])(
 
 it.each(
   ["send", "unmount", "disabled", "denied"].flatMap((outcome) =>
-    ["mention", "avatar"].flatMap((recipient) =>
+    ["mention", "text-and-mention"].flatMap((recipient) =>
       [true, false].map((parent) => ({
         outcome,
         recipient,
@@ -3292,14 +3292,9 @@ it.each(
         screen.getByRole("button", { name: "First Honey" }),
       );
     } else {
-      await view.user.type(view.input(), "Hello Honey");
+      await view.user.type(view.input(), "Hello Honey ");
       await view.user.click(
-        screen.getByRole("button", { name: "Choose an agent" }),
-      );
-      await view.user.click(
-        await screen.findByRole("button", {
-          name: parent ? "Honey — adds to session and channel" : "Honey",
-        }),
+        screen.getByRole("button", { name: "First Honey" }),
       );
     }
     expect(addAgents).not.toHaveBeenCalled();
@@ -3412,13 +3407,8 @@ it.each(
   },
 );
 
-it("routes to the avatar choice and lets an explicit mention override it", async () => {
+it("requires explicit recipients when an ordinary session has multiple agents", async () => {
   const view = mount();
-  const library = {
-    status: "ready",
-    definitions: [],
-    identities: [first, { ...second, name: "Fizz" }],
-  };
   const list = {
     status: "ready",
     channels: [
@@ -3436,31 +3426,9 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       refreshMembership: vi.fn(async () => list.channels[0]),
       addAgents: vi.fn(async () => {}),
     },
-    agentLibrary: {
-      snapshot: () => library,
-      subscribe: () => () => {},
-      refresh: async () => {},
-      retain: () => () => {},
-    },
   } as unknown as RelaySession;
   view.retarget({ session, sessionConversation: true });
-  await view.user.click(
-    screen.getByRole("button", { name: "Choose an agent" }),
-  );
-  await view.user.click(await screen.findByRole("button", { name: "Fizz" }));
-  await view.user.type(view.input(), "Hello");
-  await view.user.keyboard("{Enter}");
-  expect(view.messages.send).toHaveBeenLastCalledWith(
-    "channel",
-    "Hello",
-    [second.pubkey],
-    [],
-  );
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Change agent: Fizz" }),
-    ).toBeEnabled(),
-  );
+  expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
   await view.user.click(screen.getByRole("button", { name: "First Honey" }));
   view.submit();
   await waitFor(() =>
@@ -3468,27 +3436,6 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       "channel",
       expect.any(String),
       [first.pubkey],
-      [],
-    ),
-  );
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
-  );
-  // The remembered explicit mention still overrides the picker until removed.
-  expect(view.input()).toHaveValue("@Honey ");
-  await view.user.click(
-    screen.getByRole("button", {
-      name: `Remove mention Honey ${first.pubkey}`,
-    }),
-  );
-  expect(view.input()).toHaveValue("@Honey ");
-  expect(view.input().querySelector(".inline-chip")).toBeNull();
-  view.submit();
-  await waitFor(() =>
-    expect(view.messages.send).toHaveBeenLastCalledWith(
-      "channel",
-      "@Honey ",
-      [second.pubkey],
       [],
     ),
   );

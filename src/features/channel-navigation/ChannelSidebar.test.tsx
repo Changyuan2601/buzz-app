@@ -100,7 +100,10 @@ function fixture(
   owners.push(owner);
   let list: ChannelList = {
     status: "ready",
-    channels: initialChannels,
+    channels: initialChannels.map((channel) => ({
+      space: "collaborative",
+      ...channel,
+    })),
   };
   const listeners = new Set<() => void>();
   const live = {

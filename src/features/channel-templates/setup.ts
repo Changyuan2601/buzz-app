@@ -401,6 +401,9 @@ export function createChannelSetup({
 
 export function personalGroups(entries: readonly KitEntry[]) {
   return entries.find(
-    (e) => !e.record.deleted && e.record.value.type === "groups",
+    (e) =>
+      !e.record.deleted &&
+      e.record.value.type === "groups" &&
+      e.record.value.id === "personal",
   );
 }

@@ -286,61 +286,76 @@ membershipTest(
 );
 
 // Real container geometry, pointer targeting and editing at enlarged interface sizes.
-test("Sessions keeps new and selected conversations usable at 200%", async ({
-  page,
-  app,
-}) => {
-  await page.setViewportSize({ width: 800, height: 768 });
-  await page.goto(app.origin);
-  await openPage(page, "Sessions");
-  const workspace = page.getByRole("region", { name: "Sessions", exact: true });
-  const composer = workspace.getByRole("textbox", {
-    name: "Message this session",
-    exact: true,
+const meChannel = "33333333-3333-4333-8333-333333333333";
+test.describe("Me layout", () => {
+  test.use({
+    productionBroker: true,
+    exactMessages: false,
+    channelIds: [meChannel, "beta"],
+    channelNames: { [meChannel]: "Alpha" },
+    sessionChannels: [meChannel],
+    meChannels: [meChannel],
+    historyCounts: { [meChannel]: 5, beta: 1 },
   });
-  await expect(composer).toBeVisible();
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-  );
-  const expectReachable = async () => {
-    await expect
-      .poll(() =>
-        composer.evaluate((el) => {
-          const r = el.getBoundingClientRect();
-          return (
-            r.width > 150 &&
-            r.left >= 0 &&
-            r.right <= innerWidth &&
-            r.top >= 0 &&
-            r.bottom <= innerHeight &&
-            el.contains(
-              document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
-            )
-          );
-        }),
-      )
-      .toBe(true);
-    await composer.click();
-    await page.keyboard.type("Scaled session draft");
+  test("Me keeps new and selected conversations usable at 200%", async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 768 });
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    const workspace = page;
+    const sidebar = page.getByRole("navigation", {
+      name: "Me conversations",
+    });
+    const composer = workspace.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    await expect(composer).toBeVisible();
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    const expectReachable = async () => {
+      await expect
+        .poll(() =>
+          composer.evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            return (
+              r.width > 150 &&
+              r.left >= 0 &&
+              r.right <= innerWidth &&
+              r.top >= 0 &&
+              r.bottom <= innerHeight &&
+              el.contains(
+                document.elementFromPoint(
+                  r.x + r.width / 2,
+                  r.y + r.height / 2,
+                ),
+              )
+            );
+          }),
+        )
+        .toBe(true);
+      await composer.click();
+      await page.keyboard.type("Scaled session draft");
+      await expect(composer).toHaveText("Scaled session draft");
+    };
+    await expectReachable();
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(
+      workspace.getByRole("heading", { name: "Alpha", exact: true }),
+    ).toBeVisible();
+    await expectReachable();
+    await sidebar
+      .getByRole("button", { name: "New conversation", exact: true })
+      .click();
     await expect(composer).toHaveText("Scaled session draft");
-  };
-  await expectReachable();
-  await workspace
-    .getByRole("navigation", { name: "Session sections" })
-    .getByRole("button", { name: "Alpha", exact: true })
-    .click();
-  await expect(
-    workspace.getByRole("heading", { name: "Alpha", exact: true }),
-  ).toBeVisible();
-  await expectReachable();
-  await workspace
-    .getByRole("button", { name: "New session", exact: true })
-    .click();
-  await expect(composer).toHaveText("Scaled session draft");
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
-  );
-  await expect(composer).toBeInViewport();
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    await expect(composer).toBeInViewport();
+  });
 });
 
 // The same session column is also hosted by Channels, outside SessionsWorkspace.

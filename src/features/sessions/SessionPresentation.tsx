@@ -11,21 +11,35 @@ export function NewSessionView({
   children,
   parentName,
   actions,
+  personal = false,
 }: {
   actions?: ReactNode;
+  personal?: boolean;
   children: ReactNode;
   parentName?: string | undefined;
 }) {
   return (
     <section
       className={styles.work}
-      aria-label={parentName ? `New session in ${parentName}` : "New session"}
+      aria-label={
+        parentName
+          ? `New session in ${parentName}`
+          : personal
+            ? "New conversation"
+            : "New session"
+      }
     >
-      <SessionHeading channel={{ name: "New session" }}>
+      <SessionHeading
+        channel={{ name: personal ? "New conversation" : "New session" }}
+      >
         {actions}
       </SessionHeading>
       <div className={styles.start}>
-        <div className={styles.startContent}>{children}</div>
+        <div
+          className={`${styles.startContent} ${personal ? styles.personalStart : ""}`}
+        >
+          {children}
+        </div>
       </div>
     </section>
   );
@@ -39,7 +53,13 @@ export function SessionColumn({
   children: ReactNode;
   enabled?: boolean;
 }) {
-  return enabled ? <div className={styles.column}>{children}</div> : children;
+  return enabled ? (
+    <div data-session-column="" className={styles.column}>
+      {children}
+    </div>
+  ) : (
+    children
+  );
 }
 
 export function SessionHeading({

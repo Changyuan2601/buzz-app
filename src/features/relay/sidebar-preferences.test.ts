@@ -10,7 +10,7 @@ import type { ViteDevServer } from "vite";
 import { nip44 } from "nostr-tools";
 import { expect, it, vi } from "vitest";
 import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
-import { KIT_TAG } from "../channel-templates/model";
+import { KIT_TAG, ME_KIT_TAG } from "../channel-templates/model";
 import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
 import {
@@ -117,7 +117,7 @@ it("reads legacy preferences through the production session, transport, and boun
         {
           kinds: [30078],
           authors: [viewer.pubkey],
-          "#t": [KIT_TAG, TEAM_MANIFEST_TAG],
+          "#t": [KIT_TAG, TEAM_MANIFEST_TAG, ME_KIT_TAG],
           limit: 500,
         },
       ]);

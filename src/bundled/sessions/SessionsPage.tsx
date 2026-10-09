@@ -1,3 +1,16 @@
+import { useConversationTabs } from "../channels/useConversationTabs";
+import { useChannelTabState } from "../channels/useChannelTabState";
+import { useChannelLabels } from "../channels/useChannelLabels";
+import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
+import { PanelDock } from "../../features/panels/PanelDock";
+import { PanelFrame } from "../../features/panels/PanelFrame";
+import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import type { Panels } from "../../features/panels/service";
+import { SidebarRightIcon } from "../../shared/design-system/icons";
+import { channelIcon } from "../../features/channels/channel-icon";
+import channelStyles from "../channels/Channels.module.css";
+import { SessionShare } from "./SessionShare";
+import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
@@ -16,7 +29,19 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
-import { useCallback, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import type { PageNavigation } from "../../features/navigation/service";
+import { useMePlacement } from "../../features/sessions/personal";
+import { meSelection, meSection, meTarget } from "../me/routes";
+import { subscribeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -38,326 +63,499 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
-import { readView, writeView, subscribeView } from "../../shared/view-state";
-import { SessionsWorkspace } from "./SessionsWorkspace";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
 import styles from "../../features/sessions/Sessions.module.css";
-import { UnreadBadge } from "../channels/UnreadBadge";
 
 export function SessionsPage({
   relay,
+  panels,
+  companion,
   extensions,
   navigator,
+  navigation,
 }: {
   relay: RelayData;
+  panels: Panels;
+  companion?: ReactNode;
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
+  navigation?: PageNavigation | undefined;
 }) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
     <LiveSessions
       key={`${connection.scope}:${connection.generation}`}
+      relay={relay}
+      panels={panels}
+      companion={companion}
       session={connection.session}
       scope={connection.scope ?? ""}
       extensions={extensions}
       navigator={navigator}
+      navigation={navigation?.forSession(relay, connection)}
     />
   ) : (
-    <section className={styles.empty} aria-label="Sessions">
-      <ChatCircleIcon size={28} />
-      <h1>Sessions</h1>
-      <p>
-        {connection.status === "connecting"
-          ? "Connecting to your community…"
-          : "Connect to a community to work with your agents."}
-      </p>
-      {connection.status === "error" && (
-        <>
-          <p role="alert">{connection.error ?? "The connection failed."}</p>
-          <Button type="button" onClick={relay.retry}>
-            Retry connection
-          </Button>
-        </>
-      )}
-    </section>
+    <PanelFrame companion={companion}>
+      <section className={styles.empty} aria-label="Me">
+        <ChatCircleIcon size={28} />
+        <h1>Me</h1>
+        <p>
+          {connection.status === "connecting"
+            ? "Connecting to your community…"
+            : "Connect to a community to work with your agents."}
+        </p>
+        {connection.status === "error" && (
+          <>
+            <p role="alert">{connection.error ?? "The connection failed."}</p>
+            <Button type="button" onClick={relay.retry}>
+              Retry connection
+            </Button>
+          </>
+        )}
+      </section>
+    </PanelFrame>
   );
 }
 
 function LiveSessions({
+  relay,
+  panels,
+  companion,
   session,
   scope,
   extensions,
   navigator,
+  navigation,
 }: {
+  relay: RelayData;
+  panels: Panels;
+  companion?: ReactNode;
   session: RelaySession;
   scope: string;
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
+  navigation?: PageNavigation | undefined;
 }) {
   const list = useChannelList(session.channels);
-  const [selected, setSelected] = useState(() => {
-    const saved = readView<unknown>(scope, "sessions:selected", "");
-    return typeof saved === "string" ? saved : "";
-  });
-  const [focusRequest, setFocusRequest] = useState(0);
-  const [newSection, setNewSection] = useState<string>();
+  const placement = useMePlacement(session);
+  const selected = meSelection(navigation?.target);
+  const newSection = meSection(navigation?.target);
   const pendingDraft = useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),
-    () => (selected ? pendingSessionDraft(scope, selected) : undefined),
+    () =>
+      selected !== "new" ? pendingSessionDraft(scope, selected) : undefined,
   );
-  const selectedSession = list.channels.find(
-    (item) =>
-      item.id === selected &&
-      item.channelType === "session" &&
-      !item.parentChannelId,
-  );
-  const sessions = list.channels
-    .filter(
-      (item) =>
-        item.channelType === "session" &&
-        !item.archived &&
-        !item.parentChannelId,
-    )
-    .sort(
-      (a, b) =>
-        (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
-    );
+  const selectedSession = list.channels.find((item) => item.id === selected);
   const select = (id: string) => {
-    setSelected(id);
-    writeView(scope, "sessions:selected", id);
+    void navigator?.open(meTarget(scope, id));
   };
-  return (
-    <SessionsWorkspace
-      session={session}
-      scope={scope}
-      sessions={sessions.map((item) => {
-        const parent = list.channels.find(
-          (candidate) => candidate.id === item.parentChannelId,
-        );
-        return {
-          id: item.id,
-          title: item.name,
-          content: (
-            <UnreadBadge
-              session={session}
-              channelId={item.id}
-              label={item.name}
-            />
-          ),
-          ...(item.parentChannelId
-            ? {
-                parentName: parent?.name ?? "Channel session",
-                ...(parent?.private ? { parentPrivate: true as const } : {}),
-              }
-            : {}),
-        };
-      })}
-      selected={selected}
-      onSelect={select}
-      onNew={(sectionId) => {
-        setFocusRequest((value) => value + 1);
-        setNewSection(sectionId);
-        select("");
-      }}
-      listStatus={
-        list.status === "loading" && !sessions.length ? (
-          <p role="status">Loading sessions…</p>
-        ) : list.status === "error" ? (
-          <div role="alert">
-            <p>{list.error ?? "Sessions couldn’t load."}</p>
-            <Button
-              type="button"
-              onClick={() => session.channels.refreshList?.()}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : undefined
-      }
-    >
-      {selectedSession && !pendingDraft ? (
-        <SessionWork
-          key={selectedSession.id}
-          session={session}
-          scope={scope}
-          channel={selectedSession}
-          extensions={extensions}
-          navigator={navigator}
-          parentName={
-            list.channels.find(
-              (item) => item.id === selectedSession.parentChannelId,
-            )?.name
-          }
-        />
-      ) : (
+  if (selected === "new" || pendingDraft)
+    return (
+      <PanelFrame companion={companion}>
         <NewSessionComposer
+          personal={
+            !pendingDraft ||
+            pendingDraft === "me" ||
+            pendingDraft.startsWith("me:")
+          }
           standalone
-          focusRequest={focusRequest}
+          focusRequest={navigation?.signal ?? 1}
           key={pendingDraft ?? newSection ?? "unfiled"}
           resumeDraftKey={pendingDraft}
           sectionId={
-            pendingDraft?.startsWith("sessions:section:")
-              ? pendingDraft.slice("sessions:section:".length)
+            pendingDraft?.includes(":section:")
+              ? pendingDraft.split(":section:")[1]
               : newSection
           }
           extensions={extensions}
           session={session}
           scope={scope}
-          onStarted={select}
+          onStarted={(id) => {
+            if (navigation?.signal.aborted) return;
+            if (!session.mePlacement.has(id)) {
+              const target = meTarget(scope);
+              if (target.kind === "page" && target.scope)
+                void navigator?.open({
+                  version: 1,
+                  kind: "conversation",
+                  scope: target.scope,
+                  channelId: id,
+                });
+            } else select(id);
+          }}
         />
-      )}
-    </SessionsWorkspace>
+      </PanelFrame>
+    );
+  if (selectedSession)
+    return (
+      <SessionWork
+        relay={relay}
+        panels={panels}
+        companion={companion}
+        key={`${selectedSession.id}:${navigation?.entryId ?? ""}`}
+        session={session}
+        scope={scope}
+        channel={selectedSession}
+        navigation={navigation}
+        extensions={extensions}
+        navigator={navigator}
+      />
+    );
+  return (
+    <PanelFrame companion={companion}>
+      <section className={styles.empty}>
+        {placement.status !== "ready" ? (
+          <div role="status">
+            <p>{placement.error ?? "Loading Me placement…"}</p>
+            <Button onClick={() => void session.mePlacement.refresh()}>
+              Retry Me
+            </Button>
+          </div>
+        ) : list.status === "loading" ? (
+          <p role="status">Loading your conversation…</p>
+        ) : (
+          <>
+            <p>
+              This conversation isn’t in your Me workspace. Open it in Messages.
+            </p>
+            {selectedSession && (
+              <Button
+                onClick={() => {
+                  const target = meTarget(scope);
+                  if (target.kind === "page" && target.scope)
+                    void navigator?.open({
+                      version: 1,
+                      kind: "conversation",
+                      scope: target.scope,
+                      channelId: selected,
+                    });
+                }}
+              >
+                Open in Messages
+              </Button>
+            )}
+            <Button
+              onClick={() => {
+                session.channels.refreshList?.();
+              }}
+            >
+              Retry
+            </Button>
+          </>
+        )}
+      </section>
+    </PanelFrame>
   );
 }
 
 function SessionWork({
+  relay,
+  panels,
+  companion,
   session,
   scope,
   channel,
   extensions,
   parentName,
   navigator,
+  navigation,
 }: {
+  relay: RelayData;
+  panels: Panels;
+  companion?: ReactNode;
   session: RelaySession;
   scope: string;
   channel: ChannelSummary;
   extensions: ConversationExtensions;
   parentName?: string | undefined;
+  navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const targetForLink = useCallback(
-    (url: string) => sessionLinkTarget(url, scope, session.viewer),
-    [scope, session.viewer],
+  const placement = useMePlacement(session);
+  const inMe = placement.ids.includes(channel.id);
+  const list = useChannelList(session.channels);
+  const { channels } = useChannelLabels(
+    list.channels,
+    session.profiles,
+    session.names,
   );
-  const canOpenLink = useCallback(
-    (url: string) => !!navigator && !!targetForLink(url),
-    [navigator, targetForLink],
-  );
-  const openLink = useCallback(
-    (url: string) => {
-      const target = targetForLink(url);
-      if (!navigator || !target) return false;
+  const tabState = useChannelTabState(session, channel.id, "me");
+  const mounted = useRef(false);
+  const continuing = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    continuing.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const secondary = useConversationTabs({
+    state: tabState,
+    relay,
+    session,
+    panels,
+    current: channel,
+    scope,
+    channels,
+    extensions,
+    personalWorkspace: true,
+    leadingIds: [],
+    continuingVisit: continuing.current,
+    isLive: () => !navigation?.signal.aborted,
+    openLink: (url) => openLink(url),
+    conversationIcon: (item) => {
+      const Icon = channelIcon(item);
+      return <Icon size="1rem" />;
+    },
+  });
+  const { drawer, splitTrigger } = secondary;
+  const canOpenLink = (url: string) =>
+    !!panels.resolve(url) ||
+    (!!navigator && !!sessionLinkTarget(url, scope, session.viewer));
+  function openLink(url: string) {
+    const connection = relay.snapshot();
+    if (
+      !mounted.current ||
+      navigation?.signal.aborted ||
+      connection.status !== "ready" ||
+      connection.session !== session
+    )
+      return false;
+    const target = sessionLinkTarget(url, scope, session.viewer);
+    if (target) {
+      if (!navigator) return false;
       void navigator.open(target);
       return true;
-    },
-    [navigator, targetForLink],
+    }
+    const panel = panels.resolve(url);
+    if (!panel) return false;
+    secondary.panelTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    secondary.open({ channelId: channel.id, panel, target: url });
+    return true;
+  }
+  useEffect(
+    () => () => tabState.retireMenuEntries(),
+    [tabState.retireMenuEntries],
   );
+  const split = usePanelSplit();
+  const hasTabs = secondary.items.length > 0;
+  const hasLocalPanel = hasTabs || !!drawer.side;
+  const showingPanel = tabState.paneOpen && hasLocalPanel;
   const workspace = (
-    // biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker.
-    <div
-      className={styles.work}
-      data-attachment-drop-zone=""
-      onDragOver={rejectUnhandledFileDrop}
-      onDrop={rejectUnhandledFileDrop}
-    >
-      <SessionHeading channel={channel} parentName={parentName}>
-        <MenuRoot>
-          <MenuTrigger
-            render={(props) => (
-              <IconButton
-                {...props}
-                size="toolbar"
-                aria-label="Session actions"
-                title="Session actions"
-                icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+    <div className={channelStyles.root}>
+      <div ref={split.ref} style={split.style} className={channelStyles.board}>
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker. */}
+        <div
+          className={styles.work}
+          data-attachment-drop-zone=""
+          onDragOver={rejectUnhandledFileDrop}
+          onDrop={rejectUnhandledFileDrop}
+        >
+          <SessionHeading channel={channel} parentName={parentName}>
+            <ChannelMembersButton session={session} channelId={channel.id} />
+            {drawer.launchers}
+            <SessionShare
+              session={session}
+              channel={channel}
+              direct
+              signal={navigation?.signal}
+              onShared={() => {
+                if (navigation?.signal.aborted) return;
+                const target = sessionLinkTarget(
+                  `buzz://channel/${channel.id}`,
+                  scope,
+                  session.viewer,
+                );
+                if (target) void navigator?.open(target);
+              }}
+            />
+            <MenuRoot>
+              <MenuTrigger
+                render={(props) => (
+                  <IconButton
+                    {...props}
+                    size="toolbar"
+                    aria-label="Session actions"
+                    title="Session actions"
+                    icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                  />
+                )}
               />
-            )}
-          />
-          <MenuPopup aria-label="Session actions" align="end">
-            <MenuItem
-              disabled={
-                !!channel.readOnly || !session.channelDetails?.available
-              }
-              onClick={() => setRenameOpen(true)}
-            >
-              <MenuIcon>
-                <PencilSimpleIcon size={16} />
-              </MenuIcon>
-              Rename
-            </MenuItem>
-            <MenuItem
-              disabled={!!channel.readOnly || !session.canvas.available}
-              onClick={() => setSettingsOpen(true)}
-            >
-              <MenuIcon>
-                <GearIcon size={16} />
-              </MenuIcon>
-              Session settings…
-            </MenuItem>
-          </MenuPopup>
-        </MenuRoot>
-      </SessionHeading>
-      {renameOpen && (
-        <RenameSession
-          key={channel.id}
-          session={session}
-          id={channel.id}
-          name={channel.name}
-          close={() => setRenameOpen(false)}
-        />
-      )}
-      {settingsOpen && (
-        <WorkspaceSettings
-          key={channel.id}
-          session={session}
-          scope={scope}
-          target={{ kind: "session", id: channel.id, name: channel.name }}
-          close={() => setSettingsOpen(false)}
-        />
-      )}
-      <SessionColumn>
-        <MessageManagementStatus />
-        <div className={styles.timeline}>
-          {window.status === "error" && !window.rows.length ? (
-            <div className={styles.empty} role="alert">
-              <p>{window.error}</p>
-              <Button
-                type="button"
-                onClick={() => session.channels.ensure(channel.id)}
-              >
-                Retry messages
-              </Button>
-            </div>
-          ) : window.status !== "ready" && !window.rows.length ? (
-            <p className={styles.empty} role="status">
-              Loading messages…
-            </p>
-          ) : (
-            <ChannelTimeline
-              historyControl="scroll"
-              extensions={extensions}
-              queries={session}
-              viewer={session.viewer}
-              scope={scope}
-              channelId={channel.id}
-              window={window}
-              revealMessageId={sent}
-              onOpenLink={openLink}
+              <MenuPopup aria-label="Session actions" align="end">
+                <MenuItem
+                  disabled={
+                    !!channel.readOnly || !session.channelDetails?.available
+                  }
+                  onClick={() => setRenameOpen(true)}
+                >
+                  <MenuIcon>
+                    <PencilSimpleIcon size={16} />
+                  </MenuIcon>
+                  Rename
+                </MenuItem>
+                <MenuItem
+                  disabled={!!channel.readOnly || !session.canvas.available}
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <MenuIcon>
+                    <GearIcon size={16} />
+                  </MenuIcon>
+                  Session settings…
+                </MenuItem>
+              </MenuPopup>
+            </MenuRoot>
+            <IconButton
+              ref={splitTrigger}
+              data-tab-pane-toggle=""
+              size="toolbar"
+              aria-label="Toggle tab pane"
+              title={showingPanel ? "Close tab pane" : "Open tab pane"}
+              aria-expanded={!!showingPanel}
+              icon={<SidebarRightIcon size="1rem" />}
+              onClick={() => {
+                tabState.setPaneOpen(!showingPanel);
+                if (!showingPanel && !hasTabs) secondary.addTab();
+              }}
+            />
+          </SessionHeading>
+          {renameOpen && (
+            <RenameSession
+              key={channel.id}
+              session={session}
+              id={channel.id}
+              name={channel.name}
+              close={() => setRenameOpen(false)}
             />
           )}
+          {settingsOpen && (
+            <WorkspaceSettings
+              key={channel.id}
+              session={session}
+              scope={scope}
+              target={{ kind: "session", id: channel.id, name: channel.name }}
+              close={() => setSettingsOpen(false)}
+            />
+          )}
+          {placement.status !== "ready" && (
+            <div role="status">
+              <p>{placement.error ?? "Loading Me placement…"}</p>
+              <Button onClick={() => void session.mePlacement.refresh()}>
+                Retry Me
+              </Button>
+            </div>
+          )}
+          {!inMe && placement.status === "ready" && (
+            <div role="status">
+              <p>This conversation is in Messages.</p>
+              {navigator && (
+                <Button
+                  onClick={() => openLink(`buzz://channel/${channel.id}`)}
+                >
+                  Open in Messages
+                </Button>
+              )}
+            </div>
+          )}
+          <SessionColumn enabled={false}>
+            <MessageManagementStatus />
+            <div className={styles.timeline}>
+              {window.status === "error" && !window.rows.length ? (
+                <div className={styles.empty} role="alert">
+                  <p>{window.error}</p>
+                  <Button
+                    type="button"
+                    onClick={() => session.channels.ensure(channel.id)}
+                  >
+                    Retry messages
+                  </Button>
+                </div>
+              ) : window.status !== "ready" && !window.rows.length ? (
+                <p className={styles.empty} role="status">
+                  Loading messages…
+                </p>
+              ) : (
+                <ChannelTimeline
+                  historyControl="scroll"
+                  extensions={extensions}
+                  queries={session}
+                  viewer={session.viewer}
+                  scope={scope}
+                  channelId={channel.id}
+                  window={window}
+                  revealMessageId={sent}
+                  onOpenLink={openLink}
+                  canOpenLink={canOpenLink}
+                />
+              )}
+            </div>
+            <MessageComposer
+              sessionConversation
+              activityClickOpensPanel
+              personalConversation={placement.status !== "ready" || inMe}
+              onSend={setSent}
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              channelId={channel.id}
+              channelName={channel.name}
+              label="Message your agents"
+              disabled={
+                !!channel.archived ||
+                window.status !== "ready" ||
+                placement.status !== "ready"
+              }
+              onOpenLink={openLink}
+              canOpenLink={canOpenLink}
+            />
+          </SessionColumn>
+          {drawer.content}
         </div>
-        <MessageComposer
-          sessionConversation
-          onSend={setSent}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          channelId={channel.id}
-          channelName={channel.name}
-          label="Message this session"
-          disabled={!!channel.archived || window.status !== "ready"}
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
-        />
-      </SessionColumn>
+        <PanelDock
+          open={!!companion || !!showingPanel}
+          keepMounted={hasLocalPanel && !tabState.paneOpen}
+          className={channelStyles.panelStack}
+          resizeHandle={split.handle}
+        >
+          {hasTabs && (
+            <div
+              className={channelStyles.retainedPanel}
+              hidden={!!companion && !showingPanel}
+            >
+              <PanelWorkspace
+                value={secondary.selectedTab}
+                select={secondary.selectPanelTab}
+                add={secondary.addTab}
+                items={secondary.items}
+                focusOnMount={continuing.current}
+              />
+            </div>
+          )}
+          {drawer.side && (
+            <div
+              className={channelStyles.retainedPanel}
+              hidden={!!companion && !showingPanel}
+            >
+              {drawer.side}
+            </div>
+          )}
+          {companion && (
+            <div key="companion" className={channelStyles.companion}>
+              {companion}
+            </div>
+          )}
+        </PanelDock>
+      </div>
     </div>
   );
   return (

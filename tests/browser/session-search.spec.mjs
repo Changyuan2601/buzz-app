@@ -22,7 +22,7 @@ test("global search opens a legacy session without restoring nested sidebar rows
     .locator("[data-sidebar-section]")
     .filter({ has: parentRow });
   const disclosure = section.locator("details");
-  await expect(child).toHaveCount(0);
+  await expect(child).toBeVisible();
   await section.locator("summary").click();
   await expect(disclosure).not.toHaveAttribute("open");
 
@@ -57,7 +57,7 @@ test("global search opens a legacy session without restoring nested sidebar rows
   await expect(
     sidebar.getByRole("button", { name: /sessions in/ }),
   ).toHaveCount(0);
-  await expect(child).toBeHidden();
+  await expect(child).toBeVisible();
   await page.keyboard.press("Space");
   await expect(disclosure).not.toHaveAttribute("open");
 });
