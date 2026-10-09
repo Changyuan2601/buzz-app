@@ -1696,6 +1696,82 @@ it("drops a queued watch run whose watch was disabled, or whose attention went o
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+it("drops a queued watch run when attention goes off and on, or its watch is replaced, before it ran", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  let release = () => {};
+  const hold = () =>
+    run.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+  hold();
+  emit({
+    events: [
+      event("one", { content: "deploy" }),
+      event("two", { content: "deploy" }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await service.save(bot, { attentionEnabled: false });
+  await service.save(bot, { attentionEnabled: true });
+  release();
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  // A replacement that still matches is a new watch: the old one's work goes.
+  hold();
+  emit({
+    events: [
+      event("three", { content: "deploy" }),
+      event("four", { content: "deploy" }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await service.save(bot, {
+    attention: {
+      "watch/channel": { ...watch, name: "Replaced" } as never,
+    },
+  });
+  release();
+  await settle();
+  expect(run).toHaveBeenCalledTimes(2);
+  // New events still wake the replacement.
+  emit({ events: [event("five", { content: "deploy" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+});
+
+it("runs a spent timer again when its owner restarts it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const once = {
+    type: "timer",
+    interest_id: "default",
+    prompt: "once",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+  } as const;
+  await service.save(bot, { attention: { "watch/once": once } });
+  await vi.advanceTimersByTimeAsync(65_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(service.find(bot)?.timers["watch/once"]).toMatchObject({ used: 1 });
+  // Rearming alone keeps the spent budget; a restart grants a fresh one.
+  await service.save(bot, {
+    attention: { "watch/once": { ...once, armed_at: 1_065 } },
+  });
+  await vi.advanceTimersByTimeAsync(65_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, {
+    attention: { "watch/once": { ...once, armed_at: 1_130 } },
+    restart: ["watch/once"],
+  });
+  await vi.advanceTimersByTimeAsync(65_000);
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
 it("keeps an Interest while a watch still uses it", async () => {
   const { service } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

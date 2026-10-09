@@ -135,6 +135,9 @@ export type AgentChange<Config = unknown> = Readonly<{
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
+  /** Timers in `attention` to start over: a new schedule from their
+   * `armed_at`, with no occurrences used. */
+  restart?: readonly string[];
 }>;
 /** What a type's read-only peek receives. */
 export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
@@ -625,6 +628,10 @@ type Job = {
   work?: ReturnType<LocalAgentActivity["begin"]>;
   trigger: Trigger;
   channelId?: string;
+  /** For a watch: the object and attention epoch it was matched under. It runs
+   * only while both are still current, so a watch edited, replaced or turned
+   * off and on again since then does not run it. */
+  matched?: { object: AttentionObject; epoch: number };
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
@@ -650,6 +657,8 @@ type Runner = {
    * native outlives a page reload. */
   mayHold: boolean;
   activityClaimed?: boolean;
+  /** Advances each time attention is seen off, which voids queued watch work. */
+  epoch: number;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -1033,7 +1042,13 @@ export class AgentsService extends Service implements Agents {
         : { ...rest, attentionEnabled: false };
     }
     for (const [slug, value] of Object.entries(change.attention ?? {}))
-      record = setAttention(record, slug, value);
+      record = setAttention(
+        record,
+        slug,
+        value,
+        undefined,
+        change.restart?.includes(slug) ? "restart" : undefined,
+      );
     // As the spec's writer: an Interest stays while anything still uses it.
     for (const [slug, value] of Object.entries(change.attention ?? {})) {
       const id = parseSlug(slug)?.id;
@@ -1388,6 +1403,7 @@ export class AgentsService extends Service implements Agents {
       attention: EMPTY,
       skipped: EMPTY,
       timers: EMPTY,
+      attentionEnabled: true,
       config: undefined,
     });
     this.shown.set(fields.pubkey, agent);
@@ -1732,6 +1748,14 @@ export class AgentsService extends Service implements Agents {
     for (const identity of identities) {
       const type = types.get(identity.type);
       const runner = this.runners.get(identity.pubkey);
+      // Turning attention off voids the watch work it queued, even if it is
+      // turned on again before that work would run.
+      if (runner && this.records[identity.pubkey]?.attentionEnabled === false) {
+        runner.epoch++;
+        runner.queue = runner.queue.filter(
+          (job) => job.trigger.type !== "watch",
+        );
+      }
       if (!runner)
         this.runners.set(identity.pubkey, this.runner(identity, type));
       else if (runner.type !== type) {
@@ -1788,6 +1812,7 @@ export class AgentsService extends Service implements Agents {
       seen: new Set(),
       wrote: new Set(),
       mayHold: true,
+      epoch: 0,
     };
   }
   private retire(runner: Runner) {
@@ -1838,6 +1863,14 @@ export class AgentsService extends Service implements Agents {
           this.enqueue(runner, {
             trigger,
             ...(batch.channelId ? { channelId: batch.channelId } : {}),
+            ...(trigger.type === "watch"
+              ? {
+                  matched: {
+                    object: agent.attention[trigger.slug] as AttentionObject,
+                    epoch: runner.epoch,
+                  },
+                }
+              : {}),
           });
       }
     }
@@ -1868,7 +1901,7 @@ export class AgentsService extends Service implements Agents {
    * unknown, wakes no watch. */
   private member(agent: Agent, event: RelayEvent) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.binding?.session.channels;
+    const channels = this.bindingOf(agent)?.session.channels;
     if (!channel || !channels) return false;
     const summary =
       channels.list().channels.find((item) => item.id === channel) ??
@@ -1877,12 +1910,18 @@ export class AgentsService extends Service implements Agents {
   }
   /** The job as it should run now, or undefined when it should not run: a
    * watch's event is matched again against the agent's current attention, so
-   * one turned off, disabled, removed or changed since it was queued wakes
-   * nothing. */
+   * one turned off, disabled, removed, replaced or changed since it was
+   * queued wakes nothing, even if it now matches again. */
   private current(runner: Runner, agent: Agent, job: Job): Job | undefined {
     const { trigger } = job;
     if (trigger.type !== "watch") return job;
     if (!agent.attentionEnabled) return undefined;
+    if (
+      !job.matched ||
+      job.matched.epoch !== runner.epoch ||
+      agent.attention[trigger.slug] !== job.matched.object
+    )
+      return undefined;
     const match = this.watches(runner, agent).find(
       ({ slug, watch, filter }) =>
         slug === trigger.slug && watchMatches(watch, trigger.event, filter),

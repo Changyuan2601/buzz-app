@@ -23,6 +23,7 @@ const agent = (pubkey = first): Agent => ({
   config: {},
   attention: {},
   skipped: {},
+  attentionEnabled: true,
   timers: {},
 });
 const response = (): HostResponse => ({

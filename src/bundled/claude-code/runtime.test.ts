@@ -218,7 +218,7 @@ it("runs a mention on the model and effort its delivery picked", async () => {
     effort: "low",
     signal: new AbortController().signal,
     workingUntil: () => undefined,
-  } as Delivery);
+  } as unknown as Delivery);
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
   expect(claude?.models).toEqual(["haiku"]);
@@ -252,7 +252,7 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
       ...(team ? { team } : {}),
       signal: new AbortController().signal,
       workingUntil: () => undefined,
-    } as Delivery);
+    } as unknown as Delivery);
   const system = (process: ReturnType<typeof claudes>[number] | undefined) =>
     String(
       (
@@ -302,7 +302,7 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
       workingUntil: () => undefined,
-    } as Delivery);
+    } as unknown as Delivery);
   };
   const system = (process: ReturnType<typeof claudes>[number] | undefined) =>
     String(

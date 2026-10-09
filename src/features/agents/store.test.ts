@@ -133,6 +133,26 @@ it("keeps a timer's budget across edits; only a rearm moves its deadline", () =>
       "watch/t"
     ],
   ).toEqual({ armedAt: 200, nextDue: 3800, used: 1 });
+  // An explicit rearm sets the deadline even at the same armed_at, so a new
+  // interval applies from it; a restart also gives back the whole budget.
+  expect(
+    setAttention(
+      ran,
+      "watch/t",
+      { ...timer, interval_secs: 60 },
+      later,
+      "rearm",
+    ).timers?.["watch/t"],
+  ).toEqual({ armedAt: 100, nextDue: 160, used: 1 });
+  expect(
+    setAttention(
+      ran,
+      "watch/t",
+      { ...timer, armed_at: later },
+      later,
+      "restart",
+    ).timers?.["watch/t"],
+  ).toEqual({ armedAt: later, nextDue: later + 3600, used: 0 });
   // Without saved state, what was already due counts as used.
   expect(
     setAttention(record, "watch/t", timer, 100 + 2 * 3600 + 5).timers?.[

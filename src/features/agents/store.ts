@@ -141,12 +141,16 @@ export function writeRecords(
  * unchanged, as Janet's do: a new interval applies from its next run, and
  * enabling it again runs at most one overdue occurrence. A new `armed_at` (a
  * rearm) sets a new deadline, one interval after it, and keeps the occurrences
- * already used. Only a timer with no saved state counts what was already due. */
+ * already used. Only a timer with no saved state counts what was already due.
+ * `schedule` overrides that for a timer: `rearm` always sets the new deadline,
+ * even at the same `armed_at`, and `restart` also gives it a fresh budget, as
+ * the owner's "Run again" does. */
 export function setAttention(
   record: AgentRecord,
   slug: string,
   value: AttentionValue | null,
   now = Math.floor(Date.now() / 1000),
+  schedule?: "rearm" | "restart",
 ): AgentRecord {
   const prior = record.attention[slug]?.value;
   const { [slug]: _, ...rest } = record.attention;
@@ -168,7 +172,7 @@ export function setAttention(
           ...timers,
           [slug]:
             state && prior?.type === "timer"
-              ? rearmed(value, state)
+              ? rearmed(value, state, schedule)
               : timerState(value, undefined, now),
         }
       : timers;
@@ -278,11 +282,15 @@ export function writeUnfinished(
 }
 
 /** `state` for the edited `timer`: unchanged unless it was rearmed. */
-function rearmed(timer: TimerWatch, state: TimerState): TimerState {
-  if (state.armedAt === timer.armed_at) return state;
+function rearmed(
+  timer: TimerWatch,
+  state: TimerState,
+  schedule?: "rearm" | "restart",
+): TimerState {
+  if (!schedule && state.armedAt === timer.armed_at) return state;
   return {
     armedAt: timer.armed_at,
     nextDue: timer.armed_at + timer.interval_secs,
-    used: state.used,
+    used: schedule === "restart" ? 0 : state.used,
   };
 }

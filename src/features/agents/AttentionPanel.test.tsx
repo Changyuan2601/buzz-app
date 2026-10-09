@@ -203,6 +203,7 @@ it("keeps an Interest in use, shows skipped objects, and rearms a spent timer", 
         armed_at: expect.any(Number),
       }),
     },
+    restart: ["watch/timer"],
   });
   const [change] = save.mock.lastCall as unknown as [
     { attention: Record<string, { armed_at: number }> },
