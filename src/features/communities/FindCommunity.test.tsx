@@ -95,7 +95,8 @@ it("shows the host while finding, then only published facts, gating Join on ever
   const agreement = screen.getByRole("checkbox", {
     name: "I agree to the Buzz Terms of Service and Privacy Policy.",
   });
-  expect(join()).toHaveTextContent("Accept and join");
+  // Consent gates the button; it never relabels it.
+  expect(join()).toHaveTextContent(/^Join$/);
   expect(join()).toBeDisabled();
   expect(precedes(screen.getByRole("button", { name: "Cancel" }), join())).toBe(
     true,
@@ -146,6 +147,44 @@ it("without a policy Join needs no consent, and without onJoin it stays a placeh
     />,
   );
   expect(await screen.findByRole("button", { name: "Join" })).toBeEnabled();
+});
+
+it("holds the page while onJoin is pending and leaves a failed join's meaning to the caller", async () => {
+  const request = relay(() => ({
+    "/": Response.json(buzz),
+    "/api/join-policy": new Response("missing", { status: 404 }),
+  }));
+  const pending = deferred<void>();
+  const onJoin = vi
+    .fn<(found: unknown) => Promise<void>>()
+    .mockReturnValueOnce(pending.promise)
+    .mockRejectedValueOnce(new Error("denied"));
+  const onCancel = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <FindCommunity
+      url={url}
+      onCancel={onCancel}
+      onJoin={onJoin}
+      request={request}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Join" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Joining…");
+  expect(join()).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onCancel).not.toHaveBeenCalled();
+  await act(async () => pending.resolve());
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(join()).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  // A rejected join only ends the wait: no copy of its own, no unhandled rejection.
+  await user.click(join());
+  expect(join()).toBeEnabled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(joinCommunity()).toBeVisible();
+  expect(onJoin).toHaveBeenCalledTimes(2);
 });
 
 it("Cancel while finding leaves at once and discards the late answer", async () => {

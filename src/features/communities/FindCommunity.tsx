@@ -33,7 +33,8 @@ const FAILURES: Record<FindFailure, { message: string; retry: boolean }> = {
 /**
  * Looks up a community at a canonical secure origin before any identity or
  * session exists. Owns nothing beyond the lookup: the caller decides what Join
- * does, and leaving it out keeps Join a disabled placeholder.
+ * does, and leaving it out keeps Join a disabled placeholder. While `onJoin` is
+ * pending the page holds still; what its failure means is the caller's to show.
  */
 export function FindCommunity({
   url,
@@ -44,7 +45,7 @@ export function FindCommunity({
 }: {
   url: string;
   onCancel: () => void;
-  onJoin?: (found: FoundCommunity) => void;
+  onJoin?: (found: FoundCommunity) => Promise<void> | void;
   request?: RelayFetch;
   titleId?: string;
 }) {
@@ -52,6 +53,7 @@ export function FindCommunity({
   const [state, setState] = useState<State>({ status: "finding" });
   const [adult, setAdult] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const [joining, setJoining] = useState(false);
   const inFlight = useRef<AbortController>(null);
   useEffect(() => {
     if (state.status !== "finding") return;
@@ -132,7 +134,17 @@ export function FindCommunity({
     policy?.terms_markdown || policy?.privacy_markdown,
   );
   const consented = (!needsAge || adult) && (!needsAgreement || agreed);
-  const label = needsAge || needsAgreement ? "Accept and join" : "Join";
+  const join = async () => {
+    if (!onJoin) return;
+    setJoining(true);
+    try {
+      await onJoin(found);
+    } catch {
+      // The caller shows what a failed join means; here it only ends the wait.
+    } finally {
+      setJoining(false);
+    }
+  };
   return (
     <>
       {heading("Join Community")}
@@ -176,14 +188,29 @@ export function FindCommunity({
           )}
         </div>
       )}
+      {joining && (
+        <p
+          role="status"
+          className="flex items-center gap-2 text-body text-secondary"
+        >
+          <CircleNotchIcon
+            size={18}
+            aria-hidden="true"
+            className="motion-safe:animate-spin"
+          />
+          Joining…
+        </p>
+      )}
       <div className="flex gap-3">
-        <Button onClick={cancel}>Cancel</Button>
+        <Button onClick={cancel} disabled={joining}>
+          Cancel
+        </Button>
         <Button
           variant="primary"
-          disabled={!onJoin || !consented}
-          onClick={() => onJoin?.(found)}
+          disabled={!onJoin || !consented || joining}
+          onClick={() => void join()}
         >
-          {onJoin ? label : `${label} — Coming soon`}
+          {onJoin ? "Join" : "Join — Coming soon"}
         </Button>
       </div>
     </>

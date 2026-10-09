@@ -42,17 +42,32 @@ icon if set and the hostname — plus, when the deployment has a join policy, *I
 Buzz Terms of Service and Privacy Policy.*, whose links open the relay's
 `/api/join-policy/terms` and `/privacy` pages outside the app. No name,
 description, member count, owner or invite badge is shown: none is knowable
-before joining. **Join** (or **Accept and join** when consent is shown) sits to
-the right of **Cancel**, as in every dialog footer; it requires every shown box
-ticked and a join handler, and first run passes none, so it is a disabled *Coming
-soon* placeholder — actual joining needs the Communities service, which exists
-only after identity is ready. Failures are classified, not echoed: an
-unreachable relay or an unusable policy answer offers **Cancel** and **Retry** (a
-missing policy counts as "none" only once NIP-11 confirmed a Buzz relay); a
-non-Buzz address or a Buzz relay with no community bound to that host offers
-**Cancel** only. The page is the end of first run for now; the app itself opens
-on the next launch. Denied/unavailable/corrupt storage is not first run and keeps
-the **Retry secure storage access** path.
+before joining. **Join** sits to the right of **Cancel**, as in every dialog
+footer, and is always labelled Join: shown consent boxes gate it, they do not
+rename it. Lookup failures are classified, not echoed: an unreachable relay or an
+unusable policy answer offers **Cancel** and **Retry** (a missing policy counts as
+"none" only once NIP-11 confirmed a Buzz relay); a non-Buzz address or a Buzz
+relay with no community bound to that host offers **Cancel** only.
+
+**Join** is the same join the rail's Add-a-community dialog performs when no
+invite code is typed, through the same owner (`communities.joined` in
+`src/features/communities/service.ts`, [communities](communities.md)): a signed
+profile read (`inspectProfile`: NIP-11 again, then a NIP-98-signed `POST /query`
+for the key's own kind 0) proves the relay admits this key, then the membership —
+the canonical origin as id, the hostname as name, the NIP-11 icon if set — is
+saved to this device and selected, and the gate lifts into the app on that
+community. While the read is in flight the page shows *Joining…* with Join and
+Cancel disabled. Nothing is published: no kind 0, no policy receipt or invite
+claim. The ticked boxes are the client's record of consent, as on the dialog's
+code-less path; a relay that requires an invite answers the read with 401/403,
+shown as **This community needs an invite** with **Back** to the find page (the
+typed address stays in the URL field behind it), since this page has no invite
+code field. A relay that cannot be reached shows the lookup's unreachable copy;
+a device record that will not save shows the service's storage message. Both
+offer **Back**. An existing relay profile seeds the empty local default; a new
+key enters the app with no published profile until Settings → Profile (a profile
+step is planned between the save and app entry). Denied/unavailable/corrupt
+storage is not first run and keeps the **Retry secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an

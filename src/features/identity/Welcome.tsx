@@ -7,7 +7,11 @@ import {
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import { firstRunCredential } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
+import { inspectProfile } from "../communities/api";
 import { FindCommunity } from "../communities/FindCommunity";
+import type { FoundCommunity } from "../communities/find-community";
+import type { Communities } from "../communities/service";
+import { readErrorKind } from "../relay/errors";
 import { CircleNotchIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -23,11 +27,14 @@ import { SetupWindowHeader } from "./SetupWindowHeader";
  */
 export function Welcome({
   identity,
+  communities,
   children,
   connect = firstRunCredential,
   delay = wait,
 }: {
   identity: Identity;
+  /** The live startup service: joining through it is what selects the community. */
+  communities: Pick<Communities, "snapshot" | "joined">;
   children: ReactNode;
   connect?: (signal: AbortSignal) => Promise<Credential>;
   delay?: (ms: number) => Promise<void>;
@@ -40,6 +47,10 @@ export function Welcome({
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
   const [finding, setFinding] = useState<string>();
+  const [joinError, setJoinError] = useState<{
+    title: string;
+    error: string;
+  }>();
   useEffect(
     () => () => {
       if (login.snapshot().status === "pending") login.cancel();
@@ -50,6 +61,47 @@ export function Welcome({
   const signIn = async () => {
     await login.signIn();
     if (login.snapshot().status === "signed-in") void setup.start();
+  };
+  /**
+   * The same join the Add-a-community dialog performs without an invite code:
+   * a signed profile read proves admission, then the membership is saved
+   * through the live Communities service, which selects it, so the app opens
+   * on that community when the gate lifts. Nothing is published.
+   */
+  const join = async (found: FoundCommunity) => {
+    const fail = (error: string, title = "Couldn’t join community") =>
+      setJoinError({ title, error });
+    const client = communities.snapshot();
+    if (client.status !== "ready")
+      return fail(client.error ?? "Your saved communities aren’t ready yet.");
+    let read: Awaited<ReturnType<typeof inspectProfile>>;
+    try {
+      read = await inspectProfile(found.url);
+    } catch (error) {
+      return readErrorKind(error) === "denied"
+        ? fail(
+            `${found.host} admits members by invite, and this key has none yet.`,
+            "This community needs an invite",
+          )
+        : fail(
+            "Could not reach the relay. Check your connection and try again.",
+          );
+    }
+    try {
+      communities.joined(
+        {
+          id: found.url,
+          name: found.host,
+          ...(found.icon ? { icon: found.icon } : {}),
+        },
+        read.exists ? read.profile : client.profile,
+      );
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
+    // A profile step belongs here, once the membership is saved and before the
+    // gate lifts; today the new key enters the app with no published profile.
+    setup.reset();
   };
   return (
     <main className="p-8" aria-labelledby="welcome-title">
@@ -73,12 +125,18 @@ export function Welcome({
             </Button>
           </>
         ) : progress.status === "done" ? (
-          finding ? (
-            // No onJoin yet: joining needs the Communities service, which app
-            // composition creates only after identity is ready.
+          joinError ? (
+            // Back returns to the find page, which looks the community up again.
+            <Failure
+              title={joinError.title}
+              error={joinError.error}
+              onBack={() => setJoinError(undefined)}
+            />
+          ) : finding ? (
             <FindCommunity
               url={finding}
               onCancel={() => setFinding(undefined)}
+              onJoin={join}
               titleId="welcome-title"
             />
           ) : (

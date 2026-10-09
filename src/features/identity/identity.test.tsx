@@ -10,13 +10,17 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { EventTemplate } from "nostr-tools";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   createIdentity,
   nativeIdentityEnabled,
+  type Identity,
   type RecoveryResult,
 } from "./service";
 import { IdentitySetup } from "./IdentitySetup";
@@ -24,6 +28,9 @@ import { PrivateKey } from "./PrivateKey";
 import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
 import { Welcome } from "./Welcome";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
+import { createCommunities } from "../communities/service";
+import { connectNativeTransport } from "../relay/native";
+import { keypair, profile, signed } from "../relay/testing";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => true),
@@ -56,11 +63,38 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-afterEach(() => {
+/** Welcome reads the Communities service only to join; these screens never get there. */
+const noJoin: ComponentProps<typeof Welcome>["communities"] = {
+  snapshot() {
+    throw new Error("Welcome consulted communities before a join");
+  },
+  joined() {
+    throw new Error("Welcome joined without a join");
+  },
+};
+const roots: Context[] = [];
+/** The production shape: the service exists at startup and hydrates once the key is ready. */
+function communitiesFor(identity: Identity) {
+  const ctx = new Context();
+  roots.push(ctx);
+  return createCommunities(
+    ctx,
+    false,
+    undefined,
+    "",
+    undefined,
+    identity.ready,
+    connectNativeTransport,
+  );
+}
+afterEach(async () => {
   cleanup();
+  for (const root of roots.splice(0)) await root.fiber.dispose();
   vi.resetAllMocks();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 it("keeps native titlebar actions available throughout identity setup without dragging form controls", async () => {
@@ -648,7 +682,7 @@ it("first launch offers Builderlab, with community URL and QR scanning disabled"
   vi.mocked(invoke).mockResolvedValueOnce(null);
   const identity = createIdentity();
   render(
-    <Welcome identity={identity} connect={vi.fn()}>
+    <Welcome identity={identity} communities={noJoin} connect={vi.fn()}>
       <p>Signed in</p>
     </Welcome>,
   );
@@ -707,7 +741,12 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <Welcome identity={identity} connect={connect} delay={delay}>
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={connect}
+      delay={delay}
+    >
       <p>Signed in</p>
     </Welcome>,
   );
@@ -794,6 +833,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   render(
     <Welcome
       identity={identity}
+      communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
       delay={vi.fn().mockResolvedValue(undefined)}
     >
@@ -889,6 +929,7 @@ it("a found community shows Join Community after exactly the two unauthenticated
   render(
     <Welcome
       identity={identity}
+      communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
       delay={vi.fn().mockResolvedValue(undefined)}
     >
@@ -917,6 +958,235 @@ it("a found community shows Join Community after exactly the two unauthenticated
   identity.dispose();
 });
 
+/**
+ * A native first run against a relay that answers: the key setup creates is the
+ * one the host signs with, so `identity_restore` learns it only after
+ * `identity_create`. The kind-0 read waits on `query` so the pending join is
+ * observable; `admitted` decides whether that read is answered or refused.
+ */
+function nativeRelay(member: ReturnType<typeof keypair>) {
+  const relayKey = keypair();
+  const origin = "https://relay.example.com:8443";
+  const calls: Array<{
+    community: string;
+    path: string;
+    method: string;
+    body: unknown;
+  }> = [];
+  const relay = {
+    origin,
+    calls,
+    admitted: true,
+    profile: undefined as ReturnType<typeof profile> | undefined,
+    query: Promise.resolve(),
+  };
+  let created = false;
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.stubGlobal(
+    "WebSocket",
+    class {
+      close() {}
+    },
+  );
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "get_os_idle_seconds") return 0;
+    if (command === "identity_restore") return created ? member.pubkey : null;
+    if (command === "identity_create") {
+      created = true;
+      return member.pubkey;
+    }
+    if (command === "relay_sign")
+      return signed(member, (args as { event: EventTemplate }).event);
+    if (command !== "relay_http")
+      throw new Error(`Unexpected command ${command}`);
+    const request = args as {
+      community: string;
+      path: string;
+      method: string;
+      body: string | null;
+    };
+    const body: unknown = request.body ? JSON.parse(request.body) : null;
+    calls.push({ ...request, body });
+    const answer = (status: number, value?: unknown) => ({
+      status,
+      headers: {},
+      body: value === undefined ? "" : JSON.stringify(value),
+    });
+    if (request.path === "/")
+      return answer(200, {
+        name: "Buzz Relay",
+        self: relayKey.pubkey,
+        icon: "https://cdn.example.com/icon.png",
+      });
+    if (request.path === "/api/join-policy") return answer(404);
+    if (request.path === "/query") {
+      const filters = body as Array<{ kinds?: number[] }>;
+      if (!filters.some((filter) => filter.kinds?.includes(0)))
+        return answer(200, []);
+      await relay.query;
+      if (!relay.admitted) return answer(403, { error: "membership required" });
+      return answer(200, relay.profile ? [relay.profile] : []);
+    }
+    return answer(404);
+  });
+  return relay;
+}
+async function joinCommunityPage(identity: Identity) {
+  const communities = communitiesFor(identity);
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={vi.fn().mockResolvedValue(undefined)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await screen.findByRole("heading", { name: "Join a community" });
+  await user.type(
+    screen.getByRole("textbox", { name: "Community URL" }),
+    "relay.example.com:8443{Enter}",
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+  return { communities, user };
+}
+
+it("Join proves admission with the signed profile read, saves the membership, and opens the app on it", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.profile = profile(member, { name: "Ada", picture: "" });
+  const gate = deferred<void>();
+  relay.query = gate.promise;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  expect(relay.calls.map((call) => call.method)).toEqual(["GET", "GET"]);
+  expect(screen.getByRole("button", { name: "Join" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  // The read is in flight: the page holds still and the app stays hidden.
+  expect(screen.getByRole("status")).toHaveTextContent("Joining…");
+  expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await waitFor(() => expect(relay.calls).toHaveLength(4));
+  expect(relay.calls).toEqual([
+    { community: relay.origin, path: "/", method: "GET", body: null },
+    {
+      community: relay.origin,
+      path: "/api/join-policy",
+      method: "GET",
+      body: null,
+    },
+    { community: relay.origin, path: "/", method: "GET", body: null },
+    {
+      community: relay.origin,
+      path: "/query",
+      method: "POST",
+      body: [
+        {
+          kinds: [0],
+          authors: [member.pubkey],
+          limit: 5,
+          consistency: "strong",
+        },
+      ],
+    },
+  ]);
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(communities.snapshot().memberships).toEqual([]);
+  await act(async () => gate.resolve());
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  const membership = {
+    id: relay.origin,
+    name: "relay.example.com:8443",
+    icon: "https://cdn.example.com/icon.png",
+  };
+  expect(communities.snapshot()).toMatchObject({
+    status: "ready",
+    viewer: member.pubkey,
+    memberships: [membership],
+    selected: relay.origin,
+  });
+  // The device record the next launch restores: the relay's existing profile
+  // seeds the empty local default; nothing was published to get there.
+  expect(
+    JSON.parse(localStorage.getItem(`buzz-client.v1:${member.pubkey}`) ?? ""),
+  ).toEqual({
+    profile: { name: "Ada", picture: "", about: "" },
+    memberships: [membership],
+    selected: relay.origin,
+  });
+  expect(relay.calls.some((call) => call.path === "/events")).toBe(false);
+  identity.dispose();
+});
+
+it("a relay that refuses the read says the community needs an invite and keeps the typed URL", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", {
+      name: "This community needs an invite",
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "relay.example.com:8443 admits members by invite, and this key has none yet.",
+  );
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(communities.snapshot().memberships).toEqual([]);
+  expect(localStorage.getItem(`buzz-client.v1:${member.pubkey}`)).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  // Back lands on the find page, which looks the community up again.
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Community URL" })).toHaveValue(
+    "relay.example.com:8443",
+  );
+  identity.dispose();
+});
+
+it("a device record that will not save names the storage failure and leaves nothing joined", async () => {
+  const member = keypair();
+  nativeRelay(member);
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("QuotaExceededError");
+  });
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t join community" }),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not save this community on this device. Try again.",
+  );
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [],
+    selected: null,
+  });
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  identity.dispose();
+});
+
 it("a key creation failure stops setup and Back returns to the first-launch screen", async () => {
   vi.mocked(invoke)
     .mockResolvedValueOnce(null)
@@ -926,7 +1196,12 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <Welcome identity={identity} connect={connect} delay={delay}>
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={connect}
+      delay={delay}
+    >
       <p>Signed in</p>
     </Welcome>,
   );
@@ -971,7 +1246,7 @@ it("a failed or canceled sign-in returns to the first-launch screen", async () =
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <Welcome identity={identity} connect={connect}>
+    <Welcome identity={identity} communities={noJoin} connect={connect}>
       <p>Signed in</p>
     </Welcome>,
   );
@@ -1015,7 +1290,7 @@ it("restore denial does not become first run or generate a replacement", async (
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <Welcome identity={identity} connect={vi.fn()}>
+    <Welcome identity={identity} communities={noJoin} connect={vi.fn()}>
       <p>Restored</p>
     </Welcome>,
   );
@@ -1157,7 +1432,7 @@ it.each(["Linux x86_64", "Win32"])(
     vi.mocked(invoke).mockReturnValue(new Promise(() => {}));
     const identity = createIdentity();
     render(
-      <Welcome identity={identity} connect={vi.fn()}>
+      <Welcome identity={identity} communities={noJoin} connect={vi.fn()}>
         Signed in
       </Welcome>,
     );

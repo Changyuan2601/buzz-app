@@ -67,7 +67,10 @@ export function App({ services }: { services: AppServices }) {
       >
         <LaunchWindowControls />
         {services.identity ? (
-          <Welcome identity={services.identity}>
+          <Welcome
+            identity={services.identity}
+            communities={services.communities}
+          >
             <ConnectedApp services={services} />
           </Welcome>
         ) : (
