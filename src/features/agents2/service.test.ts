@@ -93,12 +93,18 @@ function fakeRelay(origin = "https://relay.example.test") {
         changes.add(listener);
         return () => changes.delete(listener);
       },
+      retry: vi.fn(),
     } as unknown as RelayData,
     /** Drops the connection, or restores it with a new session. */
     connect(connected: boolean) {
       snapshot = connected
         ? { ...connected_, session: { ...session } as RelaySession }
         : { status: "disconnected", generation: 2, session };
+      for (const listener of changes) listener();
+    },
+    /** Fails the connection, as a first connect that timed out does. */
+    fail() {
+      snapshot = { status: "error", generation: 4, session, error: "down" };
       for (const listener of changes) listener();
     },
     /** Replaces the session, as after the transport was lost. */
@@ -251,6 +257,8 @@ async function setup({
     run,
     emit: fake.emit,
     connect: fake.connect,
+    fail: fake.fail,
+    relay: fake.relay,
     reconnecting: fake.reconnecting,
     recover: fake.recover,
     archives: fake.archives,
@@ -530,6 +538,22 @@ it("keeps an agent running while its community reconnects, and stops it on disco
   leave("https://relay.example.test");
   expect(running()).toEqual([]);
   expect(service.relay(bot)).toBeUndefined();
+});
+
+it("tries a failed unselected community again every so often, and leaves the selected one's Retry to the viewer", async () => {
+  vi.useFakeTimers();
+  const { service, relay, fail, second, select } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  fail();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(relay.retry).not.toHaveBeenCalled();
+  select(second.origin);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(relay.retry).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(relay.retry).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(relay.retry).toHaveBeenCalledTimes(2);
 });
 
 it("is not woken by reactions, deletions or DMs", async () => {

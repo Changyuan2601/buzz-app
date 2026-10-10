@@ -194,6 +194,8 @@ const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
+/** How often a failed connection to an unselected community is tried again. */
+const RETRY_MS = 30_000;
 const EMPTY = Object.freeze({});
 const blank = (pubkey: string): AgentRecord => ({
   pubkey,
@@ -235,6 +237,8 @@ type Bound = {
   relay: RelayData;
   stop: () => void;
   binding?: Binding | undefined;
+  /** When its failed connection was last tried again. */
+  retried?: number;
 };
 /** The origin a relay URL or community ID names, if it is a valid one. */
 const originOf = (value: string) => {
@@ -323,6 +327,7 @@ export class Agents2Service extends Service implements Agents2 {
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         for (const runner of this.runners.values()) void this.drain(runner);
+        this.reconnect();
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -639,6 +644,21 @@ export class Agents2Service extends Service implements Agents2 {
       });
       this.bind(origin);
     }
+  }
+  /** Tries each unselected community whose connection failed again, since
+   * nobody is there to press its Retry; its agents wait on it. */
+  private reconnect() {
+    const selected = originOf(this.communities.snapshot().selected ?? "");
+    const now = Date.now();
+    for (const [origin, entry] of this.bound)
+      if (
+        origin !== selected &&
+        entry.relay.snapshot().status === "error" &&
+        now - (entry.retried ?? 0) >= RETRY_MS
+      ) {
+        entry.retried = now;
+        entry.relay.retry();
+      }
   }
   private unbind(origin: string) {
     const entry = this.bound.get(origin);
