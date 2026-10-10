@@ -32,12 +32,35 @@ export const entry = {
     preview: label,
     html: `<div class="model">${time(timestamp)}Switched to model: <span class="accent">${escapeHtml(label)}</span></div>`,
   }),
-  instructions: (timestamp, label, body) => ({
+  // Model-visible context outside the conversation: one quiet, collapsed row.
+  // A one-line body, once unwrapped from `<system-reminder>`, also shows inline.
+  // `extra.scope` is the role it was sent as: system, developer or user.
+  instructions: (timestamp, label, body, extra = {}) => {
+    const brief = body.replace(/<\/?system-reminder>/g, "").trim();
+    return {
+      timestamp,
+      kind: "instructions",
+      label,
+      preview: body,
+      html: `<details class="tool context instructions"><summary>${escapeHtml(label)}${/^.{1,120}$/.test(brief) ? ` <span class="accent">${escapeHtml(brief)}</span>` : ""}</summary><div class="details-body">${time(timestamp)}<pre>${escapeHtml(body)}</pre></div></details>`,
+      ...extra,
+    };
+  },
+  // Tool definitions as recorded, `[{ name, description, schema }]`, one
+  // disclosure per tool.
+  tools: (timestamp, label, tools, extra = {}) => ({
     timestamp,
     kind: "instructions",
     label,
-    preview: body,
-    html: `<div class="card instructions">${time(timestamp)}<div class="title">${escapeHtml(label)}</div>${expandable(body, 2)}</div>`,
+    tools,
+    ...extra,
+    preview: tools.map((tool) => tool.name).join(", "),
+    html: `<details class="tool context instructions"><summary>${escapeHtml(label)}</summary><div class="details-body">${time(timestamp)}${tools
+      .map(
+        ({ name, description, schema }) =>
+          `<details><summary>${escapeHtml(name)}</summary><pre>${escapeHtml([description, schema && text(schema)].filter(Boolean).join("\n\n"))}</pre></details>`,
+      )
+      .join("")}</div></details>`,
   }),
   // A Buzz turn shows its request, with the full turn context collapsed.
   user: (timestamp, body, request) => ({

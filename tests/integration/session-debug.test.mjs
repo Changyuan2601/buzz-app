@@ -109,8 +109,140 @@ test("Codex exposes recorded context and counts usage only once", () => {
   assert.equal(result.turns[0].requests.length, 1);
   assert.equal(result.turns[0].estimate, 0.00025);
   assert.equal(result.turns[0].cost, null);
-  assert.match(result.entries[0].html, /&lt;script&gt;/);
-  assert.equal(result.entries[1].label, "Recorded dynamic tool definitions");
+  const { instructions, tools } = result.setup;
+  assert.deepEqual(
+    instructions.map((e) => [e.label, e.scope]),
+    [
+      ["Base instructions", "developer"],
+      ["Run settings", "settings"],
+    ],
+  );
+  assert.equal(instructions[0].body, "base <script>no()</script>");
+  assert.equal(tools[0].label, "Dynamic tools · 1 (native tools not recorded)");
+  assert.match(tools[0].note, /native tools/);
+  assert.deepEqual(tools[0].tools, [
+    { name: "tool", description: undefined, schema: { type: "object" } },
+  ]);
+  assert.ok(result.entries.every((e) => e.kind !== "instructions"));
+});
+test("Codex keeps prompt setup apart and shows later setting changes inline", () => {
+  const context = (n, p) => ({
+    type: "turn_context",
+    timestamp: stamp(n),
+    payload: { turn_id: `t${n}`, model: "m", ...p },
+  });
+  const message = (n, role, text) => ({
+    type: "response_item",
+    timestamp: stamp(n),
+    payload: {
+      type: "message",
+      role,
+      content: [
+        { type: role === "assistant" ? "output_text" : "input_text", text },
+      ],
+    },
+  });
+  const result = sessionModel([
+    { type: "session_meta", payload: { id: "s", model_provider: "openai" } },
+    context(0, { approval_policy: "never" }),
+    message(1, "developer", "<multi_agent_role>lead</multi_agent_role>"),
+    message(1, "user", "# AGENTS.md instructions for /x\n\nbe kind"),
+    message(2, "assistant", "ok"),
+    context(3, { approval_policy: "never" }),
+    context(4, { approval_policy: "on-request" }),
+  ]);
+  assert.deepEqual(
+    result.setup.instructions.map((e) => [e.label, e.scope]),
+    [
+      ["Run settings", "settings"],
+      ["developer · multi agent role", "developer"],
+      ["user · AGENTS.md", "user"],
+    ],
+  );
+  const settings = result.setup.instructions[0].body;
+  assert.match(settings, /"model_provider": "openai"/);
+  assert.doesNotMatch(settings, /turn_id/);
+  const inline = result.entries.filter((e) => e.kind === "instructions");
+  assert.deepEqual(
+    inline.map((e) => [e.label, e.scope, e.timestamp]),
+    [["Run settings", "settings", stamp(4)]],
+  );
+});
+test("Claude puts the recorded system prompt and tools in the prompt setup", () => {
+  const attachment = (n, a, extra = {}) => ({
+    type: "attachment",
+    timestamp: stamp(n),
+    attachment: a,
+    ...extra,
+  });
+  const reminder = (n, type, text) =>
+    attachment(
+      n,
+      { type },
+      { rendered: [{ content: text }], renderedRole: "system" },
+    );
+  const systemPrompt = ["base <b>", "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"];
+  const wire = { name: "Bash", description: "Run", input_schema: {} };
+  const tools = [{ name: "Bash", description: "Run", schema: wire }];
+  const result = sessionModel([
+    {
+      type: "user",
+      uuid: "u",
+      timestamp: stamp(0),
+      message: { content: "hi" },
+    },
+    reminder(0, "date", "Today is 2026-10-10."),
+    attachment(0, { type: "credential_org", organizationUuid: "x" }),
+    attachment(0, { type: "prompt_snapshot", systemPrompt }),
+    {
+      type: "assistant",
+      timestamp: stamp(1),
+      message: {
+        id: "m",
+        model: "m1",
+        content: [{ type: "text", text: "ok" }],
+      },
+    },
+    attachment(1, {
+      type: "prompt_snapshot",
+      systemPrompt,
+      cliPrefix: "You are Claude Code.",
+      tools,
+    }),
+    reminder(2, "total_tokens_reminder", "<b>9 left</b>"),
+    attachment(2, { type: "prompt_snapshot", systemPrompt, tools }),
+  ]);
+  const { instructions, tools: groups } = result.setup;
+  assert.deepEqual(
+    instructions.map((e) => [e.label, e.scope]),
+    [
+      ["System prompt", "system"],
+      ["system · date", "system"],
+    ],
+  );
+  assert.equal(instructions[0].timestamp, stamp(0));
+  assert.deepEqual(instructions[0].blocks, [
+    "You are Claude Code.",
+    ...systemPrompt,
+  ]);
+  assert.deepEqual(
+    groups.map((g) => [g.label, g.tools]),
+    [
+      [
+        "Tools · 1",
+        [{ name: "Bash", description: "Run", schema: { input_schema: {} } }],
+      ],
+    ],
+  );
+  // Later reminders stay inline, after the reply they followed.
+  const order = result.entries.map((e) => e.label);
+  assert.deepEqual(order, [
+    "user",
+    "assistant",
+    "system · total tokens reminder",
+  ]);
+  assert.equal(result.entries[2].scope, "system");
+  assert.match(result.entries[2].html, /&lt;b&gt;9 left&lt;\/b&gt;/);
 });
 test("Claude deduplicates streamed blocks and ignores tool-result turns", () => {
   const records = [
