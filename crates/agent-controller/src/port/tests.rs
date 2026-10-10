@@ -134,7 +134,7 @@ fn missing_stores_list_nothing_and_a_broken_one_hides_only_itself() {
 fn takes_the_key_from_the_store_it_was_listed_in() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
-    let (harness, old) = (key(), key());
+    let (harness, old, inline) = (key(), key(), key());
     let id = agent_id(harness.pubkey(), "wss://relay.example");
     credentials.add(&id, &harness).unwrap();
     credentials.0.lock().unwrap().insert(
@@ -151,7 +151,10 @@ fn takes_the_key_from_the_store_it_was_listed_in() {
     legacy(
         dir.path(),
         LegacySource::Installed,
-        json!([{"pubkey": old.pubkey(), "name": "Bea"}]),
+        json!([
+            {"pubkey": old.pubkey(), "name": "Bea"},
+            {"pubkey": inline.pubkey(), "name": "Cy", "private_key_nsec": inline.hex().to_string()},
+        ]),
     );
     let stores = stores(dir.path());
     let (agent, key) = stores
@@ -165,6 +168,14 @@ fn takes_the_key_from_the_store_it_was_listed_in() {
         .take(PortSource::Installed, old.pubkey(), &credentials)
         .unwrap();
     assert_eq!((agent.name.as_str(), key.pubkey()), ("Bea", old.pubkey()));
+    // A key old Buzz kept in the record is read from there, not the keychain.
+    let (_, key) = stores
+        .take(PortSource::Installed, inline.pubkey(), &credentials)
+        .unwrap();
+    assert_eq!(key.pubkey(), inline.pubkey());
+    assert!(!serde_json::to_string(&stores.list())
+        .unwrap()
+        .contains(&*inline.hex()));
     // Each source reads only its own store.
     assert!(stores
         .take(PortSource::Development, old.pubkey(), &credentials)

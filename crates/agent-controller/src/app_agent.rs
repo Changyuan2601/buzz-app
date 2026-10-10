@@ -39,6 +39,10 @@ pub struct AppAgent {
     /// The last profile its community accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<Published>,
+    /// Its key came from an earlier agent system, so its community may already
+    /// have a profile for it, which the first publication keeps instead.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
     /// Its key is gone. The row stays until its community confirms it left its
     /// channels and was archived, which the owner signs, not the agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -349,13 +353,23 @@ impl AppAgents {
             picture: prepared.picture,
             about: None,
             profile: None,
+            adopted: prepared.adopted,
             deleted: false,
         };
         let id = agent.credential_id();
         // A harness agent saved for the same community keeps this key under the
-        // same ID. It is shared, never added again or withdrawn on failure here.
+        // same ID. It is shared, never added again or deleted on failure here.
         let shared = prepared.adopted && credentials.read(&id, &agent.pubkey)?.is_some();
         self.update(|agents| {
+            if prepared.adopted {
+                if let Some(saved) = agents.iter().find(|saved| saved.pubkey == agent.pubkey) {
+                    return Err(if saved.deleted {
+                        "That agent is still being removed here; try again shortly".into()
+                    } else {
+                        "That agent is already here".into()
+                    });
+                }
+            }
             agents.retain(|saved| saved.pubkey != agent.pubkey);
             agents.push(agent.clone());
             Ok(())
@@ -370,7 +384,12 @@ impl AppAgents {
                 .map_err(|_| "New agent key could not be verified".into())
         });
         if let Err(error) = saved {
-            if credentials.delete(&id, &agent.pubkey).is_ok() {
+            // Another writer may have saved the same adopted key meanwhile; that
+            // copy is theirs as much as this agent's.
+            if prepared.adopted && matches!(credentials.read(&id, &agent.pubkey), Ok(Some(_))) {
+                return Ok((agent, prepared.key));
+            }
+            if prepared.adopted || credentials.delete(&id, &agent.pubkey).is_ok() {
                 let _ = self.update(|agents| {
                     agents.retain(|saved| saved.pubkey != agent.pubkey);
                     Ok(())
@@ -399,7 +418,7 @@ impl AppAgents {
     /// Takes the profile its community already has for an adopted key as the
     /// last one accepted, so the agent keeps that name and picture and nothing
     /// is republished until it is renamed here. A name the app could not
-    /// publish leaves the row as it was.
+    /// publish keeps the one it has here.
     pub fn keep_profile(
         &self,
         pubkey: &str,
@@ -407,14 +426,16 @@ impl AppAgents {
         picture: Option<String>,
         created_at: u64,
     ) -> Result<()> {
-        let name = valid_name(name)?;
+        let name = valid_name(name).ok();
         let picture = picture.filter(|url| crate::port::public_picture(url));
         self.edit(pubkey, |agent| {
+            if let Some(name) = name {
+                agent.name = name;
+            }
             agent.profile = Some(Published {
-                name: name.clone(),
+                name: agent.name.clone(),
                 created_at,
             });
-            agent.name = name;
             if picture.is_some() {
                 agent.picture = picture;
             }

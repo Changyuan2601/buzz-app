@@ -548,8 +548,8 @@ function BringOver({
       />
       <p className="m-0 text-body-sm text-secondary">
         Keeps each agent's key, name and picture in this community. Its
-        instructions and settings stay behind. Stop it in old Buzz first, or
-        both will answer.
+        instructions and settings stay behind. Stop it where it runs now first,
+        or both will answer.
       </p>
       <Field label="As">
         <RadioGroup

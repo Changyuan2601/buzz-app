@@ -307,7 +307,16 @@ pub(crate) async fn app_agent_port(
     let credentials = state.credentials.clone();
     let (found, key) = blocking(move || {
         credentials.retry();
-        old.take(source, &pubkey, credentials.as_ref())
+        let mut waits = 0;
+        loop {
+            match old.take(source, &pubkey, credentials.as_ref()) {
+                Err(error) if error == CREDENTIALS_BUSY && waits < BUSY_WAITS => {
+                    waits += 1;
+                    std::thread::sleep(BUSY_WAIT);
+                }
+                taken => return taken,
+            }
+        }
     })
     .await?;
     let prepared = AppAgents::adopt(
@@ -323,33 +332,17 @@ pub(crate) async fn app_agent_port(
         .authorize_agent(owner, prepared.pubkey().to_owned())
         .await?;
     let host = state.inner().clone();
-    let saved = agents.clone();
-    let (agent, key) = blocking(move || {
-        let mut keys = host.keys();
-        let (agent, key) = saved.commit(prepared, &auth, host.credentials.as_ref())?;
-        let key = Arc::new(key);
-        keys.insert(agent.pubkey.clone(), key.clone());
-        Ok((agent, key))
-    })
-    .await?;
-    // Keep the profile its community already has; without one, the next sync
-    // publishes the name and picture it brought. If it cannot tell, it keeps
-    // whatever is there rather than overwrite it, until the agent is renamed.
-    let (name, picture, created_at) = match current_profile(&agent, &key).await {
-        Ok(None) => return Ok(agent.into()),
-        Ok(Some(profile)) => profile,
-        Err(_) => (agent.name.clone(), None, 0),
-    };
-    let pubkey = agent.pubkey.clone();
     blocking(move || {
-        agents.keep_profile(&pubkey, &name, picture, created_at)?;
-        Ok(agents.get(&pubkey)?.into())
+        let mut keys = host.keys();
+        let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
+        keys.insert(agent.pubkey.clone(), Arc::new(key));
+        Ok(agent.into())
     })
     .await
 }
 
-/// The newest profile (kind 0) its community has for the agent: its name,
-/// picture and `created_at`.
+/// The newest profile (kind 0) its community has for the agent: its name (empty
+/// without one), picture and `created_at`.
 async fn current_profile(
     agent: &AppAgent,
     key: &Secret,
@@ -364,8 +357,11 @@ async fn current_profile(
     }) else {
         return Ok(None);
     };
-    let content: Value = serde_json::from_str(event["content"].as_str().unwrap_or(""))
-        .map_err(|_| "Invalid agent profile")?;
+    // One the app cannot read is replaced; one without a name keeps the
+    // agent's name here and the picture it has.
+    let Ok(content) = serde_json::from_str::<Value>(event["content"].as_str().unwrap_or("")) else {
+        return Ok(None);
+    };
     let name = ["display_name", "name"]
         .iter()
         .find_map(|field| {
@@ -373,7 +369,7 @@ async fn current_profile(
                 .as_str()
                 .filter(|name| !name.trim().is_empty())
         })
-        .ok_or("Agent profile has no name")?;
+        .unwrap_or_default();
     Ok(Some((
         name.to_owned(),
         content["picture"].as_str().map(str::to_owned),
@@ -461,12 +457,22 @@ pub(crate) async fn app_agent_publish_profile(
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
+    let agents = state.agents.clone()?;
+    // An adopted key keeps the profile its community already has; only one it
+    // has none for publishes the name and picture it brought. Until that is
+    // known, nothing is published.
+    if agent.adopted && agent.profile.is_none() {
+        if let Some((name, picture, created_at)) = current_profile(&agent, &key).await? {
+            let pubkey = agent.pubkey.clone();
+            return blocking(move || agents.keep_profile(&pubkey, &name, picture, created_at))
+                .await;
+        }
+    }
     let signed = post(&agent, &key, agent.profile_event(&key)?).await?;
     let created_at = signed
         .get("created_at")
         .and_then(Value::as_u64)
         .ok_or("Invalid agent event")?;
-    let agents = state.agents.clone()?;
     blocking(move || {
         agents.published(
             &agent.pubkey,
@@ -503,7 +509,7 @@ async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value
         .header("Content-Type", "application/json")
         .header(
             "Authorization",
-            authorization(agent.http_auth(&key, &agent.query_url(), &bytes)?)?,
+            authorization(agent.http_auth(key, &agent.query_url(), &bytes)?)?,
         )
         .header("x-auth-tag", &agent.auth)
         .body(bytes)
@@ -711,6 +717,7 @@ mod tests {
             picture: None,
             about: None,
             profile: None,
+            adopted: false,
             deleted: false,
         };
         let (_, read) = host.key(agent).await.unwrap();

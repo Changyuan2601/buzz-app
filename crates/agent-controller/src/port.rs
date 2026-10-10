@@ -86,20 +86,22 @@ impl OldStores {
         pubkey: &str,
         credentials: &dyn Credentials,
     ) -> Result<(Portable, Secret)> {
-        let (agent, credential) = self
+        let (agent, saved) = self
             .read(source)?
             .into_iter()
             .find(|(agent, _)| agent.pubkey == pubkey)
             .ok_or("That agent is no longer saved there")?;
         let key = match source.legacy() {
+            Some(_) if !saved.is_empty() => Secret::parse(&saved, pubkey)?,
             Some(legacy) => credentials.read_legacy(legacy, pubkey)?,
             None => credentials
-                .read(&credential, pubkey)?
+                .read(&saved, pubkey)?
                 .ok_or("That agent's key is no longer saved")?,
         };
         Ok((agent, key))
     }
-    /// Its identities, each with the harness credential ID (empty for old Buzz).
+    /// Its identities, each with where its key is: the harness credential ID, or
+    /// the key old Buzz kept in the record itself, if it did.
     fn read(&self, source: PortSource) -> Result<Vec<(Portable, String)>> {
         let (path, records) = match source.legacy() {
             None => (self.harness.clone(), "agents"),
@@ -146,7 +148,7 @@ fn portable(source: PortSource, record: &Value) -> Option<(Portable, String)> {
             .filter(|id| !id.is_empty())
             .map_or_else(|| agent_id(pubkey, &relay), str::to_owned)
     } else {
-        String::new()
+        text("private_key_nsec").to_owned()
     };
     let picture = Some(text(if harness { "picture" } else { "avatar_url" }))
         .filter(|url| public_picture(url))
