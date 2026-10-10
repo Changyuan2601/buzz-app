@@ -15,6 +15,23 @@ export type AgentIdentity = Readonly<{
    * archive it, after which `forget` removes it. */
   deleted: boolean;
 }>;
+/** Where an earlier agent system saved an identity on this machine: this app's
+ * harness agents, or the installed or development build of old Buzz. */
+export type PortSource = "harness" | "installed" | "development";
+/** An identity an earlier agent system saved, which Agents2 can take over. */
+export type PortableAgent = Readonly<{
+  source: PortSource;
+  pubkey: string;
+  name: string;
+  picture?: string;
+  /** The community it was saved for there, if valid. */
+  relay: string;
+}>;
+export type PortableAgents = Readonly<{
+  agents: readonly PortableAgent[];
+  /** A store that could not be read; the others are still listed. */
+  warnings: readonly string[];
+}>;
 export type AgentEventTemplate = Readonly<{
   kind: number;
   content: string;
@@ -39,6 +56,16 @@ export type AgentsNative = {
     owner: string,
     type: string,
     name: string,
+  ): Promise<AgentIdentity>;
+  /** Earlier agent systems' identities on this machine. */
+  portable(): Promise<PortableAgents>;
+  /** Takes one over with its key, name and picture, as `create` does. */
+  port(
+    source: PortSource,
+    pubkey: string,
+    destination: string,
+    owner: string,
+    type: string,
   ): Promise<AgentIdentity>;
   rename(pubkey: string, name: string): Promise<void>;
   /** Deletes the key and marks the identity deleted. */
@@ -76,6 +103,15 @@ export const nativeAgents = (): AgentsNative | undefined =>
         list: () => invoke("app_agent_list"),
         create: (destination, owner, agentType, name) =>
           invoke("app_agent_create", { destination, owner, agentType, name }),
+        portable: () => invoke("app_agent_portable"),
+        port: (source, pubkey, destination, owner, agentType) =>
+          invoke("app_agent_port", {
+            source,
+            pubkey,
+            destination,
+            owner,
+            agentType,
+          }),
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
         remove: (pubkey) => invoke("app_agent_delete", { pubkey }),
         forget: (pubkey) => invoke("app_agent_forget", { pubkey }),

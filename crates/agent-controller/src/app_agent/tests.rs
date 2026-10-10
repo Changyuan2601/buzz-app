@@ -391,3 +391,138 @@ fn saved_public_profile_survives_updates_and_is_signed() {
     let event: nostr::event::Event = serde_json::from_value(event).unwrap();
     event.verify().unwrap();
 }
+
+#[test]
+fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
+    let credentials = Memory::default();
+    let key = Secret::generate().unwrap();
+    let pubkey = key.pubkey().to_owned();
+    // A harness agent already keeps this key under the same community's ID.
+    let id = agent_id(&pubkey, "wss://relay.example");
+    credentials.add(&id, &key).unwrap();
+    set(&credentials.1.add, true);
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let store = |n: usize| AppAgents::open(dirs[n].path().join("agents2/identities.json"));
+    let adopt = |picture: &str| {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            "p/t",
+            Secret::parse(&key.hex(), &pubkey).unwrap(),
+            "Ada",
+            Some(picture.into()),
+        )
+        .unwrap()
+    };
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(&pubkey)).unwrap();
+    let agents = store(0);
+    let (agent, _) = agents
+        .commit(
+            adopt("https://relay.example/media/a.png"),
+            &auth,
+            &credentials,
+        )
+        .unwrap();
+    assert_eq!(agent.pubkey, pubkey);
+    assert!(agent.adopted);
+    let profile = agent
+        .profile_event(&agent.read_key(&credentials).unwrap())
+        .unwrap();
+    assert_eq!(
+        profile["content"],
+        r#"{"bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"}"#
+    );
+    // Once here, it is not taken over again, nor while it is being removed.
+    let again = adopt("https://a.example/b.png");
+    assert!(agents.commit(again, &auth, &credentials).is_err());
+    agents.edit(&pubkey, |agent| agent.deleted = true).unwrap();
+    let again = adopt("https://a.example/b.png");
+    assert!(agents.commit(again, &auth, &credentials).is_err());
+    // A shared key that fails to verify is left where it was.
+    set(&credentials.1.read, true);
+    assert!(store(1)
+        .commit(adopt("https://a.example/b.png"), &auth, &credentials)
+        .is_err());
+    set(&credentials.1.read, false);
+    assert!(credentials.read(&id, &pubkey).unwrap().is_some());
+    assert!(rows(&store(1)).is_empty());
+    // Inline pictures are not profile pictures.
+    let (agent, _) = store(2)
+        .commit(adopt("data:image/png;base64,AA"), &auth, &credentials)
+        .unwrap();
+    assert_eq!(agent.picture, None);
+}
+
+#[test]
+fn an_adopted_key_that_cannot_be_saved_withdraws_only_its_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let agents = AppAgents::open(dir.path().join("agents2/identities.json"));
+    let key = Secret::generate().unwrap();
+    let pubkey = key.pubkey().to_owned();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(&pubkey)).unwrap();
+    let adopt = || {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            "p/t",
+            Secret::parse(&key.hex(), &pubkey).unwrap(),
+            "Ada",
+            None,
+        )
+        .unwrap()
+    };
+    set(&credentials.1.add, true);
+    assert!(agents.commit(adopt(), &auth, &credentials).is_err());
+    assert!(rows(&agents).is_empty());
+    set(&credentials.1.add, false);
+    let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
+    assert_eq!(agent.read_key(&credentials).unwrap().pubkey(), pubkey);
+}
+
+#[test]
+fn keeps_the_communitys_profile_for_an_adopted_key_until_renamed() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    agents
+        .keep_profile(
+            &agent.pubkey,
+            " Old Ada ",
+            Some("https://a.example/p.png".into()),
+            500,
+        )
+        .unwrap();
+    let kept = agents.get(&agent.pubkey).unwrap();
+    assert_eq!(kept.name, "Old Ada");
+    assert_eq!(kept.picture.as_deref(), Some("https://a.example/p.png"));
+    // Nothing to republish: the accepted profile already has this name.
+    assert_eq!(
+        kept.profile,
+        Some(Published {
+            name: "Old Ada".into(),
+            created_at: 500
+        })
+    );
+    // No usable picture keeps the one it has; a rename republishes it, newer.
+    agents
+        .keep_profile(&agent.pubkey, "Old Ada", Some("data:,x".into()), 500)
+        .unwrap();
+    agents.rename(&agent.pubkey, "Ada").unwrap();
+    let renamed = agents.get(&agent.pubkey).unwrap();
+    let next = renamed
+        .profile_event(&renamed.read_key(&credentials).unwrap())
+        .unwrap();
+    assert_eq!(
+        next["content"],
+        r#"{"bot":true,"name":"Ada","picture":"https://a.example/p.png"}"#
+    );
+    assert!(next["created_at"].as_u64().unwrap() > 500);
+    // A name the app could not publish keeps the one it has.
+    agents.keep_profile(&agent.pubkey, " ", None, 900).unwrap();
+    let kept = agents.get(&agent.pubkey).unwrap();
+    assert_eq!(kept.name, "Ada");
+    assert_eq!(kept.profile.unwrap().created_at, 900);
+}

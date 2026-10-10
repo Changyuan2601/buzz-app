@@ -4,7 +4,8 @@
 // - Peek: identity, the type's own read-only glance, and what wakes it.
 // - Build: the identity rail on the left, the type's tabs and the app's
 //   Attention tab on the right.
-// New agents are made in the peek slot, so making one never covers the grid.
+// New agents are made in the peek slot, so making one never covers the grid,
+// and so are agents brought over from an earlier agent system.
 import {
   useEffect,
   useRef,
@@ -18,6 +19,11 @@ import type { ChannelChoice } from "../../features/agents2/attention";
 import { AgentDelete } from "../../features/agents2/AgentManage";
 import { AttentionSummary } from "../../features/agents2/AttentionPanel";
 import { useAgents2, useChannelChoices } from "../../features/agents2/react";
+import type {
+  PortableAgent,
+  PortableAgents,
+  PortSource,
+} from "../../features/agents2/native";
 import type {
   Agent,
   Agents2,
@@ -40,13 +46,20 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
-import { formatPublicKey } from "../../shared/identity/public-key";
+import {
+  formatPublicKey,
+  publicKeyLabels,
+} from "../../shared/identity/public-key";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 type Frame =
-  | { view: "browse"; selected?: string; creating?: boolean }
+  | {
+      view: "browse";
+      selected?: string;
+      side?: "creating" | "porting";
+    }
   | { view: "build"; pubkey: string };
 
 /** The type's one-line summary of an agent; its title when it has none. */
@@ -78,11 +91,13 @@ export function Agents2Page({
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
   const building = frame.view === "build" ? find(frame.pubkey) : undefined;
   const selected = frame.view === "browse" ? find(frame.selected) : undefined;
-  const creating = frame.view === "browse" && !!frame.creating;
+  const side = frame.view === "browse" ? frame.side : undefined;
+  const creating = side === "creating";
   const browse = (selected?: string) =>
     setFrame(selected ? { view: "browse", selected } : { view: "browse" });
   const build = (pubkey: string) => setFrame({ view: "build", pubkey });
-  const newAgent = () => setFrame({ view: "browse", creating: true });
+  const newAgent = () => setFrame({ view: "browse", side: "creating" });
+  const bringOver = () => setFrame({ view: "browse", side: "porting" });
 
   const body = (() => {
     if (snapshot.status === "unavailable")
@@ -112,13 +127,15 @@ export function Agents2Page({
           onRemoved={() => browse()}
         />
       );
-    const side = creating ? (
+    const panel = creating ? (
       <NewAgent
         agents2={agents2}
         types={types}
         onClose={() => browse()}
         onCreated={(agent) => build(agent.pubkey)}
       />
+    ) : side === "porting" ? (
+      <BringOver agents2={agents2} types={types} onClose={() => browse()} />
     ) : selected ? (
       <AgentPeek
         key={selected.pubkey}
@@ -130,7 +147,7 @@ export function Agents2Page({
       />
     ) : undefined;
     return (
-      <div className={styles.browse} data-side={side ? "" : undefined}>
+      <div className={styles.browse} data-side={panel ? "" : undefined}>
         <div className={styles.inventory}>
           {snapshot.agents.length ? (
             <Inventory
@@ -140,7 +157,7 @@ export function Agents2Page({
               onSelect={browse}
               onBuild={build}
             />
-          ) : snapshot.status === "ready" && !creating ? (
+          ) : snapshot.status === "ready" && !side ? (
             <EmptyState
               icon="✦"
               title="No agents yet"
@@ -161,7 +178,7 @@ export function Agents2Page({
             />
           ) : null}
         </div>
-        {side && <aside className={styles.side}>{side}</aside>}
+        {panel && <aside className={styles.side}>{panel}</aside>}
       </div>
     );
   })();
@@ -186,9 +203,18 @@ export function Agents2Page({
             title={building ? building.name : "Agents2"}
             actions={
               !building && types.length > 0 && snapshot.status === "ready" ? (
-                <Button size="compact" onClick={newAgent} disabled={creating}>
-                  <PlusIcon size={14} aria-hidden="true" /> New agent
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="compact"
+                    onClick={bringOver}
+                    disabled={side === "porting"}
+                  >
+                    Bring over
+                  </Button>
+                  <Button size="compact" onClick={newAgent} disabled={creating}>
+                    <PlusIcon size={14} aria-hidden="true" /> New agent
+                  </Button>
+                </div>
               ) : undefined
             }
           />
@@ -454,6 +480,139 @@ function NewAgent({
         Create and set up
       </Button>
     </form>
+  );
+}
+
+const SOURCES: Record<PortSource, string> = {
+  harness: "Buzz 1.0 harness agent",
+  installed: "Buzz 0.X",
+  development: "Buzz 0.X dev",
+};
+const host = (relay: string) => relay.replace(/^wss:\/\//, "");
+
+/** Identities earlier agent systems saved on this machine, each brought over
+ * with its key, name and picture as an agent of the chosen type. */
+function BringOver({
+  agents2,
+  types,
+  onClose,
+}: {
+  agents2: Agents2;
+  types: readonly RegisteredAgentType[];
+  onClose(): void;
+}) {
+  const [found, setFound] = useState<PortableAgents>();
+  const [type, setType] = useState(types[0]?.key ?? "");
+  const [pending, setPending] = useState<string>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    agents2.portable().then(
+      (next) => live && setFound(next),
+      (reason) => live && setError(message(reason)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [agents2]);
+  const chosen = types.find((item) => item.key === type) ?? types[0];
+  const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
+  const port = async (agent: PortableAgent) => {
+    if (!chosen || pending) return;
+    setPending(agent.pubkey);
+    setError("");
+    try {
+      await agents2.port({
+        source: agent.source,
+        pubkey: agent.pubkey,
+        type: chosen.key,
+      });
+      setFound(
+        (last) =>
+          last && {
+            ...last,
+            agents: last.agents.filter((item) => item.pubkey !== agent.pubkey),
+          },
+      );
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setPending(undefined);
+    }
+  };
+  return (
+    <section className={styles.sideBody} aria-label="Bring over agents">
+      <SideHeader
+        title={<h3 className="m-0 text-heading">Bring over agents</h3>}
+        onClose={onClose}
+      />
+      <p className="m-0 text-body-sm text-secondary">
+        Keeps each agent's key, name and picture in this community. Its
+        instructions and settings stay behind. Stop it where it runs now first,
+        or both will answer.
+      </p>
+      <Field label="As">
+        <RadioGroup
+          value={chosen?.key ?? ""}
+          disabled={!!pending}
+          onValueChange={(value) => setType(String(value))}
+        >
+          {types.map((item) => (
+            <Radio key={item.key} value={item.key} label={item.title} />
+          ))}
+        </RadioGroup>
+      </Field>
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+      {found?.warnings.map((warning) => (
+        <p key={warning} className="m-0 text-body-sm text-secondary">
+          {warning}
+        </p>
+      ))}
+      {!found ? (
+        !error && (
+          <p role="status" className="m-0 text-body-sm text-secondary">
+            Looking for agents…
+          </p>
+        )
+      ) : found.agents.length ? (
+        <ul className={styles.portList} aria-label="Agents to bring over">
+          {found.agents.map((agent) => (
+            <li key={agent.pubkey} className={styles.portRow}>
+              <Avatar src={agent.picture} alt="" fallback={agent.name} />
+              <span className="grid min-w-0 flex-1">
+                <span className="truncate text-body">{agent.name}</span>
+                <span className="truncate text-caption text-secondary">
+                  {[
+                    SOURCES[agent.source],
+                    labels.get(agent.pubkey),
+                    agent.relay && host(agent.relay),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </span>
+              <Button
+                size="compact"
+                aria-label={`Bring over ${agent.name}`}
+                loading={pending === agent.pubkey}
+                disabled={!chosen || (!!pending && pending !== agent.pubkey)}
+                onClick={() => void port(agent)}
+              >
+                Bring over
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="m-0 text-body-sm text-secondary">
+          No other agents are saved on this machine.
+        </p>
+      )}
+    </section>
   );
 }
 
