@@ -17,6 +17,9 @@ import { readView, writeView } from "../../shared/view-state";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 
+// jsdom has no WebGL; these tests cover the dialog, not Mapbox rendering.
+vi.mock("mapbox-gl", () => ({ default: {} }));
+
 const profiles = {
   snapshot: () => new Map(),
   subscribe: () => () => {},
@@ -608,4 +611,22 @@ it("prevents all dismissal during restore and ignores a history response from an
   expect(
     screen.getByRole("textbox", { name: "Revision Markdown" }),
   ).toHaveValue(restored.content);
+});
+
+it("offers a Map tab only while the draft has a map block", async () => {
+  const user = userEvent.setup();
+  fixture();
+  const editor = await screen.findByLabelText("Canvas Markdown");
+  await waitFor(() => expect(editor).toBeEnabled());
+  expect(screen.queryByRole("tab", { name: "Map" })).not.toBeInTheDocument();
+  fireEvent.change(editor, {
+    target: { value: '```map\n{ "center": [200, 0] }\n```' },
+  });
+  await user.click(screen.getByRole("tab", { name: "Map" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "center must be [lng, lat].",
+  );
+  await user.click(screen.getByRole("tab", { name: "Edit" }));
+  fireEvent.change(editor, { target: { value: "No map" } });
+  expect(screen.queryByRole("tab", { name: "Map" })).not.toBeInTheDocument();
 });

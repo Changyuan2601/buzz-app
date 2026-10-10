@@ -1,14 +1,29 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { CanvasHistory } from "./CanvasHistory";
+import { canvasMapBlocks } from "./canvas-map";
 import type { RelayEvent } from "../../features/relay/events";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTemplates.module.css";
+
+// Mapbox GL is large and needs WebGL; load it only when a Map tab opens.
+const CanvasMap = lazy(() =>
+  import("./CanvasMap").then(({ CanvasMap }) => ({ default: CanvasMap })),
+);
 
 type Draft = { content: string; base: string | null };
 export function ChannelCanvasDialog({
@@ -29,7 +44,7 @@ export function ChannelCanvasDialog({
   finalFocus?: DialogProps["finalFocus"];
 }) {
   const panelId = useId();
-  const [tab, setTab] = useState<"edit" | "history">("edit");
+  const [selected, setTab] = useState<"edit" | "map" | "history">("edit");
   const key = `canvas-draft-v1:${channelId}`;
   const [saved] = useState(() => {
     const value = readView<unknown>(scope, key, null);
@@ -87,6 +102,9 @@ export function ChannelCanvasDialog({
   useEffect(() => {
     if (open && !loaded) void load();
   }, [open, loaded, load]);
+  const maps = useMemo(() => canvasMapBlocks(draft), [draft]);
+  // Removing the last map block from the draft returns to the editor.
+  const tab = selected === "map" && !maps.length ? "edit" : selected;
   const dirty = (head?.id ?? null) !== base || draft !== (head?.content ?? "");
   const restore = async (revision: RelayEvent) => {
     const generation = ++operation.current;
@@ -188,6 +206,15 @@ export function ChannelCanvasDialog({
           }}
           items={[
             { value: "edit", label: "Edit", panelId: `${panelId}-edit` },
+            ...(maps.length
+              ? [
+                  {
+                    value: "map" as const,
+                    label: "Map",
+                    panelId: `${panelId}-map`,
+                  },
+                ]
+              : []),
             {
               value: "history",
               label: "History",
@@ -224,6 +251,22 @@ export function ChannelCanvasDialog({
             )}
           </div>
         </div>
+        {tab === "map" && (
+          <div
+            role="tabpanel"
+            id={`${panelId}-map`}
+            aria-labelledby={`${panelId}-map-tab`}
+            className={styles.stack}
+          >
+            <Suspense fallback={<p className="text-secondary">Loading map…</p>}>
+              {maps.map((source, index) => (
+                // Blocks have no identity beyond their position in the draft.
+                // biome-ignore lint/suspicious/noArrayIndexKey: positional blocks
+                <CanvasMap key={index} source={source} />
+              ))}
+            </Suspense>
+          </div>
+        )}
         <div
           hidden={tab !== "history"}
           role="tabpanel"

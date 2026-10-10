@@ -1,0 +1,7 @@
+.map {
+  overflow: hidden;
+  border-radius: var(--radius-panel);
+}
+.error {
+  color: var(--text-danger);
+}
