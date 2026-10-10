@@ -25,7 +25,7 @@ import {
   timerPrompt,
   turnPrompt,
 } from "./prompt";
-import { AgentSessions, localSessions } from "./sessions";
+import { AgentSessions, localSessions, Spare } from "./sessions";
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude Code's own default. */
@@ -67,6 +67,12 @@ type Entry = {
   contexts: Map<string, Context>;
 };
 
+/** Where an agent's processes run, and with which model. */
+const where = ({ workspace, model }: Config) => ({
+  cwd: workspace,
+  ...(model.trim() ? { model: model.trim() } : {}),
+});
+
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
   private readonly reading = new Map<string, Promise<readonly Memory[]>>();
@@ -77,6 +83,11 @@ export class ClaudeRuntime {
     string,
     ReturnType<AgentSessions["snapshot"]>
   >();
+  /** One process started ahead of need, for any agent's next new conversation. */
+  private readonly spare = new Spare(
+    (id, options) => this.spawn(id, options),
+    (_conversation, message) => respond(undefined, {}, message),
+  );
 
   constructor(
     private readonly host: Host,
@@ -92,8 +103,9 @@ export class ClaudeRuntime {
     return spawn;
   }
 
-  /** Brings the runtime in line with this type's agents: new ones get a warm
-   * session, changed settings restart idle sessions, removed agents stop. */
+  /** Brings the runtime in line with this type's agents: changed settings
+   * restart idle sessions, removed agents stop, and a spare waits while any
+   * agent is here. */
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
     // Deleted, signed out or its community disconnected: either way its
@@ -106,12 +118,15 @@ export class ClaudeRuntime {
     for (const agent of agents) {
       const next = config(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next).sessions.warm();
+      if (!entry) this.entry(agent.pubkey, next);
       else if (JSON.stringify(entry.config) !== JSON.stringify(next)) {
         entry.config = next;
         entry.sessions.reconfigure();
       }
     }
+    if (agents.length)
+      this.spare.warm(...agents.map((agent) => where(config(agent.config))));
+    else this.spare.stop();
     this.notify();
   }
 
@@ -136,6 +151,7 @@ export class ClaudeRuntime {
   }
 
   dispose() {
+    this.spare.dispose();
     for (const entry of this.agents.values()) entry.sessions.dispose();
     this.agents.clear();
   }
@@ -150,6 +166,9 @@ export class ClaudeRuntime {
       return;
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
+    // Read while the turn's prompt is built, not after: a new session's prompt
+    // needs it, and a spare is only faster if nothing else is awaited.
+    void this.memory(agent.pubkey, entry);
     if (trigger.type === "timer") {
       const done = entry.sessions.deliver(
         `timer/${trigger.slug}`,
@@ -328,8 +347,6 @@ export class ClaudeRuntime {
     const tools =
       (cwd: string): ToolServer =>
       async (conversation, message) => {
-        // A spare starts before any delivery: it can list the tools, and has a
-        // handle to call them with by the time it is given a turn.
         const handle = entry.handle;
         const client = handle && {
           ...appClient(handle, {
@@ -348,6 +365,7 @@ export class ClaudeRuntime {
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
+      spare: this.spare,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
       fingerprint: () =>
@@ -358,12 +376,11 @@ export class ClaudeRuntime {
           entry.config.scope,
         ]),
       launch: async () => {
-        const { model, workspace, instructions, scope } = entry.config;
+        const { workspace, instructions, scope } = entry.config;
         const memory = await this.memory(pubkey, entry);
         return {
-          cwd: workspace,
+          ...where(entry.config),
           tools: tools(workspace),
-          ...(model.trim() ? { model: model.trim() } : {}),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,

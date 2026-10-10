@@ -294,7 +294,8 @@ it("shows the whole thread to a session started over from a lost one", async () 
   );
   await deliver({ type: "mention", event: mention });
   await flush(20);
-  const [lost, fresh] = claudes();
+  const [lost] = claudes();
+  const fresh = claudes().find((process) => process.prompts.length);
   expect(lost?.options.args).toContain("lost");
   expect(lost?.prompts).toEqual([]);
   expect(fresh?.prompts[0]).toContain('<thread-context included="1" total="2"');
@@ -339,13 +340,31 @@ it("runs a timer in its own session", async () => {
   expect(claude?.prompts[0]).toContain("Timer: watch/daily");
 });
 
-it("warms a spare for each agent of its type and stops those that go away", async () => {
+it("keeps one spare for all its agents, and none once they are gone", async () => {
   const { runtime, claudes } = setup();
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as Agent;
-  runtime.sync([agent]);
+  const agent = (pubkey: string) =>
+    ({ pubkey, config: DEFAULT_CONFIG }) as Agent;
+  runtime.sync([agent(self), agent(alice)]);
   await flush(10);
   expect(claudes()).toHaveLength(1);
+  expect(claudes()[0]?.options.cwd).toBe(DEFAULT_CONFIG.workspace);
   runtime.sync([]);
   await flush(10);
   expect(claudes().every((process) => process.killed)).toBe(true);
+});
+
+it("replaces the spare when no agent runs where it was started", async () => {
+  const { runtime, claudes } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  runtime.sync([
+    { pubkey: self, config: { ...DEFAULT_CONFIG, model: "sonnet" } } as Agent,
+  ]);
+  await flush(10);
+  const [old, next] = claudes();
+  expect(old?.killed).toBe(true);
+  expect(next?.options.args).toEqual(
+    expect.arrayContaining(["--model", "sonnet"]),
+  );
+  expect(claudes()).toHaveLength(2);
 });

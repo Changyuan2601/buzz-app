@@ -28,7 +28,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     if (snapshot.status === "loading") return;
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
-  // A spare session is warmed for each running agent.
+  // One spare session waits for whichever running agent needs it next.
   if (spawn) {
     const unsubscribe = agents2.subscribe(sync);
     sync();

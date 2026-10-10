@@ -1,11 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { fakeSpawn, flush } from "./claude-testing";
+import type { ToolServer } from "./claude";
 import {
   AgentSessions,
   IDLE_MS,
   localSessions,
-  MAX_LIVE,
   type SavedSession,
+  Spare,
   type SessionStore,
 } from "./sessions";
 
@@ -31,25 +32,35 @@ function sessions(
     hold: boolean;
     /** Holds each launch after it reads the settings, as a memory read does. */
     launched: Promise<void>;
+    /** The shared spare its new conversations look for. */
+    spare: Spare;
+    tools: ToolServer;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
   const store = options.store ?? memoryStore();
   let model = "opus";
   let ids = 0;
+  const spawn = (id: string, spawnOptions?: object) => {
+    // The fake records each process as the call begins.
+    const process = fake.spawn(id, spawnOptions);
+    const started = fake.processes.at(-1);
+    if (options.hold && started) started.hold = true;
+    return process;
+  };
   const pool = new AgentSessions({
-    spawn: (id, spawnOptions) => {
-      // The fake records each process as the call begins.
-      const process = fake.spawn(id, spawnOptions);
-      const started = fake.processes.at(-1);
-      if (options.hold && started) started.hold = true;
-      return process;
-    },
+    spawn,
+    ...(options.spare ? { spare: options.spare } : {}),
     store,
     launch: async () => {
       const current = model;
       await options.launched;
-      return { cwd: "/work", systemPrompt: "prompt", model: current };
+      return {
+        cwd: "/work",
+        systemPrompt: "prompt",
+        model: current,
+        ...(options.tools ? { tools: options.tools } : {}),
+      };
     },
     fingerprint: () => model,
     newId: () => `new-${++ids}`,
@@ -59,6 +70,7 @@ function sessions(
   return {
     pool,
     store,
+    spawn,
     claudes,
     live: () => claudes().filter((process) => !process.killed),
     setModel: (next: string) => {
@@ -67,19 +79,163 @@ function sessions(
   };
 }
 
-it("starts a new conversation on the warm spare and warms another", async () => {
-  const { pool, store, claudes } = sessions();
-  pool.warm();
+/** Sessions with a spare, spawned like their own processes. */
+function withSpare(options: Parameters<typeof sessions>[0] = {}) {
+  let ids = 0;
+  let parts: ReturnType<typeof sessions> | undefined;
+  const spare = new Spare(
+    (id, spawnOptions) => {
+      if (!parts) throw new Error("not ready");
+      return parts.spawn(id, spawnOptions);
+    },
+    async (_conversation, message) => ({ from: "spare", message }),
+    () => `spare-${++ids}`,
+  );
+  parts = sessions({ ...options, spare });
+  return { ...parts, spare };
+}
+
+const tool = (process: { emit(message: object): void }, id: string) =>
+  process.emit({
+    type: "control_request",
+    request_id: id,
+    request: {
+      subtype: "mcp_message",
+      server_name: "buzz",
+      message: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    },
+  });
+const answered = (
+  process: { received: Record<string, unknown>[] },
+  id: string,
+) =>
+  process.received.find(
+    (message) =>
+      message.type === "control_response" &&
+      (message.response as { request_id?: string }).request_id === id,
+  )?.response;
+
+it("starts a new conversation on the shared spare and warms another", async () => {
+  const { pool, spare, store, claudes } = withSpare();
+  spare.warm({ cwd: "/work", model: "opus" });
   await flush();
   expect(claudes()).toHaveLength(1);
+  // Started before any agent asked: no prompt yet.
+  expect(claudes()[0]?.received).toEqual([]);
   await expect(pool.deliver("c/root", "hello", 10)).resolves.toEqual({
     ok: true,
   });
   await flush();
   expect(claudes()).toHaveLength(2);
-  expect(claudes()[0]?.prompts).toEqual(["hello"]);
-  expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 10 });
+  const [used] = claudes();
+  expect(used?.received[0]).toMatchObject({
+    type: "control_request",
+    request: { subtype: "initialize", appendSystemPrompt: "prompt" },
+  });
+  expect(used?.prompts).toEqual(["hello"]);
+  expect(store.get("c/root")).toMatchObject({ id: "spare-1", seen: 10 });
   expect(pool.snapshot()).toEqual([{ key: "c/root", busy: false }]);
+});
+
+it("hands the spare's tools to the agent that takes it", async () => {
+  const agentTools = vi.fn(async () => ({ from: "agent" }));
+  const { pool, spare, claudes } = withSpare({ tools: agentTools });
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  const [process] = claudes();
+  if (!process) throw new Error("no spare");
+  // Claude lists the tools as it starts, before any agent has the spare.
+  tool(process, "early");
+  await flush();
+  expect(answered(process, "early")).toMatchObject({
+    response: { mcp_response: { from: "spare" } },
+  });
+  await pool.deliver("c/root", "hi", 1);
+  tool(process, "later");
+  await flush();
+  expect(answered(process, "later")).toMatchObject({
+    response: { mcp_response: { from: "agent" } },
+  });
+});
+
+it("serves whichever agent starts the next conversation", async () => {
+  const one = withSpare();
+  const two = sessions({ spare: one.spare });
+  one.spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  await one.pool.deliver("c/a", "for one", 1);
+  await flush();
+  await two.pool.deliver("c/b", "for two", 2);
+  // Each took the spare (all started by the first's spawn); neither agent
+  // started a process of its own.
+  expect(one.claudes().map((process) => process.prompts)).toEqual([
+    ["for one"],
+    ["for two"],
+    [],
+  ]);
+  expect(two.claudes()).toEqual([]);
+});
+
+it("starts a conversation elsewhere afresh, and the spare follows it", async () => {
+  const { pool, spare, claudes } = withSpare();
+  spare.warm({ cwd: "/other", model: "opus" });
+  await flush();
+  const [other] = claudes();
+  await pool.deliver("c/root", "hi", 1);
+  await flush();
+  expect(other?.killed).toBe(true);
+  expect(other?.prompts).toEqual([]);
+  const used = claudes().filter((process) => process.prompts.length);
+  expect(used[0]?.options.args).toContain("new-1");
+  const next = claudes().find((process) =>
+    process.options.args?.includes("spare-2"),
+  );
+  expect(next?.options.cwd).toBe("/work");
+  expect(next?.killed).toBe(false);
+});
+
+it("does not wait for a spare started elsewhere", async () => {
+  // The spare for another folder never finishes starting.
+  const spare = new Spare(
+    () => new Promise(() => undefined),
+    async () => ({}),
+  );
+  const { pool, claudes } = sessions({ spare });
+  spare.warm({ cwd: "/other", model: "opus" });
+  await expect(pool.deliver("c/root", "hi", 1)).resolves.toEqual({ ok: true });
+  expect(claudes()[0]?.prompts).toEqual(["hi"]);
+});
+
+it("keeps a spare that fits any agent, and replaces one that fits none", async () => {
+  const { spare, claudes } = withSpare();
+  const work = { cwd: "/work", model: "opus" };
+  const other = { cwd: "/other", model: "opus" };
+  spare.warm(work);
+  await flush();
+  spare.warm(other, work);
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  spare.warm(other);
+  await flush();
+  expect(claudes()).toHaveLength(2);
+  expect(claudes()[0]?.killed).toBe(true);
+  expect(claudes()[1]?.options.cwd).toBe("/other");
+});
+
+it("starts no spare again after one dies, until a conversation starts", async () => {
+  const { pool, spare, claudes } = withSpare();
+  const where = { cwd: "/work", model: "opus" };
+  spare.warm(where);
+  await flush();
+  claudes()[0]?.exit(1, "not signed in");
+  await flush();
+  spare.warm(where);
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  await pool.deliver("c/root", "hi", 1);
+  await flush();
+  // One for the conversation, and a spare again.
+  expect(claudes()).toHaveLength(3);
 });
 
 it("continues a conversation in its own process, apart from others", async () => {
@@ -93,14 +249,11 @@ it("continues a conversation in its own process, apart from others", async () =>
 });
 
 it("steers a conversation that is still working instead of queueing", async () => {
-  const { pool, claudes } = sessions();
-  pool.warm();
-  await flush();
-  const process = claudes()[0];
-  if (!process) throw new Error("no spare");
-  process.hold = true;
+  const { pool, claudes } = sessions({ hold: true });
   const first = pool.deliver("c/root", "first", 1);
   await flush();
+  const process = claudes()[0];
+  if (!process) throw new Error("no process");
   const second = pool.deliver("c/root", "plain", 2, { steer: "steer" });
   await flush();
   expect(process.prompts).toEqual(["first", "steer"]);
@@ -154,47 +307,13 @@ it("starts over when a saved session no longer loads", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 9 });
 });
 
-it("stops the longest-idle conversation to stay within its process limit", async () => {
-  const { pool, live } = sessions();
-  for (let index = 0; index < MAX_LIVE + 2; index++)
-    await pool.deliver(`c/${index}`, "hi", index);
-  await flush();
-  expect(live().length).toBeLessThanOrEqual(MAX_LIVE);
-  const keys = pool.snapshot().map((session) => session.key);
-  expect(keys).not.toContain("c/0");
-  expect(keys).toContain(`c/${MAX_LIVE + 1}`);
-});
-
-it("says it is busy rather than start a process past its limit", async () => {
+it("runs any number of conversations at once", async () => {
   const { pool, live } = sessions({ hold: true });
-  pool.warm();
-  for (let index = 0; index < MAX_LIVE; index++)
+  for (let index = 0; index < 12; index++)
     void pool.deliver(`c/${index}`, "hi", index);
   await flush();
-  expect(live()).toHaveLength(MAX_LIVE);
-  await expect(pool.deliver("c/extra", "hi", 9)).resolves.toEqual({
-    ok: false,
-    error: `Claude Code is already working in ${MAX_LIVE} conversations; try again when one finishes`,
-  });
-  expect(live()).toHaveLength(MAX_LIVE);
-  expect(pool.snapshot().map((session) => session.key)).not.toContain(
-    "c/extra",
-  );
-});
-
-it("counts conversations still starting toward its limit", async () => {
-  let release!: () => void;
-  const launched = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const { pool, live } = sessions({ hold: true, launched });
-  const results = Array.from({ length: MAX_LIVE + 1 }, (_, index) =>
-    pool.deliver(`c/${index}`, "hi", index),
-  );
-  await expect(results[MAX_LIVE]).resolves.toMatchObject({ ok: false });
-  release();
-  await flush();
-  expect(live()).toHaveLength(MAX_LIVE);
+  expect(live()).toHaveLength(12);
+  expect(pool.snapshot().every((session) => session.busy)).toBe(true);
 });
 
 it("starts again with settings saved while a conversation's process started", async () => {
@@ -217,17 +336,15 @@ it("starts again with settings saved while a conversation's process started", as
   expect(used[0]?.options.args).toContain("sonnet");
 });
 
-it("restarts idle processes and the spare when settings change", async () => {
+it("restarts idle processes when settings change", async () => {
   const { pool, claudes, setModel } = sessions();
   await pool.deliver("c/root", "hi", 1);
   await flush();
-  const [conversation, spare] = claudes();
+  const [conversation] = claudes();
   setModel("sonnet");
   pool.reconfigure();
   await flush();
   expect(conversation?.killed).toBe(true);
-  expect(spare?.killed).toBe(true);
-  expect(claudes().at(-1)?.options.args).toContain("sonnet");
   await pool.deliver("c/root", "again", 2);
   const resumed = claudes().at(-1);
   expect(resumed?.options.args).toEqual(
@@ -236,16 +353,20 @@ it("restarts idle processes and the spare when settings change", async () => {
 });
 
 it("stops every process when disposed", async () => {
-  const { pool, claudes } = sessions();
-  pool.warm();
+  const { pool, spare, claudes } = withSpare();
   await pool.deliver("c/root", "hi", 1);
   await flush();
   pool.dispose();
+  spare.dispose();
   await flush();
+  expect(claudes()).toHaveLength(2);
   expect(claudes().every((process) => process.killed)).toBe(true);
   await expect(pool.deliver("c/root", "late", 2)).resolves.toMatchObject({
     ok: false,
   });
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  expect(claudes()).toHaveLength(2);
 });
 
 it("keeps saved sessions per agent in storage", () => {
