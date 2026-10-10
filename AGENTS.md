@@ -272,3 +272,14 @@ communities load. Do not expose credentials in logs or responses. If the identit
 or community loading cannot be verified, report that limitation before presenting
 the build as ready to test. Follow the worktree bootstrap instructions above;
 do not hardcode identity values into tracked files.
+
+## Inspect a live agent session
+
+When asked to inspect or debug an Agent conversation, open its live session viewer
+for the human:
+
+```sh
+bin/node scripts/session-debug.mjs '<Buzz thread ID or link>'
+```
+
+Keep it running for live updates. See [details](docs/session-debugging.md) if needed.

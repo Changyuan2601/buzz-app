@@ -1,5 +1,10 @@
 # View a Codex session started by Buzz
 
+For the live viewer, run `bin/node scripts/session-debug.mjs '<Buzz thread ID or link>'`
+from the repository root. See [session debugging](session-debugging.md) for wall
+time, token use and live updates. The commands below remain useful for
+standalone snapshots and manual transcript inspection.
+
 This guide is for agents investigating a Buzz conversation. All commands run
 non-interactively and read the saved transcript without invoking Codex or tools.
 
