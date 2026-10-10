@@ -560,7 +560,7 @@ fn read_source(root: &Path) -> Result<Source> {
         digest: format!("{:x}", Sha256::digest(bytes)),
     })
 }
-fn read_json(path: &Path, optional: bool) -> Result<Value> {
+pub(crate) fn read_json(path: &Path, optional: bool) -> Result<Value> {
     let meta = match fs::symlink_metadata(path) {
         Err(e) if optional && e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
         Err(_) => return Err("Could not read chosen Buzz source".into()),

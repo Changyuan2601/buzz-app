@@ -4,7 +4,8 @@
 //! to the agent's community.
 use crate::agents::profile_http::authorization;
 use buzz_agent_controller::{
-    AppAgent, AppAgents, Credentials, PlatformCredentials, Published, Secret, CREDENTIALS_BUSY,
+    AppAgent, AppAgents, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
+    Published, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +23,8 @@ const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 #[derive(Clone)]
 pub(crate) struct AppAgentHost {
     agents: Result<AppAgents, String>,
+    /// Earlier agent systems' identities on this machine, which it can take over.
+    old: Result<OldStores, String>,
     credentials: Arc<dyn Credentials>,
     /// Each key after its first read, so only create and first use reach the
     /// credential store, whose lock refuses rather than waits. Waiting on this
@@ -34,13 +37,18 @@ pub(crate) struct AppAgentHost {
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
-    pub(crate) fn new(path: Result<PathBuf, String>, packaged: bool) -> Self {
+    pub(crate) fn new(
+        path: Result<PathBuf, String>,
+        old: Result<OldStores, String>,
+        packaged: bool,
+    ) -> Self {
         let hosts = path
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
         Self {
             agents: path.map(AppAgents::open),
+            old,
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),
             profiles: Arc::default(),
@@ -272,6 +280,109 @@ pub(crate) async fn app_agent_create(
     .await
 }
 
+/// Identities earlier agent systems saved on this machine, as Agents2 could take
+/// them over; the caller leaves out its own.
+#[tauri::command]
+pub(crate) async fn app_agent_portable(
+    state: tauri::State<'_, AppAgentHost>,
+) -> Result<Portables, String> {
+    let old = state.old.clone()?;
+    blocking(move || Ok(old.list())).await
+}
+
+/// Takes over one identity an earlier agent system saved, keeping its key, name
+/// and picture, as `app_agent_create` does for a new one. Its old store keeps it.
+#[tauri::command]
+pub(crate) async fn app_agent_port(
+    state: tauri::State<'_, AppAgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    source: PortSource,
+    pubkey: String,
+    destination: String,
+    owner: String,
+    agent_type: String,
+) -> Result<AppAgentSummary, String> {
+    let agents = state.agents.clone()?;
+    let old = state.old.clone()?;
+    let credentials = state.credentials.clone();
+    let (found, key) = blocking(move || {
+        credentials.retry();
+        old.take(source, &pubkey, credentials.as_ref())
+    })
+    .await?;
+    let prepared = AppAgents::adopt(
+        &destination,
+        &owner,
+        &agent_type,
+        key,
+        &found.name,
+        found.picture,
+    )?;
+    let auth = identity
+        .inner()
+        .authorize_agent(owner, prepared.pubkey().to_owned())
+        .await?;
+    let host = state.inner().clone();
+    let saved = agents.clone();
+    let (agent, key) = blocking(move || {
+        let mut keys = host.keys();
+        let (agent, key) = saved.commit(prepared, &auth, host.credentials.as_ref())?;
+        let key = Arc::new(key);
+        keys.insert(agent.pubkey.clone(), key.clone());
+        Ok((agent, key))
+    })
+    .await?;
+    // Keep the profile its community already has; without one, the next sync
+    // publishes the name and picture it brought. If it cannot tell, it keeps
+    // whatever is there rather than overwrite it, until the agent is renamed.
+    let (name, picture, created_at) = match current_profile(&agent, &key).await {
+        Ok(None) => return Ok(agent.into()),
+        Ok(Some(profile)) => profile,
+        Err(_) => (agent.name.clone(), None, 0),
+    };
+    let pubkey = agent.pubkey.clone();
+    blocking(move || {
+        agents.keep_profile(&pubkey, &name, picture, created_at)?;
+        Ok(agents.get(&pubkey)?.into())
+    })
+    .await
+}
+
+/// The newest profile (kind 0) its community has for the agent: its name,
+/// picture and `created_at`.
+async fn current_profile(
+    agent: &AppAgent,
+    key: &Secret,
+) -> Result<Option<(String, Option<String>, u64)>, String> {
+    let filters = serde_json::json!([{ "kinds": [0], "authors": [agent.pubkey], "limit": 1 }]);
+    let events = read(agent, key, filters.as_array().ok_or("Invalid agent read")?).await?;
+    let Some(event) = events.as_array().and_then(|events| {
+        events
+            .iter()
+            .filter(|event| event["pubkey"] == agent.pubkey.as_str() && event["kind"] == 0)
+            .max_by_key(|event| event["created_at"].as_u64())
+    }) else {
+        return Ok(None);
+    };
+    let content: Value = serde_json::from_str(event["content"].as_str().unwrap_or(""))
+        .map_err(|_| "Invalid agent profile")?;
+    let name = ["display_name", "name"]
+        .iter()
+        .find_map(|field| {
+            content[field]
+                .as_str()
+                .filter(|name| !name.trim().is_empty())
+        })
+        .ok_or("Agent profile has no name")?;
+    Ok(Some((
+        name.to_owned(),
+        content["picture"].as_str().map(str::to_owned),
+        event["created_at"]
+            .as_u64()
+            .ok_or("Invalid agent profile")?,
+    )))
+}
+
 #[tauri::command]
 pub(crate) async fn app_agent_rename(
     state: tauri::State<'_, AppAgentHost>,
@@ -382,7 +493,11 @@ pub(crate) async fn app_agent_query(
         return Err("Agents read with one to eight filters".into());
     }
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
-    let bytes = serde_json::to_vec(&filters).map_err(|_| "Could not encode agent read")?;
+    read(&agent, &key, &filters).await
+}
+
+async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value, String> {
+    let bytes = serde_json::to_vec(filters).map_err(|_| "Could not encode agent read")?;
     let response = client(20)?
         .post(agent.query_url())
         .header("Content-Type", "application/json")
@@ -580,6 +695,7 @@ mod tests {
         let key = Secret::generate().unwrap();
         let host = AppAgentHost {
             agents: Err("unused".into()),
+            old: Err("unused".into()),
             credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),
             keys: Arc::default(),
             profiles: Arc::default(),
@@ -604,7 +720,11 @@ mod tests {
     #[tokio::test]
     async fn delete_waits_for_a_profile_publication_in_flight() {
         let dir = tempfile::tempdir().unwrap();
-        let host = AppAgentHost::new(Ok(dir.path().join("identities.json")), true);
+        let host = AppAgentHost::new(
+            Ok(dir.path().join("identities.json")),
+            Err("unused".into()),
+            true,
+        );
         let pubkey = "c".repeat(64);
         let turn = host.profile_turn(&pubkey);
         let publishing = turn.lock().await;

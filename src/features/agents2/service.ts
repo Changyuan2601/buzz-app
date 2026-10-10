@@ -41,6 +41,8 @@ import {
   type AgentIdentity,
   type AgentsNative,
   type AgentUpload,
+  type PortableAgents,
+  type PortSource,
 } from "./native";
 import {
   readRecords,
@@ -195,6 +197,14 @@ export type Agents2 = {
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
   create(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
+  /** Identities earlier agent systems saved on this machine that are not
+   * Agents2 agents yet. */
+  portable(): Promise<PortableAgents>;
+  /** Takes one over as an agent of `type` in the selected community, keeping its
+   * key, name and picture. Its instructions and settings stay behind. */
+  port(
+    input: Readonly<{ source: PortSource; pubkey: string; type: string }>,
+  ): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. */
@@ -439,6 +449,47 @@ export class Agents2Service extends Service implements Agents2 {
   };
 
   async create({ type, name }: Readonly<{ type: string; name: string }>) {
+    if (!name.trim()) throw new Error("Name the agent");
+    return this.add(type, (native, destination, owner) =>
+      native.create(destination, owner, type, name.trim()),
+    );
+  }
+
+  async portable() {
+    const native = this.native;
+    if (!native) throw new Error("Agents run only in the desktop app");
+    const found = await native.portable();
+    const own = new Set(
+      this.identities
+        .filter((identity) => !identity.deleted)
+        .map((identity) => identity.pubkey),
+    );
+    return {
+      ...found,
+      agents: found.agents.filter((agent) => !own.has(agent.pubkey)),
+    };
+  }
+
+  async port({
+    source,
+    pubkey,
+    type,
+  }: Readonly<{ source: PortSource; pubkey: string; type: string }>) {
+    return this.add(type, (native, destination, owner) =>
+      native.port(source, pubkey, destination, owner, type),
+    );
+  }
+
+  /** Saves a new identity of `type` in the selected community with the type's
+   * default settings. */
+  private async add(
+    type: string,
+    save: (
+      native: AgentsNative,
+      destination: string,
+      owner: string,
+    ) => Promise<AgentIdentity>,
+  ) {
     const native = this.native;
     const selected = this.communities.snapshot().selected;
     const binding = selected
@@ -448,13 +499,11 @@ export class Agents2Service extends Service implements Agents2 {
     if (!native) throw new Error("Agents run only in the desktop app");
     if (!binding) throw new Error("Connect to a community first");
     if (!kind) throw new Error("That agent type is not available");
-    if (!name.trim()) throw new Error("Name the agent");
     const settings = defaults("", kind);
-    const identity = await native.create(
+    const identity = await save(
+      native,
       relayOrigin(binding.origin),
       binding.viewer,
-      type,
-      name.trim(),
     );
     const record = { ...settings, pubkey: identity.pubkey };
     try {

@@ -73,6 +73,8 @@
     "allow-agent-control-create-prepare",
     "allow-app-agent-list",
     "allow-app-agent-create",
+    "allow-app-agent-portable",
+    "allow-app-agent-port",
     "allow-app-agent-rename",
     "allow-app-agent-delete",
     "allow-app-agent-forget",

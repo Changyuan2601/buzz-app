@@ -21,6 +21,7 @@ mod import;
 pub mod logs;
 mod ownership;
 pub mod pi;
+mod port;
 mod process;
 mod profile;
 mod restart;
@@ -52,6 +53,7 @@ pub use harness_presets::{harness_preset, harness_presets, HarnessPreset};
 pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
+pub use port::{OldStores, PortSource, Portable, Portables};
 pub use restart::{RestartChange, RestartDiffEntry};
 pub use runtime::path::{prepare_tools_path, tools_path, warm_tools_path};
 pub use runtime::{

@@ -504,6 +504,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_create_prepare,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
+        app_agents::app_agent_portable,
+        app_agents::app_agent_port,
         app_agents::app_agent_rename,
         app_agents::app_agent_delete,
         app_agents::app_agent_forget,
@@ -672,6 +674,13 @@ pub fn run() {
                 paths
                     .as_ref()
                     .map(|(root, _, _)| root.with_file_name("agents2").join("identities.json"))
+                    .map_err(Clone::clone),
+                paths
+                    .as_ref()
+                    .map(|(root, legacy, _)| buzz_agent_controller::OldStores {
+                        harness: root.join("agents.json"),
+                        data_dir: legacy.clone(),
+                    })
                     .map_err(Clone::clone),
                 // `just desktop` builds step aside for a packaged app.
                 !tauri::is_dev(),

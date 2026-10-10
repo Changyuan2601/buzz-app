@@ -32,6 +32,22 @@
   padding: var(--space-4) var(--space-5) var(--space-6);
 }
 
+.portList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.portRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.portRow + .portRow {
+  border-top: 1px solid var(--border-standard);
+}
+
 .grid {
   display: grid;
   /* Fixed columns, so opening the side panel never resizes a tile. */

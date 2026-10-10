@@ -11,6 +11,7 @@ import type {
   AgentsSnapshot,
   RegisteredAgentType,
 } from "../../features/agents2/service";
+import type { PortableAgent } from "../../features/agents2/native";
 import type { RelayData } from "../../features/relay/service";
 import { Agents2Page } from "./Agents2Page";
 
@@ -48,6 +49,22 @@ const agent = (name: string, n: number): Agent => ({
   },
 });
 
+const portable: PortableAgent[] = [
+  {
+    source: "harness",
+    pubkey: "a".repeat(64),
+    name: "Ada",
+    relay: "wss://relay.example",
+  },
+  {
+    source: "installed",
+    pubkey: "b".repeat(64),
+    name: "Bea",
+    picture: "https://old.example/media/b.png",
+    relay: "",
+  },
+];
+
 function setup(agents: Agent[], { shown = true } = {}) {
   let snapshot: AgentsSnapshot = { status: "ready", agents, running: agents };
   const listeners = new Set<() => void>();
@@ -82,6 +99,8 @@ function setup(agents: Agent[], { shown = true } = {}) {
       for (const listener of listeners) listener();
       return created;
     }),
+    portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
+    port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
   } satisfies Agents2;
@@ -184,4 +203,39 @@ it("saves a rename on Enter and discards it on Escape", async () => {
   expect(agents2.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
     name: "Kept",
   });
+});
+
+it("brings over an earlier agent as the chosen type and drops it from the list", async () => {
+  const user = userEvent.setup();
+  const { agents2 } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("button", { name: "Bring over" }));
+  const list = await screen.findByRole("list", {
+    name: "Agents to bring over",
+  });
+  expect(
+    within(list).getByText(/Buzz 1\.0 harness agent · npub/),
+  ).toBeInTheDocument();
+  expect(within(list).getByText(/Buzz 0\.X · npub/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Bring over Bea" }));
+  expect(agents2.port).toHaveBeenCalledWith({
+    source: "installed",
+    pubkey: "b".repeat(64),
+    type: "test/echo",
+  });
+  expect(within(list).queryByText("Bea")).not.toBeInTheDocument();
+  expect(within(list).getByText("Ada")).toBeInTheDocument();
+});
+
+it("shows why bringing an agent over failed and keeps it listed", async () => {
+  const user = userEvent.setup();
+  const { agents2 } = setup([]);
+  agents2.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
+  await user.click(screen.getByRole("button", { name: "Bring over" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Bring over Ada" }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Keychain access was denied",
+  );
+  expect(screen.getByRole("button", { name: "Bring over Ada" })).toBeEnabled();
 });
