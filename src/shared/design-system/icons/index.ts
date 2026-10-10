@@ -195,6 +195,8 @@ export const MagnifyingGlassIcon = defineIcon(
   "tabler",
   TablerMagnifyingGlassIcon,
 );
+import TablerMapIcon from "@tabler/icons-react/dist/esm/icons/IconMap.mjs";
+export const MapIcon = defineIcon("tabler", TablerMapIcon);
 import TablerMicrosoftTeamsLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandTeams.mjs";
 export const MicrosoftTeamsLogoIcon = defineIcon(
   "tabler",

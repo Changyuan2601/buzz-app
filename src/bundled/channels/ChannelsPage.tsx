@@ -7,6 +7,7 @@ import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { ChannelBody } from "./ChannelBody";
+import { ChannelMapSplit, useChannelCanvasMap } from "./ChannelMap";
 import { useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
@@ -53,6 +54,7 @@ import {
 } from "react";
 import {
   SidebarRightIcon,
+  MapIcon,
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
@@ -370,6 +372,20 @@ function ChannelWorkspace({
     }
   }, [joiningChannel, current]);
   const CurrentChannelIcon = channelIcon(current);
+  // A Canvas ```map block turns the conversation area into that map, with the
+  // chat docked beside it. The header toggle restores the plain timeline.
+  const [canvasRevision, setCanvasRevision] = useState(0);
+  const [timelineChannels, setTimelineChannels] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const mapSource = useChannelCanvasMap(
+    queries.canvas,
+    queries.channels,
+    current && !cached && !current.readOnly ? current.id : undefined,
+    canvasRevision,
+  );
+  const showingMap =
+    !!mapSource && !!current && !timelineChannels.has(current.id);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
     if (composingMessage) {
@@ -1232,7 +1248,9 @@ function ChannelWorkspace({
           channelId={current.id}
           open={canvasOpen}
           onOpenChange={(open) => {
-            if (!open) setCanvasOrigin(undefined);
+            if (open) return;
+            setCanvasOrigin(undefined);
+            setCanvasRevision((value) => value + 1);
           }}
           finalFocus={canvasTrigger}
         />
@@ -1403,6 +1421,23 @@ function ChannelWorkspace({
                           );
                         }}
                       />
+                      {current && mapSource && (
+                        <IconButton
+                          size="toolbar"
+                          aria-label="Map view"
+                          title={showingMap ? "Show timeline" : "Show map"}
+                          aria-pressed={showingMap}
+                          onClick={() =>
+                            setTimelineChannels((previous) => {
+                              const next = new Set(previous);
+                              if (showingMap) next.add(current.id);
+                              else next.delete(current.id);
+                              return next;
+                            })
+                          }
+                          icon={<MapIcon size="1rem" aria-hidden="true" />}
+                        />
+                      )}
                       {current && (
                         <IconButton
                           ref={splitTrigger}
@@ -1429,116 +1464,120 @@ function ChannelWorkspace({
                   }
                 />
               )}
-              <SessionColumn enabled={flatSession}>
-                <MessageManagementStatus />
-                {flatSession &&
-                current &&
-                navigation &&
-                requestedMessage &&
-                exact &&
-                !exact.inTimeline ? (
-                  <SessionMessageTarget
-                    key={`${current.id}:${requestedMessage}`}
-                    session={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    messageId={requestedMessage}
-                    navigation={navigation}
-                    extensions={extensions}
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    onLatest={() => select(current.id)}
-                    onRetry={() => {
-                      void navigator?.retry();
-                    }}
-                  />
-                ) : current ? (
-                  <ChannelBody
-                    viewer={viewer}
-                    extensions={extensions}
-                    key={current.id}
-                    queries={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    cached={cached}
-                    navigation={
-                      flatSession || !requestedMessage || exact?.inTimeline
-                        ? navigation
-                        : undefined
-                    }
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    onOpenThread={flatSession ? undefined : openThread}
-                    onOpenMediaReview={openMediaReview}
-                    revealMessageId={
-                      sent?.channelId === current.id ? sent.id : undefined
-                    }
-                  />
-                ) : (
-                  <div
-                    className={styles.empty}
-                    data-buzz-launch-pending={
-                      resolving && !navigation?.signal.aborted
-                        ? "required"
-                        : undefined
-                    }
-                  >
-                    {resolving
-                      ? "Checking conversation access…"
-                      : "Select a channel to read it."}
-                  </div>
-                )}
-                {current?.readOnly && !current.cached && (
-                  <ChannelJoinNotice
-                    key={`join:${current.id}`}
-                    channelId={current.id}
-                    lifecycle={queries.channelLifecycle}
-                    joinable={
-                      !current.archived &&
-                      (current.channelType === "stream" ||
-                        current.channelType === "forum")
-                    }
-                    onJoin={() => setJoiningChannel(current.id)}
-                  />
-                )}
-                {!cached && (
-                  <LiveStatus
-                    live={queries.live}
-                    channelId={current?.id}
-                    partialRoster={list.coverage === "partial"}
-                    // Retry removes this focused control. Reuse the composer’s
-                    // explicit focus handoff instead of relying on browser Tab memory.
-                    onRetry={
-                      current
-                        ? () => setComposerFocus((value) => value + 1)
-                        : undefined
-                    }
-                  />
-                )}
-                {current && (
-                  <MessageComposer
-                    sessionConversation={current.channelType === "session"}
-                    extensions={extensions}
-                    key={`composer:${current.id}`}
-                    session={queries}
-                    scope={scope}
-                    channelId={current.id}
-                    channelName={current.name}
-                    autoFocus={
-                      !current.readOnly && !requestedMessage && !requestedThread
-                    }
-                    onOpenLink={openLink}
-                    canOpenLink={canOpenLink}
-                    label={
-                      current.channelType === "session"
-                        ? "Message this session"
-                        : undefined
-                    }
-                    onSend={onComposerSend}
-                    focusRequest={composerFocus}
-                  />
-                )}
-              </SessionColumn>
+              <ChannelMapSplit source={showingMap ? mapSource : undefined}>
+                <SessionColumn enabled={flatSession}>
+                  <MessageManagementStatus />
+                  {flatSession &&
+                  current &&
+                  navigation &&
+                  requestedMessage &&
+                  exact &&
+                  !exact.inTimeline ? (
+                    <SessionMessageTarget
+                      key={`${current.id}:${requestedMessage}`}
+                      session={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      messageId={requestedMessage}
+                      navigation={navigation}
+                      extensions={extensions}
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      onLatest={() => select(current.id)}
+                      onRetry={() => {
+                        void navigator?.retry();
+                      }}
+                    />
+                  ) : current ? (
+                    <ChannelBody
+                      viewer={viewer}
+                      extensions={extensions}
+                      key={current.id}
+                      queries={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      cached={cached}
+                      navigation={
+                        flatSession || !requestedMessage || exact?.inTimeline
+                          ? navigation
+                          : undefined
+                      }
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      onOpenThread={flatSession ? undefined : openThread}
+                      onOpenMediaReview={openMediaReview}
+                      revealMessageId={
+                        sent?.channelId === current.id ? sent.id : undefined
+                      }
+                    />
+                  ) : (
+                    <div
+                      className={styles.empty}
+                      data-buzz-launch-pending={
+                        resolving && !navigation?.signal.aborted
+                          ? "required"
+                          : undefined
+                      }
+                    >
+                      {resolving
+                        ? "Checking conversation access…"
+                        : "Select a channel to read it."}
+                    </div>
+                  )}
+                  {current?.readOnly && !current.cached && (
+                    <ChannelJoinNotice
+                      key={`join:${current.id}`}
+                      channelId={current.id}
+                      lifecycle={queries.channelLifecycle}
+                      joinable={
+                        !current.archived &&
+                        (current.channelType === "stream" ||
+                          current.channelType === "forum")
+                      }
+                      onJoin={() => setJoiningChannel(current.id)}
+                    />
+                  )}
+                  {!cached && (
+                    <LiveStatus
+                      live={queries.live}
+                      channelId={current?.id}
+                      partialRoster={list.coverage === "partial"}
+                      // Retry removes this focused control. Reuse the composer’s
+                      // explicit focus handoff instead of relying on browser Tab memory.
+                      onRetry={
+                        current
+                          ? () => setComposerFocus((value) => value + 1)
+                          : undefined
+                      }
+                    />
+                  )}
+                  {current && (
+                    <MessageComposer
+                      sessionConversation={current.channelType === "session"}
+                      extensions={extensions}
+                      key={`composer:${current.id}`}
+                      session={queries}
+                      scope={scope}
+                      channelId={current.id}
+                      channelName={current.name}
+                      autoFocus={
+                        !current.readOnly &&
+                        !requestedMessage &&
+                        !requestedThread
+                      }
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      label={
+                        current.channelType === "session"
+                          ? "Message this session"
+                          : undefined
+                      }
+                      onSend={onComposerSend}
+                      focusRequest={composerFocus}
+                    />
+                  )}
+                </SessionColumn>
+              </ChannelMapSplit>
               {drawer.content}
             </>
           )}

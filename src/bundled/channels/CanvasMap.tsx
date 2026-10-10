@@ -47,7 +47,15 @@ function addOverlays(map: mapboxgl.Map, spec: MapSpec) {
   });
 }
 
-function MapView({ spec, token }: { spec: MapSpec; token: string }) {
+function MapView({
+  spec,
+  token,
+  fill,
+}: {
+  spec: MapSpec;
+  token: string;
+  fill: boolean;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const [failure, setFailure] = useState("");
   useEffect(() => {
@@ -63,7 +71,9 @@ function MapView({ spec, token }: { spec: MapSpec; token: string }) {
         center: spec.center ?? points[0] ?? [0, 0],
         zoom: spec.zoom ?? 12,
         attributionControl: false,
-        cooperativeGestures: true,
+        // A preview inside a scrolling dialog needs ⌘-scroll to zoom; a
+        // full conversation-area map owns the wheel.
+        cooperativeGestures: !fill,
       });
     } catch (reason) {
       // Without WebGL Mapbox throws on construction; keep the dialog usable.
@@ -83,7 +93,7 @@ function MapView({ spec, token }: { spec: MapSpec; token: string }) {
     }
     map.on("load", () => addOverlays(map, spec));
     return () => map.remove();
-  }, [spec, token]);
+  }, [spec, token, fill]);
   if (failure)
     return (
       <p role="alert" className={styles.error}>
@@ -92,16 +102,23 @@ function MapView({ spec, token }: { spec: MapSpec; token: string }) {
     );
   return (
     <div
-      className={styles.map}
+      className={fill ? styles.fill : styles.map}
       data-testid="canvas-map"
       ref={container}
-      style={{ height: spec.height ?? DEFAULT_HEIGHT }}
+      style={fill ? undefined : { height: spec.height ?? DEFAULT_HEIGHT }}
     />
   );
 }
 
 /** One ```map block from the Canvas, or a readable reason it cannot render. */
-export function CanvasMap({ source }: { source: string }) {
+export function CanvasMap({
+  source,
+  fill = false,
+}: {
+  source: string;
+  /** Fill the parent instead of using the spec height. */
+  fill?: boolean;
+}) {
   const result = useMemo(() => parseMapSpec(source), [source]);
   if (!result.ok)
     return (
@@ -115,5 +132,5 @@ export function CanvasMap({ source }: { source: string }) {
         Map needs VITE_MAPBOX_TOKEN.
       </p>
     );
-  return <MapView spec={result.spec} token={MAPBOX_TOKEN} />;
+  return <MapView spec={result.spec} token={MAPBOX_TOKEN} fill={fill} />;
 }
