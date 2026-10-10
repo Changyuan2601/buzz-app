@@ -23,7 +23,12 @@ function addOverlays(map: mapboxgl.Map, spec: MapSpec) {
       .addTo(map);
     if (marker.label) {
       pin.getElement().title = marker.label;
-      pin.setPopup(new mapboxgl.Popup({ offset: 24 }).setText(marker.label));
+      pin.setPopup(
+        new mapboxgl.Popup({
+          offset: 24,
+          className: styles.popup ?? "",
+        }).setText(marker.label),
+      );
     }
   }
   if (spec.lines.length === 0) return;

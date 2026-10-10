@@ -10,3 +10,12 @@
   min-width: 0;
   min-height: 0;
 }
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector themes Mapbox's own popup, which paints white. */
+.popup :global(.mapboxgl-popup-content) {
+  background: var(--surface-popover);
+  color: var(--text-standard);
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: The white Mapbox tip would not match the themed popup. */
+.popup :global(.mapboxgl-popup-tip) {
+  display: none;
+}
