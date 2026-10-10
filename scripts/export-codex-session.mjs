@@ -18,6 +18,14 @@ const isContext = (value) =>
   /^(# AGENTS\.md instructions|<environment_context>|<user_instructions>)/.test(
     value,
   );
+// Name injected context by its role and leading tag, as `developer · skills instructions`.
+const contextLabel = (role, body) =>
+  `${role} · ${
+    /^# AGENTS\.md/.test(body)
+      ? "AGENTS.md"
+      : (body.match(/^<([A-Za-z][\w.-]*)>/)?.[1].replace(/[_.]/g, " ") ??
+        "instructions")
+  }`;
 // Buzz turns end with `Request: "<json string>"`; show that instead of context.
 function buzzRequest(value) {
   const match = value.match(/^Request: (".*")$/m);
@@ -46,7 +54,28 @@ export function buildCodex(records) {
   );
   const entries = [];
   let model;
+  let settings;
   for (const { timestamp, type, payload: item } of records) {
+    // Approval, sandbox, collaboration mode and effort, shown when they change.
+    if (type === "turn_context" && item) {
+      const { turn_id: _, root_turn_id: __, ...rest } = item;
+      const next = JSON.stringify(
+        {
+          ...rest,
+          model_provider: meta.model_provider,
+          context_window: meta.context_window,
+        },
+        null,
+        2,
+      );
+      if (next !== settings)
+        entries.push(
+          entry.instructions(timestamp, "Run settings", next, {
+            scope: "settings",
+          }),
+        );
+      settings = next;
+    }
     if (type === "turn_context" && item?.model && item.model !== model) {
       model = item.model;
       entries.push(
@@ -62,11 +91,9 @@ export function buildCodex(records) {
       if (!body) continue;
       if (item.role === "developer" || isContext(body))
         entries.push(
-          entry.instructions(
-            timestamp,
-            item.role === "developer" ? "instructions" : "context",
-            body,
-          ),
+          entry.instructions(timestamp, contextLabel(item.role, body), body, {
+            scope: item.role,
+          }),
         );
       else if (item.role === "user")
         entries.push(entry.user(timestamp, body, buzzRequest(body)));

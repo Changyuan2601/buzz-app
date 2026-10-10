@@ -18,9 +18,20 @@
       <div id="tip" role="tooltip" hidden></div>
     </aside>
     <main>
-      <div class="toolbar"><p id="scope"></p><input id="search" type="search" aria-label="Search" placeholder="Search…"><button id="theme" type="button" aria-label="Toggle theme" title="Toggle theme">◐</button></div>
+      <div class="toolbar"><p id="scope"></p><input id="search" type="search" aria-label="Search" placeholder="Search…"><button id="prompt-toggle" type="button" aria-expanded="false" aria-controls="prompt" hidden>Prompt</button><button id="theme" type="button" aria-label="Toggle theme" title="Toggle theme">◐</button></div>
       <section id="content" aria-label="Session content"></section>
     </main>
+    <section id="prompt" aria-label="Prompt setup" hidden>
+      <div class="prompt-head">
+        <div class="tabs" role="tablist" aria-label="Prompt setup">
+          <button id="tab-instructions" type="button" role="tab" aria-selected="true" aria-controls="prompt-instructions">Instructions</button>
+          <button id="tab-tools" type="button" role="tab" aria-selected="false" aria-controls="prompt-tools">Tools</button>
+        </div>
+        <button id="prompt-close" type="button" aria-label="Close prompt setup" title="Close (Esc)">×</button>
+      </div>
+      <section id="prompt-instructions" role="tabpanel" aria-labelledby="tab-instructions"></section>
+      <section id="prompt-tools" role="tabpanel" aria-labelledby="tab-tools" hidden></section>
+    </section>
   </div>
   <script type="module" src="client.js"></script>
 </body>

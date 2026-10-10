@@ -53,14 +53,27 @@ sessions and DMs may require `--file`, and can contain multiple Buzz threads.
 
 ## Recorded fields and cost
 
+**Prompt** opens what the model received before its first response. Instructions
+are tagged with the role they were sent as (System, Developer, User, or Settings
+for run configuration) and render as Markdown: the system prompt first, then
+the rest in recorded order. Tools show one row per tool, opening to its
+description and JSON schema. Context injected later, such as Claude Code's
+reminders, stays in the conversation as faint rows.
+
 Codex supplies `session_meta.base_instructions`, `dynamic_tools`, developer/user
 messages, response items, lifecycle events, and token usage when supported by its
-CLI version. The viewer prefers per-response `token_usage_record`, deduplicates
+CLI version. Run settings (approval, sandbox, collaboration mode, effort) come from
+`turn_context` and show again when they change. Codex does not record its native
+tool schemas, such as shell and apply_patch. The viewer prefers per-response `token_usage_record`, deduplicates
 response IDs, and falls back to changes in cumulative token counts. It does not
 add those two sources together. The chart uses timestamp intervals to account for
 wall time; recorded `duration_ms` remains available in raw records.
 
-Claude's native transcript supplies messages and usage. Content blocks can repeat
+Claude's native transcript supplies messages and usage. Claude Code also writes a
+`prompt_snapshot` with the system prompt and tool schemas, shown once per change,
+and the rendered text and role of each reminder it injects (environment, skills,
+CLAUDE.md, hook context). Request framing, such as billing and SDK system blocks,
+beta headers and deferred tool schemas, is not recorded. Content blocks can repeat
 the same message ID and usage; the viewer counts each response once. Legacy turn
 boundaries are inferred from user messages; tool results do not start turns.
 Without a completion event the viewer does not pretend that the last token's

@@ -504,16 +504,15 @@ function render() {
   if ($("scope").innerHTML !== scope) $("scope").innerHTML = scope;
   $("scope").title = state.sessionId ?? "";
   renderTiming(state.timing);
+  renderSetup(state.setup);
   const rows = state.entries
-    .filter(
-      (e) =>
-        e.kind !== "instructions" &&
-        `${e.label} ${e.preview} ${e.html}`.toLowerCase().includes(query),
+    .filter((e) =>
+      `${e.label} ${e.preview} ${e.html}`.toLowerCase().includes(query),
     )
     .map((e) => ({
       id: e.id,
       time: e.timestamp,
-      html: `${e.kind === "tool" ? "" : `<h2>${htmlEscape(e.label)}</h2>`}${e.html}`,
+      html: `${e.kind === "tool" || e.kind === "instructions" ? "" : `<h2>${htmlEscape(e.label)}</h2>`}${e.html}`,
     }));
   // Reconcile entries by stable transcript position: live polling must not close
   // a disclosure, reset selection, or steal focus while the person reads.
@@ -566,6 +565,170 @@ function render() {
   else window.scrollTo(0, scroll);
   updateViewport(false);
 }
+// Prompt setup: what the model was given before its first response, apart
+// from the conversation. Transcript text is untrusted: everything is escaped
+// before the small Markdown subset below adds its own tags.
+const SCOPES = {
+  system: "System",
+  developer: "Developer",
+  user: "User",
+  settings: "Settings",
+};
+const BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
+const inline = (text) =>
+  htmlEscape(text)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+// Headings, lists, fenced code, tag-only lines, inline code and bold. No links
+// or raw HTML.
+function markdown(source) {
+  const out = [];
+  let para = [],
+    list = [],
+    code = null;
+  const flush = () => {
+    if (para.length) out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+    if (list.length)
+      out.push(
+        `<ul>${list.map(([depth, text]) => `<li class="depth-${depth}">${inline(text)}</li>`).join("")}</ul>`,
+      );
+    para = [];
+    list = [];
+  };
+  for (const line of String(source ?? "").split("\n")) {
+    if (code) {
+      if (/^\s*```/.test(line)) {
+        out.push(
+          `<pre class="md-code"><code>${htmlEscape(code.join("\n"))}</code></pre>`,
+        );
+        code = null;
+      } else code.push(line);
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    const item = line.match(/^(\s*)(?:[-*]|\d+[.)])\s+(.+)$/);
+    if (/^\s*```/.test(line)) {
+      flush();
+      code = [];
+    } else if (heading) {
+      flush();
+      const level = Math.min(6, heading[1].length + 2);
+      out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+    } else if (/^\s*<\/?[A-Za-z][\w.-]*>\s*$/.test(line)) {
+      flush();
+      out.push(`<div class="md-tag">${htmlEscape(line.trim())}</div>`);
+    } else if (item) {
+      if (para.length) flush();
+      list.push([Math.min(3, Math.floor(item[1].length / 2)), item[2]]);
+    } else if (!line.trim()) flush();
+    else if (list.length && /^\s/.test(line))
+      list.at(-1)[1] += ` ${line.trim()}`;
+    else {
+      if (list.length) flush();
+      para.push(line);
+    }
+  }
+  if (code)
+    out.push(
+      `<pre class="md-code"><code>${htmlEscape(code.join("\n"))}</code></pre>`,
+    );
+  flush();
+  return out.join("");
+}
+// Pretty JSON with keys, strings, numbers and literals told apart.
+function json(value, indent = "") {
+  const next = `${indent}  `;
+  if (Array.isArray(value))
+    return value.length
+      ? `[\n${value.map((v) => next + json(v, next)).join(",\n")}\n${indent}]`
+      : "[]";
+  if (value && typeof value === "object") {
+    const fields = Object.entries(value);
+    return fields.length
+      ? `{\n${fields.map(([k, v]) => `${next}<span class="j-key">${htmlEscape(JSON.stringify(k))}</span>: ${json(v, next)}`).join(",\n")}\n${indent}}`
+      : "{}";
+  }
+  const kind =
+    typeof value === "string"
+      ? "j-str"
+      : typeof value === "number"
+        ? "j-num"
+        : "j-lit";
+  return `<span class="${kind}">${htmlEscape(JSON.stringify(value))}</span>`;
+}
+const parsed = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
+function setupBody(item) {
+  if (item.blocks)
+    return item.blocks
+      .map((block) =>
+        block === BOUNDARY
+          ? `<div class="md-boundary">${htmlEscape(block)}</div>`
+          : `<div class="md-block">${markdown(block)}</div>`,
+      )
+      .join("");
+  const value = item.scope === "settings" && parsed(item.body);
+  return value ? `<pre class="json">${json(value)}</pre>` : markdown(item.body);
+}
+let setupKey = "";
+function renderSetup(setup) {
+  const key = JSON.stringify(setup ?? null);
+  if (key === setupKey) return;
+  setupKey = key;
+  const { instructions = [], tools = [] } = setup ?? {};
+  const count = tools.reduce((n, group) => n + group.tools.length, 0);
+  $("prompt-toggle").hidden = !instructions.length && !count;
+  $("tab-tools").textContent = `Tools · ${count}`;
+  const items = instructions
+    .map((item) => {
+      const scope = SCOPES[item.scope] ? item.scope : "other";
+      const label = item.label.replace(/^(system|developer|user) · /, "");
+      const at = Date.parse(item.timestamp);
+      return `<details class="setup-item" open><summary><span class="scope scope-${scope}">${SCOPES[scope] ?? "Context"}</span><span class="setup-label">${htmlEscape(label)}</span>${Number.isFinite(at) ? `<span class="setup-time">${clock(at)}</span>` : ""}</summary><div class="md">${setupBody(item)}</div></details>`;
+    })
+    .join("");
+  $("prompt-instructions").innerHTML = items
+    ? `<p class="prompt-note">What the model received before its first response. Later context stays in the conversation.</p>${items}`
+    : `<p class="empty">No instructions recorded.</p>`;
+  $("prompt-tools").innerHTML =
+    tools
+      .map(
+        (group) =>
+          `${group.note ? `<p class="prompt-note">${htmlEscape(group.note)}</p>` : ""}${group.tools
+            .map(
+              (tool) =>
+                `<details class="tool-def"><summary><span class="tool-name">${htmlEscape(tool.name)}</span><span class="tool-desc">${htmlEscape(String(tool.description ?? "").split("\n")[0])}</span></summary><div class="md">${markdown(tool.description)}</div>${tool.schema ? `<pre class="json">${json(tool.schema)}</pre>` : ""}</details>`,
+            )
+            .join("")}`,
+      )
+      .join("") || `<p class="empty">No tool definitions recorded.</p>`;
+}
+function showPrompt(open) {
+  $("prompt").hidden = !open;
+  $("prompt-toggle").setAttribute("aria-expanded", String(open));
+  if (open) $("prompt-close").focus();
+  else $("prompt-toggle").focus();
+}
+function showTab(name) {
+  for (const tab of ["instructions", "tools"]) {
+    $(`tab-${tab}`).setAttribute("aria-selected", String(tab === name));
+    $(`prompt-${tab}`).hidden = tab !== name;
+  }
+}
+$("prompt-toggle").addEventListener("click", () =>
+  showPrompt($("prompt").hidden),
+);
+$("prompt-close").addEventListener("click", () => showPrompt(false));
+$("tab-instructions").addEventListener("click", () => showTab("instructions"));
+$("tab-tools").addEventListener("click", () => showTab("tools"));
+addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("prompt").hidden) showPrompt(false);
+});
 $("search").addEventListener("input", render);
 $("theme").addEventListener("click", () => {
   document.documentElement.dataset.theme =
