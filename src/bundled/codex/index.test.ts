@@ -23,13 +23,12 @@ function applied() {
     react: React,
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn: vi.fn(), request: vi.fn() },
-    relay: { snapshot: () => ({ status: "signed-out" }), subscribe },
-    communityReader: { snapshot: () => ({}), subscribe },
     agents2: {
       register: (registered: AgentType) => {
         type = registered;
       },
-      snapshot: () => ({ status: "ready", agents: [] }),
+      snapshot: () => ({ status: "ready", agents: [], running: [] }),
+      relay: () => undefined,
       subscribe,
     },
     effect: vi.fn(),

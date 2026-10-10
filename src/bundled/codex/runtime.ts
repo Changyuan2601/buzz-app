@@ -30,6 +30,8 @@ import {
 } from "./rpc";
 
 type Request = {
+  /** The agent's community and owner, as `origin:viewer`. */
+  scope: string;
   event: EventData;
   agent: AgentHandle;
   settings: Config;
@@ -79,10 +81,10 @@ export class CodexRuntime {
   private entries = new Map<string, Entry>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
-  private scope = "";
   constructor(
     private readonly spawn: Spawn,
-    private readonly relay: RelayData,
+    /** The owner's connection to each agent's own community. */
+    private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
   ) {}
   subscribe = (listener: () => void) => {
@@ -101,11 +103,7 @@ export class CodexRuntime {
     ]);
     for (const listener of this.listeners) listener();
   }
-  sync(agents: readonly Agent[], scope: string) {
-    if (scope !== this.scope) {
-      this.dispose();
-      this.scope = scope;
-    }
+  sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.entries)
       if (!present.has(pubkey)) {
@@ -131,7 +129,7 @@ export class CodexRuntime {
     let saved: Record<string, Saved> = {};
     try {
       const stored: unknown = JSON.parse(
-        this.storage.getItem(this.storageKey(pubkey)) ?? "{}",
+        this.storage.getItem(this.storageKey(request)) ?? "{}",
       );
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         saved = Object.fromEntries(
@@ -147,7 +145,7 @@ export class CodexRuntime {
     }
     const rpc = new AppServer((call) => this.tool(entry, call));
     const entry: Entry = {
-      storageKey: this.storageKey(pubkey),
+      storageKey: this.storageKey(request),
       abort: new AbortController(),
       rpc,
       saved,
@@ -170,9 +168,9 @@ export class CodexRuntime {
     this.entries.set(pubkey, entry);
     return entry;
   }
-  private storageKey(pubkey: string) {
+  private storageKey(request: Request) {
     // Resume restores the persisted tool schema; pre-tools bindings start fresh.
-    return `buzz.codex.sessions.v3:${this.scope}:${pubkey}`;
+    return `buzz.codex.sessions.v3:${request.scope}:${request.agent.pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     entry.saved[key] = saved;
@@ -197,8 +195,8 @@ export class CodexRuntime {
         "Codex timers are not supported yet; use mentions or event watches.",
       );
     if (trigger.event.pubkey !== agent.owner) return;
-    const snapshot = this.relay.snapshot();
-    if (snapshot.status !== "ready")
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
@@ -210,6 +208,7 @@ export class CodexRuntime {
       channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     const request: Request = {
+      scope: snapshot.scope ?? "",
       event: trigger.event,
       agent,
       settings,
@@ -308,8 +307,8 @@ export class CodexRuntime {
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
-    const snapshot = this.relay.snapshot();
-    if (snapshot.status !== "ready" || snapshot.scope !== this.scope)
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
       throw new Error("The community changed");
     return conversationHistory(request.event, request.conversation, (filters) =>
       snapshot.session.read(filters, { signal }),
@@ -362,8 +361,8 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
-        const snapshot = this.relay.snapshot();
-        if (snapshot.status !== "ready" || snapshot.scope !== this.scope)
+        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
           throw new Error("Buzz is not connected to this community");
         const view = snapshot.session.agentMemories.open(request.agent.pubkey);
         const abort = () => view.dispose();

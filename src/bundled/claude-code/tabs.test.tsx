@@ -61,12 +61,12 @@ function applied({ loggedIn = true } = {}) {
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { spawn, request: vi.fn() },
-    relay: { snapshot: () => ({ status: "signed-out" }) },
     agents2: {
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
-      snapshot: () => ({ status: "ready", agents: [] }),
+      snapshot: () => ({ status: "ready", agents: [], running: [] }),
+      relay: () => undefined,
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
@@ -91,7 +91,7 @@ async function choose(label: string, option: string) {
 }
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents2", "host", "relay"]);
+  expect(inject).toEqual(["agents2", "host"]);
   const { type } = installed();
   expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });

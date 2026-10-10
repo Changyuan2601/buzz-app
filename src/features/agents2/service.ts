@@ -2,8 +2,8 @@
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
 // app owns and edits, and a config blob the type owns. The app delivers matching live events to
-// `run` from the stream the owner already receives, so no plugin opens a socket
-// or a REQ.
+// `run` from the stream the owner already receives in the agent's community,
+// selected or not, so no plugin opens a socket or a REQ.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
 import {
@@ -11,7 +11,8 @@ import {
   type Contribution,
 } from "../../plugins/contributions";
 import { removeAgentFromChannels } from "../agents/relay-removal";
-import { relayOrigin } from "../communities/destination";
+import { communityDestination, relayOrigin } from "../communities/destination";
+import type { Communities } from "../communities/service";
 import type { RelayEvent } from "../relay/events";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
@@ -48,7 +49,7 @@ import {
   type SkippedObject,
 } from "./store";
 
-/** One agent in the selected community. */
+/** One of the viewer's agents, in the community at `relay`. */
 export type Agent<Config = unknown> = Readonly<{
   pubkey: string;
   name: string;
@@ -154,7 +155,11 @@ export type AgentType<Config = unknown> = {
 export type RegisteredAgentType = Contribution<AgentType>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
+  /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
+  /** Every agent kept running here, whichever community is selected: the
+   * viewer's agents in each joined community not disconnected. */
+  running: readonly Agent[];
   error?: string;
 }>;
 export type Agents2 = {
@@ -164,6 +169,9 @@ export type Agents2 = {
   subscribe(listener: () => void): () => void;
   /** The agent of this pubkey in the selected community, if it is an Agents2 agent. */
   find(pubkey: string): Agent | undefined;
+  /** The owner's connection to a running agent's community, which need not be
+   * the selected one: read the agent's conversations through this. */
+  relay(pubkey: string): RelayData | undefined;
   create(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
@@ -207,6 +215,12 @@ const bounded = (set: Set<string>, id: string) => {
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
 
+/** What Agents2 needs of the communities: the viewer, the selected one, and
+ * a connection to any joined one without selecting it. */
+export type AgentCommunities = Pick<
+  Communities,
+  "snapshot" | "subscribe" | "open"
+>;
 type Binding = {
   scope: string;
   origin: string;
@@ -214,6 +228,21 @@ type Binding = {
   session: RelaySession;
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
+  stopLive: () => void;
+};
+/** A community the viewer has an agent in, and its session while live. */
+type Bound = {
+  relay: RelayData;
+  stop: () => void;
+  binding?: Binding | undefined;
+};
+/** The origin a relay URL or community ID names, if it is a valid one. */
+const originOf = (value: string) => {
+  try {
+    return communityDestination(value).url;
+  } catch {
+    return undefined;
+  }
 };
 type Job = { trigger: Trigger; channelId?: string };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
@@ -253,8 +282,10 @@ export class Agents2Service extends Service implements Agents2 {
   private identities: readonly AgentIdentity[] = [];
   private records: Record<string, AgentRecord>;
   private state: AgentsSnapshot;
-  private binding: Binding | undefined;
-  private stopLive: (() => void) | undefined;
+  /** By origin, so each agent listens in its own community, selected or not. */
+  private bound = new Map<string, Bound>();
+  /** Agents whose community was live at the last update. */
+  private connected = new Set<string>();
   private runners = new Map<string, Runner>();
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
@@ -264,7 +295,7 @@ export class Agents2Service extends Service implements Agents2 {
 
   constructor(
     ctx: Context,
-    private readonly relay: RelayData,
+    private readonly communities: AgentCommunities,
     private readonly native: AgentsNative | undefined = nativeAgents(),
     private readonly storage: Storage = globalThis.localStorage,
   ) {
@@ -274,6 +305,7 @@ export class Agents2Service extends Service implements Agents2 {
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
       agents: [],
+      running: [],
     });
     ctx.effect(() => {
       const stops = [
@@ -281,9 +313,12 @@ export class Agents2Service extends Service implements Agents2 {
           this.update();
           this.notify();
         }),
-        relay.subscribe(() => this.bind()),
+        communities.subscribe(() => {
+          this.watch();
+          this.update();
+        }),
       ];
-      this.bind();
+      this.watch();
       void this.refresh();
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
@@ -292,16 +327,14 @@ export class Agents2Service extends Service implements Agents2 {
       return () => {
         clearInterval(tick);
         for (const stop of stops) stop();
-        this.stopLive?.();
-        this.stopLive = undefined;
-        this.binding?.controller.abort();
-        this.binding = undefined;
+        for (const origin of [...this.bound.keys()]) this.unbind(origin);
         for (const runner of this.runners.values()) this.retire(runner);
         this.runners.clear();
         // Clear what is shown without reconciling, which would make new runners.
         this.state = Object.freeze({
           ...this.state,
           agents: Object.freeze([]),
+          running: Object.freeze([]),
         });
         this.notify();
       };
@@ -338,10 +371,17 @@ export class Agents2Service extends Service implements Agents2 {
   };
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
+  relay = (pubkey: string) => {
+    const origin = originOf(this.agent(pubkey)?.relay ?? "");
+    return origin ? this.bound.get(origin)?.relay : undefined;
+  };
 
   async create({ type, name }: Readonly<{ type: string; name: string }>) {
     const native = this.native;
-    const binding = this.binding;
+    const selected = this.communities.snapshot().selected;
+    const binding = selected
+      ? this.bound.get(originOf(selected) ?? "")?.binding
+      : undefined;
     const kind = this.types().find((entry) => entry.key === type);
     if (!native) throw new Error("Agents run only in the desktop app");
     if (!binding) throw new Error("Connect to a community first");
@@ -401,7 +441,7 @@ export class Agents2Service extends Service implements Agents2 {
   async remove(pubkey: string) {
     if (!this.native) throw new Error("Agents run only in the desktop app");
     await this.native.remove(pubkey);
-    // Drops its settings, and starts its cleanup if its community is open.
+    // Drops its settings, and starts its cleanup if its community is connected.
     await this.refresh();
   }
 
@@ -442,16 +482,33 @@ export class Agents2Service extends Service implements Agents2 {
       config: record.config,
     });
   }
-  private inScope(identity: AgentIdentity, binding: Binding) {
-    try {
-      return (
-        identity.owner === binding.viewer &&
-        relayPartition(relayOrigin(identity.relay), binding.viewer) ===
-          binding.scope
-      );
-    } catch {
-      return false;
-    }
+  /** The live binding of the agent's community, if it has one now. */
+  private bindingOf({ relay, owner }: Pick<AgentIdentity, "relay" | "owner">) {
+    const origin = originOf(relay);
+    const binding = origin ? this.bound.get(origin)?.binding : undefined;
+    return binding?.scope === relayPartition(origin ?? "", owner)
+      ? binding
+      : undefined;
+  }
+  /** Whether the agent stays running: it is the viewer's, and its community is
+   * joined and not disconnected. A reconnect does not stop it. */
+  private alive({ relay, owner }: AgentIdentity) {
+    const origin = originOf(relay);
+    const entry = origin ? this.bound.get(origin) : undefined;
+    return (
+      owner === this.communities.snapshot().viewer &&
+      !!entry &&
+      entry.relay.snapshot().status !== "disconnected"
+    );
+  }
+  /** A running agent, in any community. */
+  private agent(pubkey: string) {
+    return this.state.running.find((agent) => agent.pubkey === pubkey);
+  }
+  /** The agent, while its community's session is live to run it in. */
+  private ready(pubkey: string) {
+    const agent = this.agent(pubkey);
+    return agent && this.bindingOf(agent) ? agent : undefined;
   }
 
   /** Reads the agent list from native. Every change is made there first and
@@ -485,17 +542,17 @@ export class Agents2Service extends Service implements Agents2 {
         error: message(error),
       });
     }
+    this.watch();
     this.update();
     this.notify();
     this.sync();
   }
 
   /** Brings the relay in line with the saved identities: publishes each name
-   * its community lacks, and finishes Delete for the open community. Each step
+   * its community lacks, and finishes Delete where connected. Each step
    * is safe to repeat; what fails is tried again on the next refresh or connect. */
   private sync() {
     const native = this.native;
-    const binding = this.binding;
     for (const identity of this.identities)
       if (!identity.deleted)
         native
@@ -506,8 +563,10 @@ export class Agents2Service extends Service implements Agents2 {
               error,
             ),
           );
-      else if (binding && this.inScope(identity, binding))
-        void this.cleanup(identity.pubkey, binding);
+      else {
+        const binding = this.bindingOf(identity);
+        if (binding) void this.cleanup(identity.pubkey, binding);
+      }
   }
   /** As harness Delete does: leave every channel, then archive the identity so
    * it drops out of member lists and mention suggestions. The owner signs both,
@@ -554,8 +613,44 @@ export class Agents2Service extends Service implements Agents2 {
     }
   }
 
-  private bind() {
-    const snapshot = this.relay.snapshot();
+  /** Connects the selected community, where agents are made, and each one
+   * the viewer has an agent in, deleted ones included so their cleanup can
+   * finish; lets go of the rest. */
+  private watch() {
+    const { viewer, selected } = this.communities.snapshot();
+    const origins = new Set<string>();
+    const shown = viewer && originOf(selected ?? "");
+    if (shown) origins.add(shown);
+    for (const identity of this.identities) {
+      const origin = identity.owner === viewer && originOf(identity.relay);
+      if (origin) origins.add(origin);
+    }
+    // Left, or left and joined again with a new session.
+    for (const [origin, entry] of this.bound)
+      if (!origins.has(origin) || this.communities.open(origin) !== entry.relay)
+        this.unbind(origin);
+    for (const origin of origins) {
+      if (this.bound.has(origin)) continue;
+      const relay = this.communities.open(origin);
+      if (!relay) continue;
+      this.bound.set(origin, {
+        relay,
+        stop: relay.subscribe(() => this.bind(origin)),
+      });
+      this.bind(origin);
+    }
+  }
+  private unbind(origin: string) {
+    const entry = this.bound.get(origin);
+    this.bound.delete(origin);
+    entry?.stop();
+    entry?.binding?.stopLive();
+    entry?.binding?.controller.abort();
+  }
+  private bind(origin: string) {
+    const entry = this.bound.get(origin);
+    if (!entry) return;
+    const snapshot = entry.relay.snapshot();
     const live =
       snapshot.status === "ready" &&
       !snapshot.cached &&
@@ -570,24 +665,29 @@ export class Agents2Service extends Service implements Agents2 {
             controller: new AbortController(),
           }
         : undefined;
-    if (
-      this.binding?.session === live?.session &&
-      this.binding?.scope === live?.scope
-    )
-      return;
-    this.stopLive?.();
-    this.binding?.controller.abort();
-    this.stopLive = live && this.listen(live.session);
-    this.binding = live;
+    const changed =
+      entry.binding?.session !== live?.session ||
+      entry.binding?.scope !== live?.scope;
+    if (changed) {
+      entry.binding?.stopLive();
+      entry.binding?.controller.abort();
+      entry.binding = live && {
+        ...live,
+        stopLive: this.listen(live.session, origin),
+      };
+    }
+    // Disconnecting stops its agents even when no binding changed.
     this.update();
-    if (live) this.sync();
+    if (changed && live) this.sync();
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
    * connection recovers, which happens within the same session. */
-  private listen(session: RelaySession) {
+  private listen(session: RelaySession, origin: string) {
     let connected = session.live.snapshot().status === "connected";
-    const stopEvents = session.subscribeLive((batch) => this.dispatch(batch));
+    const stopEvents = session.subscribeLive((batch) =>
+      this.dispatch(batch, origin),
+    );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
       if (now && !connected) this.sync();
@@ -599,22 +699,20 @@ export class Agents2Service extends Service implements Agents2 {
     };
   }
 
-  // Joins identities, records and the connection into the visible agents, and
-  // keeps one runner per saved agent. Runners outlive edits and reconnects; one is
-  // retired only when its agent is deleted, and its run is aborted when the
-  // agent's type is replaced.
+  // Joins identities, records and the connections into the running and visible
+  // agents, and keeps one runner per saved agent. Runners outlive edits and
+  // reconnects; one is retired only when its agent is deleted, and its run is
+  // aborted when the agent's type is replaced.
   private update() {
-    const binding = this.binding;
-    const wasShown = new Set(this.state.agents.map((agent) => agent.pubkey));
     const identities = this.identities.filter((identity) => !identity.deleted);
-    const agents: Agent[] = [];
+    const running: Agent[] = [];
     for (const identity of identities) {
-      if (!binding || !this.inScope(identity, binding)) continue;
+      if (!this.alive(identity)) continue;
       const record = this.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
-      const prior = this.find(identity.pubkey);
-      agents.push(
+      const prior = this.agent(identity.pubkey);
+      running.push(
         prior &&
           prior.name === identity.name &&
           prior.attention === record.attention &&
@@ -625,6 +723,10 @@ export class Agents2Service extends Service implements Agents2 {
           : this.view(identity, record),
       );
     }
+    const selected = originOf(this.communities.snapshot().selected ?? "");
+    const agents = running.filter(
+      (agent) => originOf(agent.relay) === selected && this.bindingOf(agent),
+    );
     const types = new Map(this.types().map((type) => [type.key, type]));
     for (const [pubkey, runner] of this.runners)
       if (!identities.some((identity) => identity.pubkey === pubkey)) {
@@ -643,26 +745,33 @@ export class Agents2Service extends Service implements Agents2 {
         void this.drain(runner);
       }
     }
-    const same =
-      agents.length === this.state.agents.length &&
-      agents.every((agent, index) => agent === this.state.agents[index]);
-    if (!same) {
+    const same = (next: readonly Agent[], prior: readonly Agent[]) =>
+      next.length === prior.length &&
+      next.every((agent, index) => agent === prior[index]);
+    if (
+      !same(agents, this.state.agents) ||
+      !same(running, this.state.running)
+    ) {
       this.state = Object.freeze({
         ...this.state,
         agents: Object.freeze(agents),
+        running: Object.freeze(running),
       });
       this.notify();
     }
-    // Resume runners whose queue paused while their agent was out of view, and
-    // claim or release each agent as it comes into or leaves view, so a copy of
-    // the app takes over without waiting for an event or tick.
-    const shown = new Set(agents.map((agent) => agent.pubkey));
+    // Resume runners whose queue paused while their community was not live,
+    // and claim or release each agent as its community goes live or not, so a
+    // copy of the app takes over without waiting for an event or tick.
+    const ready = new Set(
+      running.filter((agent) => this.bindingOf(agent)).map((a) => a.pubkey),
+    );
     for (const runner of this.runners.values())
       if (
         runner.queue.length ||
-        shown.has(runner.pubkey) !== wasShown.has(runner.pubkey)
+        ready.has(runner.pubkey) !== this.connected.has(runner.pubkey)
       )
         void this.drain(runner);
+    this.connected = ready;
   }
   private notify() {
     for (const listener of this.listeners) listener();
@@ -711,10 +820,12 @@ export class Agents2Service extends Service implements Agents2 {
     return watches;
   }
 
-  private dispatch(batch: LiveBatch) {
+  /** Gives a community's live events to the agents in it. */
+  private dispatch(batch: LiveBatch, origin: string) {
     for (const runner of this.runners.values()) {
-      const agent = this.find(runner.pubkey);
-      if (!agent || !runner.type?.run) continue;
+      const agent = this.ready(runner.pubkey);
+      if (!agent || originOf(agent.relay) !== origin || !runner.type?.run)
+        continue;
       for (const event of batch.events) {
         if (runner.seen.has(event.id)) continue;
         bounded(runner.seen, event.id);
@@ -818,7 +929,7 @@ export class Agents2Service extends Service implements Agents2 {
       runner.admitted = 0;
     }
     if (runner.queue.length >= QUEUE_LIMIT || runner.admitted >= RATE_LIMIT) {
-      console.warn(`Agent ${this.find(runner.pubkey)?.name} dropped an event`);
+      console.warn(`Agent ${this.agent(runner.pubkey)?.name} dropped an event`);
       return;
     }
     runner.admitted++;
@@ -827,16 +938,15 @@ export class Agents2Service extends Service implements Agents2 {
   }
 
   // One run at a time per agent: events in arrival order, then a due timer.
-  // Each job runs the agent as it is when the job starts. While the agent is out
-  // of view (disconnected, another community) the queue pauses and update()
-  // resumes it; a type that cannot run drops what is queued. A run that ignores
+  // Each job runs the agent as it is when the job starts. While its community's
+  // session is not live the queue pauses and update() resumes it; a type that cannot run drops what is queued. A run that ignores
   // its deadline stops holding the queue when the deadline passes; it is not
   // otherwise fenced.
   private async drain(runner: Runner) {
     if (runner.running) return;
     runner.running = true;
     while (this.runners.get(runner.pubkey) === runner) {
-      const agent = this.find(runner.pubkey);
+      const agent = this.ready(runner.pubkey);
       const type = runner.type;
       const run = type?.run;
       // An agent this copy cannot run is left to another copy of the app.
@@ -844,7 +954,7 @@ export class Agents2Service extends Service implements Agents2 {
         if (agent) runner.queue.length = 0;
         await this.release(runner);
         // It may have come back into view, or gained its type, meanwhile.
-        if (this.find(runner.pubkey) !== agent || runner.type !== type)
+        if (this.ready(runner.pubkey) !== agent || runner.type !== type)
           continue;
         break;
       }
@@ -856,7 +966,7 @@ export class Agents2Service extends Service implements Agents2 {
         break;
       }
       // The agent or its type may have changed meanwhile.
-      if (this.find(runner.pubkey) !== agent || runner.type !== type) continue;
+      if (this.ready(runner.pubkey) !== agent || runner.type !== type) continue;
       const job = runner.queue.shift() ?? this.dueTimer(agent);
       if (!job) break;
       const lifetime = runner.controller.signal;
@@ -912,7 +1022,7 @@ export class Agents2Service extends Service implements Agents2 {
       runner.mayHold = true;
       // Answering twice beats not answering at all.
       console.warn(
-        `Agent ${this.find(runner.pubkey)?.name} was not claimed`,
+        `Agent ${this.agent(runner.pubkey)?.name} was not claimed`,
         error,
       );
       return true;

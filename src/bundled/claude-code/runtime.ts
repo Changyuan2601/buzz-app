@@ -80,7 +80,8 @@ export class ClaudeRuntime {
 
   constructor(
     private readonly host: Host,
-    private readonly relay: RelayData,
+    /** The owner's connection to each agent's own community. */
+    private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = globalThis.localStorage,
   ) {}
 
@@ -95,7 +96,7 @@ export class ClaudeRuntime {
    * session, changed settings restart idle sessions, removed agents stop. */
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
-    // Out of view (another community, offline) or deleted: either way its
+    // Deleted, signed out or its community disconnected: either way its
     // processes stop. Saved sessions stay so it resumes when it is back.
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
@@ -242,8 +243,8 @@ export class ClaudeRuntime {
     channelId: string,
     fresh = false,
   ) {
-    const snapshot = this.relay.snapshot();
-    const session = snapshot.status === "ready" ? snapshot.session : undefined;
+    const snapshot = this.relay(self)?.snapshot();
+    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
     const summary =
       session?.channels.list().channels.find((item) => item.id === channelId) ??
       session?.channels.get?.(channelId);
@@ -406,8 +407,8 @@ export class ClaudeRuntime {
     return reading;
   }
   private async readMemories(pubkey: string): Promise<readonly Memory[]> {
-    const snapshot = this.relay.snapshot();
-    if (snapshot.status !== "ready") throw new Error("Buzz is not connected");
+    const snapshot = this.relay(pubkey)?.snapshot();
+    if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
     const view = snapshot.session.agentMemories.open(pubkey);
     try {
       const done = new Promise<void>((resolve) => {

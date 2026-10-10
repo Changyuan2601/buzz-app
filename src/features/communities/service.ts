@@ -291,6 +291,14 @@ export function createCommunities(
       if (id) acquire(id);
       update({ selected: id });
     },
+    /** A joined community's session, connected without selecting it, for
+     * background work such as agents; it lives until the community is left. */
+    open(id: string): RelayData | undefined {
+      id = communityDestination(id).id;
+      return state.memberships.some((m) => m.id === id)
+        ? acquire(id)
+        : undefined;
+    },
     saveProfile(profile: PersonalProfile) {
       update({ profile });
     },

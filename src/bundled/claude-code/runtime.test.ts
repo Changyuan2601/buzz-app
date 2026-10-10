@@ -58,7 +58,7 @@ function setup(thread: readonly EventData[] = []) {
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new ClaudeRuntime(host, relay, storage);
+  const runtime = new ClaudeRuntime(host, () => relay, storage);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
     published.push(template);

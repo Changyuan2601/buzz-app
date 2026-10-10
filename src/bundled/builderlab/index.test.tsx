@@ -6,7 +6,10 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
-import { Agents2Service } from "../../features/agents2/service";
+import {
+  Agents2Service,
+  type AgentCommunities,
+} from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import { Agents2Page } from "../agents2/Agents2Page";
 import * as builderlab from "./index";
@@ -42,7 +45,12 @@ afterEach(() => {
 });
 
 function provideAgents2(root: Context, relay: RelayData) {
-  return new Agents2Service(root, relay, {
+  const communities = {
+    snapshot: () => ({ memberships: [], selected: null }),
+    subscribe: () => () => {},
+    open: () => relay,
+  } as unknown as AgentCommunities;
+  return new Agents2Service(root, communities, {
     list: async () => [],
     create: vi.fn(),
     rename: vi.fn(),

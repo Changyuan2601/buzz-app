@@ -76,7 +76,7 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
-  const agents2 = new Agents2Service(ctx, relay);
+  const agents2 = new Agents2Service(ctx, communities);
   ctx.effect(() => bindAgentMentions(agentControl, communities));
   ctx.effect(() => bindTeamTextSync(agentControl, communities));
   const notifications = new NotificationsService(

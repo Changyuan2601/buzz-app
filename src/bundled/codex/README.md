@@ -47,7 +47,8 @@ current turn finishes. Expect the marker.
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
-communities, removing an agent, or disabling the plugin ends its server.
+communities does not end its server; removing the agent, leaving or disconnecting
+from its community, or disabling the plugin does.
 If a saved Codex thread no longer exists, the next mention starts a fresh one.
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 

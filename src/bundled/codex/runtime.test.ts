@@ -186,7 +186,7 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, relay, store);
+  const runtime = new CodexRuntime(spawn, () => relay, store);
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
@@ -226,7 +226,7 @@ function fixture(
     upload,
     remember,
   };
-  runtime.sync([{ pubkey } as Agent], scope);
+  runtime.sync([{ pubkey } as Agent]);
   let id = 0;
   const delivery = (content: string, threadRoot = root): Delivery => {
     const result: Delivery = {
@@ -258,7 +258,8 @@ function fixture(
       events.push(result.trigger.event as EventData);
     return result;
   };
-  const selection = { selected: "community", viewer: owner };
+  /** Agents2's running agents, whichever community is selected. */
+  const running = [{ ...agent, type: "buzz.codex/codex" }];
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
     runtime.run(delivery);
@@ -269,25 +270,9 @@ function fixture(
     apply({
       react: React,
       host: { spawn },
-      communityReader: {
-        snapshot: () => selection,
-        subscribe: (listener: () => void) => {
-          listeners.push(listener);
-          return () => {};
-        },
-      },
-      relay: {
-        ...relay,
-        subscribe: (listener: () => void) => {
-          listeners.push(listener);
-          return () => {};
-        },
-      },
       agents2: {
-        snapshot: () => ({
-          status: snapshot.status === "ready" ? "ready" : "loading",
-          agents: [{ ...agent, type: "buzz.codex/codex" }],
-        }),
+        snapshot: () => ({ status: "ready", agents: [], running }),
+        relay: () => relay,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -370,7 +355,7 @@ function fixture(
     memoryView,
     remember,
     upload,
-    selection,
+    running,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
       listeners.forEach((listener) => {
@@ -655,11 +640,11 @@ it("publishes unexpected exit and empty-completion failures instead of silently 
     content: expect.stringContaining("Codex exited"),
   });
 });
-it("ends the server on community change and suppresses a late final answer", async () => {
+it("ends the server when its agent stops running and suppresses a late final answer", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  f.runtime.sync([], "other-community");
+  f.runtime.sync([]);
   f.complete();
   await f.exits.promise;
   expect(f.process.end).toHaveBeenCalled();
@@ -880,7 +865,7 @@ it("delivers a plain follow-up after startup without waiting for the running tur
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });
 
-it("keeps plugin work alive through relay reconnect and disposes on real community change", async () => {
+it("keeps plugin work alive through relay reconnect and ends it when its agent stops running", async () => {
   const f = fixture([], undefined, true);
   try {
     await f.runPlugin(f.delivery("work"));
@@ -896,9 +881,7 @@ it("keeps plugin work alive through relay reconnect and disposes on real communi
     expect(f.process.end).not.toHaveBeenCalled();
     await f.runPlugin(f.delivery("more work"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    f.selection.selected = "other-community";
-    f.snapshot.status = "connecting";
-    f.snapshot.scope = undefined;
+    f.running.length = 0;
     f.notify();
     f.complete();
     await f.exits.promise;
