@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { pathToFileURL } from "node:url";
 import { entry, exportSession } from "./session-viewer.mjs";
 
 // Tool results are a string or a list of text/image content blocks.
@@ -16,7 +17,7 @@ const target = (input) =>
     .map((key) => input?.[key])
     .find((value) => typeof value === "string") ?? "";
 
-exportSession((records) => {
+export function buildClaude(records) {
   const messages = records.filter((record) => record?.message != null);
   const results = new Map(
     messages.flatMap((record) =>
@@ -60,6 +61,12 @@ exportSession((records) => {
       else if (block?.type === "thinking") {
         if (block.thinking?.trim())
           entries.push(entry.thinking(timestamp, block.thinking.trim()));
+      } else if (
+        block?.type === "tool_use" &&
+        /(^|__)buzz__send$/.test(block.name) &&
+        typeof block.input?.text === "string"
+      ) {
+        entries.push(entry.sent(timestamp, block.input.text));
       } else if (block?.type === "tool_use") {
         const result = results.get(block.id);
         entries.push(
@@ -88,4 +95,7 @@ exportSession((records) => {
     ],
     entries,
   };
-});
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  exportSession(buildClaude);

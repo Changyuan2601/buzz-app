@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { pathToFileURL } from "node:url";
 import { entry, exportSession, text } from "./session-viewer.mjs";
 
 const contentText = (content) =>
@@ -27,7 +28,15 @@ function buzzRequest(value) {
   }
 }
 
-exportSession((records) => {
+function jsonString(literal) {
+  try {
+    return JSON.parse(literal);
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildCodex(records) {
   const meta =
     records.find((record) => record?.type === "session_meta")?.payload ?? {};
   const outputs = new Map(
@@ -67,19 +76,36 @@ exportSession((records) => {
       if (summary) entries.push(entry.thinking(timestamp, summary));
     } else if (item.call_id && !item.type.endsWith("_output")) {
       const input = item.input ?? item.arguments ?? item.action ?? "";
-      // Code Mode runs nested tools from an `exec` script; name them.
-      const nested = new Set(
-        [...text(input).matchAll(/tools\.([A-Za-z0-9_]+)/g)].map((m) => m[1]),
-      );
       const output = outputs.get(item.call_id);
-      entries.push(
+      const tool = (name) =>
         entry.tool(timestamp, {
-          name: item.name || item.type,
-          detail: [...nested].join(", "),
+          name,
           input,
           result: output && outputText(output.output),
-        }),
-      );
+        });
+      // Code Mode runs nested tools from an `exec` script: name the calls in
+      // order, and show each Buzz send as the message it posted.
+      let group = [];
+      const flush = () => {
+        if (group.length) entries.push(tool([...new Set(group)].join(", ")));
+        group = [];
+      };
+      const calls = [
+        ...text(input).matchAll(
+          /tools\.([A-Za-z0-9_]+)\(\s*(?:\{\s*"?text"?\s*:\s*("(?:[^"\\]|\\.)*"))?/g,
+        ),
+      ];
+      for (const [, name, literal] of calls) {
+        const body = name === "buzz__send" && literal && jsonString(literal);
+        if (body === undefined || body === false || body === "")
+          group.push(name);
+        else {
+          flush();
+          entries.push(entry.sent(timestamp, body));
+        }
+      }
+      flush();
+      if (!calls.length) entries.push(tool(item.name || item.type));
     } else if (!item.type.endsWith("_output")) {
       const { encrypted_content: _, ...rest } = item;
       entries.push(entry.other(timestamp, item.type, rest));
@@ -95,4 +121,7 @@ exportSession((records) => {
     ],
     entries,
   };
-});
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  exportSession(buildCodex);

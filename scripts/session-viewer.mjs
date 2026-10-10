@@ -13,25 +13,27 @@ export const escapeHtml = (value) =>
       ],
   );
 export const text = (value) =>
-  typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? "");
 const time = (timestamp) =>
   `<div class="time">${escapeHtml(timestamp?.slice(11, 19))}</div>`;
 // Long text shows a preview; clicking toggles the full text, as in Pi's viewer.
 function expandable(value, lines = 10) {
   const all = text(value).split("\n");
   if (all.length <= lines) return `<pre>${escapeHtml(all.join("\n"))}</pre>`;
-  return `<div class="expandable"><pre class="preview">${escapeHtml(all.slice(0, lines).join("\n"))}</pre><div class="hint preview">… (${all.length - lines} more lines, click to expand)</div><pre class="full">${escapeHtml(all.join("\n"))}</pre></div>`;
+  return `<details><summary>${escapeHtml(all.slice(0, Math.max(1, lines)).join("\n"))} … (${all.length} lines)</summary><pre>${escapeHtml(all.join("\n"))}</pre></details>`;
 }
 
 // Entry builders: kind drives filters, label/preview the sidebar, html the card.
 export const entry = {
   model: (timestamp, label) => ({
+    timestamp,
     kind: "model",
     label: "model",
     preview: label,
     html: `<div class="model">${time(timestamp)}Switched to model: <span class="accent">${escapeHtml(label)}</span></div>`,
   }),
   instructions: (timestamp, label, body) => ({
+    timestamp,
     kind: "instructions",
     label,
     preview: body,
@@ -39,18 +41,21 @@ export const entry = {
   }),
   // A Buzz turn shows its request, with the full turn context collapsed.
   user: (timestamp, body, request) => ({
+    timestamp,
     kind: "user",
     label: "user",
     preview: request ?? body,
     html: `<div class="card user">${time(timestamp)}${request === undefined ? expandable(body, 20) : `<pre>${escapeHtml(request)}</pre><div class="title muted">Buzz turn</div>${expandable(body, 0)}`}</div>`,
   }),
   assistant: (timestamp, body) => ({
+    timestamp,
     kind: "assistant",
     label: "assistant",
     preview: body,
     html: `<div class="assistant">${time(timestamp)}<pre>${escapeHtml(body)}</pre></div>`,
   }),
   thinking: (timestamp, body) => ({
+    timestamp,
     kind: "assistant",
     label: "thinking",
     preview: body,
@@ -58,12 +63,22 @@ export const entry = {
   }),
   // `result` is undefined while pending; `detail` names the call's target.
   tool: (timestamp, { name, detail = "", input, result, error = false }) => ({
+    timestamp,
     kind: "tool",
     label: name,
     preview: detail || text(input),
-    html: `<div class="card tool ${result === undefined ? "pending" : error ? "error" : "done"}">${time(timestamp)}<div class="title">${escapeHtml(name)} <span class="accent">${escapeHtml(detail)}</span></div>${expandable(input, 20)}${result === undefined ? "" : `<div class="output">${expandable(result)}</div>`}</div>`,
+    html: `<details class="card tool ${result === undefined ? "pending" : error ? "error" : "done"}"><summary>${escapeHtml(name)}${detail ? ` <span class="accent">${escapeHtml(detail)}</span>` : ""}${error ? ` <span class="status">failed</span>` : ""}</summary><div class="details-body">${time(timestamp)}${expandable(input, 20)}${result === undefined ? "" : `<div class="output">${expandable(result)}</div>`}</div></details>`,
+  }),
+  // A message the agent posted to Buzz through its send tool.
+  sent: (timestamp, body) => ({
+    timestamp,
+    kind: "sent",
+    label: "posted to Buzz",
+    preview: body,
+    html: `<div class="card sent">${time(timestamp)}<pre>${escapeHtml(body)}</pre></div>`,
   }),
   other: (timestamp, label, value) => ({
+    timestamp,
     kind: "other",
     label,
     preview: text(value),

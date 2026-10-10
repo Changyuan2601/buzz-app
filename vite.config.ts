@@ -77,7 +77,14 @@ export default defineConfig(async ({ command, mode }) => {
     clearScreen: false,
     // Runtime preparation checks out the Buzz and Goose web UIs under target/.
     optimizeDeps: {
-      entries: ["**/*.html", "!**/target/**", "!**/coverage/**"],
+      // The session inspector is served by its own Node server, which maps
+      // client.js to session-debug-client.js; it is not a Vite entry.
+      entries: [
+        "**/*.html",
+        "!**/target/**",
+        "!**/coverage/**",
+        "!**/scripts/session-debug.html",
+      ],
     },
     server: {
       // Derived from this checkout's path, exactly as `just desktop` does, so
