@@ -18,6 +18,8 @@ export function systemPrompt(
     scope: Scope;
     cwd: string;
     instructions?: string;
+    /** A section for each team the agent is on, from the host. */
+    team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
     memory?: string | null;
   }>,
@@ -29,6 +31,7 @@ export function systemPrompt(
     input.instructions?.trim()
       ? section("agent-instructions", input.instructions)
       : "",
+    input.team?.trim() ?? "",
     input.memory === null
       ? section(
           "core-memory",

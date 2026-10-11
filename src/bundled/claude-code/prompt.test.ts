@@ -32,6 +32,7 @@ it("builds the harness system prompt with instructions and core memory", () => {
     scope: "thread",
     cwd: "~/.buzz",
     instructions: "Be terse.",
+    team: "<team>\nCrew\n</team>",
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
@@ -43,6 +44,10 @@ it("builds the harness system prompt with instructions and core memory", () => {
     "<agent-instructions>\nBe terse.\n</agent-instructions>",
   );
   expect(prompt).toContain("<core-memory>\nI am Claude.\n</core-memory>");
+  // A team follows the agent's own instructions.
+  expect(prompt).toContain(
+    "</agent-instructions>\n\n<team>\nCrew\n</team>\n\n<core-memory>",
+  );
   expect(systemPrompt({ scope: "thread", cwd: "/w", memory: null })).toContain(
     "No core memory found.",
   );

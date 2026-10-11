@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
@@ -14,6 +15,7 @@ import {
   type AgentType,
   type Delivery,
   fromOwner,
+  teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
 
@@ -432,6 +434,70 @@ it("delivers mentions and matching watches once, and never the agent's own event
   });
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
+});
+
+it("gives each member its teams' roster and instructions, and drops a deleted agent from its teams", async () => {
+  const { service, run, emit, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  await expect(
+    service.saveTeam({ name: "Crew", instructions: "", members: [other] }),
+  ).rejects.toThrow("not an agent");
+  const team = await service.saveTeam({
+    name: " Crew ",
+    instructions: "Echo leads.",
+    members: [bot, sibling, bot],
+  });
+  expect(team).toMatchObject({ name: "Crew", members: [bot, sibling] });
+  await service.saveTeam({
+    name: "Solo",
+    instructions: "",
+    members: [sibling],
+  });
+  expect(service.snapshot().teams.map((saved) => saved.name)).toEqual([
+    "Crew",
+    "Solo",
+  ]);
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const prompt = run.mock.calls[0]?.[0].team ?? "";
+  expect(prompt).toContain('"Crew"');
+  expect(prompt).toContain(`- Echo (${npubEncode(bot)}), you`);
+  expect(prompt).toContain(`- Sib (${npubEncode(sibling)})\n`);
+  expect(prompt).toContain("Echo leads.");
+  expect(prompt).not.toContain("Solo");
+
+  await service.remove(sibling);
+  await vi.waitFor(() =>
+    expect(service.snapshot().teams.map((saved) => saved.members)).toEqual([
+      [bot],
+      [],
+    ]),
+  );
+  expect(storage.getItem("buzz.agents2.teams.v1")).not.toContain(sibling);
+  await service.removeTeam(team.id);
+  expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
+});
+
+it("leaves the team section out for an agent on no team", () => {
+  const agents = [{ pubkey: bot, name: "Echo" }];
+  expect(teamPrompt([], agents, bot)).toBe("");
+  expect(
+    teamPrompt(
+      [{ id: "t", name: "Crew", instructions: " ", members: [sibling] }],
+      agents,
+      bot,
+    ),
+  ).toBe("");
 });
 
 // STOPGAP(agent-working-reactions): delete with working-reactions.ts.

@@ -398,7 +398,10 @@ function fixture(
 }
 it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
-  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run({
+    ...f.delivery("@Codex first"),
+    team: "<team>\nCrew\n</team>",
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(f.publish).not.toHaveBeenCalled();
   await f.runtime.run(f.delivery("@Codex independent", "e".repeat(64)));
@@ -421,6 +424,22 @@ it("hands over promptly and runs conversations independently on one server", asy
       "buzz.instructions": {
         kind: "application",
         value: expect.stringContaining("TEST_INSTRUCTIONS"),
+      },
+    },
+  });
+  expect(f.starts()[0]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringContaining(
+          "</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.\n<team>\nCrew\n</team>",
+        ),
+      },
+    },
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.not.stringContaining("<team>"),
       },
     },
   });
