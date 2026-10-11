@@ -122,6 +122,8 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     let future = first["created_at"].as_u64().unwrap() + 100;
     let published = |created_at| Published {
         name: "Ada".into(),
+        picture: None,
+        about: None,
         created_at,
     };
     agents.published(&agent.pubkey, published(future)).unwrap();
@@ -323,4 +325,69 @@ fn concurrent_writers_on_one_file_keep_every_identity() {
     made.sort();
     saved.sort();
     assert_eq!(saved, made);
+}
+
+#[test]
+fn saved_public_profile_survives_updates_and_is_signed() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+    saved[0]["picture"] = "https://relay.example/media/a.png".into();
+    saved[0]["about"] = "Reviews pull requests.\nKeeps changes small.".into();
+    // Existing receipts predate picture/about tracking.
+    saved[0]["profile"] = serde_json::json!({"name": "Ada", "createdAt": 500});
+    std::fs::write(&agents.path, saved.to_string()).unwrap();
+    agents.rename(&agent.pubkey, "Bea").unwrap();
+    let reopened = AppAgents::open(agents.path.clone());
+    let agent = reopened.get(&agent.pubkey).unwrap();
+    let event = agent
+        .profile_event(&agent.read_key(&credentials).unwrap())
+        .unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        content,
+        serde_json::json!({
+            "name": "Bea", "bot": true,
+            "picture": "https://relay.example/media/a.png",
+            "about": "Reviews pull requests.\nKeeps changes small.",
+        })
+    );
+    assert!(!agent.profile_is_current());
+    reopened
+        .published(
+            &agent.pubkey,
+            Published {
+                name: agent.name.clone(),
+                picture: agent.picture.clone(),
+                about: agent.about.clone(),
+                created_at: event["created_at"].as_u64().unwrap(),
+            },
+        )
+        .unwrap();
+    assert!(reopened.get(&agent.pubkey).unwrap().profile_is_current());
+    let accepted = std::fs::read(&reopened.path).unwrap();
+    // Each metadata-only change/clear must publish, even without a rename.
+    for field in ["picture", "about"] {
+        for replacement in [Some("https://relay.example/changed"), None] {
+            let mut changed: serde_json::Value = serde_json::from_slice(&accepted).unwrap();
+            changed[0][field] = serde_json::json!(replacement);
+            std::fs::write(&reopened.path, changed.to_string()).unwrap();
+            let changed = reopened.get(&agent.pubkey).unwrap();
+            assert!(!changed.profile_is_current());
+            let event = changed
+                .profile_event(&agent.read_key(&credentials).unwrap())
+                .unwrap();
+            let content: serde_json::Value =
+                serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                content.get(field).and_then(serde_json::Value::as_str),
+                replacement
+            );
+        }
+    }
+    let event: nostr::event::Event = serde_json::from_value(event).unwrap();
+    event.verify().unwrap();
 }
