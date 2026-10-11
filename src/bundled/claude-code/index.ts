@@ -51,6 +51,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       { id: "claude", title: "Claude", component: ClaudeTab },
       { id: "settings", title: "Settings", component: SettingsTab },
     ],
+    models: (agent) => runtime.models(agent.pubkey),
     run: (delivery) => runtime.run(delivery),
     timeoutMs: HANDOVER_MS,
   });

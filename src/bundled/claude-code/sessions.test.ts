@@ -307,6 +307,21 @@ it("starts over when a saved session no longer loads", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 9 });
 });
 
+it("runs a turn with the model and effort it was delivered with, starting over included", async () => {
+  const store = memoryStore();
+  store.set("c/root", { id: "lost", seen: 4, at: 1 });
+  const { pool, claudes } = sessions({ store });
+  await pool.deliver("c/root", "hello", 9, {
+    fresh: async () => "hello again",
+    pick: { model: "haiku", effort: "low" },
+  });
+  await pool.deliver("c/root", "next", 10);
+  const fresh = claudes().find((process) => process.prompts.length);
+  expect(fresh?.prompts).toEqual(["hello again", "next"]);
+  expect(fresh?.models).toEqual(["haiku", "opus"]);
+  expect(fresh?.efforts).toEqual(["low", "high"]);
+});
+
 it("runs any number of conversations at once", async () => {
   const { pool, live } = sessions({ hold: true });
   for (let index = 0; index < 12; index++)
@@ -403,4 +418,35 @@ it("keeps saved sessions per agent in storage", () => {
   expect(two.get("c/root")?.id).toBe("s2");
   data.set("buzz.claude-code.sessions.v1", "not json");
   expect(one.get("c/root")).toBeUndefined();
+});
+
+it("shares a temporary metadata lookup, releases its process, and refreshes after settings change", async () => {
+  const { pool, claudes, live, setModel } = sessions();
+  const [first, second] = await Promise.all([pool.metadata(), pool.metadata()]);
+  expect(first).toEqual(second);
+  expect(first.model).toBe("claude-opus-5-5");
+  expect(claudes()).toHaveLength(1);
+  expect(live()).toHaveLength(0);
+  await pool.metadata();
+  expect(claudes()).toHaveLength(1);
+  setModel("haiku");
+  pool.reconfigure();
+  expect((await pool.metadata()).model).toBe("claude-haiku-5-5");
+  expect(live()).toHaveLength(0);
+  pool.dispose();
+});
+
+it("does not start metadata discovery after its agent is disposed during launch", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  const result = pool.metadata();
+  await flush();
+  pool.dispose();
+  const stopped = expect(result).rejects.toThrow("stopped");
+  release();
+  await stopped;
+  expect(claudes()).toHaveLength(0);
 });
