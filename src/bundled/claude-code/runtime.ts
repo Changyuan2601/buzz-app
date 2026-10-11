@@ -6,12 +6,13 @@
 // only reports a turn that fails.
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import type {
-  Agent,
-  AgentHandle,
-  Delivery,
-  Effort,
-  Models,
+import {
+  fromOwner,
+  type Agent,
+  type AgentHandle,
+  type Delivery,
+  type Effort,
+  type Models,
 } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -46,16 +47,12 @@ export type Config = Readonly<{
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
   scope: Scope;
-  /** Whose messages it acts on. Claude runs commands as you, so by default
-   * only yours, as harness agents do. */
-  respondTo: "owner" | "anyone";
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
-  respondTo: "owner",
 });
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
@@ -228,10 +225,10 @@ export class ClaudeRuntime {
     workingUntil,
   }: Delivery) {
     const settings = config(raw);
+    // Claude runs commands as you, so only you and your agents can ask.
     if (
       trigger.type !== "timer" &&
-      settings.respondTo !== "anyone" &&
-      trigger.event.pubkey !== agent.owner
+      !(await fromOwner(trigger.event, agent.owner))
     )
       return;
     const entry = this.entry(agent.pubkey, settings);

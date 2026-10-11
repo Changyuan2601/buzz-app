@@ -11,6 +11,7 @@ import {
   type Contribution,
 } from "../../plugins/contributions";
 import type { LocalAgentsSnapshot } from "../agents/local";
+import { attestedOwner } from "../agents/owner-attestation";
 import { removeAgentFromChannels } from "../agents/relay-removal";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
@@ -259,6 +260,15 @@ const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
+/** Whether an agent answers `event`: its owner's, or one by another agent the
+ * owner attested (NIP-OA). Both bundled types answer nobody else. */
+export async function fromOwner(
+  event: Pick<RelayEvent, "pubkey" | "kind" | "created_at" | "tags">,
+  owner: string,
+) {
+  return event.pubkey === owner || (await attestedOwner(event)) === owner;
+}
+
 /** The model and effort the triggering message asks of this agent. Only the
  * owner picks them, so nobody else in a channel can run the agent at their
  * level, and only ones the type lists: effort from the model the run uses. */
@@ -1019,17 +1029,11 @@ export class Agents2Service extends Service implements Agents2 {
   }
   private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
-    // Two of one owner's agents would otherwise answer each other forever: one
-    // hears another only when it is named in something that does not reply to it.
-    if (
-      this.identities.some(
-        (identity) =>
-          identity.pubkey === event.pubkey && identity.owner === agent.owner,
-      )
-    )
-      return CHAT_KINDS.includes(event.kind) &&
-        tagsAgent(event, agent.pubkey) &&
-        !event.tags.some((tag) => tag[0] === "e" && !!tag[1] && wrote(tag[1]))
+    // Another of the owner's agents wakes it only by naming it, wherever: were a
+    // reply to it enough, two agents replying to each other would never stop. The
+    // claimed owner only narrows this; the type verifies it before answering.
+    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
+      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
         ? [{ type: "mention", event }]
         : [];
     // Addressed events never reach a watch. Only conversation starts a run: not a

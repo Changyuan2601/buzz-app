@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import * as React from "react";
 import { apply } from "./index";
 import { afterEach, expect, it, vi } from "vitest";
@@ -896,6 +899,29 @@ it("ignores non-owner messages without spawning", async () => {
   await f.runtime.run(other);
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
+});
+it("answers another agent its owner attested", async () => {
+  const f = fixture();
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const sibling = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${sibling}:`)
+    .digest();
+  const ask = f.delivery("work");
+  if (ask.trigger.type !== "timer") {
+    ask.trigger.event.pubkey = sibling;
+    ask.trigger.event.tags.push([
+      "auth",
+      owner,
+      "",
+      bytesToHex(schnorr.sign(digest, secret)),
+    ]);
+  }
+  await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
 });
 it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
   const f = fixture();

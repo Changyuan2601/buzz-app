@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
@@ -420,30 +423,42 @@ it("shows the whole thread to a session started over from a lost one", async () 
   expect(fresh?.prompts[0]).toContain('<thread-context included="1" total="2"');
 });
 
-it("acts only on its owner's messages unless told to answer anyone", async () => {
-  const stranger = message("5", "@Claude run this for me", {
-    pubkey: "e".repeat(64),
-    tags: [
-      ["h", channel],
-      ["p", self],
-    ],
-  });
-  const { deliver, published, claudes, runtime, agent } = setup();
-  await deliver({ type: "mention", event: stranger });
+it("acts only on messages from its owner and the owner's agents", async () => {
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const sibling = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${sibling}:`)
+    .digest();
+  const auth = ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))];
+  const mention = (id: string, pubkey: string, tags: string[][] = []) =>
+    message(id, "@Claude run this for me", {
+      pubkey,
+      tags: [["h", channel], ["p", self], ...tags],
+    });
+  const { published, claudes, runtime, agent } = setup();
+  const run = (event: RelayEvent) =>
+    runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent: {
+        ...agent,
+        owner,
+        publish: async (template: object) => ({ ...event, ...template }),
+      },
+      config: DEFAULT_CONFIG,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  // A stranger, even one carrying the sibling's attestation, is ignored.
+  await run(mention("5", "e".repeat(64)));
+  await run(mention("6", "e".repeat(64), [auth]));
   await flush(10);
   expect(published).toEqual([]);
   expect(claudes().some((process) => process.prompts.length)).toBe(false);
-  await runtime.run({
-    trigger: { type: "mention", event: stranger },
-    channelId: channel,
-    agent: {
-      ...agent,
-      publish: async (template: object) => ({ ...stranger, ...template }),
-    },
-    config: { ...DEFAULT_CONFIG, respondTo: "anyone" },
-    signal: new AbortController().signal,
-    workingUntil: () => undefined,
-  } as unknown as Delivery);
+  await run(mention("7", sibling, [auth]));
   await flush(10);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);
 });
