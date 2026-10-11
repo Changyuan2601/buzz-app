@@ -228,6 +228,8 @@ pub(crate) struct AppAgentSummary {
     #[serde(rename = "type")]
     agent_type: String,
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picture: Option<String>,
     deleted: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
@@ -238,6 +240,7 @@ impl From<AppAgent> for AppAgentSummary {
             owner: agent.owner,
             agent_type: agent.agent_type,
             name: agent.name,
+            picture: agent.picture,
             deleted: agent.deleted,
         }
     }
@@ -341,12 +344,12 @@ pub(crate) async fn app_agent_port(
     .await
 }
 
-/// The newest profile (kind 0) its community has for the agent: its name (empty
-/// without one), picture and `created_at`.
+/// The newest profile (kind 0) its community has for the agent: its content
+/// and `created_at`.
 async fn current_profile(
     agent: &AppAgent,
     key: &Secret,
-) -> Result<Option<(String, Option<String>, u64)>, String> {
+) -> Result<Option<(serde_json::Map<String, Value>, u64)>, String> {
     let filters = serde_json::json!([{ "kinds": [0], "authors": [agent.pubkey], "limit": 1 }]);
     let events = read(agent, key, filters.as_array().ok_or("Invalid agent read")?).await?;
     let Some(event) = events.as_array().and_then(|events| {
@@ -357,26 +360,28 @@ async fn current_profile(
     }) else {
         return Ok(None);
     };
-    // One the app cannot read is replaced; one without a name keeps the
-    // agent's name here and the picture it has.
-    let Ok(content) = serde_json::from_str::<Value>(event["content"].as_str().unwrap_or("")) else {
+    // One the app cannot read is replaced.
+    let Ok(content) = serde_json::from_str(event["content"].as_str().unwrap_or("")) else {
         return Ok(None);
     };
+    let created_at = event["created_at"]
+        .as_u64()
+        .ok_or("Invalid agent profile")?;
+    Ok(Some((content, created_at)))
+}
+/// A profile's name (empty without one) and picture.
+fn name_and_picture(content: &serde_json::Map<String, Value>) -> (String, Option<String>) {
     let name = ["display_name", "name"]
         .iter()
         .find_map(|field| {
-            content[field]
-                .as_str()
+            content
+                .get(*field)
+                .and_then(Value::as_str)
                 .filter(|name| !name.trim().is_empty())
         })
         .unwrap_or_default();
-    Ok(Some((
-        name.to_owned(),
-        content["picture"].as_str().map(str::to_owned),
-        event["created_at"]
-            .as_u64()
-            .ok_or("Invalid agent profile")?,
-    )))
+    let picture = content.get("picture").and_then(Value::as_str);
+    (name.to_owned(), picture.map(str::to_owned))
 }
 
 #[tauri::command]
@@ -459,16 +464,19 @@ pub(crate) async fn app_agent_publish_profile(
     let (agent, key) = state.key(agent).await?;
     let agents = state.agents.clone()?;
     // An adopted key keeps the profile its community already has; only one it
-    // has none for publishes the name and picture it brought. Until that is
-    // known, nothing is published.
-    if agent.adopted && agent.profile.is_none() {
-        if let Some((name, picture, created_at)) = current_profile(&agent, &key).await? {
-            let pubkey = agent.pubkey.clone();
-            return blocking(move || agents.keep_profile(&pubkey, &name, picture, created_at))
-                .await;
-        }
+    // has none for publishes the name and picture it brought. A rename changes
+    // only the name, keeping the rest. Until that is known, nothing is published.
+    let current = if agent.adopted {
+        current_profile(&agent, &key).await?
+    } else {
+        None
+    };
+    if let (None, Some((content, created_at))) = (&agent.profile, &current) {
+        let (name, picture) = name_and_picture(content);
+        let (pubkey, created_at) = (agent.pubkey.clone(), *created_at);
+        return blocking(move || agents.keep_profile(&pubkey, &name, picture, created_at)).await;
     }
-    let signed = post(&agent, &key, agent.profile_event(&key)?).await?;
+    let signed = post(&agent, &key, agent.profile_event(&key, current)?).await?;
     let created_at = signed
         .get("created_at")
         .and_then(Value::as_u64)

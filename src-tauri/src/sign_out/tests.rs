@@ -17,8 +17,18 @@ fn fixture() -> (tempfile::TempDir, Paths) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let paths = paths_for(root, "identity");
-    fs::create_dir_all(paths.app_data.join(KEPT)).unwrap();
-    fs::write(paths.app_data.join(KEPT).join("agents.json"), "agents").unwrap();
+    fs::create_dir_all(paths.app_data.join(OLD_AGENTS)).unwrap();
+    fs::write(
+        paths.app_data.join(OLD_AGENTS).join("agents.json"),
+        "agents",
+    )
+    .unwrap();
+    fs::create_dir_all(paths.app_data.join(AGENTS)).unwrap();
+    fs::write(
+        paths.app_data.join(AGENTS).join("identities.json"),
+        "identities",
+    )
+    .unwrap();
     fs::write(paths.app_data.join("archive.sqlite3"), "archive").unwrap();
     fs::create_dir_all(&paths.others[0]).unwrap();
     fs::write(paths.others[0].join("localstorage"), "prefs").unwrap();
@@ -127,6 +137,8 @@ fn wipe_keeps_agents_unless_they_are_removed_too() {
                 "app/",
                 "app/agent-controller/",
                 "app/agent-controller/agents.json",
+                "app/agents2/",
+                "app/agents2/identities.json",
             ]
         };
         assert_eq!(listing(dir.path()), expected);
@@ -166,7 +178,9 @@ fn a_wipe_interrupted_part_way_resumes_on_the_next_launch() {
         [
             "app/",
             "app/agent-controller/",
-            "app/agent-controller/agents.json"
+            "app/agent-controller/agents.json",
+            "app/agents2/",
+            "app/agents2/identities.json"
         ]
     );
 }
@@ -230,7 +244,9 @@ fn a_retry_clears_storage_recreated_after_the_key_was_removed() {
         [
             "app/",
             "app/agent-controller/",
-            "app/agent-controller/agents.json"
+            "app/agent-controller/agents.json",
+            "app/agents2/",
+            "app/agents2/identities.json"
         ]
     );
 }
@@ -454,7 +470,9 @@ fn across_processes_a_running_instance_blocks_sign_out_and_a_later_launch_finish
         [
             "app/",
             "app/agent-controller/",
-            "app/agent-controller/agents.json"
+            "app/agent-controller/agents.json",
+            "app/agents2/",
+            "app/agents2/identities.json"
         ]
     );
 }
@@ -521,7 +539,7 @@ fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
     let (dir, paths) = fixture();
     mark(&paths, true, false);
     let before = listing(dir.path());
-    let registry = paths.app_data.join(KEPT);
+    let registry = paths.app_data.join(OLD_AGENTS);
     let chmod = |args: &[&str]| {
         let status = std::process::Command::new("chmod")
             .args(args)
@@ -544,7 +562,9 @@ fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
         [
             "app/",
             "app/agent-controller/",
-            "app/agent-controller/agents.json"
+            "app/agent-controller/agents.json",
+            "app/agents2/",
+            "app/agents2/identities.json"
         ]
     );
 }
@@ -656,7 +676,9 @@ fn a_sign_out_escalated_to_a_wipe_during_recovery_waits_for_every_copy() {
         [
             "app/",
             "app/agent-controller/",
-            "app/agent-controller/agents.json"
+            "app/agent-controller/agents.json",
+            "app/agents2/",
+            "app/agents2/identities.json"
         ]
     );
 }
@@ -700,8 +722,9 @@ fn agent_keys_go_first_and_an_interruption_retries_without_moving_anything() {
     assert_eq!(
         finish_pending(
             &paths,
-            |registry| {
-                assert!(registry.join("agents.json").exists());
+            |app_data| {
+                assert!(app_data.join(OLD_AGENTS).join("agents.json").exists());
+                assert!(app_data.join(AGENTS).join("identities.json").exists());
                 Err("keychain interrupted".into())
             },
             || panic!("the human key waits for the agent keys")
@@ -728,7 +751,7 @@ fn agent_keys_go_first_and_an_interruption_retries_without_moving_anything() {
 #[test]
 fn kept_agents_keep_only_their_list_settings_and_keys() {
     let (dir, paths) = fixture();
-    let controller = paths.app_data.join(KEPT);
+    let controller = paths.app_data.join(OLD_AGENTS);
     for file in [
         "defaults.json",
         "agents.previous.json",
@@ -744,6 +767,11 @@ fn kept_agents_keep_only_their_list_settings_and_keys() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "x").unwrap();
     }
+    for file in ["identities.lock", "identities.tmp", "hosts/agent-1.lock"] {
+        let path = paths.app_data.join(AGENTS).join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "x").unwrap();
+    }
     mark(&paths, true, false);
     assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
     assert_eq!(
@@ -752,18 +780,24 @@ fn kept_agents_keep_only_their_list_settings_and_keys() {
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json",
-            "app/agent-controller/defaults.json"
+            "app/agent-controller/defaults.json",
+            "app/agents2/",
+            "app/agents2/identities.json"
         ]
     );
     assert_eq!(fs::read(controller.join("agents.json")).unwrap(), b"agents");
     assert_eq!(fs::read(controller.join("defaults.json")).unwrap(), b"x");
+    assert_eq!(
+        fs::read(paths.app_data.join(AGENTS).join("identities.json")).unwrap(),
+        b"identities"
+    );
 }
 
 #[cfg(unix)]
 #[test]
 fn a_linked_kept_registry_stops_the_wipe_and_deletes_nothing_through_it() {
     let (dir, paths) = fixture();
-    let controller = paths.app_data.join(KEPT);
+    let controller = paths.app_data.join(OLD_AGENTS);
     let outside = dir.path().join("outside");
     fs::create_dir(&outside).unwrap();
     let files = [
@@ -1017,7 +1051,7 @@ fn a_kept_registry_recreated_as_a_link_in_trash_fails_and_the_retry_finishes() {
     let (dir, paths) = fixture();
     let files = ["sentinel"];
     let outside = outside(dir.path(), &files);
-    let link = trash(&paths.app_data).join(KEPT);
+    let link = trash(&paths.app_data).join(OLD_AGENTS);
     mark(&paths, true, false);
     let result = finish_pending(&paths, no_agents, || {
         std::os::unix::fs::symlink(&outside, &link).unwrap();
@@ -1031,7 +1065,7 @@ fn a_kept_registry_recreated_as_a_link_in_trash_fails_and_the_retry_finishes() {
     assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
     assert!(!paths.marker.exists());
     assert_eq!(
-        fs::read(paths.app_data.join(KEPT).join("agents.json")).unwrap(),
+        fs::read(paths.app_data.join(OLD_AGENTS).join("agents.json")).unwrap(),
         b"agents"
     );
     unchanged(&outside, &files);
@@ -1067,7 +1101,7 @@ fn a_wipe_folder_or_trash_recreated_as_a_link_fails_and_the_retry_finishes() {
 #[test]
 fn a_linked_wipe_folder_refuses_before_any_marker() {
     let (dir, paths) = fixture();
-    let controller = paths.app_data.join(KEPT);
+    let controller = paths.app_data.join(OLD_AGENTS);
     fs::remove_dir_all(&controller).unwrap();
     std::os::unix::fs::symlink(dir.path(), &controller).unwrap();
     let failure = run(prepare(

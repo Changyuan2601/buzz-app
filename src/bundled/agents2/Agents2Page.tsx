@@ -303,6 +303,7 @@ function Inventory({
           >
             <span className={styles.portrait}>
               <Avatar
+                src={agent.picture}
                 alt=""
                 fallback={agent.name}
                 size="fill"
@@ -360,7 +361,13 @@ function AgentPeek({
     <div className={styles.sideBody}>
       <div className={styles.peekIdentity}>
         <span className={styles.portraitLarge}>
-          <Avatar alt="" fallback={agent.name} size="fill" shape="squircle" />
+          <Avatar
+            src={agent.picture}
+            alt=""
+            fallback={agent.name}
+            size="fill"
+            shape="squircle"
+          />
         </span>
         <div className="grid min-w-0 flex-1 gap-0.5">
           <h3 className="m-0 truncate text-heading">{agent.name}</h3>
@@ -639,7 +646,13 @@ function AgentBuild({
     <div className={styles.build}>
       <aside className={styles.rail} aria-label={`${agent.name} identity`}>
         <span className={styles.portraitLarge}>
-          <Avatar alt="" fallback={agent.name} size="fill" shape="squircle" />
+          <Avatar
+            src={agent.picture}
+            alt=""
+            fallback={agent.name}
+            size="fill"
+            shape="squircle"
+          />
         </span>
         <NameField
           name={agent.name}
