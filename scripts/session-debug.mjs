@@ -196,8 +196,8 @@ export async function createInspector({
       } else {
         const name = new Map([
           [`${base}/`, "session-debug.html"],
-          [`${base}/client.js`, "session-debug-client.js"],
-          [`${base}/style.css`, "session-debug.css"],
+          [`${base}/session-debug-client.js`, "session-debug-client.js"],
+          [`${base}/session-debug.css`, "session-debug.css"],
         ]).get(url.pathname);
         if (!name) {
           res.writeHead(404);
