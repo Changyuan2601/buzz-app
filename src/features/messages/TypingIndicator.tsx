@@ -272,8 +272,12 @@ function AgentChooser({
     // The popup action unmounts after navigation. Existing panel navigation
     // captures activeElement, so give it the retained avatar control instead.
     trigger.current?.focus({ preventScroll: true });
-    if (openTarget?.(target)) setOpen(false);
-    else if (previous instanceof HTMLElement)
+    // Close through Base UI so its hover/press state resets too. A retained
+    // conversation keeps this control mounted after navigation.
+    if (openTarget?.(target)) {
+      if (actions.current) actions.current.close();
+      else setOpen(false);
+    } else if (previous instanceof HTMLElement)
       previous.focus({ preventScroll: true });
   };
   return (

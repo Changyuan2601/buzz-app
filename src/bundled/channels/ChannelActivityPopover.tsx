@@ -17,6 +17,7 @@ import {
   useState,
   useSyncExternalStore,
   type ReactElement,
+  type ComponentProps,
 } from "react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import type { Profile } from "../../features/relay/contracts";
@@ -196,6 +197,10 @@ export function ChannelActivityPopover({
   const agentIds = activeAgents.join(",");
   const [open, setOpen] = useState(false);
   const triggerPointerType = useRef<string | null>(null);
+  const actions =
+    useRef<
+      NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
+    >(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!open || !activeAgents.length) return;
@@ -236,10 +241,17 @@ export function ChannelActivityPopover({
     if (!hasActivity) setOpen(false);
   }, [hasActivity]);
   const stale = items.length > 0 && snapshot.freshness === "stale";
+  // Row actions close through Base UI so its hover/press state resets; the
+  // sidebar trigger stays mounted after the navigation they start.
+  const close = () => {
+    if (actions.current) actions.current.close();
+    else setOpen(false);
+  };
   return (
     <PopoverRoot
       modal={false}
       open={open}
+      actionsRef={actions}
       onOpenChange={(next, details) => {
         if (next && !hasActivity) return;
         if (details.reason === "trigger-press") {
@@ -320,13 +332,13 @@ export function ChannelActivityPopover({
                       }
                       openLabel={`Open ${messageId ? "thread" : "conversation"} for ${name} in ${channelName}`}
                       onOpen={() => {
-                        setOpen(false);
+                        close();
                         onOpenWorkingAgent?.(channelId, agent, messageId);
                       }}
                       onOpenActivity={
                         openAgentActivity
                           ? () => {
-                              setOpen(false);
+                              close();
                               openAgentActivity(channelId, agent);
                             }
                           : undefined
@@ -348,7 +360,7 @@ export function ChannelActivityPopover({
                     session={session}
                     agents={activeAgents}
                     onOpen={(selected) => {
-                      setOpen(false);
+                      close();
                       onOpenThread(selected);
                     }}
                   />
