@@ -1,4 +1,7 @@
 [workspace]
-members = ["crates/pairing", "crates/plugin-manager", "crates/agent-controller", "crates/credential-store", "src-tauri"]
+members = ["crates/pairing", "crates/plugin-manager", "crates/agent-controller", "crates/credential-store", "src-tauri", "vendor/sherpa-onnx-sys"]
 default-members = ["crates/plugin-manager"]
 resolver = "2"
+
+[patch.crates-io]
+sherpa-onnx-sys = { path = "vendor/sherpa-onnx-sys" }
