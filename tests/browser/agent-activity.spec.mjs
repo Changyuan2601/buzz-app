@@ -311,11 +311,11 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     (response) =>
       response.url().endsWith("/stream-observer") &&
       response.ok() &&
-      response.request().postDataJSON().observer !== null,
+      response.request().postDataJSON().observer === null,
   );
   await toggle.click();
   await disabled;
-  // Archive capture and owner-review requests both retain independent demand.
+  // Archive capture retains independent demand.
   // Disabling the activity UI clears only its display evidence.
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   expect(app.relay.sockets).toHaveLength(sockets);

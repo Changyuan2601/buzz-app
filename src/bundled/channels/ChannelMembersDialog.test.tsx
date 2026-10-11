@@ -160,7 +160,6 @@ async function setup(
       <ChannelMembersButton
         session={owner.session}
         channelId={id}
-        control={control}
         {...navigation}
       />
     </ToastProvider>,
@@ -562,129 +561,6 @@ it("refresh restarts the current directory query from page one instead of mixing
   ).toEqual([1]);
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
 });
-
-it("finishes confirmed local-agent startup after closing and reopening during publication", async () => {
-  const t = await setup("stream", false, true);
-  t.hold();
-  await t.user.click(await t.search());
-  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  await t.user.keyboard("{Escape}");
-  await vi.waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
-  await t.user.click(screen.getByRole("button", { name: "Channel members" }));
-  await t.search();
-  expect(screen.getByText("Adding…")).toBeVisible();
-  await act(async () => t.release());
-  await vi.waitFor(() =>
-    expect(t.control.snapshot().data?.agents[0]?.status).toBe("running"),
-  );
-  expect(t.publish).toHaveBeenCalledOnce();
-  expect(
-    t.fixture.calls.filter((call) => call.action === "start"),
-  ).toHaveLength(1);
-});
-
-it("keeps closed-dialog startup failures recoverable without another membership write", async () => {
-  const t = await setup("stream", false, true);
-  const action = t.fixture.host.action;
-  vi.spyOn(t.fixture.host, "action")
-    .mockRejectedValueOnce(new Error("Missing credentials"))
-    .mockImplementation(action);
-  t.hold();
-  await t.user.click(await t.search());
-  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  await t.user.keyboard("{Escape}");
-  await vi.waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
-  await act(async () => t.release());
-  await vi.waitFor(() =>
-    expect(t.session.memberAdditions.snapshot()[0]?.error).toContain(
-      "agent did not start",
-    ),
-  );
-  await t.user.click(screen.getByRole("button", { name: "Channel members" }));
-  await screen.findByText(/Added to the channel, but the agent did not start/);
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
-  await vi.waitFor(() =>
-    expect(t.control.snapshot().data?.agents[0]?.status).toBe("running"),
-  );
-  expect(t.publish).toHaveBeenCalledOnce();
-  expect(t.session.memberAdditions.snapshot()).toEqual([]);
-});
-
-it("does not start the agent after its relay session is disposed", async () => {
-  const t = await setup("stream", false, true);
-  t.hold();
-  await t.user.click(await t.search());
-  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  cleanup();
-  await act(async () => t.dispose());
-  await act(async () => t.release());
-  expect(t.fixture.calls.some((call) => call.action === "start")).toBe(false);
-});
-
-it.each(["none", "rejected", "lagging"])(
-  "requires explicit re-add after remote removal, preserving retry identity (%s)",
-  async (failure) => {
-    const rejectReadd = failure === "rejected";
-    const t = await setup("stream", false, true);
-    const action = vi
-      .spyOn(t.fixture.host, "action")
-      .mockRejectedValueOnce(new Error("Missing credentials"));
-    await t.user.click(await t.search());
-    await screen.findByText(/agent did not start/);
-    await t.user.keyboard("{Escape}");
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
-    await t.user.click(screen.getByRole("button", { name: "Channel members" }));
-    await screen.findByText(/agent did not start/);
-    await vi.waitFor(() =>
-      expect(screen.queryByText("Loading members…")).not.toBeInTheDocument(),
-    );
-    // Change relay evidence only: the cached roster still contains this agent.
-    t.removeTarget();
-    expect(t.session.channels.list().channels[0]?.members).toContain(
-      t.fixture.agent.pubkey,
-    );
-    await t.user.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByText(/Membership changed/);
-    expect(action).toHaveBeenCalledOnce();
-    expect(t.publish).toHaveBeenCalledOnce();
-    expect(t.session.channels.list().channels[0]?.members).not.toContain(
-      t.fixture.agent.pubkey,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Retry" }),
-    ).not.toBeInTheDocument();
-    if (rejectReadd) t.fail("Addition denied");
-    if (failure === "lagging") t.delayRoster();
-    await t.user.click(await t.search());
-    if (rejectReadd) {
-      await screen.findByText(/Addition denied/);
-      t.fail("");
-      await t.user.click(screen.getByRole("button", { name: "Retry" }));
-    }
-    if (failure === "lagging") {
-      await screen.findByText(/Addition is not confirmed/);
-      await t.user.click(screen.getByRole("button", { name: "Retry" }));
-      await screen.findByText(/Addition is not confirmed/);
-      expect(t.publish).toHaveBeenCalledTimes(2);
-      t.confirmRoster();
-      await t.user.click(screen.getByRole("button", { name: "Retry" }));
-    }
-    await vi.waitFor(() =>
-      expect(t.control.snapshot().data?.agents[0]?.status).toBe("running"),
-    );
-    expect(t.publish).toHaveBeenCalledTimes(rejectReadd ? 3 : 2);
-    const ids = t.publish.mock.calls.map(([event]) => event.id);
-    expect(ids[0]).not.toBe(ids[1]);
-    if (rejectReadd) expect(ids[1]).toBe(ids[2]);
-    expect(action).toHaveBeenCalledTimes(2);
-  },
-);
 
 it("keeps known members quiet while rechecking membership without enabling unverified additions", async () => {
   const t = await setup();

@@ -130,7 +130,7 @@ launchTest(
     await expect(failed).toBeVisible();
     await openPage(page, "Projects");
     await expect(failed).toBeHidden();
-    await button(page, "Agents").first().click();
+    await button(page, "Agents2").first().click();
     await page.evaluate(() => {
       location.hash = "#buzz=%7B";
     });
@@ -140,7 +140,7 @@ launchTest(
     await expect(failed).toBeVisible();
     await button(page, "Go back").click();
     await expect(
-      page.getByRole("heading", { name: "Agents", exact: true }),
+      page.getByRole("heading", { name: "Agents2", exact: true }),
     ).toBeVisible();
     await button(page, "Go forward").click();
     await expect(failed).toBeVisible();

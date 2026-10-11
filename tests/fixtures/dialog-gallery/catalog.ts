@@ -60,15 +60,6 @@ export const dialogs = [
     note: "Try wss://relay.example.test, then Continue through access and profile. Requests and publication are simulated locally.",
   },
   {
-    id: "create",
-    name: "Create agent",
-    group: "Agent dialogs",
-    path: "Agents → Add agent",
-    source: "src/bundled/agents/AgentCreateDialog.tsx",
-    frame: "Local Base UI frame",
-    note: "Wide form with advanced fields. Explicit Close can leave saving in progress; implicit dismissal protects dirty work.",
-  },
-  {
     id: "edit",
     name: "Edit agent",
     group: "Agent dialogs",

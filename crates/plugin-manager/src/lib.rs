@@ -173,10 +173,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/channel-templates/manifest.json"
-        ))
-        .expect("channel templates manifest"),
-        serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
         .expect("identity naming manifest"),
@@ -216,8 +212,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
             .expect("projects manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
-            .expect("agents manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
             .expect("agents2 manifest"),
         serde_json::from_str(include_str!(
@@ -264,7 +258,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.inbox"
             | "buzz.reminders"
             | "buzz.projects"
-            | "buzz.agents"
             | "buzz.agents2"
             | "buzz.claude-code"
             | "buzz.codex"
@@ -1546,7 +1539,7 @@ mod tests {
 
     #[test]
     fn optional_plugins_default_off_and_preserve_explicit_overrides() {
-        for id in ["buzz.todos", "buzz.channel-templates"] {
+        for id in ["buzz.todos"] {
             let temp = tempfile::tempdir().unwrap();
             let manager = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
             let enabled = |manager: &Manager| {

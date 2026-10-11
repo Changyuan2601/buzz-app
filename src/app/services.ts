@@ -8,7 +8,6 @@ import { AgentSecurityService } from "../features/agents/security";
 import { SettingsCardsService } from "../features/settings/service";
 import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
-import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
@@ -77,7 +76,6 @@ export function createServices() {
   });
   const relay = communities.relay;
   const agents2 = new Agents2Service(ctx, communities);
-  ctx.effect(() => bindAgentMentions(agentControl, communities));
   ctx.effect(() => bindTeamTextSync(agentControl, communities));
   const notifications = new NotificationsService(
     ctx,

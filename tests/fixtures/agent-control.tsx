@@ -12,17 +12,8 @@ import { createNavigationController } from "../../src/features/navigation/contro
 import { createMemoryHistory } from "../../src/features/navigation/history";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { createRoot } from "react-dom/client";
-import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import { createRelaySession } from "../../src/features/relay/session";
-import type {
-  RelayData,
-  RelaySnapshot,
-} from "../../src/features/relay/service";
 import { createAgentControl } from "../../src/features/agents/control";
-import type {
-  Panels,
-  RegisteredPanel,
-} from "../../src/features/panels/service";
 import { controlFixture } from "../../src/features/agents/control-testing";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
@@ -30,7 +21,6 @@ import "../../src/shared/styles/globals.css";
 
 const fixtureParams = new URLSearchParams(location.search);
 const avatarPreviewMode = fixtureParams.has("avatars");
-const profilePreviewMode = fixtureParams.has("profile-panel");
 const codexPreviewMode = fixtureParams.has("codex");
 // Deliberately public test key, never an account credential.
 const profileKey = new Uint8Array(32).fill(7);
@@ -278,26 +268,6 @@ fixture.host.models = {
   },
 };
 const control = createAgentControl(fixture.host);
-const profilePanel = {
-  id: "profile",
-  title: "Profile",
-  matches: () => true,
-  component: ({ target }: { target: string }) => (
-    <button type="button" ref={(button) => button?.focus()}>
-      Profile for {target}
-    </button>
-  ),
-  key: "buzz.profiles/profile",
-  pluginId: "buzz.profiles",
-  revision: "fixture",
-} satisfies RegisteredPanel;
-const profilePanels = [profilePanel];
-const panels: Panels = {
-  snapshot: () => profilePanels,
-  subscribe: () => () => {},
-  resolve: () => profilePanel,
-  register: () => {},
-};
 const noActions: readonly [] = [];
 const accountActions = {
   subscribe: () => () => {},
@@ -370,20 +340,6 @@ const session = createRelaySession({
   },
   media: () => undefined,
 });
-const relaySnapshot: RelaySnapshot = {
-  status: "ready",
-  scope,
-  viewer,
-  generation: 1,
-  session: session.session,
-};
-const relay: RelayData = {
-  snapshot: () => relaySnapshot,
-  subscribe: () => () => {},
-  retry() {},
-  disconnect() {},
-  clearCache: async () => {},
-};
 Object.assign(window, {
   agentModelsFixture: {
     calls: modelCalls,
@@ -415,8 +371,6 @@ function Fixture() {
   const [failure, setFailure] = useState(false);
   const [uploadFailure, setUploadFailure] = useState(false);
   const [profileFailure, setProfileFailure] = useState(false);
-  const [browser, setBrowser] = useState(false);
-  const [unavailable] = useState(() => createAgentControl(null));
   return (
     <main
       data-buzz-ui=""
@@ -485,9 +439,6 @@ function Fixture() {
           >
             Toggle runtime availability
           </Button>
-          <Button onClick={() => setBrowser(!browser)}>
-            Toggle browser-only mode
-          </Button>
           <Button
             onClick={() => {
               const root = document.documentElement;
@@ -529,16 +480,7 @@ function Fixture() {
             disabled
           />
         </section>
-      ) : (
-        shown && (
-          <AgentsPage
-            relay={relay}
-            key={browser ? "browser" : "native"}
-            control={browser ? unavailable : control}
-            panels={profilePreviewMode ? panels : undefined}
-          />
-        )
-      )}
+      ) : null}
     </main>
   );
 }

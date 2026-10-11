@@ -7,7 +7,6 @@ import { ChannelSetupSettings } from "./ChannelSetupSettings";
 import { FolderSimpleIcon } from "../../shared/design-system/icons";
 export const inject = [
   "pages",
-  "agentControl",
   "relay",
   "panels",
   "conversation",
@@ -23,7 +22,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: ChannelCompletion,
   });
   const extensions = ctx.conversation;
-  const agentControl = ctx.agentControl;
   const relay = ctx.relay;
   const panels = ctx.panels;
   const pages = ctx.pages;
@@ -52,7 +50,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     route: { version: 1, validate: isChannelRoute },
     component: ({ companion, navigation }) => (
       <ChannelsPage
-        agentControl={agentControl}
         providers={providers}
         navigation={navigation}
         navigator={navigator}

@@ -1,4 +1,5 @@
 import { npubEncode } from "nostr-tools/nip19";
+import "./AgentControls.css";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { avatarPictureError } from "../../features/profiles/avatar-upload";

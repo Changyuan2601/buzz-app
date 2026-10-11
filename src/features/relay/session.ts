@@ -2,7 +2,7 @@
 import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember, startAddedAgent } from "../channel-members/members";
+import { addChannelMember } from "../channel-members/members";
 import type { AgentControl } from "../agents/control";
 import type { GitRead } from "../projects/git";
 import { projectDestinations } from "../projects/destinations";
@@ -1579,16 +1579,6 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
-      );
-    },
-    async (channelId, pubkey, control, retryStart): Promise<void> => {
-      await startAddedAgent(
-        control,
-        session,
-        channelId,
-        pubkey,
-        lifetime.signal,
-        retryStart,
       );
     },
     writes?.local,
