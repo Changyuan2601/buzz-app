@@ -20,7 +20,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // reconnect does not.
   const sync = () => {
     const snapshot = ctx.agents2.snapshot();
-    if (snapshot.status !== "ready") return;
+    if (snapshot.status === "loading") return;
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
   const offAgents = ctx.agents2.subscribe(sync);

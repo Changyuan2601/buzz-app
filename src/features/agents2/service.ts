@@ -331,6 +331,8 @@ export class Agents2Service extends Service implements Agents2 {
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
+        // A list still being read is stale: it must not reopen communities.
+        this.listed++;
         for (const stop of stops) stop();
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
         for (const runner of this.runners.values()) this.retire(runner);

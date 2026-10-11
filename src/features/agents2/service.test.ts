@@ -524,6 +524,47 @@ it("connects an agent's community at start without selecting it", async () => {
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
 });
 
+it("opens no community for an agent list that arrives after it stopped", async () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const client = fakeCommunities(
+    fakeRelay(),
+    fakeRelay("https://other.example.test"),
+  );
+  client.select(null);
+  const native = fakeNative();
+  let list!: (identities: AgentIdentity[]) => void;
+  native.list.mockReturnValueOnce(
+    new Promise((resolve) => {
+      list = resolve;
+    }),
+  );
+  const service = new Agents2Service(
+    ctx,
+    client.communities,
+    native,
+    memoryStorage(),
+  );
+  await vi.waitFor(() => expect(list).toBeDefined());
+  await ctx.fiber.dispose();
+  list([
+    {
+      pubkey: bot,
+      relay: "wss://other.example.test",
+      owner: viewer,
+      type: "example/echo",
+      name: "Echo",
+      deleted: false,
+    },
+  ]);
+  await settle();
+  expect(client.communities.open).not.toHaveBeenCalled();
+  expect(service.snapshot().running).toEqual([]);
+});
+
 it("keeps an agent running while its community reconnects, and stops it on disconnect or leave", async () => {
   const { service, connect, reconnecting, leave } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
