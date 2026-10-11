@@ -75,7 +75,7 @@ new app's pinned bridge still requires execution against an installed version.
 ## Verified pinned bridge support
 
 The new app pins Buzz revision `4f51b9e1010e086a16c099cd8d8218ca974a5e18` in
-[agent-runtime.json](../runtime/agent-runtime.json). Its
+[historical agent-runtime.json](https://github.com/block/buzz-app/blob/a2b7db9ae/runtime/agent-runtime.json). Its
 [`run_models`](https://github.com/block/buzz/blob/4f51b9e1010e086a16c099cd8d8218ca974a5e18/crates/buzz-acp/src/lib.rs#L6073)
 already implements `buzz-acp models --json`: initialize and session creation have
 a ten-second timeout, and success, protocol error and timeout explicitly shut down
@@ -103,7 +103,7 @@ failure feedback. Browse reduces typos but cannot prevent stale or rejected pick
 | --- | --- | --- |
 | [Old Buzz import](../crates/agent-controller/src/import.rs) | A normal `runtime: hermes` preset reference is rejected unless an override/custom definition supplies a command. | Separate follow-up: choose an import-time absolute-path mapping or launch-time resolution. Preserve missing-install recovery and source data; do not auto-start imported agents. |
 
-The [controller launch path](../crates/agent-controller/src/runtime.rs) already
+The [historical controller launch path](https://github.com/block/buzz-app/blob/a2b7db9ae/crates/agent-controller/src/runtime.rs) already
 accepts an executable absolute path, passes literal arguments through `buzz-acp`,
 and applies a nonempty model as `BUZZ_ACP_MODEL`. A nonempty Provider on an
 unmapped external harness is rejected. Therefore Hermes does not require bundling

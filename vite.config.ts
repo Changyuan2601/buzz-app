@@ -75,7 +75,7 @@ export default defineConfig(async ({ command, mode }) => {
       ),
     },
     clearScreen: false,
-    // Runtime preparation checks out the Buzz and Goose web UIs under target/.
+    // Keep build artifacts and coverage pages out of dependency discovery.
     optimizeDeps: {
       // The session inspector is served by its own Node server, which maps
       // client.js to session-debug-client.js; it is not a Vite entry.
