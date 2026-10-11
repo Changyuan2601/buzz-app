@@ -30,6 +30,11 @@ it("independently unloads panels without removing the page or shared data", asyn
     panels = new PanelsService(root);
   new ConversationService(root);
   new SettingsCardsService(root);
+  // Channels adds teams of agents from the members dialog.
+  root.provide("agents2", {
+    subscribe: () => () => {},
+    snapshot: () => undefined,
+  });
   provideNavigation(root);
   const relay = provideRelay(root);
   const desired = (ids: string[]) => ids.map(plugin);

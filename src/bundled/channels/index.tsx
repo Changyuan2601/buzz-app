@@ -12,6 +12,7 @@ export const inject = [
   "conversation",
   "navigation",
   "settingsCards",
+  "agents2",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerCompletion({
@@ -25,6 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const panels = ctx.panels;
   const pages = ctx.pages;
   const navigator = ctx.navigation;
+  const agents2 = ctx.agents2;
   ctx.settingsCards.register({
     id: "groups",
     title: "Personal groups",
@@ -51,6 +53,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         panels={panels}
         pages={pages}
         companion={companion}
+        agents2={agents2}
       />
     ),
   });

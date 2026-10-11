@@ -18,6 +18,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import type { Agents2, Team } from "../../features/agents2/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -338,9 +339,11 @@ export function ChannelMembersButton({
   onOpenLink,
   onOpenConversation,
   presentation,
+  agents2,
 }: {
   session: RelaySession;
   channelId: string;
+  agents2?: Agents2 | undefined;
   presentation?:
     | { open: boolean; onOpenChange(open: boolean): void }
     | undefined;
@@ -369,6 +372,7 @@ export function ChannelMembersButton({
           canOpenLink={canOpenLink}
           onOpenLink={onOpenLink}
           onOpenConversation={onOpenConversation}
+          {...(agents2 ? { agents2 } : {})}
           close={() => setOpen(false)}
           trigger={trigger}
         />
@@ -378,6 +382,57 @@ export function ChannelMembersButton({
 }
 
 /** Members are shared relay truth; only search and in-progress presentation belong to this dialog. */
+const noTeams = () => () => {};
+const noSnapshot = () => undefined;
+
+/** A team of the owner's agents, added to the channel with one button. */
+function TeamRow({
+  team,
+  names,
+  busy,
+  disabled,
+  onAdd,
+}: {
+  team: Team;
+  /** The members not yet in the channel. */
+  names: readonly string[];
+  busy: boolean;
+  disabled: boolean;
+  onAdd(): void;
+}) {
+  return (
+    <li className={styles.member}>
+      <div className={styles.profileContent}>
+        <div className={styles.staticProfile}>
+          <Avatar alt="" fallback={team.name} size="small" shape="squircle" />
+          <span className="min-w-0 flex-1">
+            <span className={`${styles.name} text-body-sm`}>
+              <MemberName name={team.name} />
+            </span>
+            <span className="block truncate text-caption text-subtle">
+              {names.join(", ")}
+            </span>
+          </span>
+        </div>
+      </div>
+      <span className={styles.addAction}>
+        <Button
+          variant="prominent"
+          size="xs"
+          aria-label={`Add team ${team.name}`}
+          aria-disabled={busy || undefined}
+          disabled={disabled}
+          onClick={() => {
+            if (!busy) onAdd();
+          }}
+        >
+          {busy ? "Adding…" : "Add team"}
+        </Button>
+      </span>
+    </li>
+  );
+}
+
 export function ChannelMembersDialog({
   session,
   channelId,
@@ -386,11 +441,13 @@ export function ChannelMembersDialog({
   canOpenLink,
   onOpenLink,
   onOpenConversation,
+  agents2,
 }: {
   session: RelaySession;
   channelId: string;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  agents2?: Agents2;
 } & MemberNavigation) {
   const reducedMotion = useReducedMotion();
   const presenceId = useId();
@@ -473,6 +530,11 @@ export function ChannelMembersDialog({
     session.archives.snapshot,
   );
   const agents = useAgentChoices(session);
+  const agents2Snapshot = useSyncExternalStore(
+    agents2?.subscribe ?? noTeams,
+    agents2?.snapshot ?? noSnapshot,
+    agents2?.snapshot ?? noSnapshot,
+  );
   const resolveName = useIdentityNames(session.names);
   const channel =
     list.channels.find((item) => item.id === channelId) ??
@@ -767,6 +829,18 @@ export function ChannelMembersDialog({
     void session.archives.refresh();
     search.refresh();
   };
+  // Teams match by name; each adds its members in this community not here yet.
+  const teamNames = new Map(
+    (agents2Snapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
+  );
+  const teams = (agents2Snapshot?.teams ?? []).flatMap((team) => {
+    const missing = team.members.filter(
+      (key) => teamNames.has(key) && !members.has(key),
+    );
+    return missing.length && matchPerson(team.name, query)
+      ? [{ team, missing }]
+      : [];
+  });
   const keys = publicKeyLabels([...members, ...candidates.keys()]);
   // A confirmed addition replaces its focused Add button with a member row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
@@ -794,6 +868,21 @@ export function ChannelMembersDialog({
       } catch {
         // Session-owned recovery remains visible if this dialog closes and reopens.
       }
+    },
+    [session, channelId],
+  );
+
+  const addTeam = useCallback(
+    async (team: Team, missing: readonly string[]) => {
+      const signal = lifetime.current?.signal;
+      if (!signal) return;
+      setNotice("");
+      const added = await Promise.allSettled(
+        missing.map((key) => session.memberAdditions.add(channelId, key)),
+      );
+      // A failed member shows its own error and Retry below.
+      if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
+        setNotice(`${team.name} is in the channel.`);
     },
     [session, channelId],
   );
@@ -1248,6 +1337,22 @@ export function ChannelMembersDialog({
                   >
                     Not in this channel
                   </h3>
+                  {teams.length > 0 && (
+                    <ul aria-label="Teams">
+                      {teams.map(({ team, missing }) => (
+                        <TeamRow
+                          key={team.id}
+                          team={team}
+                          names={missing.map((key) =>
+                            label(key, teamNames.get(key)),
+                          )}
+                          busy={missing.some((key) => busy.has(key))}
+                          disabled={rosterBusy || !!rosterError}
+                          onAdd={() => void addTeam(team, missing)}
+                        />
+                      ))}
+                    </ul>
+                  )}
                   {visibleCandidates.map((person) =>
                     row(
                       person.pubkey,
