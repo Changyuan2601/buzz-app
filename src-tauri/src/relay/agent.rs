@@ -1,5 +1,6 @@
 //! Purpose-bound agent operations. Never return key material or unscoped plaintext.
 use super::{origin, send, Result};
+use crate::federated_identity::FederatedIdentity;
 use crate::identity::IdentityHost;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, Mac};
@@ -381,6 +382,7 @@ fn memory_address(conversation: &ConversationKey, name: &str) -> Result<String> 
 #[tauri::command]
 pub(crate) async fn relay_agent_memories_read(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     agent: String,
     slug: Option<String>,
@@ -440,6 +442,7 @@ pub(crate) async fn relay_agent_memories_read(
             async move {
                 let response = send(
                     host,
+                    Some(fi.inner()),
                     url,
                     "POST",
                     Some(json!([page]).to_string()),

@@ -27,6 +27,7 @@ import type { OAuthCallback } from "./oauth/browser";
 import { deferred } from "./test-helpers";
 import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+import { federatedFixture } from "../../features/federated-identity/testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -83,6 +84,13 @@ function provideAgents(
   });
 }
 
+function provideUnconfiguredIdentity(root: Context) {
+  const identity = federatedFixture();
+  identity.publish({ status: "unconfigured", authority: null });
+  root.provide("federatedIdentity", identity.service);
+  return identity;
+}
+
 it.each([undefined, "", "http://builderlab.example"])(
   "an unavailable desktop build (%s) shows setup guidance without login or an agent type",
   async (url) => {
@@ -90,6 +98,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideUnconfiguredIdentity(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     const agents = provideAgents(root, community);
@@ -331,6 +340,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
+  provideUnconfiguredIdentity(root);
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
   const agents = provideAgents(root, community);
@@ -630,6 +640,120 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(requestsTo("delete-agent")).toHaveLength(beforeDelete + 1);
   } finally {
     backupHandoff.resolve();
+    cleanup();
+    await runtime.dispose();
+    await root.fiber.dispose();
+    await community.dispose();
+  }
+});
+
+it("waits for native restoration before enabling the legacy OAuth provider", async () => {
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => builderlab);
+  new HostService(root);
+  const identity = federatedFixture();
+  identity.publish({ status: "restoring" });
+  root.provide("federatedIdentity", identity.service);
+  const cards = new SettingsCardsService(root);
+  const community = communityFixture(null);
+  const agents = provideAgents(root, community);
+  const plugin: PluginInfo = {
+    manifest: { ...manifest, apiVersion: 1 },
+    source: "bundled",
+    revision: "bundled",
+    enabled: true,
+    previous: null,
+    reloadable: false,
+    error: null,
+  };
+  try {
+    runtime.reconcile([plugin]);
+    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    const card = cards.snapshot()[0];
+    if (!card) throw new Error("Missing Builderlab login card");
+    const Card = card.component;
+    render(<Card active={() => true} />);
+    expect(
+      await screen.findByText("Checking the Builderlab session…"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(agents.types()).toHaveLength(0);
+
+    await act(async () => {
+      identity.publish({ status: "unconfigured", authority: null });
+    });
+    expect(
+      await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+    ).toBeEnabled();
+    await waitFor(() =>
+      expect(agents.types()).toMatchObject([
+        { key: "block.builderlab/builderlab", title: "Builderlab" },
+      ]),
+    );
+    expect(identity.service.signIn).not.toHaveBeenCalled();
+    expect(
+      native.invoke.mock.calls.filter(([command]) =>
+        String(command).startsWith("oauth_callback_"),
+      ),
+    ).toEqual([]);
+  } finally {
+    cleanup();
+    await runtime.dispose();
+    await root.fiber.dispose();
+    await community.dispose();
+  }
+});
+
+it("uses the shared native session without exposing the legacy provider", async () => {
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => builderlab);
+  new HostService(root);
+  const identity = federatedFixture();
+  Object.defineProperty(identity.service, "apiAvailable", { value: false });
+  root.provide("federatedIdentity", identity.service);
+  const cards = new SettingsCardsService(root);
+  const community = communityFixture(null);
+  const agents = provideAgents(root, community);
+  const plugin: PluginInfo = {
+    manifest: { ...manifest, apiVersion: 1 },
+    source: "bundled",
+    revision: "bundled",
+    enabled: true,
+    previous: null,
+    reloadable: false,
+    error: null,
+  };
+  try {
+    runtime.reconcile([plugin]);
+    await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+    expect(agents.types()).toHaveLength(0);
+    const card = cards.snapshot()[0];
+    if (!card) throw new Error("Missing Builderlab login card");
+    const Card = card.component;
+    render(<Card active={() => true} />);
+    expect(
+      screen.getByText(
+        "Remote agent management is unavailable until the identity API contract is enabled.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Sign in with Builderlab" }),
+    ).not.toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Sign in" }));
+    expect(identity.service.signIn).toHaveBeenCalledOnce();
+    expect(
+      await screen.findByRole("button", { name: "Sign out" }),
+    ).toBeEnabled();
+    expect(
+      native.invoke.mock.calls.filter(([command]) =>
+        String(command).startsWith("oauth_callback_"),
+      ),
+    ).toEqual([]);
+    expect(agents.types()).toHaveLength(0);
+  } finally {
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();

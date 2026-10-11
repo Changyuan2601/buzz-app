@@ -11,6 +11,8 @@ name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 

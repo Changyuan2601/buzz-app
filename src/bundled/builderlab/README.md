@@ -14,7 +14,17 @@ Create agents that Builderlab hosts for you, so they keep working even when Buzz
 
 The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
+The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
+With no federated identity descriptor and a valid `BUZZ_BUILDERLAB_URL` build
+input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
+With a federated identity descriptor, the card uses the shared native session.
+The legacy OAuth session and hosted agent provider are not enabled while that
+session is configured or restoring; remote agent management remains unavailable
+until the identity API contract is enabled. A failed or unavailable FI session
+never falls back to legacy OAuth. If the descriptor is absent, the existing
+Builderlab OAuth login, session, and Agents provider continue to own the legacy
+flow.
 `adapter-type/` connects this hosted type to Beekeeper: provision registers the
 agent, activation submits the owner proof and community supplied by Agents, and
 removal deletes the provider runtime. Agents owns unfinished setup recovery and

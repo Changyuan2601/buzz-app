@@ -16,6 +16,9 @@ import type { RelayEvent } from "../relay/events";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  Channel: class {
+    constructor(public onmessage: (event: unknown) => void) {}
+  },
 }));
 const viewer = keypair(),
   relay = keypair();
@@ -55,6 +58,8 @@ beforeEach(() => {
     }),
   );
   vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "relay_socket_connect") return "public";
+    if (command === "relay_socket_close") return;
     if (command === "get_os_idle_seconds") return 0;
     if (command === "identity_restore") return viewer.pubkey;
     if (command === "relay_sign")

@@ -64,6 +64,17 @@ fn native_command_permissions_isolate_webviews() {
         .unwrap();
 
     let application_commands = [
+        "federated_identity_snapshot",
+        "federated_identity_sign_in",
+        "federated_identity_cancel_sign_in",
+        "federated_identity_sign_out",
+        "federated_identity_register",
+        "federated_identity_unregister",
+        "federated_identity_request",
+        "relay_socket_connect",
+        "relay_socket_start",
+        "relay_socket_send",
+        "relay_socket_close",
         "identity_restore",
         "identity_import",
         "identity_create",

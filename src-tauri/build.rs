@@ -6,9 +6,13 @@ mod enterprise_auth_build;
 mod enterprise_relay_url;
 #[path = "src/nsec_backup_config.rs"]
 mod nsec_backup_config;
+#[path = "src/federated_identity/config.rs"]
+#[allow(dead_code)]
+mod federated_identity_config;
 
 fn main() {
     configure_nsec_backup();
+    configure_federated_identity();
     configure_enterprise_auth();
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
@@ -39,15 +43,6 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
-            "huddle_window_reset_incoming",
-            "huddle_window_open",
-            "huddle_window_update",
-            "huddle_window_watch",
-            "huddle_window_action",
-            "huddle_open",
-            "huddle_close",
-            "huddle_pcm",
-            "huddle_touch",
             "pairing_account",
             "pairing_start",
             "pairing_status",
@@ -71,6 +66,17 @@ fn main() {
             "sign_out_wipe_refusal",
             "identity_prepare_remote_agent_authorization",
             "identity_sign_builderlab_binding",
+            "federated_identity_snapshot",
+            "federated_identity_sign_in",
+            "federated_identity_cancel_sign_in",
+            "federated_identity_sign_out",
+            "federated_identity_register",
+            "federated_identity_unregister",
+            "federated_identity_request",
+            "relay_socket_connect",
+            "relay_socket_start",
+            "relay_socket_send",
+            "relay_socket_close",
             "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",
@@ -214,5 +220,28 @@ fn configure_enterprise_auth() {
     }
     if let Some(adapter) = configured.adapter.as_deref() {
         println!("cargo:rustc-env={ADAPTER}={adapter}");
+    }
+}
+
+fn configure_federated_identity() {
+    const NAME: &str = "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
+    println!("cargo:rerun-if-env-changed={NAME}");
+    println!("cargo:rerun-if-env-changed=BUZZ_BUILDERLAB_URL");
+    if let Some(raw) = std::env::var(NAME).ok().filter(|raw| !raw.is_empty()) {
+        let config = federated_identity_config::Config::parse(&raw)
+            .unwrap_or_else(|error| panic!("{error}"));
+        for legacy in [
+            "BUZZ_BUILDERLAB_URL",
+            "BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS",
+            "BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL",
+        ] {
+            if std::env::var(legacy).is_ok_and(|value| !value.is_empty()) {
+                panic!("{legacy} must be removed when {NAME} is configured");
+            }
+        }
+        println!(
+            "cargo:rustc-env={NAME}={}",
+            serde_json::to_string(&config).expect("public descriptor")
+        );
     }
 }

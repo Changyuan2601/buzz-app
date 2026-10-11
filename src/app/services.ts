@@ -6,6 +6,7 @@ import {
   createIdentity,
   nativeIdentityEnabled,
 } from "../features/identity/service";
+import { FederatedIdentityService } from "../features/federated-identity/service";
 import { SettingsCardsService } from "../features/settings/service";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
@@ -44,6 +45,7 @@ export function createServices() {
   const updates = createUpdates();
   const ctx = new Context();
   new HostService(ctx);
+  const federatedIdentity = new FederatedIdentityService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
@@ -123,6 +125,7 @@ export function createServices() {
   let disposal: Promise<void> | undefined;
   return {
     identity,
+    federatedIdentity,
     browser,
     notifications,
     navigation,

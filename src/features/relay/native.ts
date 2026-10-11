@@ -1,4 +1,4 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
+import { nativeSocket } from "./native-socket";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -25,14 +25,14 @@ import {
   type PrivateRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
-import { communityGitRepository } from "../repos/git";
+import { communityGitRepository } from "../projects/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
-import { repoGitHost } from "../repos/git";
+import { projectGitHost } from "../projects/git";
 
 import { PublishRejected } from "./outbox";
 
@@ -52,6 +52,7 @@ import {
 import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
+import { archiveClient } from "../archive/client";
 import {
   acceptPublish,
   acceptReadStatePublish,
@@ -336,13 +337,11 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
-  const searchSort =
-    Array.isArray(info.supported_extensions) &&
-    info.supported_extensions.includes("buzz-search-sort");
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
     author,
+    nativeSocket,
   );
   signal?.throwIfAborted();
   const writer = transport.writer;
@@ -393,11 +392,18 @@ export async function connectNativeTransport(
     },
   });
   // Capabilities describe implemented host operations, not everything this key can sign.
+  const archive = archiveClient("device", async (request, signal) => {
+    signal?.throwIfAborted();
+    const value = await invoke("relay_archive", {
+      community: origin,
+      viewer: transport.viewer,
+      request,
+    });
+    signal?.throwIfAborted();
+    return value;
+  });
   return {
     ...transport,
-    audienceAuthorityCommunity: audienceAuthorityCommunity(
-      info.audience_authority,
-    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -424,7 +430,7 @@ export async function connectNativeTransport(
       signal.throwIfAborted();
       return response;
     }),
-    projectGit: repoGitHost(async (read, signal) => {
+    projectGit: projectGitHost(async (read, signal) => {
       const response = await admitSignedRequest(
         origin,
         transport.viewer,
@@ -553,8 +559,43 @@ export async function connectNativeTransport(
     },
 
     agentActivity: true,
+    activityArchive: archive.host,
     subscribe(callbacks) {
       let active = true;
+      const archiveAbort = new AbortController();
+      let archiveRefresh: Promise<unknown> | undefined;
+      let archiveRetry: ReturnType<typeof setTimeout> | undefined;
+      let archiveAttempts = 0;
+      const failedKinds = new Map<number, number>();
+      const reportCapture = () => {
+        const settings = archive.current();
+        if (!active || !settings) return;
+        for (const [kind, revision] of failedKinds)
+          if (revision !== settings.revision) failedKinds.delete(kind);
+        callbacks.captureState?.(
+          failedKinds.size ? "error" : settings.observer ? "saving" : "off",
+        );
+      };
+      const refreshArchive = () =>
+        (archiveRefresh ??= archive.host
+          .settings(archiveAbort.signal)
+          .catch(() => {
+            if (!active) return;
+            callbacks.captureState?.("error");
+            // Initial failure has no ingest to trigger recovery. Retry only
+            // while settings are unknown, at most three times per subscription.
+            if (!archive.current() && archiveAttempts < 3)
+              archiveRetry = setTimeout(
+                () => {
+                  archiveRetry = undefined;
+                  if (active && !archive.current()) void refreshArchive();
+                },
+                1000 * 2 ** archiveAttempts++,
+              );
+          })
+          .finally(() => {
+            archiveRefresh = undefined;
+          }));
       let observerGeneration: number | null = null;
       let observerEpoch = 0;
       let listening = false;
@@ -567,6 +608,30 @@ export async function connectNativeTransport(
           if (listening && !next) observerEpoch++;
           listening = next;
           callbacks.state(snapshot);
+        },
+        capture(event) {
+          const settings = archive.current();
+          if (!settings || !active) return;
+          void invoke("relay_archive", {
+            community: origin,
+            viewer: transport.viewer,
+            request: { action: "ingest", event, revision: settings.revision },
+          })
+            .then(() => {
+              if (active && archive.current()?.revision === settings.revision) {
+                failedKinds.delete(event.kind);
+                reportCapture();
+              }
+            })
+            .catch(() => {
+              if (active) {
+                if (archive.current()?.revision === settings.revision) {
+                  failedKinds.set(event.kind, settings.revision);
+                  reportCapture();
+                }
+                void refreshArchive();
+              }
+            });
         },
         telemetry(event, generation) {
           if (generation !== observerGeneration || !listening) return;
@@ -587,6 +652,18 @@ export async function connectNativeTransport(
         },
       });
       if (!traffic) throw new Error("Native relay stream is unavailable");
+      const stopArchive = archive.subscribe((settings) => {
+        if (!active) return;
+        // Readable preferences alone cannot hide a write failure. Recovery
+        // requires success for that kind or a superseding settings revision.
+        clearTimeout(archiveRetry);
+        reportCapture();
+        traffic.archive?.([
+          ...(settings.observer ? [24200] : []),
+          ...(settings.metrics ? [44200] : []),
+        ]);
+      });
+      void refreshArchive();
       return {
         ...traffic,
         observe(generation) {
@@ -596,6 +673,9 @@ export async function connectNativeTransport(
         },
         dispose() {
           active = false;
+          archiveAbort.abort();
+          clearTimeout(archiveRetry);
+          stopArchive();
           observerEpoch++;
           traffic.dispose();
         },
@@ -777,7 +857,6 @@ export async function connectNativeTransport(
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
-    ...(searchSort ? { searchSort: true as const } : {}),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

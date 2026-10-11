@@ -757,10 +757,20 @@ require the plugin to be enabled in the native catalog. External grants require 
 enabled current artifact and its integrity checks; safe mode pauses external
 plugins while enabled bundled plugins remain usable.
 
-Builderlab's effective manifest derives its exact origin from the validated
-[`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
-Its source manifest contains no deployment origins; external plugin declarations
-remain fixed in their installed artifacts.
+Configured Builderlab and native Hosted Communities derive distinct
+`host.federatedIdentity` authority/operation grants from the validated
+[FI descriptor](configuration.md#federated-identity-build-input), removing their
+ordinary network grant in that mode. External authenticated declarations remain
+fixed in installed artifacts. An ordinary network origin is never authority to
+use a native session.
+
+The `federatedIdentity` SDK shares public session status and scopes requests to
+the caller's enabled current artifact and a native live registration. Unload,
+replacement, page reload and shutdown retire registrations. API forwarding
+currently refuses explicitly pending the NIP-FA same-origin extension and agreed
+API contract; the session credential never enters the renderer. Builderlab and
+native Hosted Communities consume this shared sign-in state. Generic `host.request`
+retains its separate unauthenticated-to-FI behavior below.
 
 Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects

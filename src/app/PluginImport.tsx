@@ -94,6 +94,18 @@ function hostDeclarations(manifest: PluginManifest) {
       icon: GlobeIcon,
       details: <code className="break-words">{origin}</code>,
     })),
+    ...(manifest.host?.federatedIdentity?.operations ?? []).map((operation) => ({
+      signature: `Federated authority ${manifest.host?.federatedIdentity?.authority}: ${operation.method} ${operation.path}`,
+      title: "Federated authority:",
+      label: `${operation.method} ${operation.path}`,
+      hint: "Allows this plugin to make an authenticated request for this operation.",
+      icon: GlobeIcon,
+      details: (
+        <code className="break-words">
+          {manifest.host?.federatedIdentity?.authority} {operation.method} {operation.path}
+        </code>
+      ),
+    })),
     ...(manifest.host?.processes ?? []).map((process) => ({
       signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} and any further arguments · stdin, full user access`,
       title: `Process ${process.id}:`,

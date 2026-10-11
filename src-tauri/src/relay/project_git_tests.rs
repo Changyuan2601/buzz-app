@@ -34,6 +34,7 @@ fn production_git(directory: &Path) -> Git {
     Git::new(
         directory,
         "Authorization: Nostr test",
+        "https://example.test/repo.git",
         Instant::now() + DEADLINE,
         STOP.get_or_init(|| watch::channel(false).0).subscribe(),
     )
@@ -406,9 +407,13 @@ async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
         let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
         let (cancel, cancelled) = oneshot::channel();
         let task = tokio::spawn(async move {
-            serve(&url, &base, cancelled, async {
-                Ok("Authorization: Nostr test".into())
-            })
+            serve(
+                &url,
+                &base,
+                cancelled,
+                async { Ok("Authorization: Nostr test".into()) },
+                None,
+            )
             .await
         });
         (cancel, task)

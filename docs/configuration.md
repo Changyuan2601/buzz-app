@@ -8,7 +8,8 @@ not in source. Build defaults are readable binary data, **never secret storage**
 
 | Input | Consumer and boundary |
 | --- | --- |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
+| `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native FI authority, SDK and protected transport descriptor; public configuration only. See below. |
+| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and exact HTTPS host grant when FI is absent; no runtime override. Conflicts with FI. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -42,7 +43,9 @@ origin is granted. The repository supplies no deployment default.
 Any HTTPS host is supported, including an explicit port or deployment path. URL
 credentials, query parameters and fragments are rejected by the native build.
 The desktop's native plugin catalog supplies the effective manifest, granting
-only the configured URL's exact origin. Never put credentials in this input.
+only the configured URL's exact origin when FI is absent. Never put credentials
+in this input. Remove it when configuring FI; the native build rejects a
+non-empty Builderlab URL alongside the FI descriptor.
 
 The bundled Builderlab login consumes this public URL and appends `/api/goose`.
 
@@ -51,6 +54,43 @@ grant rebuild together; browser-only development needs a Vite restart. Productio
 web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
+
+## Federated identity build input
+
+`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is a public JSON descriptor supplied to
+Cargo through the build environment. It is validated and compiled into native
+code, with no runtime override or credential field:
+
+```json
+{
+  "version": 1,
+  "id": "example",
+  "identityOrigin": "https://identity.example",
+  "communityHosts": ["*.communities.example", "custom.example:8443"],
+  "adapterBase": "https://identity.example/nip-fa/",
+  "apiBasePath": "/api/goose/"
+}
+```
+
+The adapter must share the configured HTTPS identity origin. Standard `/v1/`
+route suffixes append to the adapter prefix. Community entries select exact
+host/port authorities or one-label wildcards on port 443; paths, credentials,
+query/fragment, trailing dots, and ambiguous or encoded URL forms are refused.
+When this descriptor is present, the Builderlab and Hosted Communities
+manifests receive separate exact authenticated-operation grants and no renderer
+network-origin grant.
+
+The native session owner and shared SDK consume this descriptor. NIP-11 governs
+assertion attachment on protected native HTTP, media, Git, and WebSocket paths;
+the mapping alone never requires sign-in. Release builds read the public
+repository variable of the same name; an empty value leaves FI unconfigured.
+No deployment endpoint is supplied here.
+
+Generic plugin API forwarding and CLI setup remain unavailable pending the
+same-origin NIP-FA extension, API authentication contract, and companion CLI
+specified in [identity](identity.md). A configured staging build still needs
+attended adapter, secure-store, and protected-transport acceptance before live
+use.
 
 ## Whole-video limit
 

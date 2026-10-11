@@ -257,6 +257,70 @@ automatic backup governs future uploads and does not delete existing backups.
 The consent hooks are the base of the draft stack:
 #1137 consent hooks → #1106 gated uploader → #1107 recovery → #1101 restore UI.
 
+## Native federated session module
+
+The [federated identity specification](federated-identity-spec.txt) adds a native
+owner separate from the human Nostr key. Its deployment descriptor is documented
+in [configuration](configuration.md#federated-identity-build-input). Native
+commands return status, authority, revision, optional email, and fixed failure
+codes. Session tokens and assertion headers stay native-only.
+
+Sign-in uses the existing native loopback callback owner with NIP-FA `return_to`
+and an S256 handoff challenge, exchanges the code natively, and verifies the
+fixed session expiry before persistence. Restore checks the stored credential
+against `/v1/session`; failed reads and unrecognized refusals do not authorize
+replacement. Local expiry, cancellation, and sign-out fence stale work.
+
+FI records use the OS secure-store service
+`dev.local.buzz.foundation.federated-session` (with `.debug` for Rust debug
+builds), keyed by profile and deployment fingerprint. Account indices and
+revision-specific refusal markers contain no credential and live outside wiped
+Buzz data. Failed removal of a known record leaves refusal durable before any
+secure-store access, so that revision cannot restore until cleanup succeeds.
+Sign out of Buzz removes indexed FI records across profiles/configurations in
+its debug/release namespace before deleting the human key or opening a WebView.
+
+The shared `federatedIdentity` SDK exposes public state and scoped requests.
+Builderlab settings and native Hosted Communities share its session; unloading a
+plugin retires only its request registration. Session record revision survives
+restore and scopes account caches without inventing a NIP-FA subject. When a
+build has no FI descriptor, Builderlab retains its existing OAuth session and
+agent-provider integration.
+
+NIP-11 discovery from the exact relay carries no FI credential. Valid absent or
+false FI flags retain ordinary Nostr transport. A true flag requires the supported
+client-attached/offline-jwt descriptor and compiled authority mapping. Assertions
+are acquired with native same-key NIP-98 proof and checked for exact audience,
+key, and lifetime. Native HTTP, media, repository Git reads/imports, and socket
+upgrades attach the assertion beside their existing possession proof. Protected
+socket workers stop by assertion expiry; the existing live owner reconnects and
+performs fresh NIP-42. Retirement fences protected reads and results.
+
+API-backed remote-agent and hosted-community controls remain unavailable until
+the agreed same-origin NIP-FA extension and API authentication contract exist.
+The native SDK checks distinct authority/operation grants, enabled artifact
+revision, and live registration, then returns an explicit unavailable error;
+it never forwards an adapter credential under a legacy header. No Buzz-managed
+CLI listener or provisioning is advertised without the companion CLI contract.
+The Node development host retains its supported broker flow.
+
+The earlier implementation validation below was run on 9 October 2026 against
+base `fcb3c655ee5ff13c2dcdf20698de7479eba1833b`; it is historical evidence and
+does not validate this rebased candidate. That run covered full Vitest, native
+foundation/credential-store/plugin-manager suites, configured and unconfigured
+native builds, TypeScript, design checks, Biome, Rust formatting, release YAML,
+and diff whitespace. It reported attended adapter, secure-store, protected
+transport, Windows/Linux, API-contract, and companion-CLI acceptance as gaps.
+
+For the shared sign-in and community recovery UI alone, run the environment-free
+fixture server documented below and open `/tests/fixtures/federated-identity.html`.
+Click **Sign in**, then **Cancel sign-in** or **Complete** in fixture controls;
+verify both consumers observe the shared status and optional-email confirmation.
+**Binding mismatch** shows existing identity-link guidance; **Storage failure**
+shows recovery without claiming success. This fixture uses Header, SettingsGroup,
+Button, and the Settings content column. It does not exercise the running app's
+full navigation or native credentials.
+
 ## Packaged connection
 
 A public native viewer hydrates the existing public-key-scoped local profile and
@@ -347,8 +411,8 @@ hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
 in the exact add/remove/role shape; the relay decides authority. Repository HTTP
-and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
-acquisition is not implemented, so deployments enforcing it are outside acceptance.
+and other broker-only helpers are not claimed by this adapter. Native NIP-FI
+assertion acquisition and protected transport are described below.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

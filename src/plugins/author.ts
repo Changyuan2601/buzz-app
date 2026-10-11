@@ -91,3 +91,9 @@ export type {
   AgentSession,
   AgentSessions,
 } from "../features/agents/service";
+
+export type {
+  FederatedIdentity,
+  SessionSnapshot,
+  AuthenticatedRequest,
+} from "../features/federated-identity/service";
