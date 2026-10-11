@@ -309,7 +309,7 @@ describe("completion capacity", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
-// STOPGAP(agent-local-typing): delete with agents2/local-typing.ts.
+// STOPGAP(agent-local-typing): delete with agents/local-typing.ts.
 it("shows a local pulse like a live one, through the agent's posts until a local end", () => {
   const { owner, snapshot } = setup();
   const local = {

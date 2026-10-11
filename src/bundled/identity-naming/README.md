@@ -248,7 +248,7 @@ bin/pnpm exec vitest run src/features/identity-names/policy.test.ts
 
 At the extraction baseline, [directory.ts](../../features/identity-names/directory.ts)
 constructs facts from public profiles, ready agent-library records, the
-viewer's local Agents2 agents in the current community, and view-local display
+viewer's local agents in the current community, and view-local display
 facts. Local non-empty names take precedence over library names in that
 community. The first
 library record per key uses its trimmed name, then the profile name, then

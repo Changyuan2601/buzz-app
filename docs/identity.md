@@ -32,7 +32,7 @@ isolation from other programs running as the same OS user.
 There is no file/environment fallback, automatic legacy migration or human key
 replacement. The human key is deleted from this device only by
 [Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
-delete it. Agents2's bring-over (`app_agent_port`) may read only the selected
+delete it. Agents' bring-over (`app_agent_port`) may read only the selected
 old Buzz service/account and copy the selected agent key into this app's separate
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.

@@ -470,7 +470,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "buzz.channels",
         "buzz.reminders",
-        "buzz.agents2",
+        "buzz.agents",
         "buzz.inbox",
         "buzz.bestie",
       ],

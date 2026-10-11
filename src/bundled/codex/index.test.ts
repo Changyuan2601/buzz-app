@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AgentType } from "../../features/agents2/service";
+import type { AgentType } from "../../features/agents/service";
 import { CodexRuntime } from "./runtime";
 import { apply } from "./index";
 
@@ -24,7 +24,7 @@ function applied() {
     react: React,
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn: vi.fn(), request: vi.fn() },
-    agents2: {
+    agents: {
       register: (registered: AgentType) => {
         type = registered;
       },
@@ -58,7 +58,7 @@ it("stops agents that stop running even when the agent list could not be read", 
     react: React,
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
-    agents2: {
+    agents: {
       register: () => undefined,
       snapshot: () => state,
       relay: () => undefined,

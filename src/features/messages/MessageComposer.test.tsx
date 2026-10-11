@@ -43,8 +43,8 @@ import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
-import { Agents2Context } from "../agents2/react";
-import type { Agents2 } from "../agents2/service";
+import { AgentsContext } from "../agents/react";
+import type { Agents } from "../agents/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
@@ -114,7 +114,7 @@ function mount(
   options: Partial<MessageComposerProps> = {},
   control?: LocalAgents,
   viewer?: string,
-  agents2?: Agents2,
+  agents?: Agents,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -340,13 +340,13 @@ function mount(
   bindChoices();
   let presented = true;
   const tree = () => (
-    <Agents2Context.Provider value={agents2}>
+    <AgentsContext.Provider value={agents}>
       <ConversationPresentation value={presented}>
         <div hidden={!presented} inert={!presented}>
           <MessageComposer {...props} />
         </div>
       </ConversationPresentation>
-    </Agents2Context.Provider>
+    </AgentsContext.Provider>
   );
   const view = render(tree(), {
     reactStrictMode: true,
@@ -2076,12 +2076,12 @@ it("opens the model picker while discovery is pending, then fills its controls",
     agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
   };
   const types = [{ key: "test/agent", models: () => pending.promise }];
-  const agents2 = {
+  const agents = {
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents2;
-  const h = mount({}, undefined, undefined, agents2);
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
     screen.getByRole("button", { name: "Model and effort for the next run" }),
@@ -2128,12 +2128,12 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     ],
   };
   const types = [{ key: "test/agent", models: () => models }];
-  const agents2 = {
+  const agents = {
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents2;
-  const h = mount({}, undefined, undefined, agents2);
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
   const picker = () =>
     screen.queryByRole("button", {
       name: "Model and effort for the next run",
@@ -2247,12 +2247,12 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
     ],
   };
   const types = [{ key: "test/agent", models: () => models }];
-  const agents2 = {
+  const agents = {
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents2;
-  const h = mount({}, undefined, undefined, agents2);
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
   const open = async () => {
     await h.user.click(
       await screen.findByRole("button", {

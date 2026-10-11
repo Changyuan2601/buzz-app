@@ -1,13 +1,13 @@
 import type { Groups, Group } from "../../features/channel-templates/model";
 import type { ChannelCreationInput } from "../../features/channel-templates/setup";
 import type { RelaySession } from "../../features/relay/session";
-import type { Agents2 } from "../../features/agents2/service";
+import type { Agents } from "../../features/agents/service";
 import {
   templateAgents,
   useChannelTemplates,
 } from "../../features/channel-templates/local";
 import { Select } from "../../shared/design-system/ui/Select";
-import { useAgents2Snapshot } from "../../features/agents2/react";
+import { useAgentsSnapshot } from "../../features/agents/react";
 import {
   useEffect,
   useId,
@@ -44,7 +44,7 @@ type Props = {
   finalFocus?: RefObject<HTMLElement | null> | undefined;
   session: RelaySession;
   /** Supplies the teams a template adds. */
-  agents2?: Agents2 | undefined;
+  agents?: Agents | undefined;
   groups: Groups | undefined;
   destinations?: readonly (Pick<Group, "id" | "name"> & { icon?: string })[];
   groupSource?: "legacy";
@@ -62,7 +62,7 @@ function OpenCreateChannelDialog({
   pending,
   finalFocus,
   session,
-  agents2,
+  agents,
   groups,
   destinations = groups?.groups ?? [],
   groupSource,
@@ -103,7 +103,7 @@ function OpenCreateChannelDialog({
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
   const templates = useChannelTemplates();
-  const agentsSnapshot = useAgents2Snapshot(agents2);
+  const agentsSnapshot = useAgentsSnapshot(agents);
   const [chosenTemplate, setTemplateId] = useState("");
   // A template deleted meanwhile, here or in another window, is no choice.
   const template = templates.find((item) => item.id === chosenTemplate);

@@ -1,10 +1,10 @@
-// An Agents2 agent's sections, wherever they are shown (its Build view and its
+// An agent's sections, wherever they are shown (its Build view and its
 // profile panel): the type's own tabs, then the app's Attention tab, which every
 // type shares because the app is what wakes the agent.
 import type { ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
-import type { Agent, Agents2, RegisteredAgentType } from "./service";
+import type { Agent, Agents, RegisteredAgentType } from "./service";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>` or `agent:attention`; never collides with a host tab. */
@@ -14,12 +14,12 @@ export type AgentSection = Readonly<{
 }>;
 
 export function agentSections({
-  agents2,
+  agents,
   agent,
   type,
   channels,
 }: {
-  agents2: Agents2;
+  agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
@@ -31,7 +31,7 @@ export function agentSections({
       render: () => (
         <Component
           agent={agent}
-          save={(config) => agents2.save(agent.pubkey, { config })}
+          save={(config) => agents.save(agent.pubkey, { config })}
         />
       ),
     })),
@@ -41,7 +41,7 @@ export function agentSections({
       render: () => (
         <AttentionPanel
           agent={agent}
-          save={(change) => agents2.save(agent.pubkey, change)}
+          save={(change) => agents.save(agent.pubkey, change)}
           channels={channels}
         />
       ),

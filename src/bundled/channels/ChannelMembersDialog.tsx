@@ -18,7 +18,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type { Agents2, Team } from "../../features/agents2/service";
+import type { Agents, Team } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -339,11 +339,11 @@ export function ChannelMembersButton({
   onOpenLink,
   onOpenConversation,
   presentation,
-  agents2,
+  agents,
 }: {
   session: RelaySession;
   channelId: string;
-  agents2?: Agents2 | undefined;
+  agents?: Agents | undefined;
   presentation?:
     | { open: boolean; onOpenChange(open: boolean): void }
     | undefined;
@@ -372,7 +372,7 @@ export function ChannelMembersButton({
           canOpenLink={canOpenLink}
           onOpenLink={onOpenLink}
           onOpenConversation={onOpenConversation}
-          {...(agents2 ? { agents2 } : {})}
+          {...(agents ? { agents } : {})}
           close={() => setOpen(false)}
           trigger={trigger}
         />
@@ -441,13 +441,13 @@ export function ChannelMembersDialog({
   canOpenLink,
   onOpenLink,
   onOpenConversation,
-  agents2,
+  agents,
 }: {
   session: RelaySession;
   channelId: string;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
-  agents2?: Agents2;
+  agents?: Agents;
 } & MemberNavigation) {
   const reducedMotion = useReducedMotion();
   const presenceId = useId();
@@ -529,11 +529,11 @@ export function ChannelMembersDialog({
     session.archives.snapshot,
     session.archives.snapshot,
   );
-  const agents = useAgentChoices(session);
-  const agents2Snapshot = useSyncExternalStore(
-    agents2?.subscribe ?? noTeams,
-    agents2?.snapshot ?? noSnapshot,
-    agents2?.snapshot ?? noSnapshot,
+  const agentChoices = useAgentChoices(session);
+  const agentsSnapshot = useSyncExternalStore(
+    agents?.subscribe ?? noTeams,
+    agents?.snapshot ?? noSnapshot,
+    agents?.snapshot ?? noSnapshot,
   );
   const resolveName = useIdentityNames(session.names);
   const channel =
@@ -654,8 +654,9 @@ export function ChannelMembersDialog({
   }, [session, channelId, rosterBusy, namesBusy, rolesSettled]);
   const initialLoading = revealedFor !== session;
   const known = useMemo(
-    () => new Map(agents.identities.map((agent) => [agent.pubkey, agent])),
-    [agents.identities],
+    () =>
+      new Map(agentChoices.identities.map((agent) => [agent.pubkey, agent])),
+    [agentChoices.identities],
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
@@ -725,7 +726,7 @@ export function ChannelMembersDialog({
     search.people.map((person) => [person.pubkey, person]),
   );
   if (query.trim())
-    for (const agent of agents.identities) {
+    for (const agent of agentChoices.identities) {
       if (addable(agent.pubkey, label(agent.pubkey, agent.name), agent.name))
         candidates.set(agent.pubkey, {
           pubkey: agent.pubkey,
@@ -800,7 +801,7 @@ export function ChannelMembersDialog({
     administration.status === "loading" ||
     namesBusy ||
     search.loading ||
-    agents.pending ||
+    agentChoices.pending ||
     agentsBusy ||
     archives.status === "loading";
   const mutationPending =
@@ -831,9 +832,9 @@ export function ChannelMembersDialog({
   };
   // Teams match by name; each adds its members in this community not here yet.
   const teamNames = new Map(
-    (agents2Snapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
+    (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
   );
-  const teams = (agents2Snapshot?.teams ?? []).flatMap((team) => {
+  const teams = (agentsSnapshot?.teams ?? []).flatMap((team) => {
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
     );
@@ -1413,7 +1414,7 @@ export function ChannelMembersDialog({
                 Some agent managers or their names could not load. Try again.
               </p>
             )}
-            {agents.error && (
+            {agentChoices.error && (
               <p role="alert" className="text-body-sm text-danger">
                 Some agents could not load.
               </p>

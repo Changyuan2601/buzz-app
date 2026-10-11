@@ -520,7 +520,7 @@ test("a reveal while the narrow drawer is closed runs when the drawer opens", as
 
 for (const destination of [
   "Projects",
-  "Agents2",
+  "Agents",
   "Workflows",
   "Settings",
   "Back/Forward",

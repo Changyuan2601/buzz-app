@@ -20,7 +20,7 @@ export type AgentIdentity = Readonly<{
 /** Where an earlier agent system saved an identity on this machine: this app's
  * harness agents, or the installed or development build of old Buzz. */
 export type PortSource = "harness" | "installed" | "development";
-/** An identity an earlier agent system saved, which Agents2 can take over. */
+/** An identity an earlier agent system saved, which Agents can take over. */
 export type PortableAgent = Readonly<{
   source: PortSource;
   pubkey: string;

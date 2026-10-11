@@ -1,5 +1,5 @@
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
-import type { AgentHandle } from "../../features/agents2/service";
+import type { AgentHandle } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Config } from "./config";

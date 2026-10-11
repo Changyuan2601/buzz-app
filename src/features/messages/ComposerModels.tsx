@@ -7,9 +7,9 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { useMentionModels } from "../agents2/react";
-import type { MentionModelChoice } from "../agents2/react";
-import type { Effort } from "../agents2/service";
+import { useMentionModels } from "../agents/react";
+import type { MentionModelChoice } from "../agents/react";
+import type { Effort } from "../agents/service";
 import type { MentionPicks, RunPick } from "../relay/messages";
 import {
   CaretDownIcon,

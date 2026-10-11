@@ -212,8 +212,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
             .expect("projects manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
-            .expect("agents2 manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
+            .expect("agents manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/claude-code/manifest.json"
         ))
@@ -258,7 +258,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.inbox"
             | "buzz.reminders"
             | "buzz.projects"
-            | "buzz.agents2"
+            | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
             | "buzz.workflows"
@@ -267,6 +267,16 @@ fn enabled_by_default(id: &str) -> bool {
             | "block.builderlab"
             | "buzz.moderation"
     )
+}
+/// The key a bundled plugin's saved switch is kept under. Agents shipped as
+/// `buzz.agents2` while v1 Agents held `buzz.agents`, so its switch keeps the
+/// old key: earlier builds still find it, and v1's leftover switch is ignored.
+fn override_key(id: &str) -> &str {
+    if id == "buzz.agents" {
+        "buzz.agents2"
+    } else {
+        id
+    }
 }
 /// Bundled ids that older profiles may still hold as installed plugins.
 const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code", "buzz.codex"];
@@ -584,7 +594,7 @@ impl Manager {
                 let enabled = manifest.id == "buzz.channels"
                     || registry
                         .bundled_overrides
-                        .get(&manifest.id)
+                        .get(override_key(&manifest.id))
                         .copied()
                         .unwrap_or_else(|| enabled_by_default(&manifest.id));
                 PluginInfo {
@@ -703,13 +713,17 @@ impl Manager {
             if is_bundled(id) {
                 match action {
                     "enable" => {
-                        registry.bundled_overrides.insert(id.into(), true);
+                        registry
+                            .bundled_overrides
+                            .insert(override_key(id).into(), true);
                     }
                     "disable" => {
                         if id == "buzz.channels" {
                             return Err("Channels is required and cannot be disabled".into());
                         }
-                        registry.bundled_overrides.insert(id.into(), false);
+                        registry
+                            .bundled_overrides
+                            .insert(override_key(id).into(), false);
                     }
                     _ => return Err("Bundled pages can only be enabled or disabled".into()),
                 }
@@ -1558,6 +1572,49 @@ mod tests {
         assert!(enabled(&reopened), "{id} retains enable after reopening");
         reopened.change("disable", id).unwrap();
         assert!(!enabled(&manager), "{id} exposes persisted disable");
+    }
+
+    #[test]
+    fn agents_keeps_its_agents2_switch_and_ignores_v1s() {
+        let open = |overrides: serde_json::Value| {
+            let temp = tempfile::tempdir().unwrap();
+            let profile = temp.path().join("profiles").join("agents");
+            fs::create_dir_all(&profile).unwrap();
+            let registry = serde_json::json!({
+                "version": 1,
+                "bundledEnabled": true,
+                "bundledOverrides": overrides,
+                "installed": {},
+            });
+            fs::write(profile.join("registry.json"), registry.to_string()).unwrap();
+            let manager = Manager::open(Some(temp.path().into()), "agents", false).unwrap();
+            (temp, manager)
+        };
+        let enabled = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.agents")
+                .unwrap()
+                .enabled
+        };
+        let (_v1, manager) = open(serde_json::json!({ "buzz.agents": false }));
+        assert!(enabled(&manager), "v1's switch does not turn Agents off");
+        let (_temp, manager) = open(serde_json::json!({ "buzz.agents2": false }));
+        assert!(!enabled(&manager), "the Agents2 switch still applies");
+        manager.change("enable", "buzz.agents").unwrap();
+        assert!(enabled(&manager));
+        let saved: serde_json::Value = serde_json::from_slice(
+            &fs::read(manager.storage_root().join("registry.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            saved["bundledOverrides"],
+            serde_json::json!({ "buzz.agents2": true }),
+            "earlier builds still find the switch"
+        );
     }
 
     #[test]

@@ -8,6 +8,10 @@ import type {
 
 export const desktop = isTauri();
 const storageKey = "buzzodz.plugins.v1";
+/** The key a plugin's saved switch is kept under. Agents shipped as
+ * `buzz.agents2` while v1 Agents held `buzz.agents`, so its switch keeps the
+ * old key, as on desktop. */
+const flagKey = (id: string) => (id === "buzz.agents" ? "buzz.agents2" : id);
 
 export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
   function webCatalog(): StorageResult {
@@ -40,7 +44,8 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         ) {
           const flags = value.enabled as Record<string, boolean>;
           for (const plugin of catalog.plugins)
-            plugin.enabled = flags[plugin.manifest.id] ?? plugin.enabled;
+            plugin.enabled =
+              flags[flagKey(plugin.manifest.id)] ?? plugin.enabled;
         } else throw new Error("Invalid browser plugin settings");
       }
     } catch (error) {
@@ -76,7 +81,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         version: 2,
         enabled: Object.fromEntries(
           catalog.plugins.map((plugin) => [
-            plugin.manifest.id,
+            flagKey(plugin.manifest.id),
             plugin.manifest.id === id ? action === "enable" : plugin.enabled,
           ]),
         ),

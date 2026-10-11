@@ -74,7 +74,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     "Inbox",
     "Bestie",
     "Projects",
-    "Agents2",
+    "Agents",
     "Workflows",
   ].map((name) => pages.getByRole("button", { name, exact: true }));
   const assertDestinationFillParity = async () => {
@@ -200,11 +200,11 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await expect(alpha).toBeFocused();
   const node = await sidebar.elementHandle();
   await page
-    .getByRole("button", { name: "Agents2", exact: true })
+    .getByRole("button", { name: "Agents", exact: true })
     .first()
     .click();
   await expect(
-    page.getByRole("heading", { name: "Agents2", exact: true }),
+    page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
   await expect(sidebar).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
@@ -653,15 +653,15 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     )
     .toBe(expandedWidth);
 
-  await sidebar.getByRole("button", { name: "Agents2", exact: true }).click();
+  await sidebar.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Agents2", exact: true }),
+    page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(sidebar).not.toBeVisible();
   await expect(rail).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Agents2", exact: true }),
+    page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Show Channel sidebar" }).click();
@@ -678,7 +678,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     )
     .toBe(expandedWidth);
   await expect(
-    sidebar.getByRole("button", { name: "Agents2", exact: true }),
+    sidebar.getByRole("button", { name: "Agents", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 });
 

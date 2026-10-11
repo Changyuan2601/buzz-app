@@ -1,7 +1,7 @@
 // The type's tabs: Claude Code's setup on this computer, and the agent's
 // settings.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { AgentViewProps } from "../../features/agents2/service";
+import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";

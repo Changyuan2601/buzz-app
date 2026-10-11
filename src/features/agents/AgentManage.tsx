@@ -1,21 +1,21 @@
-// Owner actions on an Agents2 agent that every surface showing it offers: the
-// Agents2 Build view and the profile panel.
+// Owner actions on an agent that every surface showing it offers: the
+// Agents Build view and the profile panel.
 import { useState } from "react";
 import { TrashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import type { Agent, Agents2 } from "./service";
+import type { Agent, Agents } from "./service";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 /** Delete, after a confirmation that says what it does. */
 export function AgentDelete({
-  agents2,
+  agents,
   agent,
   onRemoved,
 }: {
-  agents2: Agents2;
+  agents: Agents;
   agent: Agent;
   onRemoved(): void;
 }) {
@@ -26,7 +26,7 @@ export function AgentDelete({
     setRemoving(true);
     setError("");
     try {
-      await agents2.remove(agent.pubkey);
+      await agents.remove(agent.pubkey);
       setConfirming(false);
       onRemoved();
     } catch (reason) {

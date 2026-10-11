@@ -1,6 +1,6 @@
 # Native agent identities
 
-The desktop host uses this crate for Agents2's `app_agent_*` commands: identity
+The desktop host uses this crate for Agents' `app_agent_*` commands: identity
 custody, signing, credentials and bringing over identities from earlier stores.
 Plugin runtimes own agent execution; this crate no longer contains a controller,
 supervisor, harness launcher, teams, provider defaults or bundled runtime loader.

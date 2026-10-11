@@ -1,4 +1,4 @@
-//! Identities for agents the app runs through a plugin (Agents2). They are not
+//! Identities for agents the app runs through a plugin (Agents). They are not
 //! harness agents: there is no process, harness setting or controller record.
 //! Native keeps each key and its owner attestation and signs only bounded kinds,
 //! bounded requests to its community, and its memory.

@@ -19,7 +19,7 @@ import {
 } from "../features/notifications/messages";
 import { AccountActionsService } from "../features/account-actions/service";
 import { ShortcutsService } from "../features/shortcuts/service";
-import { Agents2Service } from "../features/agents2/service";
+import { AgentsService } from "../features/agents/service";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
@@ -70,9 +70,9 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
-  const agents2 = new Agents2Service(ctx, communities);
+  const agents = new AgentsService(ctx, communities);
   ctx.effect(() =>
-    localAgents.bind({ snapshot: agents2.local, subscribe: agents2.subscribe }),
+    localAgents.bind({ snapshot: agents.local, subscribe: agents.subscribe }),
   );
   const notifications = new NotificationsService(
     ctx,
@@ -109,7 +109,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
-    agents2,
+    agents,
     accountActions,
     shortcutBindings,
     conversation,

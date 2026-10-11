@@ -1,4 +1,4 @@
-// Agents2: agents that are plugins from the start. A plugin registers an agent
+// Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
 // app owns and edits, and a config blob the type owns. The app delivers matching live events to
@@ -11,9 +11,9 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
-import type { LocalAgentsSnapshot } from "../agents/local";
-import { attestedOwner } from "../agents/owner-attestation";
-import { removeAgentFromChannels } from "../agents/relay-removal";
+import type { LocalAgentsSnapshot } from "./local";
+import { attestedOwner } from "./owner-attestation";
+import { removeAgentFromChannels } from "./relay-removal";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
 import type { RelayEvent } from "../relay/events";
@@ -209,19 +209,19 @@ export type AgentsSnapshot = Readonly<{
 }>;
 export type { Team };
 export type TeamChange = Omit<Team, "id"> & Readonly<{ id?: string }>;
-export type Agents2 = {
+export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
-  /** The agent of this pubkey in the selected community, if it is an Agents2 agent. */
+  /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
   create(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
-   * Agents2 agents yet. */
+   * Agents yet. */
   portable(): Promise<PortableAgents>;
   /** Takes one over as an agent of `type` in the selected community, keeping its
    * key, name and picture. Its instructions and settings stay behind. */
@@ -240,7 +240,7 @@ export type Agents2 = {
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
-    agents2: Agents2;
+    agents: Agents;
   }
 }
 
@@ -355,7 +355,7 @@ async function pickFor(
   }
 }
 
-/** What Agents2 needs of the communities: the viewer, the selected one, and
+/** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */
 export type AgentCommunities = Pick<
   Communities,
@@ -416,7 +416,7 @@ type Runner = {
   };
 };
 
-export class Agents2Service extends Service implements Agents2 {
+export class AgentsService extends Service implements Agents {
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -442,7 +442,7 @@ export class Agents2Service extends Service implements Agents2 {
     private readonly native: AgentsNative | undefined = nativeAgents(),
     private readonly storage: Storage = globalThis.localStorage,
   ) {
-    super(ctx, "agents2");
+    super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.records = readRecords(storage);
     this.teamList = Object.freeze(readTeams(storage));

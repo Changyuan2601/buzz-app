@@ -1,5 +1,5 @@
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
-import type { Agents2 } from "../../features/agents2/service";
+import type { Agents } from "../../features/agents/service";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -91,11 +91,11 @@ export function ChannelsPage({
   companion,
   navigation,
   navigator,
-  agents2,
+  agents,
 }: {
   extensions?: ConversationExtensions | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
-  agents2?: Agents2 | undefined;
+  agents?: Agents | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
@@ -150,7 +150,7 @@ export function ChannelsPage({
           panels={panels}
           sessionsEnabled={sessionsEnabled}
           companion={companion}
-          agents2={agents2}
+          agents={agents}
         />
       )}
     </section>
@@ -168,10 +168,10 @@ function ChannelWorkspace({
   navigation,
   navigator,
   viewer,
-  agents2,
+  agents,
 }: {
   extensions?: ConversationExtensions | undefined;
-  agents2?: Agents2 | undefined;
+  agents?: Agents | undefined;
   companion?: ReactNode;
   scope: string;
   navigation?: PageNavigation | undefined;
@@ -1184,7 +1184,7 @@ function ChannelWorkspace({
               : membersHeaderTrigger
           }
           canOpenLink={canOpenLink}
-          {...(agents2 ? { agents2 } : {})}
+          {...(agents ? { agents } : {})}
           onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
           onOpenConversation={
             navigator && viewer

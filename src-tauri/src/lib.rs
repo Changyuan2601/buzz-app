@@ -600,6 +600,7 @@ pub fn run() {
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()
+                    // Keeps its Agents2 name; see `sign_out::AGENTS`.
                     .map(|(root, _)| root.with_file_name("agents2").join("identities.json"))
                     .map_err(Clone::clone),
                 paths

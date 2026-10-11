@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useTeams } from "../../features/agents2/react";
-import type { Agents2, Team } from "../../features/agents2/service";
+import { useTeams } from "../../features/agents/react";
+import type { Agents, Team } from "../../features/agents/service";
 import {
   channelTemplates,
   useChannelTemplates,
@@ -21,14 +21,14 @@ import styles from "./ChannelTemplates.module.css";
 
 /** Templates a new channel can start from: its teams and its Canvas. */
 export function ChannelTemplateSettings({
-  agents2,
+  agents,
   active,
 }: {
-  agents2?: Agents2 | undefined;
+  agents?: Agents | undefined;
   active(): boolean;
 }) {
   const templates = useChannelTemplates();
-  const teams = useTeams(agents2);
+  const teams = useTeams(agents);
   // A template's id while it is edited, or "new" for one being made.
   const [editing, setEditing] = useState<string>();
   const template = templates.find((item) => item.id === editing);

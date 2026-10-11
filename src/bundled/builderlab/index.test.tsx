@@ -7,11 +7,11 @@ import userEvent from "@testing-library/user-event";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import {
-  Agents2Service,
+  AgentsService,
   type AgentCommunities,
-} from "../../features/agents2/service";
+} from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
-import { Agents2Page } from "../agents2/Agents2Page";
+import { AgentsPage } from "../agents/AgentsPage";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
@@ -44,13 +44,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function provideAgents2(root: Context, relay: RelayData) {
+function provideAgents(root: Context, relay: RelayData) {
   const communities = {
     snapshot: () => ({ memberships: [], selected: null }),
     subscribe: () => () => {},
     open: () => relay,
   } as unknown as AgentCommunities;
-  return new Agents2Service(root, communities, {
+  return new AgentsService(root, communities, {
     list: async () => [],
     create: vi.fn(),
     portable: vi.fn(),
@@ -70,7 +70,7 @@ function provideAgents2(root: Context, relay: RelayData) {
 }
 
 it.each([undefined, "", "http://builderlab.example"])(
-  "an unavailable desktop build (%s) shows setup guidance without login or an Agents2 type",
+  "an unavailable desktop build (%s) shows setup guidance without login or an agent type",
   async (url) => {
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
     const root = new Context();
@@ -85,7 +85,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     );
     root.provide("relay", community.relay);
     root.provide("communityReader", community.reader);
-    const agents2 = provideAgents2(root, community.relay);
+    const agents = provideAgents(root, community.relay);
     try {
       runtime.reconcile([
         {
@@ -108,9 +108,9 @@ it.each([undefined, "", "http://builderlab.example"])(
       );
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
       expect(native.invoke).not.toHaveBeenCalled();
-      expect(agents2.types()).toHaveLength(0);
+      expect(agents.types()).toHaveLength(0);
       cleanup();
-      render(<Agents2Page agents2={agents2} relay={community.relay} />);
+      render(<AgentsPage agents={agents} relay={community.relay} />);
       expect(
         await screen.findByText("Enable an agent type plugin to make one."),
       ).toBeInTheDocument();
@@ -171,7 +171,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
   );
   root.provide("relay", community.relay);
   root.provide("communityReader", community.reader);
-  const agents2 = provideAgents2(root, community.relay);
+  const agents = provideAgents(root, community.relay);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
     source: "bundled",
@@ -184,12 +184,12 @@ it("binds login, list and creation to the plugin host and clears the session on 
   try {
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-    expect(agents2.types()).toMatchObject([
+    expect(agents.types()).toMatchObject([
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
-    expect(agents2.types()[0]?.defaults()).toEqual({ config: {} });
+    expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
     const picker = render(
-      <Agents2Page agents2={agents2} relay={community.relay} />,
+      <AgentsPage agents={agents} relay={community.relay} />,
     );
     const [newAgent] = await screen.findAllByRole("button", {
       name: "New agent",
@@ -298,14 +298,14 @@ it("binds login, list and creation to the plugin host and clears the session on 
       runtime.reconcile([]);
     });
     expect(cards.snapshot()).toHaveLength(0);
-    expect(agents2.types()).toHaveLength(0);
+    expect(agents.types()).toHaveLength(0);
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
-    expect(agents2.types()).toMatchObject([
+    expect(agents.types()).toMatchObject([
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
     const fresh = cards.snapshot()[0];

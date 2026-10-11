@@ -22,8 +22,8 @@ import mentionsManifest from "./mentions/manifest.json";
 import * as mentions from "./mentions";
 import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
-import agents2Manifest from "./agents2/manifest.json";
-import * as agents2 from "./agents2";
+import agentsManifest from "./agents/manifest.json";
+import * as agents from "./agents";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
@@ -163,8 +163,8 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...agents2Manifest, apiVersion: 1 },
-    module: agents2,
+    manifest: { ...agentsManifest, apiVersion: 1 },
+    module: agents,
     enabledByDefault: true,
   },
   {

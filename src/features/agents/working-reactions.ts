@@ -1,4 +1,4 @@
-// STOPGAP(agent-working-reactions): DELETE once Agents2 agents show as typing
+// STOPGAP(agent-working-reactions): DELETE once agents show as typing
 // through the relay. Every piece is tagged STOPGAP(agent-working-reactions):
 // grep for it and delete this file, its import and use in service.ts, and its
 // test. Keep `Delivery.workingUntil`, which typing indicators need too.

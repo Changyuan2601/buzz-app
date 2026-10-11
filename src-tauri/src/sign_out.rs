@@ -32,15 +32,16 @@ const AGENT_STOPPING: &str =
 const ALREADY: &str = "Buzz is already signing out.";
 const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
 const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
-/// App data folders of the Agents2 list and of the earlier agent system,
-/// whose agents Agents2 can still port.
+/// App data folders of the Agents list and of the earlier agent system,
+/// whose agents can still be ported. The Agents folder keeps its Agents2 name,
+/// so its saved agents stay and earlier builds still find them.
 pub(crate) const AGENTS: &str = "agents2";
 pub(crate) const OLD_AGENTS: &str = "agent-controller";
 /// One lock per running agent, held by its supervisor until the agent has
 /// stopped, even after Buzz exits. Shared by every Buzz, under the user data folder.
 pub(crate) const AGENT_OWNERSHIP: &str = "dev.local.buzz.agent-ownership";
 /// What kept agents need to be identified and start again, by app data folder:
-/// the Agents2 list, and the earlier system's list and defaults to port from.
+/// the Agents list, and the earlier system's list and defaults to port from.
 /// Their keys live in the keychain. Anything else in these folders (hosting
 /// locks, saved logins, logs, run folders, and whatever is added later) is wiped.
 const KEPT: Kept = &[
@@ -784,7 +785,7 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         wipe,
         remove_agents,
     };
-    // Agents2 agents run as plugin host processes, which stop when Buzz exits.
+    // Agents run as plugin host processes, which stop when Buzz exits.
     let shutdown = || async { Ok(()) };
     let identity = app.state::<crate::identity::IdentityHost>().inner().clone();
     let pairing = app.state::<crate::pairing::Pairing>().inner().clone();

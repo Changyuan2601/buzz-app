@@ -31,7 +31,7 @@ it("independently unloads panels without removing the page or shared data", asyn
   new ConversationService(root);
   new SettingsCardsService(root);
   // Channels adds teams of agents from the members dialog.
-  root.provide("agents2", {
+  root.provide("agents", {
     subscribe: () => () => {},
     snapshot: () => undefined,
   });

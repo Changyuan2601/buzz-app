@@ -4,7 +4,7 @@ import {
   type AgentHandle,
   type Delivery,
   type Models,
-} from "../../features/agents2/service";
+} from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
@@ -96,7 +96,7 @@ function textOf(event: EventData, name: string) {
   return text;
 }
 
-/** Agents2 owns admission/identity. This plugin owns work after hand-over, and
+/** Agents owns admission/identity. This plugin owns work after hand-over, and
  * uses one app-server for every agent. Each conversation is its own Codex
  * thread carrying its agent's workspace, instructions and tools, and tool
  * calls find their agent by thread and turn. */
@@ -386,7 +386,7 @@ export class CodexRuntime {
     }
     if (lane.active) {
       const active = lane.active;
-      // Startup and history reads stay ordered without holding Agents2 delivery.
+      // Startup and history reads stay ordered without holding Agents delivery.
       const accepted = active.steering.then(async () => {
         try {
           await active.ready;
@@ -454,7 +454,7 @@ export class CodexRuntime {
       });
     lane.tail = job;
     this.status(request.agent.pubkey, key, "Starting");
-    // Agents2 can deliver follow-ups and other conversations immediately.
+    // Agents can deliver follow-ups and other conversations immediately.
     void job
       .catch((error) => console.error("Codex turn failed", error))
       .finally(() => {

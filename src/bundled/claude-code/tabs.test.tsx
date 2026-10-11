@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Agent, AgentType } from "../../features/agents2/service";
+import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
@@ -61,7 +61,7 @@ function applied({ loggedIn = true } = {}) {
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { spawn, request: vi.fn() },
-    agents2: {
+    agents: {
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
@@ -91,7 +91,7 @@ async function choose(label: string, option: string) {
 }
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents2", "host"]);
+  expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
   expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });

@@ -17,7 +17,7 @@ broader supported external reuse remains an [author-contract gate](status.md#ope
 
 **Rich conversation content.** An integration plugin recognizes a link to a GitHub pull request or a native Buzz object and supplies a panel showing that object. The Channels page decides where the panel appears. Another page can display the same content in a different arrangement.
 
-Both experiences use real session capabilities. As AI integrations become available, authors should be able to consume those capabilities without rebuilding authentication, execution, or state handling. Agents2 is the app's only agent system; [shared agent selection](agents.md) gives other plugins the viewer's local agents and the known inventory through `session.agentChoices`, and mentions use current channel membership. Execution and credential handling stay blocked in the disposable editor.
+Both experiences use real session capabilities. As AI integrations become available, authors should be able to consume those capabilities without rebuilding authentication, execution, or state handling. Agents is the app's only agent system; [shared agent selection](agents.md) gives other plugins the viewer's local agents and the known inventory through `session.agentChoices`, and mentions use current channel membership. Execution and credential handling stay blocked in the disposable editor.
 
 ## Ownership
 
@@ -67,8 +67,8 @@ bundled/channels/       conversation navigation, page layout and panel placement
 bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
 bundled/projects/       repository/project pages, issue/PR details and Git views
 features/projects/     entity route/data contracts and bounded Git read bridge
-bundled/agents2/        Agents2 page and agent types (harness plugins register theirs)
-features/agents2/       Agents2 service: saved agents, creation, deletion
+bundled/agents/        Agents page and agent types (harness plugins register theirs)
+features/agents/       Agents service: saved agents, creation, deletion
 features/agents/        session-owned agent inventory, choices, local agents and activity
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin Bestie page
@@ -215,7 +215,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
-Projects, Agents2, Claude Code, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
+Projects, Agents, Claude Code, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Me is an empty, optional default-enabled page. Me and Channels request topbar
@@ -270,7 +270,7 @@ exact registration identity and mounted lifetime revoke callbacks on removal.
 The channel template extension point (`ctx.channelTemplates`) was removed with the
 v1 Agents system. The host sidebar owns personal groups and the existing + creation
 buttons. Channel templates are now device-local (`buzz.channel-templates.v1`,
-`features/channel-templates/local.ts`): a name, Agents2 team ids and a starting
+`features/channel-templates/local.ts`): a name, Agents team ids and a starting
 Canvas, managed under Settings → Channel templates. Picking one in Create resolves
 its teams to their members that are the owner's agents in this community and sends
 them with the Canvas as ordinary channel setup, which the session applies and
@@ -548,7 +548,7 @@ environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
 are never inherited. The program is found on the same search path as commands,
 which on macOS also includes `~/.local/bin`.
 
-`agent` names an Agents2 agent whose type the calling plugin registered. The
+`agent` names an agent whose type the calling plugin registered. The
 process then runs as that agent, as harness agents do: native puts its key in
 `BUZZ_PRIVATE_KEY` (and `NOSTR_PRIVATE_KEY`), its community in `BUZZ_RELAY_URL`
 and its owner attestation in `BUZZ_AUTH_TAG`, and puts the bundled agent tools,

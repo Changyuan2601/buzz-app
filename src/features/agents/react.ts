@@ -8,58 +8,58 @@ import {
 } from "react";
 import type { ChannelQueries } from "../relay/contracts";
 import type { ChannelChoice } from "./attention";
-import type { Agents2, Models } from "./service";
+import type { Agents, Models } from "./service";
 
 const noSubscribe = () => () => {};
 const none = () => undefined;
 
-/** The selected community's Agents2 agents and the registered types. */
-export function useAgents2(agents2: Agents2) {
+/** The selected community's agents and the registered types. */
+export function useAgents(agents: Agents) {
   const snapshot = useSyncExternalStore(
-    agents2.subscribe,
-    agents2.snapshot,
-    agents2.snapshot,
+    agents.subscribe,
+    agents.snapshot,
+    agents.snapshot,
   );
   const types = useSyncExternalStore(
-    agents2.subscribe,
-    agents2.types,
-    agents2.types,
+    agents.subscribe,
+    agents.types,
+    agents.types,
   );
   return { snapshot, types };
 }
 
-/** Agents2's snapshot, or undefined without it. */
-export function useAgents2Snapshot(agents2: Agents2 | undefined) {
-  const subscribe = agents2?.subscribe ?? noSubscribe;
-  const snapshot = agents2?.snapshot ?? none;
+/** Agents' snapshot, or undefined without it. */
+export function useAgentsSnapshot(agents: Agents | undefined) {
+  const subscribe = agents?.subscribe ?? noSubscribe;
+  const snapshot = agents?.snapshot ?? none;
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 const noTeams: readonly never[] = Object.freeze([]);
-/** The owner's teams on this device, or none without Agents2. */
-export const useTeams = (agents2: Agents2 | undefined) =>
-  useAgents2Snapshot(agents2)?.teams ?? noTeams;
+/** The owner's teams on this device, or none without Agents. */
+export const useTeams = (agents: Agents | undefined) =>
+  useAgentsSnapshot(agents)?.teams ?? noTeams;
 
-/** The Agents2 agent at `pubkey`, with its type when that is registered. A saved
- * agent whose type plugin is disabled or reloading is still an Agents2 agent. */
-export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {
-  const subscribe = agents2?.subscribe ?? noSubscribe;
+/** The agent at `pubkey`, with its type when that is registered. A saved
+ * agent whose type plugin is disabled or reloading is still an agent. */
+export function useAgent(agents: Agents | undefined, pubkey: string) {
+  const subscribe = agents?.subscribe ?? noSubscribe;
   const agent = useSyncExternalStore(
     subscribe,
-    agents2 ? () => agents2.find(pubkey) : none,
-    agents2 ? () => agents2.find(pubkey) : none,
+    agents ? () => agents.find(pubkey) : none,
+    agents ? () => agents.find(pubkey) : none,
   );
   const type = useSyncExternalStore(
     subscribe,
-    agents2 && agent
-      ? () => agents2.types().find((type) => type.key === agent.type)
+    agents && agent
+      ? () => agents.types().find((type) => type.key === agent.type)
       : none,
     none,
   );
   return agent ? { agent, type } : undefined;
 }
 
-/** The app's Agents2, for surfaces such as the composer that plugins do not own. */
-export const Agents2Context = createContext<Agents2 | undefined>(undefined);
+/** The app's Agents, for surfaces such as the composer that plugins do not own. */
+export const AgentsContext = createContext<Agents | undefined>(undefined);
 
 export type MentionModelChoice = Models &
   Readonly<{ pubkey: string; name: string; loading?: boolean }>;
@@ -68,16 +68,16 @@ export type MentionModelChoice = Models &
 export function useMentionModels(
   pubkeys: readonly string[],
 ): readonly MentionModelChoice[] {
-  const agents2 = useContext(Agents2Context);
-  const subscribe = agents2?.subscribe ?? noSubscribe;
+  const agents = useContext(AgentsContext);
+  const subscribe = agents?.subscribe ?? noSubscribe;
   const snapshot = useSyncExternalStore(
     subscribe,
-    agents2 ? agents2.snapshot : none,
+    agents ? agents.snapshot : none,
     none,
   );
   const types = useSyncExternalStore(
     subscribe,
-    agents2 ? agents2.types : none,
+    agents ? agents.types : none,
     none,
   );
   const key = [...new Set(pubkeys)].join(":");

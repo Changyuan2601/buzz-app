@@ -7,14 +7,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
-  Agents2,
+  Agents,
   AgentsSnapshot,
   RegisteredAgentType,
   TeamChange,
-} from "../../features/agents2/service";
-import type { PortableAgent } from "../../features/agents2/native";
+} from "../../features/agents/service";
+import type { PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
-import { Agents2Page } from "./Agents2Page";
+import { AgentsPage } from "./AgentsPage";
 
 afterEach(cleanup);
 
@@ -66,11 +66,11 @@ const portable: PortableAgent[] = [
   },
 ];
 
-function setup(agents: Agent[], { shown = true } = {}) {
+function setup(saved: Agent[], { shown = true } = {}) {
   let snapshot: AgentsSnapshot = {
     status: "ready",
-    agents,
-    running: agents,
+    agents: saved,
+    running: saved,
     teams: [],
   };
   const listeners = new Set<() => void>();
@@ -88,7 +88,7 @@ function setup(agents: Agent[], { shown = true } = {}) {
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
   const types = [type];
-  const agents2 = {
+  const agents = {
     types: () => types,
     snapshot: () => snapshot,
     subscribe: (listener: () => void) => {
@@ -125,14 +125,14 @@ function setup(agents: Agent[], { shown = true } = {}) {
       };
       for (const listener of listeners) listener();
     }),
-  } satisfies Agents2;
+  } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
     snapshot: () => disconnected,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  render(<Agents2Page agents2={agents2} relay={relay} />);
-  return { agents2 };
+  render(<AgentsPage agents={agents} relay={relay} />);
+  return { agents };
 }
 
 it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
@@ -196,26 +196,26 @@ it("shows an agent's picture in the grid, peek and build view", async () => {
 it("edits the picture from the build view and shows why a save failed", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
-  const { agents2 } = setup([{ ...agent("Ada", 1), picture }]);
+  const { agents } = setup([{ ...agent("Ada", 1), picture }]);
   await user.click(screen.getByRole("option", { name: /Ada/ }));
   await user.keyboard("{Enter}");
-  agents2.save.mockRejectedValueOnce(new Error("Could not save"));
+  agents.save.mockRejectedValueOnce(new Error("Could not save"));
   await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.click(
     await screen.findByRole("button", { name: "Remove avatar" }),
   );
-  expect(agents2.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
 it("makes a new agent in the side panel and goes straight to building it", async () => {
   const user = userEvent.setup();
-  const { agents2 } = setup([agent("Ada", 1)]);
+  const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("button", { name: "New agent" }));
   const form = screen.getByRole("form", { name: "New agent" });
   expect(within(form).getByText("Says its line.")).toBeInTheDocument();
   await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
-  expect(agents2.create).toHaveBeenCalledWith({
+  expect(agents.create).toHaveBeenCalledWith({
     type: "test/echo",
     name: "Nova",
   });
@@ -225,11 +225,11 @@ it("makes a new agent in the side panel and goes straight to building it", async
 
 it("stays on the grid when the new agent belongs to a community no longer shown", async () => {
   const user = userEvent.setup();
-  const { agents2 } = setup([agent("Ada", 1)], { shown: false });
+  const { agents } = setup([agent("Ada", 1)], { shown: false });
   await user.click(screen.getByRole("button", { name: "New agent" }));
   const form = screen.getByRole("form", { name: "New agent" });
   await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
-  await vi.waitFor(() => expect(agents2.create).toHaveBeenCalled());
+  await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
   expect(
     await screen.findByRole("listbox", { name: "Agents" }),
   ).toBeInTheDocument();
@@ -239,7 +239,7 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
 
 it("saves a rename on Enter and discards it on Escape", async () => {
   const user = userEvent.setup();
-  const { agents2 } = setup([agent("Ada", 1)]);
+  const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("option", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   const field = within(
@@ -247,18 +247,18 @@ it("saves a rename on Enter and discards it on Escape", async () => {
   ).getByLabelText("Name");
   await user.clear(field);
   await user.type(field, "Discarded{Escape}");
-  expect(agents2.save).not.toHaveBeenCalled();
+  expect(agents.save).not.toHaveBeenCalled();
   expect(field).toHaveValue("Ada");
   await user.clear(field);
   await user.type(field, "Kept{Enter}");
-  expect(agents2.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
+  expect(agents.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
     name: "Kept",
   });
 });
 
 it("brings over an earlier agent as the chosen type and drops it from the list", async () => {
   const user = userEvent.setup();
-  const { agents2 } = setup([agent("Ada", 1)]);
+  const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("button", { name: "Bring over" }));
   const list = await screen.findByRole("list", {
     name: "Agents to bring over",
@@ -268,7 +268,7 @@ it("brings over an earlier agent as the chosen type and drops it from the list",
   ).toBeInTheDocument();
   expect(within(list).getByText(/Buzz 0\.X · npub/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Bring over Bea" }));
-  expect(agents2.port).toHaveBeenCalledWith({
+  expect(agents.port).toHaveBeenCalledWith({
     source: "installed",
     pubkey: "b".repeat(64),
     type: "test/echo",
@@ -279,8 +279,8 @@ it("brings over an earlier agent as the chosen type and drops it from the list",
 
 it("shows why bringing an agent over failed and keeps it listed", async () => {
   const user = userEvent.setup();
-  const { agents2 } = setup([]);
-  agents2.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
+  const { agents } = setup([]);
+  agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
   await user.click(screen.getByRole("button", { name: "Bring over" }));
   await user.click(
     await screen.findByRole("button", { name: "Bring over Ada" }),
@@ -294,7 +294,7 @@ it("shows why bringing an agent over failed and keeps it listed", async () => {
 it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
-  const { agents2 } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
+  const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
   await user.click(screen.getByRole("button", { name: "Teams" }));
   expect(screen.getByText("No teams yet.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
@@ -307,7 +307,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("checkbox", { name: "Cy" }));
   await user.click(screen.getByRole("button", { name: "Create team" }));
 
-  expect(agents2.saveTeam).toHaveBeenCalledWith({
+  expect(agents.saveTeam).toHaveBeenCalledWith({
     name: "Crew",
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
@@ -318,6 +318,6 @@ it("makes a team of chosen agents and lists it with its members", async () => {
 
   await user.click(screen.getByRole("button", { name: "Edit Crew" }));
   await user.click(screen.getByRole("button", { name: "Delete team" }));
-  expect(agents2.removeTeam).toHaveBeenCalledWith("team-1");
+  expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.getByText("No teams yet.")).toBeInTheDocument();
 });

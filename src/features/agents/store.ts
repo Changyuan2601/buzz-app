@@ -1,4 +1,4 @@
-// Device-local settings for Agents2 agents: each agent's attention objects in the
+// Device-local settings for agents: each agent's attention objects in the
 // `agent-attention/v1` shape, one JSON blob its plugin type owns, and its timers'
 // run state. Which agents exist, their type and name, and their keys live in
 // native custody, never here; a record without an identity does nothing. A
@@ -35,6 +35,7 @@ export type AgentRecord = Readonly<{
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
+// Saved names keep the Agents2 spelling, so existing agents and teams stay.
 export const STORAGE_KEY = "buzz.agents2.v1";
 const PUBKEY = /^[0-9a-f]{64}$/;
 const group = (value: AttentionValue) =>

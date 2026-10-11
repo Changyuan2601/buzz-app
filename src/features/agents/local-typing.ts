@@ -2,7 +2,7 @@
 // relay. Every piece is tagged STOPGAP(agent-local-typing): grep for it and
 // delete this file and its test, its import and use in service.ts, and
 // `typing.local` in relay/typing.ts with its test and the fake in
-// agents2/service.test.ts.
+// agents/service.test.ts.
 //
 // While an agent this app runs works on a mention, it shows as typing there,
 // on this device only.

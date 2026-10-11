@@ -1,4 +1,4 @@
-//! Native custody for agents the app runs through a plugin (Agents2). The key
+//! Native custody for agents the app runs through a plugin (Agents). The key
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
@@ -27,7 +27,7 @@ const BUSY_WAITS: u32 = 50;
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The identity file (which locks its own writes across app instances) and its
-/// own credential handle, so Agents2 never waits on, or fails with, the harness
+/// own credential handle, so Agents never waits on, or fails with, the harness
 /// agent controller (whose storage lock another app may hold).
 #[derive(Clone)]
 pub(crate) struct AppAgentHost {
@@ -292,7 +292,7 @@ pub(crate) async fn app_agent_create(
     .await
 }
 
-/// Identities earlier agent systems saved on this machine, as Agents2 could take
+/// Identities earlier agent systems saved on this machine, as Agents could take
 /// them over; the caller leaves out its own.
 #[tauri::command]
 pub(crate) async fn app_agent_portable(

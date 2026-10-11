@@ -16,7 +16,7 @@ import { PagesService } from "../../src/features/pages/service";
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
 import { localAgentsFixture } from "../../src/features/agents/local-testing";
-import { Agents2Service } from "../../src/features/agents2/service";
+import { AgentsService } from "../../src/features/agents/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import type {
   RelayData,
@@ -317,8 +317,8 @@ const manager = createPluginManager(context, {
     : bundledPlugins.filter(({ manifest }) => manifest.id === "buzz.profiles"),
 });
 const panels = new PanelsService(context);
-// Profiles reads Agents2 to choose agent tabs; this fixture has no Agents2 agents.
-new Agents2Service(context, relay, undefined);
+// Profiles reads Agents to choose agent tabs; this fixture has no agents.
+new AgentsService(context, relay, undefined);
 const pages = new PagesService(context);
 Object.assign(window, {
   profilesFixture: {

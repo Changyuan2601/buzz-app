@@ -260,7 +260,7 @@ The **+** action in the DMs sidebar header opens **New message**, a routed empty
 conversation in Messages. The header remains available before the first DM exists. Its inline **To:**
 field owns a paginated people picker and up to eight recipient chips, excluding
 this viewer. Agent profiles are offered only when their exact public key is one of the viewer's
-local agents (Agents2) for this community, the `managed` choices of
+local agents (Agents) for this community, the `managed` choices of
 `session.agentChoices`. Public profile hints and the inventory library do not
 qualify; this filter also applies to searches and cached results. Selected agent
 chips are revalidated against the current local agents before a fresh open and

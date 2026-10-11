@@ -2,8 +2,8 @@
 import type { ReactNode } from "react";
 import { act, waitFor, renderHook } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { useAgent2, useMentionModels, Agents2Context } from "./react";
-import type { Agent, Agents2 } from "./service";
+import { useAgent, useMentionModels, AgentsContext } from "./react";
+import type { Agent, Agents } from "./service";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -15,14 +15,14 @@ function deferred<T>() {
 
 it("still finds a saved agent whose type plugin is not registered", () => {
   const agent = { pubkey: "a".repeat(64), type: "gone/echo" } as Agent;
-  const agents2 = {
+  const agents = {
     subscribe: () => () => {},
     find: (pubkey: string) => (pubkey === agent.pubkey ? agent : undefined),
     types: () => [],
-  } as unknown as Agents2;
-  const { result } = renderHook(() => useAgent2(agents2, agent.pubkey));
+  } as unknown as Agents;
+  const { result } = renderHook(() => useAgent(agents, agent.pubkey));
   expect(result.current).toEqual({ agent, type: undefined });
-  const other = renderHook(() => useAgent2(agents2, "b".repeat(64)));
+  const other = renderHook(() => useAgent(agents, "b".repeat(64)));
   expect(other.result.current).toBeUndefined();
 });
 
@@ -41,11 +41,9 @@ it("loads models and their effort levels asynchronously before an agent runs", a
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents2;
+  } as unknown as Agents;
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <Agents2Context.Provider value={service}>
-      {children}
-    </Agents2Context.Provider>
+    <AgentsContext.Provider value={service}>{children}</AgentsContext.Provider>
   );
   const { result } = renderHook(() => useMentionModels(["agent"]), {
     wrapper,
@@ -80,11 +78,9 @@ it("offers nothing for a single model without effort levels", async () => {
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents2;
+  } as unknown as Agents;
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <Agents2Context.Provider value={service}>
-      {children}
-    </Agents2Context.Provider>
+    <AgentsContext.Provider value={service}>{children}</AgentsContext.Provider>
   );
   const { result } = renderHook(() => useMentionModels(["fixed", "tunable"]), {
     wrapper,
@@ -112,11 +108,9 @@ it("discards pending metadata after the mentioned agent changes", async () => {
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents2;
+  } as unknown as Agents;
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <Agents2Context.Provider value={service}>
-      {children}
-    </Agents2Context.Provider>
+    <AgentsContext.Provider value={service}>{children}</AgentsContext.Provider>
   );
   const { result, rerender } = renderHook(
     ({ pubkey }) => useMentionModels([pubkey]),

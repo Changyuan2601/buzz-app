@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { Agents2 } from "../../features/agents2/service";
+import type { Agents } from "../../features/agents/service";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { createHash } from "node:crypto";
@@ -67,7 +67,7 @@ async function setup(
     canOpenLink(target: string): boolean;
     onOpenLink(target: string, returnFocus?: HTMLElement): boolean;
   },
-  agents2?: Agents2,
+  agents?: Agents,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -165,7 +165,7 @@ async function setup(
         session={owner.session}
         channelId={id}
         {...navigation}
-        {...(agents2 ? { agents2 } : {})}
+        {...(agents ? { agents } : {})}
       />
     </ToastProvider>,
   );
@@ -1249,11 +1249,11 @@ it("adds a team's members not in the channel with one button", async () => {
       },
     ],
   };
-  const agents2 = {
+  const agents = {
     subscribe: () => () => {},
     snapshot: () => snapshot,
-  } as unknown as Agents2;
-  const t = await setup("stream", false, false, undefined, agents2);
+  } as unknown as Agents;
+  const t = await setup("stream", false, false, undefined, agents);
   await t.user.type(screen.getByRole("searchbox"), "Cr");
   const teams = await screen.findByRole("list", { name: "Teams" });
   expect(within(teams).getByText("Ada, Cy")).toBeInTheDocument();

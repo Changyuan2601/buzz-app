@@ -15,7 +15,7 @@ type ParticipantActivity = {
   lastMessageAt: number;
   visibleUntil: number;
   quietUntil: number;
-  // STOPGAP(agent-local-typing): delete with agents2/local-typing.ts.
+  // STOPGAP(agent-local-typing): delete with agents/local-typing.ts.
   /** Driven by this app's own pulses, which end only with a local end. */
   local?: boolean;
 };
@@ -179,7 +179,7 @@ export function createTyping(
   return {
     capability: Object.freeze({
       snapshot: () => snapshot,
-      // STOPGAP(agent-local-typing): delete with agents2/local-typing.ts.
+      // STOPGAP(agent-local-typing): delete with agents/local-typing.ts.
       /** Takes a pulse (20002) this app made for an agent it runs, or the
        * end of its turn (9, as if the agent had replied), on this device only,
        * as if it came live, until agents' pulses reach the relay. Until that

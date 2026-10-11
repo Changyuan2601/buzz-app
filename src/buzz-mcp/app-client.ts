@@ -1,9 +1,9 @@
 // The Buzz tools' client inside the app: the agent's native-held key signs and
-// reads through its Agents2 handle, files are read by a declared process, and
+// reads through its Agents handle, files are read by a declared process, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memory } from "./client";
-import type { AgentHandle } from "../features/agents2/service";
+import type { AgentHandle } from "../features/agents/service";
 import type { HostProcess, HostProcessOptions } from "../features/host/service";
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 

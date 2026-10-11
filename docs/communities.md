@@ -115,7 +115,7 @@ community origin and viewer; channel IDs alone are not sufficient keys.
 
 Selecting a saved membership lazily acquires its session. Sessions survive page
 navigation and switching; startup opens only the selected one. Once its agent
-list loads, Agents2 also opens each joined community where the viewer has an
+list loads, Agents also opens each joined community where the viewer has an
 agent, through `open`, which connects without selecting so those agents keep
 running, and retries one whose connection failed while it is not selected. Opened communities
 retain their existing per-session query/cache budgets. Arbitrary destinations mean

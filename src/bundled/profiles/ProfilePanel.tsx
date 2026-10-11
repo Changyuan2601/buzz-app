@@ -37,23 +37,23 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
-import { AgentDelete } from "../../features/agents2/AgentManage";
-import { useAgent2, useChannelChoices } from "../../features/agents2/react";
-import type { Agents2 } from "../../features/agents2/service";
-import { agentSections } from "../../features/agents2/tabs";
+import { AgentDelete } from "../../features/agents/AgentManage";
+import { useAgent, useChannelChoices } from "../../features/agents/react";
+import type { Agents } from "../../features/agents/service";
+import { agentSections } from "../../features/agents/tabs";
 
 export function ProfilePanel({
   relay,
   target,
   context,
   navigation,
-  agents2,
+  agents,
   close,
 }: PanelProps & {
   relay: RelayData;
   navigation?: Navigation;
-  /** Agents2 agents show their type's tabs. */
-  agents2?: Agents2;
+  /** Agents show their type's tabs. */
+  agents?: Agents;
 }) {
   const connection = useRelayConnection(relay);
   const pubkey = profilePanelKey(target);
@@ -68,7 +68,7 @@ export function ProfilePanel({
       agentHint={profileAgentHint(target)}
       context={context}
       navigation={navigation}
-      agents2={agents2}
+      agents={agents}
       scope={connection.scope}
       viewer={connection.viewer}
       close={close}
@@ -81,12 +81,12 @@ function ProfileDetails({
   pubkey,
   context,
   navigation,
-  agents2,
+  agents,
   scope,
   viewer,
   close,
 }: {
-  agents2: Agents2 | undefined;
+  agents: Agents | undefined;
   agentHint: boolean;
   session: RelaySession;
   pubkey: string;
@@ -114,14 +114,14 @@ function ProfileDetails({
   const [tab, setTab] = useState<"info" | "channels" | `agent:${string}`>(
     "info",
   );
-  // An Agents2 agent's sections come from its type and the app, not the harness.
-  const plugin = useAgent2(agents2, pubkey);
+  // An agent's sections come from its type and the app, not the harness.
+  const plugin = useAgent(agents, pubkey);
   const channelChoices = useChannelChoices(
     plugin ? session.channels : undefined,
   );
   const sections =
-    plugin && agents2
-      ? agentSections({ agents2, ...plugin, channels: channelChoices })
+    plugin && agents
+      ? agentSections({ agents, ...plugin, channels: channelChoices })
       : [];
   const section = sections.find((item) => item.value === tab);
   const tabHost = usePanelTabHost();
@@ -313,10 +313,10 @@ function ProfileDetails({
                   {profile?.about && (
                     <p className={styles.about}>{profile.about}</p>
                   )}
-                  {plugin && agents2 && (
+                  {plugin && agents && (
                     <div>
                       <AgentDelete
-                        agents2={agents2}
+                        agents={agents}
                         agent={plugin.agent}
                         onRemoved={close}
                       />

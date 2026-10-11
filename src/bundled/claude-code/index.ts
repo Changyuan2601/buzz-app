@@ -1,4 +1,4 @@
-// Claude Code agents: an Agents2 type whose agents are Claude Code sessions on
+// Claude Code agents: an agent type whose agents are Claude Code sessions on
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
@@ -11,18 +11,18 @@ export const TYPE_ID = "claude-code";
 /** A turn's run returns once Claude has it, so this bounds only the hand-over. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["agents2", "host"];
+export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
-  const { agents2, host } = ctx;
+  const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn?.bind(host);
   const setup = new ClaudeSetup(spawn);
-  const runtime = new ClaudeRuntime(host, agents2.relay);
+  const runtime = new ClaudeRuntime(host, agents.relay);
   const sync = () => {
-    const snapshot = agents2.snapshot();
+    const snapshot = agents.snapshot();
     // Agents that stop running, the app signing out included, stop their
     // processes; switching communities does not.
     if (snapshot.status === "loading") return;
@@ -30,7 +30,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   // One spare session waits for whichever running agent needs it next.
   if (spawn) {
-    const unsubscribe = agents2.subscribe(sync);
+    const unsubscribe = agents.subscribe(sync);
     sync();
     ctx.effect(() => () => {
       unsubscribe();
@@ -40,7 +40,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
 
   const { ClaudeTab, SettingsTab } = createTabs({ setup, runtime });
-  agents2.register<Config>({
+  agents.register<Config>({
     id: TYPE_ID,
     title: "Claude Code",
     description:

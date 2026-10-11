@@ -1,4 +1,4 @@
-//! Agent identities an earlier agent system saved on this machine, which Agents2
+//! Agent identities an earlier agent system saved on this machine, which Agents
 //! can take over: the harness controller's library and old Buzz's. Only the
 //! identity and its public name, picture and description move; instructions,
 //! harness settings and memberships stay behind. Neither store is ever written.

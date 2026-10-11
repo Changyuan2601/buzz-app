@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentDelete } from "./AgentManage";
-import type { Agent, Agents2 } from "./service";
+import type { Agent, Agents } from "./service";
 
 afterEach(cleanup);
 
@@ -23,13 +23,13 @@ const agent = {
 it("deletes after confirming, and keeps the dialog open with the error when Delete fails", async () => {
   const user = userEvent.setup();
   const remove = vi
-    .fn<Agents2["remove"]>()
+    .fn<Agents["remove"]>()
     .mockRejectedValueOnce(new Error("Credential store refused"))
     .mockResolvedValueOnce();
   const onRemoved = vi.fn();
   render(
     <AgentDelete
-      agents2={{ remove } as unknown as Agents2}
+      agents={{ remove } as unknown as Agents}
       agent={agent}
       onRemoved={onRemoved}
     />,

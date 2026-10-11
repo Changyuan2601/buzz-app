@@ -2,13 +2,19 @@
 
 ## Scope
 
-Agents2 (`src/bundled/agents2`, `src/features/agents2`) is the app's only agent
+Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
 Channel templates plugin, agent snapshots, team bundles, community catalog and
 agent-management request popups are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
+
+Agents was called Agents2 while v1 still shipped. Its saved data keeps that name,
+so existing agents carry over and earlier builds still find them: the
+`agents2/identities.json` app data folder, the `buzz.agents2.v1` and
+`buzz.agents2.teams.v1` local storage keys, and the plugin's on/off switch, which
+stays under `buzz.agents2` so v1's leftover `buzz.agents` switch is ignored.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
@@ -18,13 +24,13 @@ archive state and presence do not prove ownership, membership or runtime state.
 `LocalAgents` (`src/features/agents/local.ts`) is a read-only snapshot of the
 viewer's live agents on this machine, in any community:
 `{ status, agents: [{ pubkey, name, relayUrl, owner }] }`, with `status` one of
-`unavailable`, `loading`, `ready` or `error`. `Agents2Service.local()` produces it
-from its saved identities (deleted ones omitted), so it carries Agents2's own
-loading and error state. Agents2's `snapshot()` is different: it holds only the
+`unavailable`, `loading`, `ready` or `error`. `AgentsService.local()` produces it
+from its saved identities (deleted ones omitted), so it carries Agents' own
+loading and error state. Agents' `snapshot()` is different: it holds only the
 selected community's agents, with their settings.
 
-`app/services.ts` composes consumers before Agents2 exists, through
-`createLocalAgents()`. Until `bind` connects `agents2.local`, the snapshot is
+`app/services.ts` composes consumers before Agents exists, through
+`createLocalAgents()`. Until `bind` connects `agents.local`, the snapshot is
 `unavailable`; unbinding returns it there. Two consumers read it directly:
 
 - the identity-name service, which lets a local agent's name win in its own
@@ -65,7 +71,7 @@ retirement revokes its candidates.
 
 `templates` serves saved channel-kit templates and section defaults (session setup
 resolves lineups through it with `templateAgentChoices`). Its identities are the
-local agents once Agents2 is bound, and the library only while the local source is
+local agents once Agents is bound, and the library only while the local source is
 `unavailable`. It never falls back to the library after a local error.
 `templateAgentChoices` returns nothing until archive evidence is ready, and
 library-only choices additionally need visible community membership. Saved keys
@@ -314,8 +320,8 @@ the relay re-verifies consent. An owner request copies the target's single live
 by that re-read, and only a definitive relay rejection skips it. No profile pane
 offers Archive or Unarchive now; the only caller is agent deletion.
 
-**Delete agent** on Agents2 forgets the agent's key on this device, then
-(`Agents2Service.cleanup`, shared helpers in `features/agents/relay-removal.ts`)
+**Delete agent** on Agents forgets the agent's key on this device, then
+(`AgentsService.cleanup`, shared helpers in `features/agents/relay-removal.ts`)
 runs whenever its community is open:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every

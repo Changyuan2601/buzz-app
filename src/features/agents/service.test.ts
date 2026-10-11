@@ -10,7 +10,7 @@ import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import {
-  Agents2Service,
+  AgentsService,
   type AgentCommunities,
   type AgentType,
   type Delivery,
@@ -23,7 +23,7 @@ import { memoryStorage } from "./test-fakes";
 // place in the order matters.
 const steps: string[] = [];
 const leaveChannels = vi.hoisted(() => vi.fn());
-vi.mock("../agents/relay-removal", () => ({
+vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
 }));
 
@@ -273,7 +273,7 @@ async function setup({
   const second = fakeRelay("https://other.example.test");
   const client = fakeCommunities(fake, second);
   const native = fakeNative(identities);
-  const service = new Agents2Service(ctx, client.communities, native, storage);
+  const service = new AgentsService(ctx, client.communities, native, storage);
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
   });
@@ -312,7 +312,7 @@ async function setup({
     }),
     run,
   };
-  plugin.agents2.register(type);
+  plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   return {
     service,
@@ -808,7 +808,7 @@ it("opens no community for an agent list that arrives after it stopped", async (
       list = resolve;
     }),
   );
-  const service = new Agents2Service(
+  const service = new AgentsService(
     ctx,
     client.communities,
     native,
@@ -1123,7 +1123,7 @@ it("keeps an agent created while identities are still loading", async () => {
   native.list.mockImplementationOnce(
     () => new Promise<AgentIdentity[]>((resolve) => (release = resolve)),
   );
-  const service = new Agents2Service(
+  const service = new AgentsService(
     ctx,
     fakeCommunities(fakeRelay()).communities,
     native,
@@ -1131,7 +1131,7 @@ it("keeps an agent created while identities are still loading", async () => {
   );
   ctx
     .extend({ pluginOwner: Object.freeze({ id: "example", revision: "one" }) })
-    .agents2.register<Config>({
+    .agents.register<Config>({
       id: "echo",
       title: "Echo",
       defaults: () => ({ config: { reply: "ok" } }),

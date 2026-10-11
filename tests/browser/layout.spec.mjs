@@ -60,7 +60,7 @@ const destinationTitles = [
   "Reminders",
   "Bestie",
   "Projects",
-  "Agents2",
+  "Agents",
   "Workflows",
 ];
 const sidebarDestinations = (page, options = {}) =>
@@ -1080,7 +1080,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Reminders",
     "Bestie",
     "Projects",
-    "Agents2",
+    "Agents",
     "Sessions (now in Me)",
     "Workflows",
   ];
@@ -1162,7 +1162,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Inbox",
     "Reminders",
     "Bestie",
-    "Agents2",
+    "Agents",
     "Sessions (now in Me)",
     "Workflows",
   ]);

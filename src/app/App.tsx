@@ -3,7 +3,7 @@ import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { MeSidebar } from "../bundled/me/MeSidebar";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
-import { Agents2Context } from "../features/agents2/react";
+import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
@@ -146,7 +146,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
       <ChannelNavigationProvider relay={services.relay}>
-        <Agents2Context.Provider value={services.agents2}>
+        <AgentsContext.Provider value={services.agents}>
           <AppShell
             sidebar={(pageNavigation) =>
               settings ? (
@@ -186,7 +186,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 <ChannelSidebar
                   relay={services.relay}
                   navigator={services.navigation}
-                  agents2={services.agents2}
+                  agents={services.agents}
                   target={route.target}
                   meEnabled={route.pages.some(
                     (page) => page.key === "buzz.me/me",
@@ -309,7 +309,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               />
             ) : null}
           </AppShell>
-        </Agents2Context.Provider>
+        </AgentsContext.Provider>
       </ChannelNavigationProvider>
     </ToastProvider>
   );

@@ -1,4 +1,4 @@
-// The Agents2 page. Three frames, one at a time:
+// The Agents page. Three frames, one at a time:
 // - Inventory: every agent as a tile. Selecting one (click, or arrow keys) opens
 //   its peek beside the grid without leaving it; Enter or a double-click builds.
 // - Peek: identity, the type's own read-only glance, and what wakes it.
@@ -13,25 +13,25 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import styles from "./Agents2Page.module.css";
+import styles from "./AgentsPage.module.css";
 import { AgentTabs } from "./AgentTabs";
-import type { ChannelChoice } from "../../features/agents2/attention";
-import { AgentDelete } from "../../features/agents2/AgentManage";
-import { AttentionSummary } from "../../features/agents2/AttentionPanel";
+import type { ChannelChoice } from "../../features/agents/attention";
+import { AgentDelete } from "../../features/agents/AgentManage";
+import { AttentionSummary } from "../../features/agents/AttentionPanel";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
-import { useAgents2, useChannelChoices } from "../../features/agents2/react";
+import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type {
   PortableAgent,
   PortableAgents,
   PortSource,
-} from "../../features/agents2/native";
+} from "../../features/agents/native";
 import type {
   Agent,
-  Agents2,
+  Agents,
   RegisteredAgentType,
   Team,
-} from "../../features/agents2/service";
+} from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import {
@@ -77,14 +77,14 @@ function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
   }
 }
 
-export function Agents2Page({
-  agents2,
+export function AgentsPage({
+  agents,
   relay,
 }: {
-  agents2: Agents2;
+  agents: Agents;
   relay: RelayData;
 }) {
-  const { snapshot, types } = useAgents2(agents2);
+  const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
   const channels = useChannelChoices(
     connection.status === "ready" ? connection.session.channels : undefined,
@@ -110,7 +110,7 @@ export function Agents2Page({
       return (
         <EmptyState
           icon="✦"
-          title="Agents2 runs in the desktop app"
+          title="Agents runs in the desktop app"
           description="Agent keys stay in the desktop app's native custody."
         />
       );
@@ -126,7 +126,7 @@ export function Agents2Page({
       return (
         <AgentBuild
           key={building.pubkey}
-          agents2={agents2}
+          agents={agents}
           agent={building}
           type={typeOf(building)}
           channels={channels}
@@ -135,17 +135,17 @@ export function Agents2Page({
       );
     const panel = creating ? (
       <NewAgent
-        agents2={agents2}
+        agents={agents}
         types={types}
         onClose={() => browse()}
         onCreated={(agent) => build(agent.pubkey)}
       />
     ) : side === "porting" ? (
-      <BringOver agents2={agents2} types={types} onClose={() => browse()} />
+      <BringOver agents={agents} types={types} onClose={() => browse()} />
     ) : side === "teams" ? (
       <Teams
-        agents2={agents2}
-        agents={snapshot.agents}
+        agents={agents}
+        saved={snapshot.agents}
         teams={snapshot.teams}
         onClose={() => browse()}
       />
@@ -198,7 +198,7 @@ export function Agents2Page({
 
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Agents2">
+      <FullPageSurface aria-label="Agents">
         <div className="flex h-full min-h-0 flex-col">
           <PanelHeader
             {...(building
@@ -213,7 +213,7 @@ export function Agents2Page({
                   ),
                 }
               : {})}
-            title={building ? building.name : "Agents2"}
+            title={building ? building.name : "Agents"}
             actions={
               !building && types.length > 0 && snapshot.status === "ready" ? (
                 <div className="flex items-center gap-2">
@@ -431,12 +431,12 @@ function AgentPeek({
 }
 
 function NewAgent({
-  agents2,
+  agents,
   types,
   onClose,
   onCreated,
 }: {
-  agents2: Agents2;
+  agents: Agents;
   types: readonly RegisteredAgentType[];
   onClose(): void;
   onCreated(agent: Agent): void;
@@ -451,7 +451,7 @@ function NewAgent({
     setPending(true);
     setError("");
     try {
-      onCreated(await agents2.create({ type: chosen.key, name: name.trim() }));
+      onCreated(await agents.create({ type: chosen.key, name: name.trim() }));
     } catch (reason) {
       setError(message(reason));
       setPending(false);
@@ -528,11 +528,11 @@ const host = (relay: string) => relay.replace(/^wss:\/\//, "");
 /** Identities earlier agent systems saved on this machine, each brought over
  * with its key, name and picture as an agent of the chosen type. */
 function BringOver({
-  agents2,
+  agents,
   types,
   onClose,
 }: {
-  agents2: Agents2;
+  agents: Agents;
   types: readonly RegisteredAgentType[];
   onClose(): void;
 }) {
@@ -542,14 +542,14 @@ function BringOver({
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
-    agents2.portable().then(
+    agents.portable().then(
       (next) => live && setFound(next),
       (reason) => live && setError(message(reason)),
     );
     return () => {
       live = false;
     };
-  }, [agents2]);
+  }, [agents]);
   const chosen = types.find((item) => item.key === type) ?? types[0];
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
   const port = async (agent: PortableAgent) => {
@@ -557,7 +557,7 @@ function BringOver({
     setPending(agent.pubkey);
     setError("");
     try {
-      await agents2.port({
+      await agents.port({
         source: agent.source,
         pubkey: agent.pubkey,
         type: chosen.key,
@@ -654,13 +654,13 @@ function BringOver({
 /** The owner's teams: each a name, instructions and members, given to every
  * member's prompt with a roster. Agents record nothing about their teams. */
 function Teams({
-  agents2,
   agents,
+  saved,
   teams,
   onClose,
 }: {
-  agents2: Agents2;
-  agents: readonly Agent[];
+  agents: Agents;
+  saved: readonly Agent[];
   teams: readonly Team[];
   onClose(): void;
 }) {
@@ -671,13 +671,13 @@ function Teams({
     return (
       <TeamEditor
         key={editing}
-        agents2={agents2}
         agents={agents}
+        saved={saved}
         {...(team ? { team } : {})}
         onDone={() => setEditing(undefined)}
       />
     );
-  const names = new Map(agents.map((agent) => [agent.pubkey, agent.name]));
+  const names = new Map(saved.map((agent) => [agent.pubkey, agent.name]));
   return (
     <section className={styles.sideBody} aria-label="Teams">
       <SideHeader
@@ -722,13 +722,13 @@ function Teams({
 }
 
 function TeamEditor({
-  agents2,
   agents,
+  saved,
   team,
   onDone,
 }: {
-  agents2: Agents2;
-  agents: readonly Agent[];
+  agents: Agents;
+  saved: readonly Agent[];
   team?: Team;
   onDone(): void;
 }) {
@@ -753,7 +753,7 @@ function TeamEditor({
   };
   const save = () =>
     act(() =>
-      agents2.saveTeam({
+      agents.saveTeam({
         ...(team ? { id: team.id } : {}),
         name: name.trim(),
         instructions,
@@ -800,9 +800,9 @@ function TeamEditor({
         />
       </Field>
       <Section title="Members">
-        {agents.length ? (
+        {saved.length ? (
           <div className="grid gap-2">
-            {agents.map((agent) => (
+            {saved.map((agent) => (
               <Checkbox
                 key={agent.pubkey}
                 label={agent.name}
@@ -840,7 +840,7 @@ function TeamEditor({
           <Button
             variant="destructive"
             disabled={pending}
-            onClick={() => void act(() => agents2.removeTeam(team.id))}
+            onClick={() => void act(() => agents.removeTeam(team.id))}
           >
             Delete team
           </Button>
@@ -851,13 +851,13 @@ function TeamEditor({
 }
 
 function AgentBuild({
-  agents2,
+  agents,
   agent,
   type,
   channels,
   onRemoved,
 }: {
-  agents2: Agents2;
+  agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
@@ -882,7 +882,7 @@ function AgentBuild({
             community={agent.relay}
             onChange={(picture) => {
               setPictureError("");
-              agents2
+              agents
                 .save(agent.pubkey, { picture: picture || null })
                 .catch((error: unknown) => setPictureError(message(error)));
             }}
@@ -895,7 +895,7 @@ function AgentBuild({
         </div>
         <NameField
           name={agent.name}
-          onSave={(name) => agents2.save(agent.pubkey, { name })}
+          onSave={(name) => agents.save(agent.pubkey, { name })}
         />
         <dl className={styles.facts}>
           <dt>Type</dt>
@@ -916,7 +916,7 @@ function AgentBuild({
           </dd>
         </dl>
         <div className="mt-auto">
-          <AgentDelete agents2={agents2} agent={agent} onRemoved={onRemoved} />
+          <AgentDelete agents={agents} agent={agent} onRemoved={onRemoved} />
         </div>
       </aside>
       <section className={styles.work} aria-label={`${agent.name} settings`}>
@@ -927,7 +927,7 @@ function AgentBuild({
           </p>
         )}
         <AgentTabs
-          agents2={agents2}
+          agents={agents}
           agent={agent}
           type={type}
           channels={channels}

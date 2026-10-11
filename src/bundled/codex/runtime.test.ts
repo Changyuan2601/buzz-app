@@ -4,7 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import * as React from "react";
 import { apply } from "./index";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents2/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
@@ -277,7 +277,7 @@ function fixture(
       events.push(result.trigger.event as EventData);
     return result;
   };
-  /** Agents2's running agents, whichever community is selected. */
+  /** Agents' running agents, whichever community is selected. */
   const running = [{ ...agent, type: "buzz.codex/codex" }];
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
@@ -289,7 +289,7 @@ function fixture(
     apply({
       react: React,
       host: { spawn },
-      agents2: {
+      agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
         subscribe: (listener: () => void) => {

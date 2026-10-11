@@ -15,7 +15,7 @@ import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol
 import { useMePlacement } from "../sessions/personal";
 import { personalGroups } from "../channel-templates/setup";
 import type { RelayData } from "../relay/service";
-import type { Agents2 } from "../agents2/service";
+import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
@@ -91,7 +91,7 @@ type Props = {
   relay: RelayData;
   navigator: Navigation;
   /** For channel templates, which start a channel with the owner's teams. */
-  agents2?: Agents2 | undefined;
+  agents?: Agents | undefined;
   target: OpenTarget;
   sessionsEnabled: boolean;
   meEnabled?: boolean;
@@ -189,7 +189,7 @@ class SidebarBoundary extends Component<
 function ReadySidebar({
   relay,
   navigator,
-  agents2,
+  agents,
   target,
   children,
   queries,
@@ -1376,7 +1376,7 @@ function ReadySidebar({
           pending={pendingChannelCreation}
           finalFocus={createChannelTrigger}
           session={queries}
-          agents2={agents2}
+          agents={agents}
           groups={groups}
           destinations={displayedPreferences?.sections ?? []}
           {...(preferences.data?.groupSource !== "personal"

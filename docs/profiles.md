@@ -5,9 +5,9 @@ public identity, human or agent. It uses the current session's shared profile
 directory. It is read-only for people and for other users' agents; profile
 metadata and agent hints grant no authority.
 
-For an Agents2 agent this app keeps, the panel also shows its type's tabs and
-the app's Delete action, from `features/agents2` (`useAgent2`, `agentSections`).
-Its settings, attention and identity are edited there or on the Agents2 page;
+For an agent this app keeps, the panel also shows its type's tabs and
+the app's Delete action, from `features/agents` (`useAgent`, `agentSections`).
+Its settings, attention and identity are edited there or on the Agents page;
 Profiles adds no second editor, runtime view or process control.
 
 ## Agent activity
@@ -124,7 +124,7 @@ Avatar, name, about, self-declared NIP-05 (not DNS-verified), exact copyable
 npub, and, for known agents, an optional compact activity preview/action. **Message** is offered for a
 foreign profile when the session can start direct messages; as in New message,
 a known agent qualifies only while it is one of this machine's agents in this
-community (the Agents2 `LocalAgents` snapshot), rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
+community (the Agents `LocalAgents` snapshot), rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
 navigates to the relay-confirmed channel in the scope captured at click time. A
 confirmed open also clears that DM's local sidebar hide. The person's
 self-published NIP-38 `general` status (kind 30315, emoji tag plus text) uses the
@@ -140,7 +140,7 @@ Agent hints change avatar shape, not authority:
 
 - Profiles, mentions, participants and membership avatars use squircles for
   self-declared `is_agent`/`isAgent` metadata or exact keys of this machine's
-  agents; otherwise they use circles. Agents2 tiles always use squircles.
+  agents; otherwise they use circles. Agents tiles always use squircles.
 - Message authors also use these hints. An original kind-40002 envelope is enough
   on its own and keeps that treatment through edits.
 - Avatars never fetch an agent list or scan telemetry for these hints.

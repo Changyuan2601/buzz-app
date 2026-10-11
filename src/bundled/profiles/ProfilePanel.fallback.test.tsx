@@ -28,7 +28,7 @@ function fixture(configuredNames = false) {
     relayUrl: "wss://relay.example.test",
     owner: viewer,
   };
-  // Agents2 lists this machine's agents once it loads.
+  // Agents lists this machine's agents once it loads.
   const control = localAgentsFixture(configuredNames ? [agent] : []);
   const provider = createAgentDirectory(control);
   const query = vi.fn<ReadTransport["query"]>(async () => []);
@@ -73,7 +73,7 @@ function fixture(configuredNames = false) {
     agent,
     person,
     control,
-    /** Agents2 lists the person as one of this machine's agents. */
+    /** Agents lists the person as one of this machine's agents. */
     known: (relayUrl = agent.relayUrl) =>
       act(() => control.set({ agents: [{ ...agent, relayUrl }] })),
     query,

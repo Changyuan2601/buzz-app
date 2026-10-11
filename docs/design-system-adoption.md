@@ -73,7 +73,7 @@ Use [DESIGN.md's whole-surface recipes](../src/shared/design-system/DESIGN.md#co
 as the target; remove resolved gaps from this table when their migrations are verified.
 During PR preparation, source references were refreshed against `a6ea532d6`,
 including the new Me workspace. The browser observations below remain tied to
-`2bea18769`; the newer Me workspace and Agents2 page were not browser-retested.
+`2bea18769`; the newer Me workspace and Agents page were not browser-retested.
 
 Browser inspection covered Messages, Inbox, Reminders, Projects, Agents, Sessions,
 Workflows, Me, the account menu, Channel members, a profile companion panel, and

@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
-import type { Agents2 } from "../../features/agents2/service";
+import type { Agents } from "../../features/agents/service";
 import { channelTemplates } from "../../features/channel-templates/local";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 
@@ -21,14 +21,14 @@ const snapshot = {
     { id: "t2", name: "Docs", instructions: "", members: [] },
   ],
 };
-const agents2 = {
+const agents = {
   snapshot: () => snapshot,
   subscribe: () => () => {},
-} as unknown as Agents2;
+} as unknown as Agents;
 
 it("makes, edits and deletes a template of teams and a Canvas", async () => {
   const user = userEvent.setup();
-  render(<ChannelTemplateSettings agents2={agents2} active={() => true} />);
+  render(<ChannelTemplateSettings agents={agents} active={() => true} />);
   await user.click(screen.getByRole("button", { name: "New template" }));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Launch");
   await user.click(screen.getByRole("checkbox", { name: "Docs" }));

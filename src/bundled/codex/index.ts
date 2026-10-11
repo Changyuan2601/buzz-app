@@ -3,7 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import { defaults, config } from "./config";
 import { CodexRuntime } from "./runtime";
 import { createTabs } from "./tabs";
-export const inject = ["react", "agents2", "host"];
+export const inject = ["react", "agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `codex`, and file uploads run `base64`,
   // which stock Windows lacks; no unusable type elsewhere.
@@ -14,23 +14,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const runtime = new CodexRuntime(start, ctx.agents2.relay);
+  const runtime = new CodexRuntime(start, ctx.agents.relay);
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
   // Agents that stop running stop their turns, and the last one stops the
   // server; switching communities or a reconnect does not.
   const sync = () => {
-    const snapshot = ctx.agents2.snapshot();
+    const snapshot = ctx.agents.snapshot();
     if (snapshot.status === "loading") return;
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
-  const offAgents = ctx.agents2.subscribe(sync);
+  const offAgents = ctx.agents.subscribe(sync);
   sync();
   ctx.effect(() => () => {
     offAgents();
     runtime.dispose();
   });
   const { CodexTab, SettingsTab } = createTabs(ctx.react, start, runtime);
-  ctx.agents2.register({
+  ctx.agents.register({
     id: "codex",
     title: "Codex",
     description:

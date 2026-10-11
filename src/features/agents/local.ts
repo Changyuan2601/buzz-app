@@ -1,5 +1,5 @@
 /** One agent this machine keeps, in any community. Names never grant control;
- * Agents2 owns its key and runtime. */
+ * Agents owns its key and runtime. */
 export type LocalAgent = Readonly<{
   pubkey: string;
   name: string;
@@ -22,7 +22,7 @@ const unavailable: LocalAgentsSnapshot = Object.freeze({
   agents: Object.freeze([]),
 });
 
-/** Names and mentions are composed before Agents2 exists; this lets them
+/** Names and mentions are composed before Agents exists; this lets them
  * follow its list once `bind` connects it. */
 export function createLocalAgents() {
   let source: LocalAgents | undefined;

@@ -1,6 +1,6 @@
 import type * as ReactModule from "react";
 import type { ReactNode } from "react";
-import type { AgentViewProps } from "../../features/agents2/service";
+import type { AgentViewProps } from "../../features/agents/service";
 import {
   config,
   effortName,

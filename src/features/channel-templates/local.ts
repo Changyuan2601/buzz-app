@@ -1,4 +1,4 @@
-// The owner's channel templates on this device: a name, the Agents2 teams a
+// The owner's channel templates on this device: a name, the Agents teams a
 // new channel starts with, and its starting Canvas. Creating a channel from
 // one sends ordinary channel setup, so the session owns applying it.
 import { useSyncExternalStore } from "react";
@@ -7,7 +7,7 @@ import { CANVAS_BYTES } from "./model";
 export type ChannelTemplate = Readonly<{
   id: string;
   name: string;
-  /** Agents2 team ids. A team deleted since is skipped. */
+  /** Agents team ids. A team deleted since is skipped. */
   teams: readonly string[];
   canvas: string;
 }>;

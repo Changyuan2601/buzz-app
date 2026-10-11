@@ -10,7 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
-import type { Agents2 } from "../../features/agents2/service";
+import type { Agents } from "../../features/agents/service";
 import { channelTemplates } from "../../features/channel-templates/local";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 
@@ -859,10 +859,10 @@ it("starts a channel from a template with its teams' agents here and its Canvas"
       { id: "t2", name: "Docs", instructions: "", members: [bo, ada] },
     ],
   };
-  const agents2 = {
+  const agents = {
     snapshot: () => snapshot,
     subscribe: () => () => {},
-  } as unknown as Agents2;
+  } as unknown as Agents;
   channelTemplates.save({
     name: "Launch",
     teams: ["t1", "t2", "gone"],
@@ -872,7 +872,7 @@ it("starts a channel from a template with its teams' agents here and its Canvas"
   render(
     <CreateChannelDialog
       {...setupProps()}
-      agents2={agents2}
+      agents={agents}
       open
       onOpenChange={() => {}}
       onCreate={onCreate}

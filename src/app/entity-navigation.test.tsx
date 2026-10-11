@@ -34,8 +34,8 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/projects"),
     },
     {
-      manifest: { id: "buzz.agents2", name: "Agents2", apiVersion: 1 },
-      module: await import("../bundled/agents2"),
+      manifest: { id: "buzz.agents", name: "Agents", apiVersion: 1 },
+      module: await import("../bundled/agents"),
     },
     {
       manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
@@ -215,7 +215,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie", "Projects", "Agents2"]),
+    ).toEqual(["Inbox", "Bestie", "Projects", "Agents"]),
   );
 
   // The fixture page is active and searchable but never a sidebar row.
@@ -223,7 +223,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
     "fixture.notes/notes",
   );
 
-  await act(() => current.plugins.change("disable", "buzz.agents2"));
+  await act(() => current.plugins.change("disable", "buzz.agents"));
   await waitFor(() =>
     expect(
       within(screen.getByRole("navigation", { name: "Pages" }))
@@ -238,7 +238,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
     within(search).getByRole("option", { name: "Fixture notes" }),
   ).toBeInTheDocument();
   expect(
-    within(search).queryByRole("option", { name: "Agents2" }),
+    within(search).queryByRole("option", { name: "Agents" }),
   ).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
 

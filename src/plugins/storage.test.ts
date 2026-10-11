@@ -116,3 +116,33 @@ it.each([true, undefined])(
     });
   },
 );
+
+it("keeps the Agents switch under its Agents2 key and ignores v1's", async () => {
+  const agents = (): PluginInfo[] =>
+    catalog()
+      .slice(0, 1)
+      .map((plugin) => ({
+        ...plugin,
+        manifest: { id: "buzz.agents", name: "Agents", apiVersion: 1 },
+      }));
+  const values = new Map([
+    [
+      "buzzodz.plugins.v1",
+      JSON.stringify({ version: 2, enabled: { "buzz.agents": false } }),
+    ],
+  ]);
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  const installation = createPluginStorage(agents);
+  expect(await installation.getCatalog()).toMatchObject({
+    catalog: { plugins: [{ enabled: true }] },
+  });
+  expect(
+    await installation.changePlugin("disable", "buzz.agents"),
+  ).toMatchObject({ catalog: { plugins: [{ enabled: false }] } });
+  expect(JSON.parse(values.get("buzzodz.plugins.v1") ?? "").enabled).toEqual({
+    "buzz.agents2": false,
+  });
+});

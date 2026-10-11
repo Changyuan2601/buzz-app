@@ -13,7 +13,7 @@ export const inject = [
   "conversation",
   "navigation",
   "settingsCards",
-  "agents2",
+  "agents",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerCompletion({
@@ -27,7 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const panels = ctx.panels;
   const pages = ctx.pages;
   const navigator = ctx.navigation;
-  const agents2 = ctx.agents2;
+  const agents = ctx.agents;
   ctx.settingsCards.register({
     id: "groups",
     title: "Personal groups",
@@ -41,7 +41,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Channel templates",
     icon: CopyIcon,
     component: ({ active }) => (
-      <ChannelTemplateSettings agents2={agents2} active={active} />
+      <ChannelTemplateSettings agents={agents} active={active} />
     ),
   });
   ctx.pages.register({
@@ -62,7 +62,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         panels={panels}
         pages={pages}
         companion={companion}
-        agents2={agents2}
+        agents={agents}
       />
     ),
   });

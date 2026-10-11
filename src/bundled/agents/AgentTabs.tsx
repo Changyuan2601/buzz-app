@@ -1,16 +1,16 @@
 import { useState } from "react";
-import type { ChannelChoice } from "../../features/agents2/attention";
+import type { ChannelChoice } from "../../features/agents/attention";
 import type {
   Agent,
-  Agents2,
+  Agents,
   RegisteredAgentType,
-} from "../../features/agents2/service";
-import { agentSections } from "../../features/agents2/tabs";
+} from "../../features/agents/service";
+import { agentSections } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 
 /** An agent's sections as tabs, opening on the first. */
 export function AgentTabs(props: {
-  agents2: Agents2;
+  agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];

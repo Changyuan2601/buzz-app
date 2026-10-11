@@ -1,4 +1,4 @@
-// Turns Agents2 deliveries into Claude turns. Each agent of this type has its
+// Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation. The run returns once the turn is handed over,
 // so one agent works in several conversations at once. Claude acts in Buzz with
@@ -13,7 +13,7 @@ import {
   type Delivery,
   type Effort,
   type Models,
-} from "../../features/agents2/service";
+} from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
