@@ -1,4 +1,5 @@
-//! Private storage directory used by credential locking.
+//! Private storage directory used by credential locking, which only macOS
+//! (and tests) compile.
 use crate::Result;
 use std::path::Path;
 

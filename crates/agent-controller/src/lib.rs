@@ -2,6 +2,7 @@
 //! Plugin runtimes own execution; this crate does not launch agent processes.
 mod app_agent;
 mod config;
+#[cfg(any(target_os = "macos", test))]
 mod connection;
 mod create;
 mod credentials;
