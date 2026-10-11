@@ -11,8 +11,6 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
-import type { TemplateProviders } from "../../features/channel-templates/provider";
-import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
@@ -85,7 +83,6 @@ import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
-  providers,
   extensions,
   relay,
   panels,
@@ -94,7 +91,6 @@ export function ChannelsPage({
   navigation,
   navigator,
 }: {
-  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
@@ -138,7 +134,6 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
-          providers={providers}
           extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
@@ -158,7 +153,6 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
-  providers,
   extensions,
   queries,
   cached,
@@ -170,7 +164,6 @@ function ChannelWorkspace({
   navigator,
   viewer,
 }: {
-  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
   scope: string;
@@ -192,12 +185,6 @@ function ChannelWorkspace({
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
   );
-  const templateProviders = useSyncExternalStore(
-    providers.subscribe,
-    providers.snapshot,
-  );
-  const templateProvider =
-    templateProviders.length === 1 ? templateProviders[0] : undefined;
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
     // Start the optional catalog afterward so opening Messages cannot strand it.
@@ -1086,24 +1073,6 @@ function ChannelWorkspace({
       setupTools={
         current && (
           <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            {templateProvider && (
-              <OwnedContribution
-                key={`template:${current.id}`}
-                entry={templateProvider}
-                registry={providers}
-              >
-                {(entry, active) => {
-                  const SaveAs = entry.saveAs;
-                  return (
-                    <SaveAs
-                      session={queries}
-                      channel={current}
-                      active={active}
-                    />
-                  );
-                }}
-              </OwnedContribution>
-            )}
             {personal && (
               <Select
                 label="Personal group"
@@ -1286,8 +1255,6 @@ function ChannelWorkspace({
                       channel={current}
                       session={queries}
                       origin={navigation?.signal}
-                      providers={providers}
-                      templateProvider={templateProvider}
                       trigger={settingsTrigger}
                       openDetails={() => {
                         drawer.close();
@@ -1348,8 +1315,6 @@ function ChannelWorkspace({
                         channel={current}
                         session={queries}
                         origin={navigation?.signal}
-                        providers={providers}
-                        templateProvider={templateProvider}
                         trigger={settingsTrigger}
                         openDetails={() => {
                           drawer.close();

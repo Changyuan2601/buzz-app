@@ -185,14 +185,14 @@ outside the parent menu trigger, as do child-session rows.
 
 Sidebar create-channel dialogs stay available on other pages. Channel admission
 (creation plus verified viewer membership) is fenced to the originating relay
-session and navigates to a normal conversation destination. Remaining template
-setup continues in that session; failure produces a dismissible notice without
+session and navigates to a normal conversation destination. Remaining setup from a
+receipt saved by an earlier build continues in that session; failure produces a dismissible notice without
 navigating again. Frozen setup receipts and delivery evidence remain saved, but
-there is no template Resume or automatic startup continuation. An uncertain
+there is no setup Resume or automatic startup continuation. An uncertain
 admission keeps the original form locked to its channel identity. **Retry channel**
 checks that creation first; if delivery remains unknown, an explicit click may
 republish only the exact saved Create event, with the same UUID and signature.
-It never continues template writes or retries in the background. Successful recovery opens that channel and reports
+It never continues setup writes or retries in the background. Successful recovery opens that channel and reports
 any unfinished setup for manual inspection. Closing/reopening retains the attempt;
 after session replacement, unresolved ordinary creations (including pre-upgrade
 Outbox entries) restore for the same identity-preserving retry. Already-admitted partial
@@ -339,8 +339,7 @@ and modeled upstream I/O; it does not send messages to a live community.
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
 (non-compact) menu. **View channel details** is first and opens or focuses the existing
 Channel Settings tab; selecting it again never closes the pane. Editing is available
-from that pane, not directly from the menu. **View canvas**, an optional provider-supplied **Save as template…** (none is bundled now) and
-**New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
+from that pane, not directly from the menu. **View canvas**, **New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Move replaces the redundant Personal group shortcut. Permission-gated lifecycle
 actions follow in **Leave → Archive → Delete** order, with Delete in the shared
@@ -349,7 +348,7 @@ action; their permissions are not inferred from stream channels. Members retains
 Session headings are unchanged. Header moves and dialog cancellation return focus
 to the ellipsis, while session creation hands focus to its composer. Read-only, cached, archived and DM eligibility stays
 with the existing capabilities. Opening the menu reads permissions, never publishes
-a lifecycle command. Menu Escape/outside dismissal returns to the header; Canvas, template
+a lifecycle command. Menu Escape/outside dismissal returns to the header; Canvas
 and lifecycle confirmation cancellation also return there. Dialog owners outlive menu dismissal,
 while channel/session navigation retires header-origin dialogs. Canvas is bound to
 its opening channel and visit, so navigation never mounts another channel’s editor.
@@ -365,8 +364,8 @@ a separator only when they resolve and earlier actions exist. Right-click
 and keyboard access reuse the existing row trigger; no ⋮ control or second popup
 is added. Session creation, attention actions and child-session navigation keep
 their existing owners. Session-typed channels in Messages use these same permission-checked
-actions, including the standard header menu and Channel Settings. Existing Canvas,
-template and organization entry points come with that shared menu; the session
+actions, including the standard header menu and Channel Settings. Existing Canvas
+and organization entry points come with that shared menu; the session
 transcript layout, Share behavior and recipient rules do not change. Move/Star/grouping
 controls share this popup with independent eligibility; lifecycle actions do not
 change shared-menu styling.
@@ -594,15 +593,14 @@ workflow.
 
 Both forms show Description immediately; Create opens with Name focused and keeps
 Description optional. The workflows intentionally remain distinct: Create owns
-template setup plus frozen creation retry; Edit shows the
+frozen creation retry; Edit shows the
 saved description, retains custom durations, and owns authority/conflict checks,
 Save/Cancel and check-only uncertainty recovery. Create still trims optional
 Description on submission; Edit preserves its exact text and can explicitly clear it.
 
 Both dialogs opt into backdrop dismissal and guard Close, Escape and backdrop
 dismissal with an in-dialog discard confirmation when the draft differs. Comparison covers raw
-text, staged privacy and effective duration; Create also compares accepted template
-setup, treating the opening group's automatic default as initial data. Reverting
+text, staged privacy and effective duration. Reverting
 all fields removes the warning. Pending operations still block dismissal, and
 frozen/uncertain requests remain owned by recovery rather than being offered for
 discard. Returning from a discard confirmation focuses Name and retains the draft.
@@ -612,11 +610,11 @@ that destination for the draft and titles the modal **Create a channel in [icon]
 [group name]**, reusing the sidebar's decorative Unicode/custom-emoji renderer.
 Opening from the general Channels section stays ungrouped and uses **Create a
 channel**. Group placement remains managed through the left-nav Move action.
-Group template defaults and frozen retry input remain unchanged; unavailable groups
+Frozen retry input remains unchanged; unavailable groups
 block a new create rather than silently falling back to a different destination.
 
 Create's session and existing creation helper also use `canonicalDetailsName`,
-including template preflight and ordinary recovery matching. New frozen intent and
+including ordinary recovery matching. New frozen intent and
 signed names retain the relay's Unicode rules: trim Unicode White_Space and leading
 hashes, preserve U+FEFF, then enforce the code-point limit. This is cleanup, not a
 new invisible-character policy. Recovery derives its comparison name without
@@ -640,7 +638,7 @@ this community can view the channel's full history. Continue
 only stages the choice; Create channel or Save changes still performs the write. Cancel/Escape or
 the confirmation's Close control leaves the switch unchanged and returns to the
 intact form with focus on the switch. All other draft fields—including Create's
-selected destination and accepted template setup—survive either path. The consequence
+selected destination—survive either path. The consequence
 is shown once in the confirmation body, connected as the dialog's accessible description.
 **Don’t show me this again** is saved only on **Continue** and skips both public and
 private warnings. It is a device-local preference shared by Create and Edit for the

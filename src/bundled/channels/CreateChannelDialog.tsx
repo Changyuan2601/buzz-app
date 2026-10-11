@@ -1,23 +1,12 @@
-import {
-  emptyLineup,
-  parseLineup,
-  type Groups,
-  type Group,
-} from "../../features/channel-templates/model";
-import type {
-  TemplateDraft,
-  TemplateProviders,
-} from "../../features/channel-templates/provider";
+import type { Groups, Group } from "../../features/channel-templates/model";
 import type { ChannelCreationInput } from "../../features/channel-templates/setup";
 import type { RelaySession } from "../../features/relay/session";
-import { OwnedContribution } from "../../plugins/OwnedContribution";
 import {
   useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type RefObject,
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -47,24 +36,12 @@ type Props = {
   pending?: CreateChannelInput | undefined;
   finalFocus?: RefObject<HTMLElement | null> | undefined;
   session: RelaySession;
-  providers: TemplateProviders;
   groups: Groups | undefined;
   destinations?: readonly (Pick<Group, "id" | "name"> & { icon?: string })[];
   groupSource?: "legacy";
   initialGroup: string;
   groupsReady: boolean;
 };
-// Error/loading messages are not user edits; only accepted setup belongs to the draft.
-function setupKey(draft: TemplateDraft | undefined) {
-  return JSON.stringify([
-    draft?.templateId ?? "",
-    draft?.lineup.teamIds ?? [],
-    draft?.lineup.agents ?? [],
-    draft?.lineup.canvas ?? "",
-    draft?.agents ?? [],
-  ]);
-}
-
 export function CreateChannelDialog(props: Props) {
   // Each opening owns its callbacks. Closing/reopening cannot revive an old editor.
   return props.open ? <OpenCreateChannelDialog {...props} /> : null;
@@ -76,37 +53,12 @@ function OpenCreateChannelDialog({
   pending,
   finalFocus,
   session,
-  providers,
   groups,
   destinations = groups?.groups ?? [],
   groupSource,
   initialGroup,
   groupsReady,
 }: Props) {
-  const available = useSyncExternalStore(
-    providers.subscribe,
-    providers.snapshot,
-  );
-  const provider = available.length === 1 ? available[0] : undefined;
-  const [initialProvider] = useState(provider);
-  const [initialDefault] = useState(() =>
-    !pending && provider && !groupSource
-      ? (groups?.groups.find((g) => g.id === initialGroup)?.defaultTemplateId ??
-        "")
-      : "",
-  );
-  const [editorGeneration, setEditorGeneration] = useState(0);
-  const [draft, setDraft] = useState<TemplateDraft | undefined>(() =>
-    initialDefault
-      ? {
-          templateId: initialDefault,
-          lineup: emptyLineup(),
-          agents: [],
-          problem: "Group default is awaiting selection.",
-        }
-      : undefined,
-  );
-  const initialSetup = useRef(setupKey(draft));
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const keepEditing = useRef<HTMLButtonElement>(null);
   const previousDiscard = useRef(confirmDiscard);
@@ -141,11 +93,7 @@ function OpenCreateChannelDialog({
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
   const destination = destinations.find((g) => g.id === groupId);
-  const summary =
-    pending?.setup ?? (draft ? { agents: draft.agents, groupId } : undefined);
-  const group = groupSource
-    ? undefined
-    : groups?.groups.find((g) => g.id === groupId);
+  const summary = pending?.setup;
   const editing = useRef(false);
   editing.current = !pending && !busy && !privacyChoice && !confirmDiscard;
   useEffect(() => {
@@ -188,8 +136,7 @@ function OpenCreateChannelDialog({
     (name !== "" ||
       description !== "" ||
       privateChannel ||
-      lifetime !== "ongoing" ||
-      setupKey(draft) !== initialSetup.current);
+      lifetime !== "ongoing");
   const requestClose = () => {
     if (busy) return;
     if (privacyChoice) setPrivacyChoice(undefined);
@@ -214,24 +161,20 @@ function OpenCreateChannelDialog({
             ? "This group is no longer available. Close this dialog and create from another sidebar group or Channels."
             : "Wait for saved sidebar groups to load, then try again.",
         );
-      if (!pending && draft?.problem) throw new Error(draft.problem);
-      const agents = draft?.agents ?? [];
-      const canvas = draft?.lineup.canvas ?? "";
-      const templateId = draft?.templateId ?? "";
       await onCreate(
         pending ?? {
           name: normalizedName,
           visibility: privateChannel ? "private" : "open",
           ...(lifetime === "temporary" ? { ttlSeconds: temporaryTtl } : {}),
           ...(description.trim() ? { description: description.trim() } : {}),
-          ...(templateId || groupId || agents.length || canvas
+          ...(groupId
             ? {
                 setup: {
-                  agents,
-                  canvas,
+                  agents: [],
+                  canvas: "",
                   groupId,
-                  templateId,
-                  ...(groupId && groupSource ? { groupSource } : {}),
+                  templateId: "",
+                  ...(groupSource ? { groupSource } : {}),
                 },
               }
             : {}),
@@ -259,25 +202,6 @@ function OpenCreateChannelDialog({
         {summary.groupId &&
           ` Destination: ${destinations.find((g) => g.id === summary.groupId)?.name ?? "saved group"}.`}
       </p>
-      {!pending && (
-        <>
-          <p>
-            Your selected setup is retained. Restore Templates &amp; teams to
-            edit it, or clear it below.
-          </p>
-          <Button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setEditorGeneration((generation) => generation + 1);
-              setDraft({ templateId: "", lineup: emptyLineup(), agents: [] });
-              setError("");
-            }}
-          >
-            Clear template setup (keep group)
-          </Button>
-        </>
-      )}
     </section>
   );
 
@@ -435,7 +359,7 @@ function OpenCreateChannelDialog({
             <p role="status">
               This attempt may already have created a channel. Retry checks it
               first and, if unconfirmed, resends only the same creation request.
-              It will not create another channel or continue template setup.
+              It will not create another channel or continue its setup.
             </p>
           )}
           <fieldset
@@ -463,90 +387,6 @@ function OpenCreateChannelDialog({
                 setError("");
               }}
             />
-            {!pending && provider && (
-              <OwnedContribution
-                key={editorGeneration}
-                entry={provider}
-                registry={providers}
-                fallback={
-                  <>
-                    <p role="alert">Template controls could not open.</p>
-                    {recoverySummary}
-                  </>
-                }
-              >
-                {(entry, active) => {
-                  const Editor = entry.editor;
-                  return (
-                    <Editor
-                      session={session}
-                      value={draft}
-                      initialDefault={
-                        editorGeneration === 0 && provider === initialProvider
-                          ? initialDefault
-                          : ""
-                      }
-                      group={group}
-                      active={() =>
-                        active() &&
-                        mounted.current &&
-                        editing.current &&
-                        !session.channelCreation.snapshot()
-                      }
-                      onChange={(value) => {
-                        if (
-                          !active() ||
-                          !mounted.current ||
-                          !editing.current ||
-                          session.channelCreation.snapshot()
-                        )
-                          return;
-                        try {
-                          const lineup = parseLineup(value.lineup);
-                          const resolved = parseLineup({
-                            teamIds: [],
-                            agents: value.agents,
-                            canvas: lineup.canvas,
-                          });
-                          if (
-                            typeof value.templateId !== "string" ||
-                            (value.templateId &&
-                              !/^[a-zA-Z0-9_-]{1,128}$/.test(value.templateId))
-                          )
-                            throw new Error("Invalid template selection");
-                          const next = {
-                            templateId: value.templateId,
-                            lineup,
-                            agents: resolved.agents,
-                            problem: value.problem
-                              ? String(value.problem)
-                              : undefined,
-                          };
-                          // Loading the opening group's default is initialization,
-                          // not a user edit. Later selections compare with it.
-                          if (
-                            draft?.problem ===
-                              "Group default is awaiting selection." &&
-                            value.templateId === initialDefault &&
-                            editorGeneration === 0
-                          )
-                            initialSetup.current = setupKey(next);
-                          setDraft(next);
-                        } catch (reason) {
-                          setError(String(reason));
-                        }
-                      }}
-                    />
-                  );
-                }}
-              </OwnedContribution>
-            )}
-            {!pending && !provider && group?.defaultTemplateId && !draft && (
-              <p className="text-secondary">
-                Templates &amp; teams is off. This channel will not use the
-                group’s saved template default.
-              </p>
-            )}
             <ChannelDurationField
               temporary={lifetime === "temporary"}
               ttlSeconds={temporaryTtl}
@@ -559,8 +399,7 @@ function OpenCreateChannelDialog({
               }}
             />
           </fieldset>
-          {!pending && draft?.problem && <p role="alert">{draft.problem}</p>}
-          {(pending || !provider) && recoverySummary}
+          {recoverySummary}
           {error && (
             <p role="alert" className={styles.error}>
               {error}

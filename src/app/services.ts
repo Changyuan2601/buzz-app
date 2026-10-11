@@ -4,7 +4,6 @@ import {
   nativeIdentityEnabled,
 } from "../features/identity/service";
 import { SettingsCardsService } from "../features/settings/service";
-import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
 import { HostService } from "../features/host/service";
@@ -55,7 +54,6 @@ export function createServices() {
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
-  const channelTemplates = new TemplateProvidersService(ctx);
   const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;
   const communities = createCommunities(
@@ -116,7 +114,6 @@ export function createServices() {
     shortcutBindings,
     conversation,
     settingsCards,
-    channelTemplates,
     pages,
     panels,
     plugins,

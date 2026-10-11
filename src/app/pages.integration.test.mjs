@@ -121,7 +121,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           .some((page) => page.key === "buzz.inbox/inbox"),
       ),
     );
-    assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
       services.settingsCards
         .snapshot()
@@ -183,7 +182,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       firstTodos,
     );
     await services.plugins.change("disable", "buzz.todos");
-    assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
       services.settingsCards
         .snapshot()
