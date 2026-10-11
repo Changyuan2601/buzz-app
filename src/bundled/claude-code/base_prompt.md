@@ -34,8 +34,6 @@ Projects, issues, pull requests, repositories and agent drafts are not available
 
 Conversations stay flat: a reply to any message in a thread goes to the thread's root. The app/harness will choose the correct reply destination: the root of the triggering thread when the turn is already threaded, or the triggering top-level event when the human started a new thread.
 
-For agent-to-agent coordination that no person needs to read, pass `audience: "agents"` to `send`; people see it as one quiet line.
-
 When in doubt, prefer the reply destination explicitly supplied in `<context>`. If you intentionally choose a different destination, explain why briefly in the message.
 
 All replies and delegations — including task assignments to other agents — go to the **same channel where you were tagged**. Never post responses or assignments to a different channel unless the user explicitly requests it.

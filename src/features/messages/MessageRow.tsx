@@ -956,40 +956,54 @@ function AgentsMessageRow(props: MessageRowProps) {
     </span>
   );
   return (
-    <div className={styles.audienceRow} data-audience="agents">
+    <div
+      className={styles.audienceRow}
+      data-audience="agents"
+      data-open={open || undefined}
+    >
       {props.day && <DayDivider createdAt={row.createdAt} />}
-      <button
-        type="button"
-        data-buzz-ui=""
-        className={styles.audienceLine}
-        // Collapsed, the line stands in for the message as a scroll anchor.
-        data-message-id={open ? undefined : row.id}
-        aria-expanded={open}
-        aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
-        onClick={() => setOpen(!open)}
-      >
-        {avatar(author)}
-        {to.length > 0 && (
-          <>
-            <ArrowRightIcon
-              size={12}
-              aria-hidden="true"
-              className={styles.audienceArrow}
+      {/* Open, the message starts beside its addresses and the whole entry
+          stays highlighted, so it reads as one box that folds back. */}
+      <div className={styles.audienceEntry}>
+        <button
+          type="button"
+          data-buzz-ui=""
+          className={styles.audienceLine}
+          // Collapsed, the line stands in for the message as a scroll anchor.
+          data-message-id={open ? undefined : row.id}
+          aria-expanded={open}
+          aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
+          onClick={() => setOpen(!open)}
+        >
+          {avatar(author)}
+          {to.length > 0 && (
+            <>
+              <ArrowRightIcon
+                size={12}
+                aria-hidden="true"
+                className={styles.audienceArrow}
+              />
+              {to.map(avatar)}
+            </>
+          )}
+          {!open && (
+            <>
+              <span className={styles.audiencePreview}>{preview}</span>
+              <MessageTimestamp createdAt={row.createdAt} />
+            </>
+          )}
+        </button>
+        {open && (
+          <div className={styles.audienceBody}>
+            <FullMessageRow
+              {...props}
+              shownRow={body}
+              day={false}
+              layout="continuation"
             />
-            {to.map(avatar)}
-          </>
+          </div>
         )}
-        <span className={styles.audiencePreview}>{open ? "" : preview}</span>
-        <MessageTimestamp createdAt={row.createdAt} />
-      </button>
-      {open && (
-        <FullMessageRow
-          {...props}
-          shownRow={body}
-          day={false}
-          layout="continuation"
-        />
-      )}
+      </div>
     </div>
   );
 }
