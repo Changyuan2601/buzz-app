@@ -2,7 +2,7 @@ import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 test.use({ productionBroker: true, readState: true });
 
-test("profile snapshot and same-socket renewal coexist with real chat while optional response is held", async ({
+test("presence snapshot and same-socket renewal coexist with real chat while optional response is held", async ({
   page,
   app,
 }) => {
@@ -15,20 +15,8 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
   ).toHaveCount(0);
   await settle(page);
   try {
-    await page
-      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
-      .first()
-      .click();
-    const profile = page.getByRole("region", { name: "Profile details" });
-    await expect(profile).toBeVisible();
-    await expect(
-      profile.getByRole("img", { name: "Alice Fixture avatar", exact: true }),
-    ).toBeVisible();
-    await expect(profile.locator(".buzz-avatar-status")).not.toHaveAttribute(
-      "data-status",
-    );
-    // Narrowing the timeline for the profile can demand an older page. This
-    // fixture deliberately holds those pages; retire that foreground work first.
+    // The account button reads the viewer's own presence. Retire any held
+    // foreground page first so only that optional read stays pending.
     await expect
       .poll(() => {
         for (const pending of app.pending.splice(0)) pending.release();
@@ -67,19 +55,12 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     expect(
       app.report.presenceSnapshots.some((snapshot) => snapshot.pending),
     ).toBe(true);
-    await expect(profile.getByText(/^(Active|Away|Offline)$/)).toHaveCount(0);
     app.relay.releasePresence();
-    await expect(profile.getByText("Active", { exact: true })).toBeVisible();
-    await expect(
-      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
-    ).toBeVisible();
-    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
-      "data-status",
-      "online",
-    );
-    await expect(profile.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
+    await expect
+      .poll(() =>
+        app.report.presenceSnapshots.every((snapshot) => !snapshot.pending),
+      )
+      .toBe(true);
     // Startup may skip busy setup. Keep real time: advancing only browser time
     // would expire its SSE heartbeat without advancing the broker's keepalive.
     await expect
@@ -95,15 +76,12 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
         ),
       ),
     ).toBe(true);
-    await profile.screenshot({
-      path: test.info().outputPath("presence-profile.png"),
-    });
   } finally {
     app.relay.releasePresence();
   }
 });
 
-test("foreground send and cold channel entry remain available during a profile snapshot", async ({
+test("foreground send and cold channel entry remain available during a presence snapshot", async ({
   page,
   app,
 }) => {
@@ -122,12 +100,6 @@ test("foreground send and cold channel entry remain available during a profile s
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
   await settle(page);
   try {
-    await page
-      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
-      .first()
-      .click();
-    const profile = page.getByRole("region", { name: "Profile details" });
-    await expect(profile).toBeVisible();
     await expect
       .poll(() => {
         for (const pending of app.pending.splice(0)) pending.release();
@@ -209,8 +181,6 @@ test("foreground send and cold channel entry remain available during a profile s
       app.histories.get("primary/beta").map(({ id }) => id),
     );
     expect(betaHeads().length).toBeGreaterThan(0);
-    // Closing the contextual profile may abort optional work; do not require
-    // an unnecessary snapshot to survive navigation just to satisfy this test.
     app.report.measurements.push({
       sendMs,
       coldVisibleMs: visibleMs,
@@ -224,10 +194,7 @@ test("foreground send and cold channel entry remain available during a profile s
 
 test.describe("human message bylines omit presence", () => {
   test.use({ threadUnread: true, historyCounts: { alpha: 2, beta: 1 } });
-  test("timeline and thread omit badges while the profile retains presence", async ({
-    page,
-    app,
-  }) => {
+  test("timeline and thread omit badges", async ({ page, app }) => {
     await open(page, app);
     await settle(page);
     const timeline = page.locator("[data-channel-timeline]");
@@ -247,53 +214,14 @@ test.describe("human message bylines omit presence", () => {
     ).toBeVisible();
     await expect(
       timeline
-        .getByRole("button", { name: "View Alice Fixture profile" })
-        .first()
-        .locator(".buzz-avatar-status"),
+        .locator(`[data-message-id="${root.id}"] .buzz-avatar-status`)
+        .first(),
     ).not.toHaveAttribute("data-status");
     await expect(
       thread
-        .getByRole("button", { name: "View Alice Fixture profile" })
-        .first()
-        .locator(".buzz-avatar-status"),
+        .locator(`[data-message-id="${root.id}"] .buzz-avatar-status`)
+        .first(),
     ).not.toHaveAttribute("data-status");
-    await thread
-      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
-      .first()
-      .click();
-    const profile = page.getByRole("region", { name: "Profile details" });
-    // Human bylines do not demand presence; opening the profile starts that read.
-    await expect(
-      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
-    ).toBeVisible();
-    await expect(profile.getByText("Active", { exact: true })).toBeVisible();
-    app.presence("away");
-    await expect(profile.getByText("Away", { exact: true })).toBeVisible();
-    await expect(
-      profile.getByRole("img", { name: "Alice Fixture avatar, away" }),
-    ).toBeVisible();
-    expect(
-      app.report.presenceSnapshots.some((snapshot) =>
-        snapshot.filter.authors.includes(root.pubkey),
-      ),
-    ).toBe(true);
-    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
-      "data-status",
-      "away",
-    );
-    await expect(profile.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    expect(
-      app.relay.requests.some(({ filters }) =>
-        filters.some(
-          (filter) =>
-            filter.kinds.includes(20001) &&
-            filter.limit === 0 &&
-            filter.authors.length <= 256,
-        ),
-      ),
-    ).toBe(true);
   });
 });
 
@@ -393,20 +321,10 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
       .poll(() => app.report.unreadHolds.some((hold) => hold.pending))
       .toBe(true);
     await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
-    await page
-      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
-      .first()
-      .click();
     snapshotStart.resolve(); // Begin broker dispatch only after ordinary HTTP is held.
     await expect
       .poll(() => receipts.some(({ accepted }) => accepted === true))
       .toBe(true);
-    await expect(
-      page
-        .getByRole("region", { name: "Profile details" })
-        .getByRole("img", { name: "Alice Fixture avatar, online" })
-        .first(),
-    ).toBeVisible();
     expect(app.report.unreadHolds.some((hold) => hold.pending)).toBe(true);
     expect(
       app.report.wireFrames.some(

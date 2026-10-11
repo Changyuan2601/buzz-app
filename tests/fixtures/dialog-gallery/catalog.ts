@@ -60,15 +60,6 @@ export const dialogs = [
     note: "Try wss://relay.example.test, then Continue through access and profile. Requests and publication are simulated locally.",
   },
   {
-    id: "edit",
-    name: "Edit agent",
-    group: "Agent dialogs",
-    path: "Agents → agent actions → Edit",
-    source: "src/bundled/agents/AgentEditor.tsx",
-    frame: "Local Base UI frame",
-    note: "Single-column editor with shared Runtime and Technical details disclosures. Local fixture changes reset on reopening.",
-  },
-  {
     id: "channel",
     name: "Change workflow channel",
     group: "Workflow confirmations",

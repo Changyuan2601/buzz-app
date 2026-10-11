@@ -239,19 +239,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
 
     const { npubEncode } = await import("nostr-tools/nip19");
-    const profileTarget = `nostr:${npubEncode("ab".repeat(32))}`;
+    // No bundled plugin claims profiles; profile links stay inert.
     assert.equal(
-      services.panels.resolve(profileTarget)?.pluginId,
-      "buzz.profiles",
-    );
-    await services.plugins.change("disable", "buzz.profiles");
-    assert.equal(services.panels.resolve(profileTarget), undefined);
-    await services.plugins.change("enable", "buzz.profiles");
-    await vi.waitFor(() =>
-      assert.equal(
-        services.panels.resolve(profileTarget)?.pluginId,
-        "buzz.profiles",
-      ),
+      services.panels.resolve(`nostr:${npubEncode("ab".repeat(32))}`),
+      undefined,
     );
 
     const usage = services.panels

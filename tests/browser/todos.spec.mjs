@@ -291,14 +291,6 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     );
   };
   await expectToolDraft();
-  await row
-    .getByRole("button", { name: /View .* profile/ })
-    .first()
-    .click();
-  await expect(
-    workspace.getByRole("complementary", { name: "Profile", exact: true }),
-  ).toBeVisible();
-  await expectToolDraft();
   await sidebar
     .getByRole("button", { name: "New message", exact: true })
     .click();

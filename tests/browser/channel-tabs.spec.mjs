@@ -72,27 +72,6 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(
     workspace.getByRole("tab", { name: "New tab", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  // An independent account companion must not hold the channel-pane toggle open.
-  await split.click();
-  await expect(workspace).toBeHidden();
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "View your profile" }).click();
-  const account = page.getByRole("complementary", {
-    name: "Profile",
-    exact: true,
-  });
-  await expect(account).toBeVisible();
-  await expect(workspace).toBeHidden();
-  await expect(split).toHaveAttribute("aria-expanded", "false");
-  await split.click();
-  await expect(split).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    workspace.getByRole("tab", { name: "New tab", exact: true }),
-  ).toBeVisible();
-  await expect(account).toBeVisible();
-  await account
-    .getByRole("button", { name: "Close Profile panel", exact: true })
-    .click();
   await workspace
     .getByRole("button", { name: "Close New tab tab", exact: true })
     .click();

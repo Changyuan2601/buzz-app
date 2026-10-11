@@ -134,7 +134,6 @@ test("thread actions and growing reactions paint beyond the scroller without mov
 test("timeline actions escape the top edge, track scrolling and preserve keyboard order", async ({
   page,
   app,
-  browserName,
 }) => {
   const target = app.append(
     "primary",
@@ -160,18 +159,6 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
   });
   await row.scrollIntoViewIfNeeded();
   await settle(page, scroller);
-  if (browserName === "chromium") {
-    await page.mouse.move(0, 0);
-    const avatar = row
-      .getByRole("button", { name: /^View .* profile$/ })
-      .first();
-    await avatar.focus();
-    await shown(actions);
-    await page.keyboard.press("Tab");
-    await expect(actions.getByRole("button").first()).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
-    await expect(avatar).toBeFocused();
-  }
   await actions.evaluate((bar) => {
     const scroller = bar.closest("[data-message-scroller]");
     scroller.scrollTop +=

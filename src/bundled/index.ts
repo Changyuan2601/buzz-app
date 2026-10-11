@@ -16,8 +16,6 @@ import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
 import terminalManifest from "./terminal/manifest.json";
 import * as terminal from "./terminal";
-import profilesManifest from "./profiles/manifest.json";
-import * as profiles from "./profiles";
 import mentionsManifest from "./mentions/manifest.json";
 import * as mentions from "./mentions";
 import emojiManifest from "./emoji/manifest.json";
@@ -105,11 +103,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...terminalManifest, apiVersion: 1 },
     module: terminal,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...profilesManifest, apiVersion: 1 },
-    module: profiles,
     enabledByDefault: true,
   },
   {
