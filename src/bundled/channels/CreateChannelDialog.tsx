@@ -7,7 +7,7 @@ import {
   useChannelTemplates,
 } from "../../features/channel-templates/local";
 import { Select } from "../../shared/design-system/ui/Select";
-import { useAgents2 } from "./ChannelTemplateSettings";
+import { useAgents2Snapshot } from "../../features/agents2/react";
 import {
   useEffect,
   useId,
@@ -103,9 +103,11 @@ function OpenCreateChannelDialog({
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
   const templates = useChannelTemplates();
-  const agentsSnapshot = useAgents2(agents2);
-  const [templateId, setTemplateId] = useState("");
-  const template = templates.find((item) => item.id === templateId);
+  const agentsSnapshot = useAgents2Snapshot(agents2);
+  const [chosenTemplate, setTemplateId] = useState("");
+  // A template deleted meanwhile, here or in another window, is no choice.
+  const template = templates.find((item) => item.id === chosenTemplate);
+  const templateId = template?.id ?? "";
   // The team members that are the owner's agents in this community.
   const agentNames = new Map(
     (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
@@ -206,13 +208,13 @@ function OpenCreateChannelDialog({
           visibility: privateChannel ? "private" : "open",
           ...(lifetime === "temporary" ? { ttlSeconds: temporaryTtl } : {}),
           ...(description.trim() ? { description: description.trim() } : {}),
-          ...(groupId || templateSetup
+          ...(groupId || templateSetup?.agents.length || templateSetup?.canvas
             ? {
                 setup: {
                   agents: templateSetup?.agents ?? [],
                   canvas: templateSetup?.canvas ?? "",
                   groupId,
-                  templateId: template?.id ?? "",
+                  templateId,
                   ...(groupId && groupSource ? { groupSource } : {}),
                 },
               }

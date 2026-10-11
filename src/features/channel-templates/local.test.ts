@@ -40,6 +40,9 @@ it("rejects an unnamed template, an unknown id and an oversized Canvas", () => {
     }),
   ).toThrow("Canvas is too large");
   expect(channelTemplates.snapshot()).toEqual([]);
+  expect(
+    channelTemplates.save({ name: "Blank", teams: [], canvas: " \n " }).canvas,
+  ).toBe("");
 });
 
 it("reads what another window saved and skips what is not a template", () => {

@@ -82,7 +82,7 @@ export const channelTemplates = {
       id: id ?? crypto.randomUUID(),
       name: name.trim(),
       teams: Object.freeze([...new Set(teams)]),
-      canvas,
+      canvas: canvas.trim() ? canvas : "",
     });
     write(
       id

@@ -911,3 +911,32 @@ it("offers no template choice without saved templates", () => {
     screen.queryByRole("combobox", { name: "Template" }),
   ).not.toBeInTheDocument();
 });
+
+it("creates a plain channel from a template that adds nothing here", async () => {
+  const user = userEvent.setup();
+  channelTemplates.save({ name: "Empty", teams: ["gone"], canvas: "  " });
+  const onCreate = vi.fn(async () => {});
+  render(
+    <CreateChannelDialog
+      {...setupProps()}
+      open
+      onOpenChange={() => {}}
+      onCreate={onCreate}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "plain");
+  await user.click(screen.getByRole("combobox", { name: "Template" }));
+  await user.click(await screen.findByRole("option", { name: "Empty" }));
+  expect(
+    screen.getByText(
+      "None of its agents are in this community, and it has no Canvas.",
+    ),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Create channel" }));
+  await waitFor(() =>
+    expect(onCreate).toHaveBeenCalledWith({
+      name: "plain",
+      visibility: "open",
+    }),
+  );
+});

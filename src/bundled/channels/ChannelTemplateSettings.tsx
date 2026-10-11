@@ -1,4 +1,5 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
+import { useTeams } from "../../features/agents2/react";
 import type { Agents2, Team } from "../../features/agents2/service";
 import {
   channelTemplates,
@@ -18,18 +19,6 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTemplates.module.css";
 
-const noAgents2 = () => () => {};
-const noSnapshot = () => undefined;
-
-/** Agents2's snapshot, or undefined without it. */
-export function useAgents2(agents2: Agents2 | undefined) {
-  return useSyncExternalStore(
-    agents2?.subscribe ?? noAgents2,
-    agents2?.snapshot ?? noSnapshot,
-    agents2?.snapshot ?? noSnapshot,
-  );
-}
-
 /** Templates a new channel can start from: its teams and its Canvas. */
 export function ChannelTemplateSettings({
   agents2,
@@ -39,7 +28,7 @@ export function ChannelTemplateSettings({
   active(): boolean;
 }) {
   const templates = useChannelTemplates();
-  const teams = useAgents2(agents2)?.teams ?? [];
+  const teams = useTeams(agents2);
   // A template's id while it is edited, or "new" for one being made.
   const [editing, setEditing] = useState<string>();
   const template = templates.find((item) => item.id === editing);
@@ -122,8 +111,6 @@ function TemplateDialog({
   );
   const [canvas, setCanvas] = useState(template?.canvas ?? "");
   const [error, setError] = useState("");
-  // A team deleted since keeps no place in the template.
-  const kept = chosen.filter((id) => teams.some((team) => team.id === id));
   const act = (work: () => void) => {
     setError("");
     try {
@@ -171,7 +158,7 @@ function TemplateDialog({
             channelTemplates.save({
               ...(template ? { id: template.id } : {}),
               name,
-              teams: kept,
+              teams: chosen,
               canvas,
             }),
           );
@@ -191,7 +178,7 @@ function TemplateDialog({
               <Checkbox
                 key={team.id}
                 label={team.name}
-                checked={kept.includes(team.id)}
+                checked={chosen.includes(team.id)}
                 onCheckedChange={(checked) =>
                   setChosen((last) =>
                     checked
