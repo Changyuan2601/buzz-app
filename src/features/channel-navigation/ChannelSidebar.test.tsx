@@ -662,7 +662,7 @@ it("clears only the removed section's collapsed intent after confirmation, never
     };
     let dialog = await open();
     expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+      "1 channel will move back to Channels. This does not delete any channels.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(remove).not.toHaveBeenCalled();
