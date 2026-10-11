@@ -46,8 +46,14 @@ it("pulses in the mention's thread every three seconds until stopped", () => {
   expect(local).toHaveBeenCalledTimes(2);
   expect(local.mock.lastCall?.[0].created_at).toBe(13);
   stop();
+  // Stopping ends it at once, then nothing more is sent.
+  expect(local).toHaveBeenCalledTimes(3);
+  expect(local.mock.lastCall?.[0]).toMatchObject({
+    kind: 9,
+    tags: local.mock.calls[0]?.[0].tags,
+  });
   vi.advanceTimersByTime(9_000);
-  expect(local).toHaveBeenCalledTimes(2);
+  expect(local).toHaveBeenCalledTimes(3);
 });
 
 it("skips pulses while the community is not ready, and stops if one throws", () => {

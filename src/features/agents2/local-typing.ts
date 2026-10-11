@@ -27,16 +27,18 @@ export function typeLocally(
     ...(root === event.id ? [] : [["e", root, "", "root"]]),
     ["e", event.id, "", "reply"],
   ];
+  const send = (kind: number) =>
+    session()?.typing.local({
+      id: "",
+      pubkey,
+      kind,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "",
+      tags,
+    });
   const pulse = () => {
     try {
-      session()?.typing.local({
-        id: "",
-        pubkey,
-        kind: 20002,
-        created_at: Math.floor(Date.now() / 1000),
-        content: "",
-        tags,
-      });
+      send(20002);
     } catch (error) {
       // A stopgap must never break the run it decorates.
       clearInterval(timer);
@@ -45,5 +47,13 @@ export function typeLocally(
   };
   const timer = setInterval(pulse, PULSE_MS);
   pulse();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    // Ends it now rather than when the last pulse would expire.
+    try {
+      send(9);
+    } catch (error) {
+      console.warn("Agent typing was not ended", error);
+    }
+  };
 }

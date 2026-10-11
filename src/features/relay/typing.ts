@@ -168,10 +168,12 @@ export function createTyping(
     capability: Object.freeze({
       snapshot: () => snapshot,
       // STOPGAP(agent-local-typing): delete with agents2/local-typing.ts.
-      /** Shows a pulse this app made for an agent it runs, on this device
-       * only, as if it came live, until agents' pulses reach the relay. */
+      /** Takes a pulse (20002) this app made for an agent it runs, or its
+       * end (9, as if the agent had replied), on this device only, as if it
+       * came live, until agents' pulses reach the relay. */
       local(event: EventData) {
-        if (event.kind === 20002) accept([event as RelayEvent], true);
+        if (event.kind === 20002 || event.kind === 9)
+          accept([event as RelayEvent], true);
       },
       subscribe(listener: () => void) {
         if (closed) return () => {};

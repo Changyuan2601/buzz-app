@@ -37,12 +37,20 @@ export function reactWhileWorking(
         );
         if (ids.length < results.length)
           console.warn("Agent working reactions were not all published");
-        if (!ids.length) return;
-        return publish({
-          kind: 5,
-          content: "",
-          tags: [["h", channelId], ...ids.map((id) => ["e", id]), ["k", "7"]],
-        });
+        // The relay takes one target per deletion.
+        return Promise.all(
+          ids.map((id) =>
+            publish({
+              kind: 5,
+              content: "",
+              tags: [
+                ["h", channelId],
+                ["e", id],
+                ["k", "7"],
+              ],
+            }),
+          ),
+        );
       })
       .catch((error) =>
         console.warn("Agent working reactions were not removed", error),
