@@ -22,11 +22,6 @@ import {
 import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
-import { createAgentControl } from "../features/agents/control";
-
-vi.mock("../features/agents/control-native", () => ({
-  createNativeAgentControl: () => createAgentControl(null),
-}));
 
 vi.mock("../bundled", async () => ({
   bundledPlugins: [

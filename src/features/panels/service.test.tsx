@@ -6,7 +6,6 @@ import { PanelsService } from "../panels/service";
 import { ConversationService } from "../conversation/service";
 import { SettingsCardsService } from "../settings/service";
 import { TemplateProvidersService } from "../channel-templates/provider";
-import { provideAgentControl } from "../agents/control-service";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
 import * as channelsPlugin from "../../bundled/channels";
@@ -34,7 +33,6 @@ it("independently unloads panels without removing the page or shared data", asyn
   new SettingsCardsService(root);
   new TemplateProvidersService(root);
   provideNavigation(root);
-  provideAgentControl(root);
   const relay = provideRelay(root);
   const desired = (ids: string[]) => ids.map(plugin);
   try {

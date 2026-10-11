@@ -89,22 +89,4 @@ export type {
   NotificationCategoryDescriptor,
 } from "../features/notifications/service";
 
-export type {
-  AgentControl,
-  AgentControlState,
-  AgentView,
-  AgentEdit,
-  AgentAction,
-  ControlSnapshot,
-  AgentImportPreview,
-  ImportSource,
-} from "../features/agents/control";
-
-export type {
-  AgentSecurity,
-  SecurityBinding,
-  SecuritySnapshot,
-  SecurityProvider,
-} from "../features/agents/security";
-
 export type { VoiceRecording } from "../features/relay/voice-media";

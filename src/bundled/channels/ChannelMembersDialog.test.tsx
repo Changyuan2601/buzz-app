@@ -14,8 +14,7 @@ import { matchesEvent } from "../../features/relay/projection";
 import type { RelayEvent } from "../../features/relay/events";
 import { PublishRejected } from "../../features/relay/outbox";
 import type { AgentLibrary } from "../../features/agents/library";
-import { createAgentControl } from "../../features/agents/control";
-import { controlFixture } from "../../features/agents/control-testing";
+import { localAgentsFixture } from "../../features/agents/local-testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { profileTarget } from "../../features/profiles/target";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
@@ -68,16 +67,18 @@ async function setup(
     onOpenLink(target: string, returnFocus?: HTMLElement): boolean;
   },
 ) {
-  const fixture = controlFixture();
-  fixture.agent.status = "stopped";
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  stops.push(control.dispose);
   const viewer = keypair(),
     relay = keypair(),
     person = keypair();
+  const agent = {
+    pubkey: "ab".repeat(32),
+    name: "Fixture agent",
+    relayUrl: "wss://relay.example.test",
+    owner: viewer.pubkey,
+  };
+  const control = localAgentsFixture([agent]);
   const id = "11111111-1111-4111-8111-111111111111";
-  const target = localAgent ? fixture.agent.pubkey : person.pubkey;
+  const target = localAgent ? agent.pubkey : person.pubkey;
   const members = [viewer.pubkey];
   let clock = 1700000000;
   let failure = "";
@@ -172,7 +173,7 @@ async function setup(
   return {
     user,
     trigger,
-    fixture,
+    agent,
     control,
     dispose: owner.dispose,
     publish,
@@ -460,7 +461,7 @@ it("one refresh retries every failed data source and never replays a failed invi
   expect(screen.getByText(/Invitation denied/)).toBeVisible();
 });
 
-it.each(["search", "archives", "agents", "native agents"])(
+it.each(["search", "archives", "agents"])(
   "keeps the shared refresh busy until %s settle, then permits recovery",
   async (source) => {
     const t = await setup();
@@ -482,8 +483,6 @@ it.each(["search", "archives", "agents", "native agents"])(
       throw new Error("Held read failed");
     };
     if (source === "agents") t.readAgentLibrary.mockImplementationOnce(hold);
-    else if (source === "native agents")
-      vi.spyOn(t.fixture.host, "snapshot").mockImplementationOnce(hold);
     else
       t.query.mockImplementation(async (filters) => {
         if (
@@ -737,7 +736,7 @@ it("shares the identity presentation with invitation rows without assigning a ch
   ).toBeInTheDocument();
   const key = row.querySelector('[aria-hidden="true"].text-mono');
   expect(key).toHaveTextContent(/^npub/);
-  const npub = npubEncode(t.fixture.agent.pubkey);
+  const npub = npubEncode(t.agent.pubkey);
   expect(key).toHaveTextContent(`${npub.slice(0, 11)}…${npub.slice(-6)}`);
   expect(
     within(row).queryByRole("button", { name: /Copy/ }),

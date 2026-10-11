@@ -18,7 +18,7 @@ import {
   validCanvas,
 } from "./channel-kit.mjs";
 
-import { encodeTeamPayload } from "../src/features/channel-templates/team-payload.ts";
+import { TEAM_CHUNK_BYTES } from "../src/features/channel-templates/team-payload.ts";
 const community = "https://relay.example.test";
 const owner = keypair();
 const record = {
@@ -182,12 +182,36 @@ it("encrypts manifest and payload records with exact owner/revision admission", 
       },
     ],
   };
-  const { manifest, payloads } = await encodeTeamPayload(
-    snapshot,
+  // Chunked as old Buzz saved portable teams.
+  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
+  const revision = crypto.randomUUID();
+  const manifest = {
+    version: 1,
+    owner: owner.pubkey,
+    revision,
+    digest: Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join(""),
+    bytes: bytes.length,
+    chunks: Math.ceil(bytes.length / TEAM_CHUNK_BYTES),
+  };
+  const payloads = Array.from({ length: manifest.chunks }, (_, index) => ({
+    version: 1,
     community,
-    owner.pubkey,
-    "portable",
-  );
+    owner: owner.pubkey,
+    teamId: "portable",
+    revision,
+    index,
+    data: btoa(
+      String.fromCharCode(
+        ...bytes.subarray(
+          index * TEAM_CHUNK_BYTES,
+          (index + 1) * TEAM_CHUNK_BYTES,
+        ),
+      ),
+    ),
+  }));
   const records = [
     {
       version: 2,

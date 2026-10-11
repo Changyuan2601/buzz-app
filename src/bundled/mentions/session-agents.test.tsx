@@ -11,8 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
-import { createAgentControl } from "../../features/agents/control";
-import { controlFixture } from "../../features/agents/control-testing";
+import { localAgentsFixture } from "../../features/agents/local-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
@@ -30,10 +29,7 @@ import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
-import type {
-  AgentControlState,
-  AgentView,
-} from "../../features/agents/control";
+import type { LocalAgentsSnapshot } from "../../features/agents/local";
 import {
   followupDraft,
   type MentionRecipient,
@@ -600,7 +596,7 @@ it.each([
 
 // Exercise selection, wire text/p tags, and sent rendering, not an already-bound @name.
 it.each(["picker", "completion"] as const)(
-  "%s keeps native display labels out of serialized mentions",
+  "%s keeps local display labels out of serialized mentions",
   async (surface) => {
     const test = setup();
     const profiles = new Map([[test.key, { name: "Mic" }]]);
@@ -608,25 +604,20 @@ it.each(["picker", "completion"] as const)(
       definitions: [],
       identities: [{ pubkey: test.key, name: "Legacy Mic" }],
     }));
-    let state: AgentControlState = {
+    let state: LocalAgentsSnapshot = {
       status: "ready",
-      busy: false,
-      error: null,
-      data: {
-        runtimeAvailable: true,
-        agents: [
-          {
-            pubkey: test.key,
-            relayUrl: "wss://here.example",
-            name: "Native Mic",
-          } as AgentView,
-        ],
-      },
+      agents: [
+        {
+          pubkey: test.key,
+          relayUrl: "wss://here.example",
+          name: "Native Mic",
+          owner: "aa".repeat(32),
+        },
+      ],
     };
     const listeners = new Set<() => void>();
     const provider = createAgentDirectory({
       snapshot: () => state,
-      refresh: async () => {},
       subscribe(listener) {
         listeners.add(listener);
         return () => {
@@ -760,16 +751,9 @@ it.each(["picker", "completion"] as const)(
         name: "View Native Mic profile",
       });
       act(() => {
-        const data = state.data;
-        const agent = data?.agents[0];
-        if (!data || !agent) throw new Error("Missing native agent");
-        state = {
-          ...state,
-          data: {
-            ...data,
-            agents: [{ ...agent, name: "Renamed Mic" }],
-          },
-        };
+        const agent = state.agents[0];
+        if (!agent) throw new Error("Missing local agent");
+        state = { ...state, agents: [{ ...agent, name: "Renamed Mic" }] };
         for (const listener of listeners) listener();
       });
       expect(
@@ -792,8 +776,14 @@ it.each([false, true])(
   "completion remounts preserve warm evidence (invite=%s)",
   async (inviteAgents) => {
     const test = setup();
-    const f = controlFixture();
-    const native = createAgentControl(f.host);
+    const native = localAgentsFixture([
+      {
+        pubkey: "ab".repeat(32),
+        name: "Fixture agent",
+        relayUrl: "wss://relay.example.test",
+        owner: "aa".repeat(32),
+      },
+    ]);
     const read = vi.fn(async () => ({
       definitions: [],
       identities: [{ pubkey: test.key, name: "Outside agent" }],
@@ -829,7 +819,6 @@ it.each([false, true])(
     );
     const view = render(tree(0));
     try {
-      await waitFor(() => expect(native.snapshot().status).toBe("ready"));
       if (inviteAgents)
         await waitFor(() => expect(result?.items).toHaveLength(1));
       expect(read).toHaveBeenCalledTimes(inviteAgents ? 1 : 0);
@@ -839,9 +828,6 @@ it.each([false, true])(
         await act(async () => {});
         expect(session.agentChoices.snapshot()).toBe(warm);
         expect(read).toHaveBeenCalledTimes(inviteAgents ? 1 : 0);
-        expect(
-          f.calls.filter((call) => call.action === "snapshot"),
-        ).toHaveLength(1);
       }
       // An explicit library change still reaches an ordinary open completion.
       await act(async () => {
@@ -856,7 +842,6 @@ it.each([false, true])(
       lifetime.abort();
       library.dispose();
       test.library.dispose();
-      native.dispose();
     }
   },
 );
@@ -2313,20 +2298,6 @@ function teamFixture(
   const listeners = new Set<() => void>();
   const channelKit: NonNullable<RelaySession["channelKit"]> = {
     available: true,
-    loadTeam: vi.fn(async () => {
-      throw new Error("No portable fixture team");
-    }),
-    savePortable: vi.fn(async () => {
-      throw new Error("No portable fixture save");
-    }),
-    readText: vi.fn(async () => undefined),
-    readTextHead: vi.fn(async () => undefined),
-    prepareText: vi.fn(async () => {
-      throw new Error("No text fixture prepare");
-    }),
-    publishText: vi.fn(async () => {
-      throw new Error("No text fixture publish");
-    }),
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);

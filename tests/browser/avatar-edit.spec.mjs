@@ -6,7 +6,7 @@ test("avatar image controls retain their hover fill and accessible URL label", a
   page,
 }) => {
   await page.route("**/api/relay/**", (route) => route.abort());
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();
@@ -62,7 +62,7 @@ test("human avatar upload and scoped save", async ({ page }) => {
   );
   const errors = watchPageErrors(page);
   await page.route("**/api/relay/**", (route) => route.abort());
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();
@@ -127,7 +127,7 @@ test("human avatar upload and scoped save", async ({ page }) => {
 test("avatar custom spectrum supports dragging, keyboard hue and return focus", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();
@@ -242,7 +242,7 @@ test("emoji picker load failure fits above the footer and retries on reopen", as
       }`,
     }),
   );
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();
@@ -283,7 +283,7 @@ test("custom color and footer resize together without reversing direction", asyn
   page,
 }) => {
   await page.setViewportSize({ width: 900, height: 720 });
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();
@@ -384,7 +384,7 @@ test("custom color and footer resize together without reversing direction", asyn
 test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   const centers = await page.evaluate(async () => {
     const { paintEmojiAvatar } = await import(
       "/src/features/profiles/avatar-upload.ts"
@@ -424,7 +424,7 @@ test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", a
 test("avatar picker previews pointer selections and respects reduced motion", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page.goto("/tests/fixtures/profile-settings.html");
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();

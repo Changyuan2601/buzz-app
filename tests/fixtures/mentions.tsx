@@ -1,7 +1,6 @@
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { AgentSettings } from "../../src/app/AgentSettings";
-import { createAgentControl } from "../../src/features/agents/control";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -35,7 +34,6 @@ const viewer = keypair(),
   first = keypair(),
   second = keypair(),
   outsider = keypair();
-const browserControl = createAgentControl(null);
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
@@ -339,7 +337,6 @@ if (channels) {
   new SettingsCardsService(context);
   new TemplateProvidersService(context);
   provideNavigation(context);
-  context.provide("agentControl", browserControl);
   // Only the composer is mounted; the Channels page never consumes this service.
   context.provide("relay", {
     snapshot: () => ({ session: namedSession }),

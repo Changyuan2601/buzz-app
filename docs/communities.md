@@ -142,8 +142,7 @@ discovery, admission, leave requests, profile publication, authenticated reads a
 supported event writes. Native invite minting and relay-advertised KLIPY GIF search
 use the same captured HTTPS community; neither requires the development broker.
 Windows/Linux installed-app acceptance remains unverified. Community creation and
-background connection eviction are not implemented. Native agent enrollment has
-its own [local control contract](agent-control.md). Avatar uploads still require
+background connection eviction are not implemented. Avatar uploads still require
 the development media host. Agents have local
 configuration plus separately scoped participation; selecting a community must
 not become a deployment or enrollment command.

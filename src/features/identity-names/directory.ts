@@ -1,6 +1,6 @@
 import type { NamingIdentity } from "./policy";
 import type { NameProvider, NameSource, NamingPolicy } from "./service";
-import type { AgentControl } from "../agents/control";
+import type { LocalAgents } from "../agents/local";
 import { relayOrigin } from "../communities/destination";
 
 function sameCommunity(left: string, right: string) {
@@ -11,10 +11,10 @@ function sameCommunity(left: string, right: string) {
   }
 }
 
-/** Native configuration wins only in its community. Names never grant control. */
+/** Local agent names win only in their community. Names never grant control. */
 export function createNameProvider(
   policy: NamingPolicy,
-  control?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
+  local?: LocalAgents,
 ): NameProvider {
   let base:
     | {
@@ -29,7 +29,7 @@ export function createNameProvider(
       }
     | undefined;
   const current = (source: NameSource) => {
-    const native = control?.snapshot();
+    const native = local?.snapshot();
     const relayUrl = source.relayUrl;
     const library = source.agentLibrary.snapshot();
     const profiles = source.profiles.snapshot();
@@ -58,7 +58,7 @@ export function createNameProvider(
     }
     if (relayUrl && native?.status === "ready") {
       const seen = new Set<string>();
-      for (const agent of native.data?.agents ?? []) {
+      for (const agent of native.agents) {
         const key = agent.pubkey.toLowerCase();
         if (seen.has(key) || !sameCommunity(agent.relayUrl, relayUrl)) continue;
         seen.add(key);
@@ -120,9 +120,8 @@ export function createNameProvider(
   };
   return {
     id: policy.id,
-    ...(control ? { subscribe: control.subscribe } : {}),
+    ...(local ? { subscribe: local.subscribe } : {}),
     activate(source) {
-      void control?.refresh();
       return source.agentLibrary.retain();
     },
     scope(source, candidates, displayFacts) {

@@ -1,4 +1,3 @@
-import { snapshotClipboardHtml } from "../agents/snapshot-link";
 // @vitest-environment jsdom
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -38,8 +37,8 @@ import type {
 } from "../conversation/contracts";
 import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
-import { createAgentControl, type AgentControl } from "../agents/control";
-import { controlFixture } from "../agents/control-testing";
+import type { LocalAgents } from "../agents/local";
+import { localAgentsFixture } from "../agents/local-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
@@ -104,9 +103,16 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
+const localAgent = {
+  pubkey: "ab".repeat(32),
+  name: "Fixture agent",
+  relayUrl: "wss://relay.example.test",
+  owner: "d".repeat(64),
+};
+
 function mount(
   options: Partial<MessageComposerProps> = {},
-  control?: AgentControl,
+  control?: LocalAgents,
   viewer?: string,
   agents2?: Agents2,
 ) {
@@ -3247,10 +3253,9 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
 // The production composer must perform enrollment, not a pre-populated test roster.
 for (const threadRootId of [undefined, "f".repeat(64)])
   it(`adds a selected local agent only on Send, then sends after membership confirmation (thread=${!!threadRootId})`, async () => {
-    const f = controlFixture();
-    f.agent.pubkey = first.pubkey;
-    const control = createAgentControl(f.host);
-    await control.refresh();
+    const control = localAgentsFixture([
+      { ...localAgent, pubkey: first.pubkey, owner: "d".repeat(64) },
+    ]);
     const h = mount(
       {
         scope: `https://relay.example.test:${"d".repeat(64)}`,
@@ -3336,55 +3341,48 @@ for (const threadRootId of [undefined, "f".repeat(64)])
           ),
       ),
     });
-    try {
-      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
-      expect(add).not.toHaveBeenCalled();
-      fireEvent.submit(screen.getByRole("form"));
-      await act(async () => {});
-      expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-      await act(async () => {});
-      expect(add).toHaveBeenCalledWith(
-        {
-          kind: 9000,
-          content: "",
-          tags: [
-            ["h", "channel"],
-            ["p", first.pubkey],
-            ["role", "bot"],
-          ],
-        },
-        { key: `member-add:channel:${first.pubkey}`, value: "1" },
-      );
-      expect(h.messages.send).not.toHaveBeenCalled();
-      expect(h.messages.reply).not.toHaveBeenCalled();
-      await act(async () => {
-        operations = operations.map((item) => ({
-          ...item,
-          delivery: "accepted",
-        }));
-        for (const listener of listeners) listener();
-      });
-      const send = threadRootId ? h.messages.reply : h.messages.send;
-      expect(send).toHaveBeenCalledOnce();
-      expect(retry).not.toHaveBeenCalled();
-      expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([
-        first.pubkey,
-      ]);
-      // Native evidence now shares the ordinary remember-agent classification.
-      expect(h.input().value).toBe("@Honey ");
-    } finally {
-      control.dispose();
-    }
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    expect(add).not.toHaveBeenCalled();
+    fireEvent.submit(screen.getByRole("form"));
+    await act(async () => {});
+    expect(add).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    await act(async () => {});
+    expect(add).toHaveBeenCalledWith(
+      {
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", "channel"],
+          ["p", first.pubkey],
+          ["role", "bot"],
+        ],
+      },
+      { key: `member-add:channel:${first.pubkey}`, value: "1" },
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.messages.reply).not.toHaveBeenCalled();
+    await act(async () => {
+      operations = operations.map((item) => ({
+        ...item,
+        delivery: "accepted",
+      }));
+      for (const listener of listeners) listener();
+    });
+    const send = threadRootId ? h.messages.reply : h.messages.send;
+    expect(send).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
+    // Native evidence now shares the ordinary remember-agent classification.
+    expect(h.input().value).toBe("@Honey ");
   });
 
 it.each([false, true])(
   "keeps the selected draft on an enrollment error (expired=%s) without sending the message",
   async (expired) => {
-    const f = controlFixture();
-    f.agent.pubkey = first.pubkey;
-    const control = createAgentControl(f.host);
-    await control.refresh();
+    const control = localAgentsFixture([
+      { ...localAgent, pubkey: first.pubkey, owner: "d".repeat(64) },
+    ]);
     const h = mount(
       { scope: `https://relay.example.test:${"d".repeat(64)}` },
       control,
@@ -3442,27 +3440,22 @@ it.each([false, true])(
           ),
       ),
     });
-    try {
-      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
-      fireEvent.submit(screen.getByRole("form"));
-      await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-      await act(async () => {});
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        expired ? "addition expired" : "Cannot add agent",
-      );
-      expect(
-        (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement)
-          .value,
-      ).toBe("@Honey ");
-      expect(h.messages.send).not.toHaveBeenCalled();
-      if (expired) expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Close" }));
-      await act(async () => {});
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-    } finally {
-      control.dispose();
-    }
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    fireEvent.submit(screen.getByRole("form"));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      expired ? "addition expired" : "Cannot add agent",
+    );
+    expect(
+      (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement).value,
+    ).toBe("@Honey ");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    if (expired) expect(add).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await act(async () => {});
+    expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
   },
 );
 
@@ -3941,10 +3934,9 @@ it.each([false, true])(
     const viewer = keypair(),
       relay = keypair();
     const scope = `https://relay.example.test:${viewer.pubkey}`;
-    const f = controlFixture();
-    f.agent.pubkey = second.pubkey;
-    const native = createAgentControl(f.host);
-    await native.refresh();
+    const native = localAgentsFixture([
+      { ...localAgent, pubkey: second.pubkey, owner: viewer.pubkey },
+    ]);
     let members = [viewer.pubkey, first.pubkey];
     let time = 1700000000;
     const sign = vi.fn(async (template: EventTemplate) =>
@@ -4011,7 +4003,6 @@ it.each([false, true])(
     } finally {
       h.unmount();
       owner.dispose();
-      native.dispose();
     }
   },
 );
@@ -6354,7 +6345,7 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
       items: [],
       getData: (type: string) =>
         type === "text/html"
-          ? snapshotClipboardHtml(descriptor, "Helper")
+          ? `<a href="${descriptor.url}">Helper</a>`
           : descriptor.url,
     },
   });
