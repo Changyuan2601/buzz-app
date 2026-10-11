@@ -131,8 +131,15 @@ need their own validation.
   even empty, `0` or `false` enables it when `BUZZ_DEV_OPEN_RELAY` is absent.
   Explicit `BUZZ_DEV_OPEN_RELAY=0` opts out. Neither input provides packaged relay
   connectivity. See [configuration parity](configuration.md).
-- `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
-  eventually start local Docker services including the Buzz relay backend.
+- `just fullstack`: start a local Docker relay (Postgres, Redis, MinIO, Caddy)
+  at `wss://localhost:3443`, then run `just desktop` against it. Use
+  `just fullstack web` for the browser, `up` for the relay alone, `logs` and
+  `down` to inspect or stop it. Requires Docker and `BUZZ_DEV_VIEWER`, which
+  becomes the closed relay's owner; agents join through NIP-OA. Only Caddy
+  publishes a port, on loopback. Caddy's local CA is handed to Node through
+  `NODE_EXTRA_CA_CERTS`, not installed system-wide. All checkouts share one
+  relay; its generated secrets and the CA live in `~/.buzz-foundation/fullstack/`.
+  Delete that directory only together with `just fullstack down --volumes`.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
   fixes, check TypeScript, and build the frontend. Remaining problems fail the command. No tests or
   native compilation run here.

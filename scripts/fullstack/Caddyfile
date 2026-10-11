@@ -1,0 +1,11 @@
+# Local TLS for the fullstack relay. Caddy's own CA signs `localhost`; the
+# host never trusts it globally; scripts/fullstack.mjs hands it to Node only.
+{
+	admin off
+	local_certs
+	skip_install_trust
+}
+
+localhost:3443 {
+	reverse_proxy relay:3000
+}

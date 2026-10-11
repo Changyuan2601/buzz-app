@@ -41,10 +41,10 @@ design *args: install
 cli *args:
     @cargo run --quiet --locked --manifest-path crates/plugin-manager/Cargo.toml --bin buzzodz -- "$@"
 
-# Reserved for the frontend and local Docker relay backend.
-fullstack:
-    @echo "Not implemented: fullstack will run Buzz with a local Docker relay backend." >&2
-    @exit 1
+# Run desktop (default), web, up, down or logs against a local Docker relay.
+[positional-arguments]
+fullstack *args: install
+    exec node scripts/fullstack.mjs "$@"
 
 # Fast feedback: safe fixes, formatting, type checking, and frontend build; no tests.
 iterate: install
