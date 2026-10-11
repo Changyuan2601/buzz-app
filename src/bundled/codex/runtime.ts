@@ -45,6 +45,8 @@ type Request = {
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
+  /** Called once a final send answers this request, or one steered after it. */
+  answered: () => void;
 };
 type Saved = { threadId: string; workspace: string };
 type Active = {
@@ -60,6 +62,8 @@ type Active = {
   signal: AbortSignal;
   version: number;
   sentVersion?: number;
+  /** Every request this turn has taken in, the first and each steered one. */
+  requests: Request[];
 };
 type Lane = {
   tail: Promise<void>;
@@ -338,6 +342,12 @@ export class CodexRuntime {
     const toolRoot =
       channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
+    let answered!: () => void;
+    // Codex makes one more model call after a final send before its turn
+    // ends; the agent is done working on this request once it has replied.
+    const replied = new Promise<void>((resolve) => {
+      answered = resolve;
+    });
     const request: Request = {
       scope: snapshot.scope ?? "",
       event: trigger.event,
@@ -353,6 +363,7 @@ export class CodexRuntime {
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
+      answered,
     };
     if (!validWorkspace(settings.workspace)) {
       await this.publish(
@@ -394,6 +405,7 @@ export class CodexRuntime {
             ),
           });
           active.reply = request;
+          active.requests.push(request);
           active.version++;
         } catch (error) {
           if (entry.abort.signal.aborted) return;
@@ -413,10 +425,14 @@ export class CodexRuntime {
       );
       // The steered turn, or one started in its place, answers this mention.
       const steered = lane;
-      delivery.workingUntil(accepted.then(() => steered.tail));
+      delivery.workingUntil(
+        Promise.race([replied, accepted.then(() => steered.tail)]),
+      );
       return;
     }
-    delivery.workingUntil(this.start(request, text, key, lane, entry));
+    delivery.workingUntil(
+      Promise.race([replied, this.start(request, text, key, lane, entry)]),
+    );
   }
   private start(
     request: Request,
@@ -493,6 +509,7 @@ export class CodexRuntime {
     const args = call.arguments as Record<string, unknown>;
     const version = active.version;
     const request = active.reply;
+    const answering = [...active.requests];
     const client = appClient(request.agent, {
       spawn: this.spawn,
       cwd: active.workspace,
@@ -534,6 +551,7 @@ export class CodexRuntime {
     const final = call.tool === "send" && args.final === true;
     if (final) {
       active.sentVersion = Math.max(active.sentVersion ?? -1, version);
+      for (const taken of answering) taken.answered();
     }
     return { success: true, contentItems: [{ type: "inputText", text }] };
   }
@@ -603,6 +621,7 @@ export class CodexRuntime {
       workspace: request.settings.workspace,
       signal,
       version: 0,
+      requests: [request],
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
