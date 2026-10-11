@@ -52,6 +52,8 @@ import {
   type AgentRecord,
   type SkippedObject,
 } from "./store";
+// STOPGAP(agent-local-typing): delete with local-typing.ts.
+import { typeLocally } from "./local-typing";
 // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
 import { reactWhileWorking } from "./working-reactions";
 
@@ -1196,27 +1198,40 @@ export class Agents2Service extends Service implements Agents2 {
 
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, or the longest run allowed has passed. A
-   * mention run is reacted to meanwhile. */
+   * mention run is reacted to, and shown typing here, meanwhile: both are
+   * STOPGAPs, and `done` is empty without them. */
   private working(runner: Runner, { trigger, channelId }: Job) {
     const native = this.native;
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
-    // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
     const done =
       native && event && channel
-        ? reactWhileWorking(
-            (template) => native.publish(runner.pubkey, template),
-            event,
-            channel,
-          )
-        : undefined;
+        ? [
+            // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
+            reactWhileWorking(
+              (template) => native.publish(runner.pubkey, template),
+              event,
+              channel,
+            ),
+            // STOPGAP(agent-local-typing): delete with local-typing.ts.
+            typeLocally(
+              () => {
+                const relay = this.relay(runner.pubkey)?.snapshot();
+                return relay?.status === "ready" ? relay.session : undefined;
+              },
+              runner.pubkey,
+              event,
+              channel,
+            ),
+          ]
+        : [];
     let holds = 1;
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       clearTimeout(timer);
-      done?.();
+      for (const end of done) end();
     };
     const timer = setTimeout(stop, TIMEOUT_LIMIT_MS);
     const release = () => {
