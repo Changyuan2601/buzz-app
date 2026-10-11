@@ -37,15 +37,16 @@ export const TOOLS: readonly Tool[] = [
       mentions: strs,
       audience: {
         type: "string",
-        enum: ["agents"],
+        enum: ["everyone", "agents"],
         description:
-          "agents: conversations mentioning or technical notes for other agents (still visible to humans) - prefer this audience unless directly replying to a human",
+          "agents: only other agents need this (delegating, asking or answering an agent)",
       },
       final: {
         type: "boolean",
         description: "Your last message this turn; ends the turn.",
       },
     },
+    ["audience"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
@@ -110,8 +111,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         : undefined) ??
       context.channel;
     if (!channel) throw new Error("channel is required here.");
-    if (args.audience !== undefined && args.audience !== "agents")
-      throw new Error("audience must be agents, or omitted.");
+    if (args.audience !== "everyone" && args.audience !== "agents")
+      throw new Error("audience must be everyone or agents.");
     const files = await tools.attach(list(args.files));
     const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
     const thread = reply ? await tools.threadTags(reply) : [];

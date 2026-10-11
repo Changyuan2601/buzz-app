@@ -8,6 +8,7 @@ import type { Agent, Delivery } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 
@@ -347,7 +348,8 @@ function fixture(
     return sent.find((wire) => wire.id === id && !wire.method);
   };
   const complete = async (index = starts().length - 1, text = "DONE") => {
-    if (!closed && text) await tool("send", { text, final: true }, index);
+    if (!closed && text)
+      await tool("send", { audience: "everyone", text, final: true }, index);
     const params = starts()[index]?.params as { threadId: string };
     emit({
       method: "item/completed",
@@ -419,6 +421,7 @@ it("hands over promptly and runs conversations independently on one server", asy
   });
   expect(started.baseInstructions).toBeUndefined();
   expect(started.developerInstructions).toContain("coding agent in Buzz");
+  expect(started.developerInstructions).toContain(BUZZ_PROMPT);
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
@@ -1138,8 +1141,8 @@ it("posts tool-sent parts and never duplicates native assistant text", async () 
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.tool("send", { text: "PART ONE" });
-  await f.tool("send", { text: "PART TWO" });
+  await f.tool("send", { audience: "everyone", text: "PART ONE" });
+  await f.tool("send", { audience: "everyone", text: "PART TWO" });
   await f.complete(0, "FINAL");
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -1356,7 +1359,14 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
     { arguments: [] },
   ]) {
     expect(
-      (await f.tool("send", { text: "must not send" }, 0, overrides))?.result,
+      (
+        await f.tool(
+          "send",
+          { audience: "everyone", text: "must not send" },
+          0,
+          overrides,
+        )
+      )?.result,
     ).toMatchObject({
       success: false,
       contentItems: [{ type: "inputText", text: expect.any(String) }],
@@ -1381,7 +1391,9 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
     },
   ]);
   const count = f.publish.mock.calls.length;
-  expect((await f.tool("send", { text: "late" }, 0))?.result).toMatchObject({
+  expect(
+    (await f.tool("send", { audience: "everyone", text: "late" }, 0))?.result,
+  ).toMatchObject({
     success: false,
   });
   expect(f.publish).toHaveBeenCalledTimes(count);
@@ -1410,6 +1422,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(
     (
       await f.tool("send", {
+        audience: "everyone",
         path: "answer.txt",
         files: ["attachment.jpg"],
         final: true,
@@ -1443,7 +1456,13 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.publish.mockRejectedValueOnce(new Error("Signing rejected"));
   expect(
-    (await f.tool("send", { text: "answer", final: true }))?.result,
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "answer",
+        final: true,
+      })
+    )?.result,
   ).toMatchObject({
     success: false,
     contentItems: [{ type: "inputText", text: "Signing rejected" }],
@@ -1465,7 +1484,11 @@ it("delivers pending owner steering after a final send and posts its own answer"
   await f.runtime.run(f.delivery("new request"));
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
-    await f.tool("send", { text: "prior answer", final: true });
+    await f.tool("send", {
+      audience: "everyone",
+      text: "prior answer",
+      final: true,
+    });
     expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
   } finally {
     gate.resolve([]);
@@ -1497,6 +1520,7 @@ it("finishes final sends normally and preserves the agent's background terminals
   await f.runtime.run(f.delivery("start server"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   const reply = await f.tool("send", {
+    audience: "everyone",
     text: "http://localhost:3000",
     final: true,
   });
@@ -1545,7 +1569,11 @@ it.each([false, true])(
       started.resolve();
       return late ? gate.promise : child;
     });
-    const reading = f.tool("send", { path: "answer.txt", final: true });
+    const reading = f.tool("send", {
+      audience: "everyone",
+      path: "answer.txt",
+      final: true,
+    });
     await started.promise;
     f.interrupt();
     try {
