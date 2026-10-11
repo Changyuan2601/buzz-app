@@ -4,7 +4,7 @@ import type { RelayEvent } from "../relay/events";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import type { AgentIdentity, AgentsNative } from "./native";
+import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import {
   Agents2Service,
   type AgentCommunities,
@@ -231,8 +231,13 @@ function fakeNative(identities: AgentIdentity[] = []) {
       steps.push("forget");
       identities.splice(at(pubkey), 1);
     }),
-    publish: vi.fn(async (pubkey: string, template: { kind: number }) =>
-      event(`p${++published}`, { pubkey, kind: template.kind }),
+    publish: vi.fn(async (pubkey: string, template: AgentEventTemplate) =>
+      event(`p${++published}`, {
+        pubkey,
+        kind: template.kind,
+        content: template.content,
+        tags: (template.tags ?? []).map((tag) => [...tag]),
+      }),
     ),
     publishProfile: vi.fn(async (_: string) => {}),
     query: vi.fn(async () => []),
@@ -325,6 +330,14 @@ async function setup({
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** The events native published as an agent, of `kind`, in order. */
+async function published(native: ReturnType<typeof fakeNative>, kind: number) {
+  const events = await Promise.all(
+    native.publish.mock.results.map(({ value }) => value),
+  );
+  return events.filter((event) => event.kind === kind);
+}
+
 beforeEach(() => {
   vi.useRealTimers();
   steps.length = 0;
@@ -413,6 +426,55 @@ it("delivers mentions and matching watches once, and never the agent's own event
   });
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
+});
+
+it("reacts 👀 and 💬 to a mention until the work its run handed off settles", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+  const mention = event("m", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  emit({ events: [mention], channelId: channel });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await settle();
+  const reactions = await published(native, 7);
+  expect(reactions.map(({ content, tags }) => [content, tags])).toEqual(
+    ["👀", "💬"].map((emoji) => [
+      emoji,
+      [
+        ["h", channel],
+        ["e", mention.id],
+      ],
+    ]),
+  );
+  // `run` has returned, but the turn it handed off is still going.
+  expect(await published(native, 5)).toEqual([]);
+  finish();
+  await vi.waitFor(async () =>
+    expect(await published(native, 5)).toHaveLength(1),
+  );
+  expect((await published(native, 5))[0]?.tags).toEqual([
+    ["h", channel],
+    ...reactions.map(({ id }) => ["e", id]),
+    ["k", "7"],
+  ]);
+  // Only mentions are reacted to, and a failed run takes its reactions back.
+  run.mockRejectedValueOnce(new Error("boom"));
+  emit({ events: [event("m2", { tags: mention.tags })], channelId: channel });
+  emit({ events: [event("w", { content: "deploy" })], channelId: channel });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  await vi.waitFor(async () =>
+    expect(await published(native, 5)).toHaveLength(2),
+  );
+  expect(await published(native, 7)).toHaveLength(4);
 });
 
 it("treats a reply to something the agent published as addressed", async () => {
@@ -736,7 +798,7 @@ it("is not woken by reactions, deletions or DMs", async () => {
 });
 
 it("does not let one owner's agents wake each other by replying", async () => {
-  const { service, run, emit } = await setup();
+  const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.create({ type: "example/echo", name: "Sibling" });
   run.mockImplementation(async ({ agent, trigger }) => {
@@ -753,7 +815,7 @@ it("does not let one owner's agents wake each other by replying", async () => {
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   // The sibling replies to Echo's message, naming it, and also says "deploy",
   // which Echo's watch matches. Neither wakes Echo.
-  const echoMessage = "p1".padEnd(64, "0");
+  const echoMessage = (await published(native, 9))[0]?.id;
   emit({
     events: [
       event("reply", {

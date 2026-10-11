@@ -411,9 +411,12 @@ export class CodexRuntime {
       active.steering = accepted.catch((error) =>
         console.error("Codex steering failed", error),
       );
+      // The steered turn, or one started in its place, answers this mention.
+      const steered = lane;
+      delivery.workingUntil(accepted.then(() => steered.tail));
       return;
     }
-    this.start(request, text, key, lane, entry);
+    delivery.workingUntil(this.start(request, text, key, lane, entry));
   }
   private start(
     request: Request,
@@ -437,6 +440,7 @@ export class CodexRuntime {
       .finally(() => {
         if (current.tail === job && !current.active) entry.lanes.delete(key);
       });
+    return job;
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
