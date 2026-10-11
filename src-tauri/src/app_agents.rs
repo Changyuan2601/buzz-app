@@ -690,7 +690,6 @@ mod tests {
             agent_type: "p/t".into(),
             name: "Ada".into(),
             picture: None,
-            about: None,
             profile: None,
             about: None,
             deleted: false,
