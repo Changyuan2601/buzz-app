@@ -113,7 +113,7 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
-    let first = agent.profile_event(&key).unwrap();
+    let first = agent.profile_event(&key, None).unwrap();
     assert_eq!(first["kind"], 0);
     assert_eq!(first["content"], r#"{"bot":true,"name":"Ada"}"#);
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
@@ -135,7 +135,7 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     let renamed = agents.get(&agent.pubkey).unwrap();
     assert_eq!(renamed.name, "Bea");
     assert_eq!(renamed.profile, Some(published(future)));
-    let next = renamed.profile_event(&key).unwrap();
+    let next = renamed.profile_event(&key, None).unwrap();
     assert_eq!(next["created_at"], future + 1);
     assert_eq!(next["content"], r#"{"bot":true,"name":"Bea"}"#);
 }
@@ -427,7 +427,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
     assert_eq!(agent.pubkey, pubkey);
     assert!(agent.adopted);
     let profile = agent
-        .profile_event(&agent.read_key(&credentials).unwrap())
+        .profile_event(&agent.read_key(&credentials).unwrap(), None)
         .unwrap();
     assert_eq!(
         profile["content"],
@@ -515,7 +515,7 @@ fn keeps_the_communitys_profile_for_an_adopted_key_until_renamed() {
     agents.rename(&agent.pubkey, "Ada").unwrap();
     let renamed = agents.get(&agent.pubkey).unwrap();
     let next = renamed
-        .profile_event(&renamed.read_key(&credentials).unwrap())
+        .profile_event(&renamed.read_key(&credentials).unwrap(), None)
         .unwrap();
     assert_eq!(
         next["content"],
@@ -527,4 +527,72 @@ fn keeps_the_communitys_profile_for_an_adopted_key_until_renamed() {
     let kept = agents.get(&agent.pubkey).unwrap();
     assert_eq!(kept.name, "Ada");
     assert_eq!(kept.profile.unwrap().created_at, 900);
+}
+
+#[test]
+fn a_rename_keeps_the_rest_of_the_communitys_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    agents
+        .keep_profile(
+            &agent.pubkey,
+            "Old Ada",
+            Some("https://a.example/p.png".into()),
+            500,
+        )
+        .unwrap();
+    agents.rename(&agent.pubkey, "Ada").unwrap();
+    let renamed = agents.get(&agent.pubkey).unwrap();
+    let current = serde_json::json!({
+        "name": "Old Ada",
+        "display_name": "Old Ada",
+        "about": "Reviews pull requests",
+        "banner": "https://a.example/b.png",
+        "nip05": "ada@a.example",
+        "picture": "https://a.example/new.png",
+        "bot": false,
+    });
+    let current = current.as_object().unwrap().clone();
+    // Edited elsewhere after the one kept here: the rename must still be newer.
+    let next = renamed
+        .profile_event(
+            &renamed.read_key(&credentials).unwrap(),
+            Some((current, 9_000_000_000)),
+        )
+        .unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(next["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        content,
+        serde_json::json!({
+            "name": "Ada",
+            "display_name": "Ada",
+            "about": "Reviews pull requests",
+            "banner": "https://a.example/b.png",
+            "nip05": "ada@a.example",
+            "picture": "https://a.example/new.png",
+            "bot": true,
+        })
+    );
+    assert_eq!(next["created_at"], 9_000_000_001u64);
+}
+
+#[test]
+fn deleting_keys_removes_every_agents_key_and_repeats_safely() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, first) = created(dir.path(), &credentials);
+    let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Bea").unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    let (second, _) = agents.commit(prepared, &auth, &credentials).unwrap();
+    agents.delete_keys(&credentials).unwrap();
+    assert!(first.read_key(&credentials).is_err());
+    assert!(second.read_key(&credentials).is_err());
+    agents.delete_keys(&credentials).unwrap();
+    // No saved identities is nothing to delete.
+    AppAgents::open(dir.path().join("absent/identities.json"))
+        .delete_keys(&credentials)
+        .unwrap();
 }

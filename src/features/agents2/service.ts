@@ -57,6 +57,7 @@ import {
 export type Agent<Config = unknown> = Readonly<{
   pubkey: string;
   name: string;
+  picture?: string;
   /** The agent type's key, `pluginId/typeId`. */
   type: string;
   owner: string;
@@ -617,6 +618,7 @@ export class Agents2Service extends Service implements Agents2 {
     return Object.freeze({
       pubkey: identity.pubkey,
       name: identity.name,
+      ...(identity.picture && { picture: identity.picture }),
       type: identity.type,
       owner: identity.owner,
       relay: identity.relay,
@@ -874,6 +876,7 @@ export class Agents2Service extends Service implements Agents2 {
       running.push(
         prior &&
           prior.name === identity.name &&
+          prior.picture === identity.picture &&
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&

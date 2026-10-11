@@ -11,6 +11,8 @@ export type AgentIdentity = Readonly<{
   /** The agent type's key, `pluginId/typeId`, fixed at create. */
   type: string;
   name: string;
+  /** The profile picture it brought from an earlier agent system. */
+  picture?: string;
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
   deleted: boolean;

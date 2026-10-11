@@ -109,23 +109,36 @@ impl AppAgent {
             last.name == self.name && last.picture == self.picture && last.about == self.about
         })
     }
-    /// Its profile as this row describes it, replacing the last one accepted.
-    pub fn profile_event(&self, key: &Secret) -> Result<serde_json::Value> {
+    /// Its profile as this row describes it, replacing the last one accepted
+    /// and `current`, the newest its community has (content and `created_at`).
+    /// Only the name and bot flag replace what `current` says, and the picture
+    /// is added only where it has none: an adopted key's profile was made
+    /// elsewhere and keeps every other field.
+    pub fn profile_event(
+        &self,
+        key: &Secret,
+        current: Option<(serde_json::Map<String, serde_json::Value>, u64)>,
+    ) -> Result<serde_json::Value> {
         valid_name(&self.name)?;
-        let mut content = serde_json::json!({ "name": self.name, "bot": true });
+        let after = current.as_ref().map(|(_, at)| *at);
+        let mut content = current.map(|(content, _)| content).unwrap_or_default();
+        content.insert("name".into(), self.name.as_str().into());
+        if content.contains_key("display_name") {
+            content.insert("display_name".into(), self.name.as_str().into());
+        }
+        content.insert("bot".into(), true.into());
         if let Some(picture) = &self.picture {
-            content["picture"] = picture.as_str().into();
+            content
+                .entry("picture")
+                .or_insert_with(|| picture.as_str().into());
         }
-        if let Some(about) = &self.about {
-            content["about"] = about.as_str().into();
-        }
-        let content = content.to_string();
+        let content = serde_json::Value::Object(content).to_string();
         let tags = self.attested(key, vec![])?;
         key.sign_event_after(
             0,
             content,
             tags,
-            self.profile.as_ref().map(|p| p.created_at),
+            self.profile.as_ref().map(|p| p.created_at).max(after),
         )
     }
     fn attested(&self, key: &Secret, mut tags: Vec<Vec<String>>) -> Result<Vec<Vec<String>>> {
@@ -455,6 +468,14 @@ impl AppAgents {
         };
         credentials.delete(&agent.credential_id(), &agent.pubkey)?;
         self.edit(pubkey, |agent| agent.deleted = true)
+    }
+    /// Deletes every key it still has, as an erase that removes agents does
+    /// before the rows go with app data. Absence is success, so it repeats safely.
+    pub fn delete_keys(&self, credentials: &dyn Credentials) -> Result<()> {
+        for agent in self.list()?.into_iter().filter(|agent| !agent.deleted) {
+            credentials.delete(&agent.credential_id(), &agent.pubkey)?;
+        }
+        Ok(())
     }
     /// Drops a deleted row once its community has been cleaned up.
     pub fn forget(&self, pubkey: &str) -> Result<()> {

@@ -157,6 +157,20 @@ it("opens the build view with the type's tabs and the app's Attention tab", asyn
   );
 });
 
+it("shows an agent's picture in the grid, peek and build view", async () => {
+  const user = userEvent.setup();
+  const picture = "https://old.example/media/a.png";
+  setup([{ ...agent("Ada", 1), picture }]);
+  const pictures = () =>
+    document.querySelectorAll(`img[src="${picture}"]`).length;
+  expect(pictures()).toBe(1);
+  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  expect(pictures()).toBe(2);
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(pictures()).toBe(1);
+});
+
 it("makes a new agent in the side panel and goes straight to building it", async () => {
   const user = userEvent.setup();
   const { agents2 } = setup([agent("Ada", 1)]);
