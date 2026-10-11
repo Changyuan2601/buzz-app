@@ -14,6 +14,7 @@ import { removeAgentFromChannels } from "../agents/relay-removal";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
 import type { RelayEvent } from "../relay/events";
+import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
@@ -129,10 +130,27 @@ export type Delivery<Config = unknown> = Readonly<{
   agent: AgentHandle;
   /** The agent's config when this run started. */
   config: Config;
+  /** The model the owner asked for in the triggering message: one of the
+   * type's `models`. Absent means the agent's own model. */
+  model?: string;
+  /** The effort level the owner asked for in the triggering message: one of
+   * that model's `efforts`. Absent means the agent's own default. */
+  effort?: string;
   /** Aborts on the run's deadline, or when the agent is removed or its type is
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
 }>;
+export type Effort = Readonly<{ id: string; label: string }>;
+/** A model with its effort levels, lowest first. */
+export type Model = Readonly<{
+  id: string;
+  label: string;
+  efforts: readonly Effort[];
+  /** The effort a run on it uses without a pick, when known. */
+  effort?: string;
+}>;
+/** The models an owner can pick from, and the id of the one used without a pick. */
+export type Models = Readonly<{ current: string; models: readonly Model[] }>;
 export type AgentType<Config = unknown> = {
   id: string;
   title: string;
@@ -148,6 +166,10 @@ export type AgentType<Config = unknown> = {
   Peek?: ComponentType<AgentPeekProps<Config>>;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
+  /** Models and effort levels the owner can pick for the next run while
+   * mentioning the agent. Discovery may be async but must not start a turn.
+   * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
+  models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
@@ -216,6 +238,39 @@ const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
+/** The model and effort the triggering message asks of this agent. Only the
+ * owner picks them, so nobody else in a channel can run the agent at their
+ * level, and only ones the type lists: effort from the model the run uses. */
+async function pickFor(
+  trigger: Trigger,
+  agent: Agent,
+  type: RegisteredAgentType,
+): Promise<{ model?: string; effort?: string }> {
+  if (trigger.type === "timer" || trigger.event.pubkey !== agent.owner)
+    return {};
+  const asked = (name: string) =>
+    trigger.event.tags.find(
+      (tag) => tag[0] === name && tag[1] === agent.pubkey,
+    )?.[2];
+  const model = asked(MODEL_TAG);
+  const effort = asked(EFFORT_TAG);
+  if (!model && !effort) return {};
+  try {
+    const offered = await type.models?.(agent);
+    const picked = offered?.models.find((item) => item.id === model);
+    const runs =
+      picked ?? offered?.models.find((item) => item.id === offered.current);
+    return {
+      ...(picked ? { model: picked.id } : {}),
+      ...(effort && runs?.efforts.some((level) => level.id === effort)
+        ? { effort }
+        : {}),
+    };
+  } catch (error) {
+    console.warn(`Agent type ${type.key} could not list its models`, error);
+    return {};
+  }
+}
 
 /** What Agents2 needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */
@@ -1010,17 +1065,20 @@ export class Agents2Service extends Service implements Agents2 {
       });
       try {
         await Promise.race([
-          Promise.resolve().then(() =>
-            run(
+          Promise.resolve().then(async () => {
+            const pick = await pickFor(job.trigger, agent, type);
+            signal.throwIfAborted();
+            return run(
               Object.freeze({
                 trigger: job.trigger,
                 ...(job.channelId ? { channelId: job.channelId } : {}),
                 agent: handle,
                 config: agent.config,
+                ...pick,
                 signal,
               }),
-            ),
-          ),
+            );
+          }),
           new Promise<never>((_, reject) => {
             if (signal.aborted) reject(signal.reason);
             signal.addEventListener("abort", () => reject(signal.reason), {

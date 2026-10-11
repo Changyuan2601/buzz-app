@@ -627,7 +627,10 @@ use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
-extra-small capsule uses `text-caption`.
+extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
+the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
+horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
+for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
 IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
 sm/md/lg sizes. Existing names

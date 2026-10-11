@@ -82,6 +82,74 @@ it("answers both messages of a turn that took a second one mid-way", async () =>
   await expect(second).resolves.toEqual({ ok: true });
 });
 
+it("runs a turn at the effort asked for, and the next without one at the session's own", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  await claude.send("plain");
+  expect(fake.received.map((message) => message.type)).toEqual([
+    "control_request",
+    "user",
+  ]);
+  await claude.send("hard", { effort: "xhigh" });
+  fake.hold = true;
+  const quick = claude.send("quick", { effort: "low" });
+  // Folded into the running turn, a message without an effort keeps it.
+  const steer = claude.send("also");
+  await flush();
+  fake.finish();
+  await Promise.all([quick, steer]);
+  fake.hold = false;
+  await claude.send("after");
+  expect(fake.prompts).toEqual(["plain", "hard", "quick", "also", "after"]);
+  expect(fake.efforts).toEqual(["high", "xhigh", "low", "low", "high"]);
+  // The session's own level is read once, before the first change.
+  expect(
+    fake.received.filter(
+      (message) =>
+        (message.request as { subtype?: string } | undefined)?.subtype ===
+        "get_settings",
+    ),
+  ).toHaveLength(1);
+});
+
+it("runs a turn on the model asked for, and the next without one on the session's own", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    model: "opus",
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  await expect(claude.models()).resolves.toEqual(
+    expect.arrayContaining([expect.objectContaining({ value: "haiku" })]),
+  );
+  await claude.send("plain");
+  fake.hold = true;
+  const quick = claude.send("quick", { model: "haiku" });
+  // Folded into the running turn, a message without a model keeps it.
+  const steer = claude.send("also");
+  await flush();
+  fake.finish();
+  await Promise.all([quick, steer]);
+  fake.hold = false;
+  await claude.send("after");
+  expect(fake.models).toEqual(["opus", "haiku", "haiku", "opus"]);
+  // The session reports its own model, not the picked one.
+  await expect(claude.readModel()).resolves.toBe("claude-opus-5-5");
+  expect(
+    fake.received
+      .map((message) => message.request as { subtype?: string; model?: string })
+      .filter((request) => request?.subtype === "set_model")
+      .map((request) => request.model),
+  ).toEqual(["haiku", "opus"]);
+});
+
 it("settles on each result when Claude Code does not report idle", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(

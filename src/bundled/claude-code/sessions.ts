@@ -6,9 +6,11 @@
 import {
   ClaudeProcess,
   type ClaudeLaunch,
+  type ClaudeModel,
   type Settled,
   type Spawn,
   type ToolServer,
+  type TurnPick,
 } from "./claude";
 
 /** A conversation's process stops after this long without a message. */
@@ -54,6 +56,17 @@ type Live = {
 export class AgentSessions {
   private readonly live = new Map<string, Live>();
   private readonly opening = new Map<string, Promise<Live | undefined>>();
+  private discovery:
+    | {
+        fingerprint: string;
+        result: Promise<{
+          models: readonly ClaudeModel[];
+          model: string | undefined;
+          effort: string | undefined;
+        }>;
+        process?: ClaudeProcess | undefined;
+      }
+    | undefined;
   private disposed = false;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -75,9 +88,68 @@ export class AgentSessions {
     }));
   }
 
+  /** Read defaults without assigning the shared spare to this agent. */
+  async metadata() {
+    const fingerprint = this.options.fingerprint();
+    const read = async (process: ClaudeProcess) => {
+      const [models, model, effort] = await Promise.all([
+        process.models(),
+        process.readModel(),
+        process.readEffort(),
+      ]);
+      return { models, model, effort };
+    };
+    for (const live of this.live.values())
+      if (live.fingerprint === fingerprint && live.process.running) {
+        const metadata = await read(live.process);
+        const discovered =
+          this.discovery?.fingerprint === fingerprint
+            ? await this.discovery.result
+            : undefined;
+        return { ...metadata, model: metadata.model ?? discovered?.model };
+      }
+    if (this.disposed)
+      return { models: [], model: undefined, effort: undefined };
+    if (this.discovery?.fingerprint === fingerprint)
+      return this.discovery.result;
+    this.clearDiscovery();
+    const discovery: NonNullable<AgentSessions["discovery"]> = {
+      fingerprint,
+      result: Promise.resolve().then(async () => {
+        const launch = await this.options.launch();
+        if (this.disposed || this.discovery !== discovery)
+          throw new Error("Claude Code was stopped");
+        const process = await ClaudeProcess.start(this.options.spawn, {
+          cwd: launch.cwd,
+          ...(launch.model ? { model: launch.model } : {}),
+          systemPrompt: "",
+        });
+        discovery.process = process;
+        try {
+          if (this.disposed || this.discovery !== discovery)
+            throw new Error("Claude Code was stopped");
+          return await read(process);
+        } finally {
+          await process.kill();
+          discovery.process = undefined;
+        }
+      }),
+    };
+    this.discovery = discovery;
+    void discovery.result.catch(() => {
+      if (this.discovery === discovery) this.discovery = undefined;
+    });
+    return discovery.result;
+  }
+  private clearDiscovery() {
+    void this.discovery?.process?.kill();
+    this.discovery = undefined;
+  }
+
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
-   * `fresh` builds it again for a new session when the saved one is lost. */
+   * `fresh` builds it again for a new session when the saved one is lost;
+   * `pick` is the model and effort the turn was asked to run with. */
   async deliver(
     key: string,
     text: string,
@@ -85,7 +157,12 @@ export class AgentSessions {
     {
       steer = text,
       fresh,
-    }: Readonly<{ steer?: string; fresh?: () => Promise<string> }> = {},
+      pick = {},
+    }: Readonly<{
+      steer?: string;
+      fresh?: () => Promise<string>;
+      pick?: TurnPick;
+    }> = {},
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude Code was stopped" };
     // A message that arrives while its conversation's process starts uses it.
@@ -103,7 +180,7 @@ export class AgentSessions {
     }
     if (live) {
       this.touch(key, live, seen);
-      return this.answer(key, live, live.process.busy ? steer : text);
+      return this.answer(key, live, live.process.busy ? steer : text, pick);
     }
     const saved = this.options.store.get(key);
     const starting = this.start(saved?.id).catch((error) => {
@@ -119,13 +196,13 @@ export class AgentSessions {
       void live.process.kill();
       return { ok: false, error: "Claude Code was stopped" };
     }
-    const delivered = await this.answer(key, live, text);
+    const delivered = await this.answer(key, live, text, pick);
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
       this.options.store.delete(key);
       this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen);
+      return this.deliver(key, fresh ? await fresh() : text, seen, { pick });
     }
     return delivered;
   }
@@ -133,6 +210,7 @@ export class AgentSessions {
   /** Stops idle processes started with old settings; busy ones stop when they
    * next fall idle. */
   reconfigure() {
+    this.clearDiscovery();
     const fingerprint = this.options.fingerprint();
     for (const [key, live] of this.live)
       if (live.fingerprint !== fingerprint && !live.process.busy)
@@ -141,6 +219,7 @@ export class AgentSessions {
 
   dispose() {
     this.disposed = true;
+    this.clearDiscovery();
     for (const [key, live] of this.live) this.drop(key, live);
   }
 
@@ -181,8 +260,8 @@ export class AgentSessions {
       if (this.live.get(key) === live) this.drop(key, live);
     });
   }
-  private async answer(key: string, live: Live, text: string) {
-    const settled = await live.process.send(text);
+  private async answer(key: string, live: Live, text: string, pick: TurnPick) {
+    const settled = await live.process.send(text, pick);
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (live.fingerprint !== this.options.fingerprint() && !live.process.busy)
