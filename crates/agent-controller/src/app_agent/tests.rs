@@ -503,6 +503,8 @@ fn keeps_the_communitys_profile_for_an_adopted_key_until_renamed() {
         kept.profile,
         Some(Published {
             name: "Old Ada".into(),
+            picture: Some("https://a.example/p.png".into()),
+            about: None,
             created_at: 500
         })
     );
