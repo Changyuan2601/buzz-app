@@ -92,6 +92,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 pubkey: shared.pubkey().into(),
                 name: "Ada".into(),
                 picture: None,
+                about: None,
                 relay: "wss://relay.example".into(),
             },
             Portable {
@@ -99,6 +100,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 pubkey: old.pubkey().into(),
                 name: "Bea".into(),
                 picture: Some("https://old.example/media/b.png".into()),
+                about: None,
                 relay: "wss://old.example".into(),
             },
             Portable {
@@ -106,6 +108,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 pubkey: dev.pubkey().into(),
                 name: "Cy".into(),
                 picture: None,
+                about: None,
                 relay: String::new(),
             },
         ]
@@ -152,7 +155,8 @@ fn takes_the_key_from_the_store_it_was_listed_in() {
         dir.path(),
         LegacySource::Installed,
         json!([
-            {"pubkey": old.pubkey(), "name": "Bea"},
+            {"pubkey": old.pubkey(), "name": "Bea", "description": " Reviews PRs ",
+             "avatar_url": "https://old.example/bea.png"},
             {"pubkey": inline.pubkey(), "name": "Cy", "private_key_nsec": inline.hex().to_string()},
         ]),
     );
@@ -168,6 +172,30 @@ fn takes_the_key_from_the_store_it_was_listed_in() {
         .take(PortSource::Installed, old.pubkey(), &credentials)
         .unwrap();
     assert_eq!((agent.name.as_str(), key.pubkey()), ("Bea", old.pubkey()));
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
+    let prepared = crate::AppAgents::adopt(
+        "wss://relay.example",
+        &auth[1],
+        "p/t",
+        key,
+        &agent.name,
+        agent.picture,
+        agent.about,
+    )
+    .unwrap();
+    let destination = crate::AppAgents::open(dir.path().join("agents2/identities.json"));
+    let (agent, key) = destination.commit(prepared, &auth, &credentials).unwrap();
+    let reopened = destination.get(&agent.pubkey).unwrap();
+    let profile = reopened.profile_event(&key).unwrap();
+    let content: Value = serde_json::from_str(profile["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        content,
+        json!({"name": "Bea", "bot": true,
+        "picture": "https://old.example/bea.png", "about": "Reviews PRs"})
+    );
+    let event: nostr::event::Event = serde_json::from_value(profile).unwrap();
+    event.verify().unwrap();
     // A key old Buzz kept in the record is read from there, not the keychain.
     let (_, key) = stores
         .take(PortSource::Installed, inline.pubkey(), &credentials)
@@ -183,4 +211,157 @@ fn takes_the_key_from_the_store_it_was_listed_in() {
     assert!(stores
         .take(PortSource::Harness, old.pubkey(), &credentials)
         .is_err());
+}
+
+#[test]
+fn imports_authored_descriptions_from_the_saved_profile_or_exact_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys: Vec<_> = (0..7).map(|_| key()).collect();
+    write(
+        stores(dir.path()).harness,
+        json!({"agents": [
+            {"pubkey": keys[0].pubkey(), "name": "Snapshot", "imported": {
+                "record": {"profile": {"about": " Snapshot description "}}
+            }},
+            {"pubkey": keys[1].pubkey(), "name": "Imported legacy", "imported": {
+                "record": {"persona_id": "reviewer", "description": "stale"},
+                "definition": {"description": " Retained definition "}
+            }}
+        ]}),
+    );
+    let records = json!([
+        {"pubkey": keys[2].pubkey(), "name": "Linked", "persona_id": "reviewer", "description": "stale"},
+        {"pubkey": "", "slug": "reviewer", "description": " Reviews PRs.\nCarefully. "},
+        {"pubkey": keys[3].pubkey(), "name": "Standalone", "description": " Standalone description "},
+        {"pubkey": keys[4].pubkey(), "name": "Orphan", "persona_id": "missing", "description": "stale"},
+        {"pubkey": keys[5].pubkey(), "name": "Blank", "persona_id": "blank", "description": "stale"},
+        {"pubkey": "", "slug": "blank", "description": "  "},
+        {"pubkey": keys[6].pubkey(), "name": "Unrelated", "description": "Other description"}
+    ]);
+    // Both legacy installation paths have the same persisted format.
+    for source in [LegacySource::Installed, LegacySource::Development] {
+        legacy(dir.path(), source, records.clone());
+        let found = stores(dir.path()).list();
+        assert!(found.warnings.is_empty());
+        let descriptions: Vec<_> = found
+            .agents
+            .iter()
+            .map(|agent| serde_json::to_value(agent).unwrap()["about"].clone())
+            .collect();
+        assert_eq!(
+            descriptions,
+            vec![
+                json!("Snapshot description"),
+                json!("Retained definition"),
+                json!("Reviews PRs.\nCarefully."),
+                json!("Standalone description"),
+                Value::Null,
+                Value::Null,
+                json!("Other description"),
+            ]
+        );
+        std::fs::remove_file(
+            dir.path()
+                .join("data")
+                .join(source.app_directory())
+                .join("agents/managed-agents.json"),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn retained_harness_artwork_survives_agents2_storage_and_signed_publication() {
+    let retained = json!({
+        "record": {"persona_id": "reviewer", "avatar_url": "https://old.example/identity.png"},
+        "definition": {"slug": "reviewer", "avatar_url": "https://old.example/definition.png"}
+    });
+    let mut inherited = retained.clone();
+    inherited["record"]["avatar_url"] = Value::Null;
+    let snapshot = json!({"record": {"profile": {
+        "avatarUrl": "https://old.example/snapshot.png", "avatarDataUrl": "data:image/png;base64,AA"
+    }}});
+    let mut unsafe_legacy = retained.clone();
+    unsafe_legacy["record"]["avatar_url"] = json!("https://user:secret@old.example/private.png");
+    for (current, imported, expected) in [
+        (
+            Value::Null,
+            retained.clone(),
+            Some("https://old.example/identity.png"),
+        ),
+        (
+            Value::Null,
+            inherited,
+            Some("https://old.example/definition.png"),
+        ),
+        (
+            Value::Null,
+            snapshot,
+            Some("https://old.example/snapshot.png"),
+        ),
+        (
+            json!("https://new.example/current.png"),
+            retained.clone(),
+            Some("https://new.example/current.png"),
+        ),
+        // Empty is an explicit harness removal, not a missing override.
+        (json!(""), retained.clone(), None),
+        (json!("data:image/png;base64,AA"), retained, None),
+        (Value::Null, unsafe_legacy, None),
+        (Value::Null, Value::Null, None),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Memory::default();
+        let key = key();
+        let id = agent_id(key.pubkey(), "wss://relay.example");
+        credentials.add(&id, &key).unwrap();
+        let stores = stores(dir.path());
+        write(
+            stores.harness.clone(),
+            json!({"version": 1, "agents": [{
+                "pubkey": key.pubkey(), "relayUrl": "wss://relay.example", "name": "Ada",
+                "credentialId": id, "picture": current, "imported": imported
+            }]}),
+        );
+        // The harness wins over the installed copy of this exact identity.
+        legacy(
+            dir.path(),
+            LegacySource::Installed,
+            json!([{
+                "pubkey": key.pubkey(), "name": "Old Ada", "avatar_url": "https://old.example/installed.png"
+            }]),
+        );
+        let found = stores.list();
+        assert!(found.warnings.is_empty());
+        assert_eq!(found.agents.len(), 1);
+        assert_eq!(found.agents[0].source, PortSource::Harness);
+        let (agent, key) = stores
+            .take(found.agents[0].source, key.pubkey(), &credentials)
+            .unwrap();
+        let auth: Vec<String> =
+            serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
+        let prepared = crate::AppAgents::adopt(
+            "wss://relay.example",
+            &auth[1],
+            "p/t",
+            key,
+            &agent.name,
+            agent.picture,
+            agent.about,
+        )
+        .unwrap();
+        let path = dir.path().join("agents2/identities.json");
+        let (agent, _) = crate::AppAgents::open(path.clone())
+            .commit(prepared, &auth, &credentials)
+            .unwrap();
+        let reopened = crate::AppAgents::open(path).get(&agent.pubkey).unwrap();
+        let event = reopened
+            .profile_event(&reopened.read_key(&credentials).unwrap())
+            .unwrap();
+        assert_eq!(event["kind"], 0);
+        let content: Value = serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+        assert_eq!(content.get("picture").and_then(Value::as_str), expected);
+        let event: nostr::event::Event = serde_json::from_value(event).unwrap();
+        event.verify().unwrap();
+    }
 }
