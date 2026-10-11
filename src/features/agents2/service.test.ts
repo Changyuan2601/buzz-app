@@ -460,20 +460,23 @@ it("reacts 👀 and 💬 to a mention until the work its run handed off settles"
   expect(await published(native, 5)).toEqual([]);
   finish();
   await vi.waitFor(async () =>
-    expect(await published(native, 5)).toHaveLength(1),
+    expect(await published(native, 5)).toHaveLength(2),
   );
-  expect((await published(native, 5))[0]?.tags).toEqual([
-    ["h", channel],
-    ...reactions.map(({ id }) => ["e", id]),
-    ["k", "7"],
-  ]);
+  // The relay takes one target per deletion.
+  expect((await published(native, 5)).map(({ tags }) => tags)).toEqual(
+    reactions.map(({ id }) => [
+      ["h", channel],
+      ["e", id],
+      ["k", "7"],
+    ]),
+  );
   // Only mentions are reacted to, and a failed run takes its reactions back.
   run.mockRejectedValueOnce(new Error("boom"));
   emit({ events: [event("m2", { tags: mention.tags })], channelId: channel });
   emit({ events: [event("w", { content: "deploy" })], channelId: channel });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
   await vi.waitFor(async () =>
-    expect(await published(native, 5)).toHaveLength(2),
+    expect(await published(native, 5)).toHaveLength(4),
   );
   expect(await published(native, 7)).toHaveLength(4);
 });
