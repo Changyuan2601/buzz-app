@@ -90,6 +90,7 @@ const community = [
 it("replies in the current thread and notifies the members it names", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
     text: "@Alice Smith see `@Bob`",
   });
   expect(published).toEqual([
@@ -105,7 +106,7 @@ it("replies in the current thread and notifies the members it names", async () =
   ]);
 });
 
-it("tags a message for agents, and only that audience", async () => {
+it("tags a message for agents, and needs the audience said", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
   await callTool(client, context, "send", {
@@ -119,8 +120,11 @@ it("tags a message for agents, and only that audience", async () => {
     ["audience", "agents"],
   ]);
   await expect(
-    callTool(client, context, "send", { text: "hi", audience: "everyone" }),
-  ).rejects.toThrow("audience must be agents");
+    callTool(client, context, "send", { text: "hi" }),
+  ).rejects.toThrow("audience must be everyone or agents");
+  await expect(
+    callTool(client, context, "send", { text: "hi", audience: "humans" }),
+  ).rejects.toThrow("audience must be everyone or agents");
   expect(published).toHaveLength(1);
 });
 
@@ -128,9 +132,13 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
   await expect(
-    callTool(client, context, "send", { text: "hi @Carol" }),
+    callTool(client, context, "send", {
+      audience: "everyone",
+      text: "hi @Carol",
+    }),
   ).rejects.toThrow("No single channel member is @carol");
   await callTool(client, context, "send", {
+    audience: "everyone",
     text: "hi @Carol",
     mentions: [bob],
   });
@@ -140,6 +148,7 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
 it("replies to a message inside a thread at the thread's root, and posts a file's text and images", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
     reply: nested,
     path: "notes.md",
     files: ["shot.png"],
@@ -165,6 +174,7 @@ it("replies to a message inside a thread at the thread's root, and posts a file'
 it("posts at the channel's top level when given a channel", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
     channel: "other",
     text: "hello",
   });
@@ -263,6 +273,7 @@ it("replies in the channel of the message it answers", async () => {
   const elsewhere = event({ id: "3".repeat(64), tags: [["h", "other"]] });
   const { client, published } = fake([...community, elsewhere]);
   await callTool(client, { channel: "chan", root }, "send", {
+    audience: "everyone",
     reply: elsewhere.id,
     text: "over here",
   });
