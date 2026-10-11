@@ -5,6 +5,7 @@
 // `run` from the stream the owner already receives in the agent's community,
 // selected or not, so no plugin opens a socket or a REQ.
 import { Service, type Context } from "@deepseek-ai/cordis";
+import { npubEncode } from "nostr-tools/nip19";
 import type { ComponentType } from "react";
 import {
   createContributions,
@@ -48,10 +49,13 @@ import {
 } from "./native";
 import {
   readRecords,
+  readTeams,
   setAttention,
   writeRecords,
+  writeTeams,
   type AgentRecord,
   type SkippedObject,
+  type Team,
 } from "./store";
 // STOPGAP(agent-local-typing): delete with local-typing.ts.
 import { typeLocally } from "./local-typing";
@@ -147,6 +151,9 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The effort level the owner asked for in the triggering message: one of
    * that model's `efforts`. Absent means the agent's own default. */
   effort?: string;
+  /** A section for each team the agent is on, with the team's name, roster and
+   * instructions, to follow the agent's own instructions. Absent without one. */
+  team?: string;
   /** Aborts on the run's deadline, or when the agent is removed or its type is
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
@@ -196,8 +203,12 @@ export type AgentsSnapshot = Readonly<{
   /** Every agent kept running here, whichever community is selected: the
    * viewer's agents in each joined community not disconnected. */
   running: readonly Agent[];
+  /** The owner's teams on this device, in any community. */
+  teams: readonly Team[];
   error?: string;
 }>;
+export type { Team };
+export type TeamChange = Omit<Team, "id"> & Readonly<{ id?: string }>;
 export type Agents2 = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
@@ -221,6 +232,11 @@ export type Agents2 = {
   /** Deletes its key at once. Leaving its channels and archiving it follow in
    * the background whenever its community is open. */
   remove(pubkey: string): Promise<void>;
+  /** Creates a team, or replaces the one with `id`. Members must be agents on
+   * this device. */
+  saveTeam(team: TeamChange): Promise<Team>;
+  /** Deletes the team; its agents are untouched. */
+  removeTeam(id: string): Promise<void>;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -256,6 +272,42 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
 }
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
+/** The team sections for agent `self`: each team it is on, its members that
+ * still exist by name and npub, and the team's instructions. */
+export function teamPrompt(
+  teams: readonly Team[],
+  agents: readonly Pick<AgentIdentity, "pubkey" | "name">[],
+  self: string,
+) {
+  const names = new Map(agents.map((agent) => [agent.pubkey, agent.name]));
+  return teams
+    .filter((team) => team.members.includes(self))
+    .map((team) => {
+      const roster = team.members.flatMap((pubkey) => {
+        const name = names.get(pubkey);
+        return name === undefined
+          ? []
+          : [
+              `- ${name} (${npubEncode(pubkey)})${pubkey === self ? ", you" : ""}`,
+            ];
+      });
+      return [
+        "<team>",
+        `You are on the team ${JSON.stringify(team.name)}. Its members, you included:`,
+        ...roster,
+        "Mention a teammate by name, with their npub, to reach them.",
+        ...(team.instructions.trim()
+          ? [
+              "<team-instructions>",
+              team.instructions.trim(),
+              "</team-instructions>",
+            ]
+          : []),
+        "</team>",
+      ].join("\n");
+    })
+    .join("\n\n");
+}
 const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
@@ -371,6 +423,7 @@ export class Agents2Service extends Service implements Agents2 {
    * list, and `records` only adds settings to it. */
   private identities: readonly AgentIdentity[] = [];
   private records: Record<string, AgentRecord>;
+  private teamList: readonly Team[];
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
@@ -392,10 +445,12 @@ export class Agents2Service extends Service implements Agents2 {
     super(ctx, "agents2");
     this.contributions = createContributions<AgentType>(ctx);
     this.records = readRecords(storage);
+    this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
       agents: [],
       running: [],
+      teams: this.teamList,
     });
     ctx.effect(() => {
       const stops = [
@@ -613,6 +668,39 @@ export class Agents2Service extends Service implements Agents2 {
     await this.refresh();
   }
 
+  async saveTeam({ id, name, instructions, members }: TeamChange) {
+    if (!this.native) throw new Error("Agents run only in the desktop app");
+    if (!name.trim()) throw new Error("Name the team");
+    const unknown = members.find((pubkey) => !this.live(pubkey));
+    if (unknown) throw new Error("A member is not an agent on this device");
+    if (id && !this.teamList.some((team) => team.id === id))
+      throw new Error("No such team");
+    const team: Team = Object.freeze({
+      id: id ?? crypto.randomUUID(),
+      name: name.trim(),
+      instructions,
+      members: Object.freeze([...new Set(members)]),
+    });
+    this.writeTeams(
+      id
+        ? this.teamList.map((saved) => (saved.id === id ? team : saved))
+        : [...this.teamList, team],
+    );
+    return team;
+  }
+
+  async removeTeam(id: string) {
+    this.writeTeams(this.teamList.filter((team) => team.id !== id));
+  }
+
+  /** Saves the teams; memory changes only once storage has taken them. */
+  private writeTeams(teams: readonly Team[]) {
+    writeTeams(this.storage, teams);
+    this.teamList = Object.freeze(teams);
+    this.state = Object.freeze({ ...this.state, teams: this.teamList });
+    this.notify();
+  }
+
   /** Saves one record; memory changes only once storage has taken it. */
   private write(record: AgentRecord) {
     const records = { ...this.records, [record.pubkey]: record };
@@ -703,6 +791,18 @@ export class Agents2Service extends Service implements Agents2 {
         );
         writeRecords(this.storage, this.records);
       }
+      // A deleted agent leaves its teams; the teams stay.
+      if (
+        this.teamList.some((team) =>
+          team.members.some((pubkey) => !live.has(pubkey)),
+        )
+      )
+        this.writeTeams(
+          this.teamList.map((team) => ({
+            ...team,
+            members: team.members.filter((pubkey) => live.has(pubkey)),
+          })),
+        );
     } catch (error) {
       if (turn !== this.listed) return;
       this.state = Object.freeze({
@@ -1170,6 +1270,11 @@ export class Agents2Service extends Service implements Agents2 {
         await Promise.race([
           Promise.resolve().then(async () => {
             const pick = await pickFor(job.trigger, agent, type);
+            const team = teamPrompt(
+              this.teamList,
+              this.identities.filter((identity) => !identity.deleted),
+              agent.pubkey,
+            );
             signal.throwIfAborted();
             return run(
               Object.freeze({
@@ -1178,6 +1283,7 @@ export class Agents2Service extends Service implements Agents2 {
                 agent: handle,
                 config: agent.config,
                 ...pick,
+                ...(team ? { team } : {}),
                 signal,
                 workingUntil: working.hold,
               }),

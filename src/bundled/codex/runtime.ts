@@ -43,6 +43,8 @@ type Request = {
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   interest: string;
+  /** The agent's team sections, if it is on a team. */
+  team: string;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
@@ -364,6 +366,7 @@ export class CodexRuntime {
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
+      team: delivery.team ?? "",
       answered,
     };
     if (!validWorkspace(settings.workspace)) {
@@ -780,7 +783,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings),
+            value: developerInstructions(agent, settings, request.team),
           },
         },
       });

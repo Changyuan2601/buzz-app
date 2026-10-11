@@ -171,3 +171,48 @@ export function setAttention(
     timers: kept,
   };
 }
+
+/** A group of the owner's agents and the text its members share. Membership
+ * lives only here: an agent records nothing about its teams. */
+export type Team = Readonly<{
+  id: string;
+  name: string;
+  instructions: string;
+  /** Agent pubkeys, in the order shown. */
+  members: readonly string[];
+}>;
+export const TEAMS_KEY = "buzz.agents2.teams.v1";
+
+/** Reads every team, skipping any that is not one. */
+export function readTeams(storage: Storage): readonly Team[] {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(storage.getItem(TEAMS_KEY) ?? "null");
+  } catch {
+    return [];
+  }
+  const teams =
+    (stored as { version?: unknown; teams?: unknown } | null)?.version === 1
+      ? (stored as { teams: unknown }).teams
+      : undefined;
+  if (!Array.isArray(teams)) return [];
+  return teams.flatMap((team: Partial<Team> | null) =>
+    typeof team?.id === "string" &&
+    typeof team.name === "string" &&
+    typeof team.instructions === "string" &&
+    Array.isArray(team.members)
+      ? [
+          {
+            id: team.id,
+            name: team.name,
+            instructions: team.instructions,
+            members: team.members.filter((member) => PUBKEY.test(member)),
+          },
+        ]
+      : [],
+  );
+}
+
+export function writeTeams(storage: Storage, teams: readonly Team[]) {
+  storage.setItem(TEAMS_KEY, JSON.stringify({ version: 1, teams }));
+}

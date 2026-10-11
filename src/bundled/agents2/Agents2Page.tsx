@@ -5,7 +5,7 @@
 // - Build: the identity rail on the left, the type's tabs and the app's
 //   Attention tab on the right.
 // New agents are made in the peek slot, so making one never covers the grid,
-// and so are agents brought over from an earlier agent system.
+// and so are agents brought over from an earlier agent system, and teams.
 import {
   useEffect,
   useRef,
@@ -30,6 +30,7 @@ import type {
   Agent,
   Agents2,
   RegisteredAgentType,
+  Team,
 } from "../../features/agents2/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -41,6 +42,7 @@ import {
 } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
@@ -48,6 +50,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
 import {
   formatPublicKey,
   publicKeyLabels,
@@ -60,7 +63,7 @@ type Frame =
   | {
       view: "browse";
       selected?: string;
-      side?: "creating" | "porting";
+      side?: "creating" | "porting" | "teams";
     }
   | { view: "build"; pubkey: string };
 
@@ -100,6 +103,7 @@ export function Agents2Page({
   const build = (pubkey: string) => setFrame({ view: "build", pubkey });
   const newAgent = () => setFrame({ view: "browse", side: "creating" });
   const bringOver = () => setFrame({ view: "browse", side: "porting" });
+  const openTeams = () => setFrame({ view: "browse", side: "teams" });
 
   const body = (() => {
     if (snapshot.status === "unavailable")
@@ -138,6 +142,13 @@ export function Agents2Page({
       />
     ) : side === "porting" ? (
       <BringOver agents2={agents2} types={types} onClose={() => browse()} />
+    ) : side === "teams" ? (
+      <Teams
+        agents2={agents2}
+        agents={snapshot.agents}
+        teams={snapshot.teams}
+        onClose={() => browse()}
+      />
     ) : selected ? (
       <AgentPeek
         key={selected.pubkey}
@@ -212,6 +223,13 @@ export function Agents2Page({
                     disabled={side === "porting"}
                   >
                     Bring over
+                  </Button>
+                  <Button
+                    size="compact"
+                    onClick={openTeams}
+                    disabled={side === "teams"}
+                  >
+                    Teams
                   </Button>
                   <Button size="compact" onClick={newAgent} disabled={creating}>
                     <PlusIcon size={14} aria-hidden="true" /> New agent
@@ -630,6 +648,205 @@ function BringOver({
         </p>
       )}
     </section>
+  );
+}
+
+/** The owner's teams: each a name, instructions and members, given to every
+ * member's prompt with a roster. Agents record nothing about their teams. */
+function Teams({
+  agents2,
+  agents,
+  teams,
+  onClose,
+}: {
+  agents2: Agents2;
+  agents: readonly Agent[];
+  teams: readonly Team[];
+  onClose(): void;
+}) {
+  // A team's id while it is edited, or "new" for one being made.
+  const [editing, setEditing] = useState<string>();
+  const team = teams.find((item) => item.id === editing);
+  if (editing === "new" || team)
+    return (
+      <TeamEditor
+        key={editing}
+        agents2={agents2}
+        agents={agents}
+        {...(team ? { team } : {})}
+        onDone={() => setEditing(undefined)}
+      />
+    );
+  const names = new Map(agents.map((agent) => [agent.pubkey, agent.name]));
+  return (
+    <section className={styles.sideBody} aria-label="Teams">
+      <SideHeader
+        title={<h3 className="m-0 text-heading">Teams</h3>}
+        onClose={onClose}
+      />
+      <p className="m-0 text-body-sm text-secondary">
+        Each member is told who its teammates are, and follows the team's
+        instructions after its own.
+      </p>
+      {teams.length ? (
+        <ul className={styles.portList} aria-label="Teams">
+          {teams.map((item) => (
+            <li key={item.id} className={styles.portRow}>
+              <span className="grid min-w-0 flex-1">
+                <span className="truncate text-body">{item.name}</span>
+                <span className="truncate text-caption text-secondary">
+                  {item.members
+                    .map((pubkey) => names.get(pubkey))
+                    .filter(Boolean)
+                    .join(", ") || "No members"}
+                </span>
+              </span>
+              <Button
+                size="compact"
+                aria-label={`Edit ${item.name}`}
+                onClick={() => setEditing(item.id)}
+              >
+                Edit
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="m-0 text-body-sm text-secondary">No teams yet.</p>
+      )}
+      <Button variant="primary" onClick={() => setEditing("new")}>
+        <PlusIcon size={14} aria-hidden="true" /> New team
+      </Button>
+    </section>
+  );
+}
+
+function TeamEditor({
+  agents2,
+  agents,
+  team,
+  onDone,
+}: {
+  agents2: Agents2;
+  agents: readonly Agent[];
+  team?: Team;
+  onDone(): void;
+}) {
+  const [name, setName] = useState(team?.name ?? "");
+  const [instructions, setInstructions] = useState(team?.instructions ?? "");
+  const [members, setMembers] = useState<readonly string[]>(
+    team?.members ?? [],
+  );
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const act = async (work: () => Promise<unknown>) => {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      await work();
+      onDone();
+    } catch (reason) {
+      setError(message(reason));
+      setPending(false);
+    }
+  };
+  const save = () =>
+    act(() =>
+      agents2.saveTeam({
+        ...(team ? { id: team.id } : {}),
+        name: name.trim(),
+        instructions,
+        members,
+      }),
+    );
+  return (
+    <form
+      className={styles.sideBody}
+      aria-label={team ? `Edit ${team.name}` : "New team"}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !pending) onDone();
+      }}
+    >
+      <SideHeader
+        title={
+          <h3 className="m-0 text-heading">
+            {team ? "Edit team" : "New team"}
+          </h3>
+        }
+        onClose={onDone}
+      />
+      <Field label="Name">
+        <Input
+          autoFocus
+          value={name}
+          disabled={pending}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </Field>
+      <Field
+        label="Instructions"
+        description="Every member follows these after its own instructions."
+      >
+        <Textarea
+          rows={5}
+          value={instructions}
+          disabled={pending}
+          onChange={(event) => setInstructions(event.target.value)}
+        />
+      </Field>
+      <Section title="Members">
+        {agents.length ? (
+          <div className="grid gap-2">
+            {agents.map((agent) => (
+              <Checkbox
+                key={agent.pubkey}
+                label={agent.name}
+                checked={members.includes(agent.pubkey)}
+                disabled={pending}
+                onCheckedChange={(checked) =>
+                  setMembers((last) =>
+                    checked
+                      ? [...last, agent.pubkey]
+                      : last.filter((pubkey) => pubkey !== agent.pubkey),
+                  )
+                }
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
+        )}
+      </Section>
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <Button
+          type="submit"
+          variant="primary"
+          loading={pending}
+          disabled={!name.trim()}
+        >
+          {team ? "Save" : "Create team"}
+        </Button>
+        {team && (
+          <Button
+            variant="destructive"
+            disabled={pending}
+            onClick={() => void act(() => agents2.removeTeam(team.id))}
+          >
+            Delete team
+          </Button>
+        )}
+      </div>
+    </form>
   );
 }
 
