@@ -230,6 +230,7 @@ function fixture(
     size: 12,
     type: mime,
   }));
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
   const agent = {
     pubkey,
     owner,
@@ -266,6 +267,7 @@ function fixture(
         instructions: "TEST_INSTRUCTIONS",
       },
       signal: new AbortController().signal,
+      workingUntil,
     };
     if (result.trigger.type !== "timer")
       events.push(result.trigger.event as EventData);
@@ -383,6 +385,7 @@ function fixture(
     read,
     storage,
     delivery,
+    workingUntil,
     starts,
     complete,
     interrupt,
@@ -701,8 +704,17 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   await vi.waitFor(() =>
     expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(2),
   );
+  // Each mention counts as working until the turn it was steered into ends.
+  let settled = 0;
+  for (const [done] of f.workingUntil.mock.calls)
+    void Promise.resolve(done).then(() => settled++);
+  expect(f.workingUntil).toHaveBeenCalledTimes(3);
+  // A macrotask lets every pending promise chain finish first.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(settled).toBe(0);
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(settled).toBe(3));
   const steering = f.sent.filter((wire) => wire.method === "turn/steer");
   expect(JSON.stringify(steering[0]?.params)).toContain("FIRST_STEER");
   expect(JSON.stringify(steering[1]?.params)).toContain("SECOND_STEER");

@@ -77,6 +77,7 @@ function setup(thread: readonly EventData[] = []) {
     upload: vi.fn(),
     remember: vi.fn(),
   };
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
   const deliver = (trigger: Delivery["trigger"]) =>
     runtime.run({
       trigger,
@@ -84,10 +85,21 @@ function setup(thread: readonly EventData[] = []) {
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
+      workingUntil,
     } as Delivery);
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
-  return { runtime, deliver, published, claudes, fake, read, data, agent };
+  return {
+    runtime,
+    deliver,
+    published,
+    claudes,
+    fake,
+    read,
+    data,
+    agent,
+    workingUntil,
+  };
 }
 
 it("hands a mention to its thread's session", async () => {
@@ -201,6 +213,7 @@ it("runs a mention on the model and effort its delivery picked", async () => {
     model: "haiku",
     effort: "low",
     signal: new AbortController().signal,
+    workingUntil: () => undefined,
   } as Delivery);
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
@@ -352,7 +365,7 @@ it("says so in the thread when a turn fails", async () => {
       ["p", self],
     ],
   });
-  const { runtime, deliver, published, claudes } = setup();
+  const { runtime, deliver, published, claudes, workingUntil } = setup();
   runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
   await flush(10);
   const [spare] = claudes();
@@ -361,8 +374,16 @@ it("says so in the thread when a turn fails", async () => {
   await deliver({ type: "mention", event: mention });
   await flush(10);
   expect(spare.prompts).toHaveLength(1);
+  // The host counts the agent as working until the turn it handed off ends.
+  let settled = false;
+  const done = workingUntil.mock.calls[0]?.[0];
+  if (!done) throw new Error("the turn was not handed to workingUntil");
+  void Promise.resolve(done).then(() => (settled = true));
+  await flush(10);
+  expect(settled).toBe(false);
   spare.exit(1, "Error: Invalid API key\n");
   await flush(10);
+  expect(settled).toBe(true);
   const report = published.find((event) => event.kind === 9);
   expect(report?.content).toBe(
     "⚠️ I couldn't finish that: Error: Invalid API key",
@@ -421,6 +442,7 @@ it("acts only on its owner's messages unless told to answer anyone", async () =>
     },
     config: { ...DEFAULT_CONFIG, respondTo: "anyone" },
     signal: new AbortController().signal,
+    workingUntil: () => undefined,
   } as unknown as Delivery);
   await flush(10);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);

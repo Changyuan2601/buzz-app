@@ -225,6 +225,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    workingUntil,
   }: Delivery) {
     const settings = config(raw);
     if (
@@ -250,6 +251,7 @@ export class ClaudeRuntime {
         }),
         0,
       );
+      workingUntil(done);
       this.watch(done, () => undefined);
       return;
     }
@@ -284,6 +286,8 @@ export class ClaudeRuntime {
       fresh: async () => (await prompt(true)).text,
       pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
     });
+    // The turn outlives `run`, which the host is told so it shows it as working.
+    workingUntil(done);
     this.notify();
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error);
