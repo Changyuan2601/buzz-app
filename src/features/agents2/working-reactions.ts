@@ -1,6 +1,10 @@
-// A stopgap until Agents2 agents show as typing: while an agent works on a
-// mention it reacts to it with 👀 and 💬, then takes both back. To retire it,
-// delete this file and its one use in service.ts.
+// STOPGAP(agent-working-reactions): DELETE once Agents2 agents show as typing
+// through the relay. Every piece is tagged STOPGAP(agent-working-reactions):
+// grep for it and delete this file, its import and use in service.ts, and its
+// test. Keep `Delivery.workingUntil`, which typing indicators need too.
+//
+// While an agent works on a mention it reacts to it with 👀 and 💬, then takes
+// both back.
 import type { RelayEvent } from "../relay/events";
 import type { AgentEventTemplate } from "./native";
 

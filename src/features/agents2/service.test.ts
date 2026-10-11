@@ -428,6 +428,7 @@ it("delivers mentions and matching watches once, and never the agent's own event
   expect(first?.config).toEqual({ reply: "ok" });
 });
 
+// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
 it("reacts 👀 and 💬 to a mention until the work its run handed off settles", async () => {
   const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

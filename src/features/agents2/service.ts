@@ -52,6 +52,7 @@ import {
   type AgentRecord,
   type SkippedObject,
 } from "./store";
+// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
 import { reactWhileWorking } from "./working-reactions";
 
 /** One of the viewer's agents, in the community at `relay`. */
@@ -1201,6 +1202,7 @@ export class Agents2Service extends Service implements Agents2 {
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
+    // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
     const done =
       native && event && channel
         ? reactWhileWorking(
