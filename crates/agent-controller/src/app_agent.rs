@@ -416,6 +416,17 @@ impl AppAgents {
         let name = valid_name(name)?;
         self.edit(pubkey, |agent| agent.name = name)
     }
+    /// Sets or, with `None`, clears the profile picture: an `https` URL without
+    /// credentials.
+    pub fn set_picture(&self, pubkey: &str, picture: Option<String>) -> Result<()> {
+        if picture
+            .as_deref()
+            .is_some_and(|url| !crate::port::public_picture(url))
+        {
+            return Err("Use an HTTPS image URL without credentials".into());
+        }
+        self.edit(pubkey, |agent| agent.picture = picture)
+    }
     /// Records a profile its community accepted, unless a newer one already is.
     pub fn published(&self, pubkey: &str, profile: Published) -> Result<()> {
         self.edit(pubkey, |agent| {

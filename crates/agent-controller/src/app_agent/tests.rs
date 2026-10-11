@@ -141,6 +141,34 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
 }
 
 #[test]
+fn a_set_picture_is_published_and_can_be_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let url = "https://relay.example/media/abc";
+    for refused in [
+        "http://relay.example/a",
+        "https://u:p@relay.example/a",
+        "nope",
+    ] {
+        assert!(agents
+            .set_picture(&agent.pubkey, Some(refused.into()))
+            .is_err());
+    }
+    agents.set_picture(&agent.pubkey, Some(url.into())).unwrap();
+    let pictured = agents.get(&agent.pubkey).unwrap();
+    assert_eq!(pictured.picture.as_deref(), Some(url));
+    assert!(!pictured.profile_is_current());
+    assert_eq!(
+        pictured.profile_event(&key).unwrap()["content"],
+        format!(r#"{{"bot":true,"name":"Ada","picture":"{url}"}}"#)
+    );
+    agents.set_picture(&agent.pubkey, None).unwrap();
+    assert_eq!(agents.get(&agent.pubkey).unwrap().picture, None);
+}
+
+#[test]
 fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();

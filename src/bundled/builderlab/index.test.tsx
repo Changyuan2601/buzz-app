@@ -56,6 +56,7 @@ function provideAgents2(root: Context, relay: RelayData) {
     portable: vi.fn(),
     port: vi.fn(),
     rename: vi.fn(),
+    setPicture: vi.fn(),
     remove: vi.fn(),
     forget: vi.fn(),
     publish: vi.fn(),

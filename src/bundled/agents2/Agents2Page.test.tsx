@@ -171,6 +171,21 @@ it("shows an agent's picture in the grid, peek and build view", async () => {
   expect(pictures()).toBe(1);
 });
 
+it("edits the picture from the build view and shows why a save failed", async () => {
+  const user = userEvent.setup();
+  const picture = "https://old.example/media/a.png";
+  const { agents2 } = setup([{ ...agent("Ada", 1), picture }]);
+  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.keyboard("{Enter}");
+  agents2.save.mockRejectedValueOnce(new Error("Could not save"));
+  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Remove avatar" }),
+  );
+  expect(agents2.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
+});
+
 it("makes a new agent in the side panel and goes straight to building it", async () => {
   const user = userEvent.setup();
   const { agents2 } = setup([agent("Ada", 1)]);

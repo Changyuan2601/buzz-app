@@ -18,6 +18,8 @@ import { AgentTabs } from "./AgentTabs";
 import type { ChannelChoice } from "../../features/agents2/attention";
 import { AgentDelete } from "../../features/agents2/AgentManage";
 import { AttentionSummary } from "../../features/agents2/AttentionPanel";
+import { AvatarEditor } from "../../features/profiles/AvatarEditor";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { useAgents2, useChannelChoices } from "../../features/agents2/react";
 import type {
   PortableAgent,
@@ -302,13 +304,7 @@ function Inventory({
             onDoubleClick={() => onBuild(agent.pubkey)}
           >
             <span className={styles.portrait}>
-              <Avatar
-                src={agent.picture}
-                alt=""
-                fallback={agent.name}
-                size="fill"
-                shape="squircle"
-              />
+              <AgentPortrait agent={agent} size="fill" />
             </span>
             <span className={styles.tileName}>{agent.name}</span>
             <span className={styles.tileSummary}>{summaryOf(agent, type)}</span>
@@ -316,6 +312,26 @@ function Inventory({
         );
       })}
     </div>
+  );
+}
+
+/** An agent's picture, shown through its community's media access. */
+function AgentPortrait({
+  agent,
+  size,
+}: {
+  agent: Readonly<{ name: string; picture?: string; relay: string }>;
+  size?: "fill";
+}) {
+  const src = useAvatarPreview(agent.picture ?? "", agent.relay || undefined);
+  return (
+    <Avatar
+      src={src}
+      alt=""
+      fallback={agent.name}
+      {...(size && { size })}
+      shape="squircle"
+    />
   );
 }
 
@@ -361,13 +377,7 @@ function AgentPeek({
     <div className={styles.sideBody}>
       <div className={styles.peekIdentity}>
         <span className={styles.portraitLarge}>
-          <Avatar
-            src={agent.picture}
-            alt=""
-            fallback={agent.name}
-            size="fill"
-            shape="squircle"
-          />
+          <AgentPortrait agent={agent} size="fill" />
         </span>
         <div className="grid min-w-0 flex-1 gap-0.5">
           <h3 className="m-0 truncate text-heading">{agent.name}</h3>
@@ -589,7 +599,7 @@ function BringOver({
         <ul className={styles.portList} aria-label="Agents to bring over">
           {found.agents.map((agent) => (
             <li key={agent.pubkey} className={styles.portRow}>
-              <Avatar src={agent.picture} alt="" fallback={agent.name} />
+              <AgentPortrait agent={agent} />
               <span className="grid min-w-0 flex-1">
                 <span className="truncate text-body">{agent.name}</span>
                 <span className="truncate text-caption text-secondary">
@@ -637,6 +647,7 @@ function AgentBuild({
   onRemoved(): void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [pictureError, setPictureError] = useState("");
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1500);
@@ -645,15 +656,26 @@ function AgentBuild({
   return (
     <div className={styles.build}>
       <aside className={styles.rail} aria-label={`${agent.name} identity`}>
-        <span className={styles.portraitLarge}>
-          <Avatar
-            src={agent.picture}
-            alt=""
-            fallback={agent.name}
-            size="fill"
+        <div className={styles.portraitEdit}>
+          <AvatarEditor
+            size="compact"
             shape="squircle"
+            value={agent.picture ?? ""}
+            name={agent.name}
+            community={agent.relay}
+            onChange={(picture) => {
+              setPictureError("");
+              agents2
+                .save(agent.pubkey, { picture: picture || null })
+                .catch((error: unknown) => setPictureError(message(error)));
+            }}
           />
-        </span>
+          {pictureError && (
+            <p role="alert" className="m-0 text-body-sm">
+              {pictureError}
+            </p>
+          )}
+        </div>
         <NameField
           name={agent.name}
           onSave={(name) => agents2.save(agent.pubkey, { name })}
