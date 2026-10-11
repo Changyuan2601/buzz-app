@@ -964,25 +964,7 @@ function AgentsMessageRow(props: MessageRowProps) {
       {props.day && <DayDivider createdAt={row.createdAt} />}
       {/* Open, the message starts beside its addresses and the whole entry
           stays highlighted, so it reads as one box that folds back. */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: folding by click is a pointer shortcut; the line's button folds it from the keyboard. */}
-      <div
-        className={styles.audienceEntry}
-        // Open, a click anywhere in the box folds it, except on its own
-        // controls and links or at the end of a text selection.
-        onClick={(event) => {
-          const target = event.target as Element;
-          if (
-            !open ||
-            !event.currentTarget.contains(target) ||
-            target.closest(
-              "a, button, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true']",
-            ) ||
-            !target.ownerDocument.getSelection()?.isCollapsed
-          )
-            return;
-          setOpen(false);
-        }}
-      >
+      <div className={styles.audienceEntry}>
         <button
           type="button"
           data-buzz-ui=""

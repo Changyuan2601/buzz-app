@@ -2104,9 +2104,6 @@ it("shows a message for agents as one line from its author to whom it addresses"
     expect(screen.getByText(/Then report back/)).toBeInTheDocument();
     expect(screen.queryByText("@Rivet,")).toBeNull();
     expect(screen.getByText("run").tagName).toBe("STRONG");
-    // Anywhere in the open box folds it back.
-    fireEvent.click(screen.getByText(/Then report back/));
-    expect(line).toHaveAttribute("aria-expanded", "false");
   } finally {
     cleanup();
   }
