@@ -1,4 +1,4 @@
-import type { RelayEvent } from "./events";
+import type { EventData, RelayEvent } from "./events";
 import { threadReference } from "./thread-reference";
 
 const ACTIVITY_LIFETIME_MS = 8_000;
@@ -167,6 +167,12 @@ export function createTyping(
   return {
     capability: Object.freeze({
       snapshot: () => snapshot,
+      // STOPGAP(agent-local-typing): delete with agents2/local-typing.ts.
+      /** Shows a pulse this app made for an agent it runs, on this device
+       * only, as if it came live, until agents' pulses reach the relay. */
+      local(event: EventData) {
+        if (event.kind === 20002) accept([event as RelayEvent], true);
+      },
       subscribe(listener: () => void) {
         if (closed) return () => {};
         listeners.add(listener);

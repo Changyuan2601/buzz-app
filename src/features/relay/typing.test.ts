@@ -309,3 +309,19 @@ describe("completion capacity", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+// STOPGAP(agent-local-typing): delete with agents2/local-typing.ts.
+it("shows a local pulse like a live one, and the agent's reply ends it", () => {
+  const { owner, snapshot } = setup();
+  const local = {
+    id: "",
+    pubkey: agent.pubkey,
+    content: "",
+    created_at: epoch,
+  };
+  owner.capability.local({ ...local, kind: 9, tags: [["h", "a"]] });
+  expect(snapshot()).toEqual([]);
+  owner.capability.local({ ...local, kind: 20002, tags: [["h", "a"]] });
+  expect(snapshot()).toEqual([{ channelId: "a", pubkey: agent.pubkey }]);
+  owner.accept([message(agent, "a", "done", epoch)], true);
+  expect(snapshot()).toEqual([]);
+});
