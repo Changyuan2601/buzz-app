@@ -318,10 +318,26 @@ it("shows a local pulse like a live one, and the agent's reply ends it", () => {
     content: "",
     created_at: epoch,
   };
-  owner.capability.local({ ...local, kind: 9, tags: [["h", "a"]] });
+  owner.capability.local({ ...local, kind: 7, tags: [["h", "a"]] });
   expect(snapshot()).toEqual([]);
   owner.capability.local({ ...local, kind: 20002, tags: [["h", "a"]] });
   expect(snapshot()).toEqual([{ channelId: "a", pubkey: agent.pubkey }]);
   owner.accept([message(agent, "a", "done", epoch)], true);
+  expect(snapshot()).toEqual([]);
+  // A local end works the same way, without waiting for the pulse to expire.
+  vi.advanceTimersByTime(3_000);
+  owner.capability.local({
+    ...local,
+    created_at: epoch + 3,
+    kind: 20002,
+    tags: [["h", "a"]],
+  });
+  expect(snapshot()).toHaveLength(1);
+  owner.capability.local({
+    ...local,
+    created_at: epoch + 3,
+    kind: 9,
+    tags: [["h", "a"]],
+  });
   expect(snapshot()).toEqual([]);
 });
