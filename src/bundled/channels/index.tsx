@@ -12,7 +12,6 @@ export const inject = [
   "conversation",
   "navigation",
   "settingsCards",
-  "channelTemplates",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerCompletion({
@@ -26,17 +25,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const panels = ctx.panels;
   const pages = ctx.pages;
   const navigator = ctx.navigation;
-  const providers = ctx.channelTemplates;
   ctx.settingsCards.register({
     id: "groups",
     title: "Personal groups",
     icon: FolderSimpleIcon,
     component: ({ active }) => (
-      <ChannelSetupSettings
-        relay={relay}
-        providers={providers}
-        active={active}
-      />
+      <ChannelSetupSettings relay={relay} active={active} />
     ),
   });
   ctx.pages.register({
@@ -50,7 +44,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     route: { version: 1, validate: isChannelRoute },
     component: ({ companion, navigation }) => (
       <ChannelsPage
-        providers={providers}
         navigation={navigation}
         navigator={navigator}
         extensions={extensions}

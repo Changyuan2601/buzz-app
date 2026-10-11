@@ -9,7 +9,6 @@ import { createPluginManager } from "../../src/plugins/manager";
 import { PagesService } from "../../src/features/pages/service";
 import { PanelsService } from "../../src/features/panels/service";
 import { SettingsCardsService } from "../../src/features/settings/service";
-import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
@@ -335,7 +334,6 @@ if (channels) {
   new PagesService(context);
   new PanelsService(context);
   new SettingsCardsService(context);
-  new TemplateProvidersService(context);
   provideNavigation(context);
   // Only the composer is mounted; the Channels page never consumes this service.
   context.provide("relay", {

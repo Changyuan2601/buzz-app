@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelKit } from "../../features/channel-templates/capability";
 import type { KitEntry } from "../../features/channel-templates/model";
-import type { TemplateProviders } from "../../features/channel-templates/provider";
 import type { RelayData } from "../../features/relay/service";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
 
@@ -72,21 +71,7 @@ function fixture({
     snapshot: () => connection,
     subscribe: () => () => {},
   } as unknown as RelayData;
-  const providers: TemplateProviders = {
-    snapshot: () => [],
-    subscribe: () => () => {},
-    register() {},
-  };
-  // useSyncExternalStore requires a stable snapshot.
-  const noProviders: ReturnType<TemplateProviders["snapshot"]> = [];
-  providers.snapshot = () => noProviders;
-  render(
-    <ChannelSetupSettings
-      relay={relay}
-      providers={providers}
-      active={() => true}
-    />,
-  );
+  render(<ChannelSetupSettings relay={relay} active={() => true} />);
   return {
     kit,
     update(next: typeof state) {

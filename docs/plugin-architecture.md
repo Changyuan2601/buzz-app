@@ -256,7 +256,7 @@ fence asynchronous reads on revocation. Channel Usage owns this panel and its
 archive projection; the session continues to own archive capture, access and
 retention. Plugin enablement controls visibility without changing capture settings.
 
-### Optional channel templates and Settings cards
+### Settings cards
 
 `ctx.settingsCards.register({ id, title, icon, component })` contributes a card under
 Settings → Messages, not a new route. Adding `group` instead gives the card its own
@@ -267,10 +267,11 @@ Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
-No bundled plugin supplies a template provider now: Templates & teams
-(`buzz.channel-templates`) was removed with the v1 Agents system. The host sidebar
-owns personal groups and the existing + creation buttons, independently of any
-provider.
+The channel template extension point (`ctx.channelTemplates`) was removed with the
+v1 Agents system. The host sidebar owns personal groups and the existing + creation
+buttons. Create sends only name, privacy, duration and destination group; the
+session still retries frozen setup receipts saved by earlier builds, including their
+agents and Canvas, without any template or agent catalog.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
 under Settings → Communities. It manages Block-hosted relays through a Builderlab
@@ -297,30 +298,6 @@ over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
 validates the challenge and signs only the fixed kind 24243 binding. The desktop
 credential lives in plugin memory for the plugin's lifetime and is never persisted,
 so restarting the app signs out. Other browser builds show the unavailable notice.
-
-`ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
-one optional composition provider (`TemplateProviders`,
-`features/channel-templates/provider.ts`). With zero or multiple active providers, no
-optional controls are selected, so Create and the channel menu show none while no
-provider is registered. This host-matched preview is not a workflow API:
-The sidebar owns creation form/draft data and final dispatch; the session owns signing,
-membership, Canvas writes, exact receipts and setup completion notices. Provider
-components must check `active()` before accepting delayed work or starting
-new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
-
-A provider going away preserves saved group default references but does not apply
-them to new intent. Accepted drafts get a compact summary and Clear action only when
-the provider is unavailable or fails; a provider returning does not overwrite edits
-or automatically apply an unresolved old default.
-Accepted setup runs independently of the template/agent catalogs after admission.
-Failures preserve frozen setup receipts and Outbox delivery evidence; dismissing a
-completion notice only hides that notice. There is no template Resume, automatic
-resend or startup continuation. Removing a provider is not cancellation of already
-accepted writes. Group-only and Canvas-only setup
-require no agent-library readiness; real agent selections still receive fresh host
-validation. Shared group/kit storage remains session-owned. Updating the native
-bundled catalog requires a desktop rebuild/restart; frontend hot reload alone
-cannot add the entry.
 
 ### Composer accessories
 
