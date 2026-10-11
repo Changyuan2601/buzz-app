@@ -28,6 +28,17 @@ export function useAgents2(agents2: Agents2) {
   return { snapshot, types };
 }
 
+/** Agents2's snapshot, or undefined without it. */
+export function useAgents2Snapshot(agents2: Agents2 | undefined) {
+  const subscribe = agents2?.subscribe ?? noSubscribe;
+  const snapshot = agents2?.snapshot ?? none;
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+const noTeams: readonly never[] = Object.freeze([]);
+/** The owner's teams on this device, or none without Agents2. */
+export const useTeams = (agents2: Agents2 | undefined) =>
+  useAgents2Snapshot(agents2)?.teams ?? noTeams;
+
 /** The Agents2 agent at `pubkey`, with its type when that is registered. A saved
  * agent whose type plugin is disabled or reloading is still an Agents2 agent. */
 export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {

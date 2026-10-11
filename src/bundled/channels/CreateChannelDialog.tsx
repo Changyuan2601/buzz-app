@@ -1,6 +1,13 @@
 import type { Groups, Group } from "../../features/channel-templates/model";
 import type { ChannelCreationInput } from "../../features/channel-templates/setup";
 import type { RelaySession } from "../../features/relay/session";
+import type { Agents2 } from "../../features/agents2/service";
+import {
+  templateAgents,
+  useChannelTemplates,
+} from "../../features/channel-templates/local";
+import { Select } from "../../shared/design-system/ui/Select";
+import { useAgents2Snapshot } from "../../features/agents2/react";
 import {
   useEffect,
   useId,
@@ -36,6 +43,8 @@ type Props = {
   pending?: CreateChannelInput | undefined;
   finalFocus?: RefObject<HTMLElement | null> | undefined;
   session: RelaySession;
+  /** Supplies the teams a template adds. */
+  agents2?: Agents2 | undefined;
   groups: Groups | undefined;
   destinations?: readonly (Pick<Group, "id" | "name"> & { icon?: string })[];
   groupSource?: "legacy";
@@ -53,6 +62,7 @@ function OpenCreateChannelDialog({
   pending,
   finalFocus,
   session,
+  agents2,
   groups,
   destinations = groups?.groups ?? [],
   groupSource,
@@ -92,6 +102,35 @@ function OpenCreateChannelDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
+  const templates = useChannelTemplates();
+  const agentsSnapshot = useAgents2Snapshot(agents2);
+  const [chosenTemplate, setTemplateId] = useState("");
+  // A template deleted meanwhile, here or in another window, is no choice.
+  const template = templates.find((item) => item.id === chosenTemplate);
+  const templateId = template?.id ?? "";
+  // The team members that are the owner's agents in this community.
+  const agentNames = new Map(
+    (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
+  );
+  const templateSetup = template && {
+    agents: templateAgents(
+      template,
+      agentsSnapshot?.teams ?? [],
+      new Set(agentNames.keys()),
+    ),
+    canvas: template.canvas,
+  };
+  const templateNote =
+    templateSetup &&
+    ([
+      templateSetup.agents.length
+        ? `Adds ${templateSetup.agents.map((key) => agentNames.get(key)).join(", ")}`
+        : "",
+      templateSetup.canvas.trim() ? "Starts the Canvas" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ") ||
+      "None of its agents are in this community, and it has no Canvas.");
   const destination = destinations.find((g) => g.id === groupId);
   const summary = pending?.setup;
   const editing = useRef(false);
@@ -120,6 +159,7 @@ function OpenCreateChannelDialog({
     setConfirmDiscard(false);
     setError("");
     setGroupId(pending ? (pending.setup?.groupId ?? "") : initialGroup);
+    setTemplateId("");
   }, [open, pending, initialGroup]);
 
   const normalizedName = canonicalDetailsName(name);
@@ -136,7 +176,8 @@ function OpenCreateChannelDialog({
     (name !== "" ||
       description !== "" ||
       privateChannel ||
-      lifetime !== "ongoing");
+      lifetime !== "ongoing" ||
+      templateId !== "");
   const requestClose = () => {
     if (busy) return;
     if (privacyChoice) setPrivacyChoice(undefined);
@@ -167,14 +208,14 @@ function OpenCreateChannelDialog({
           visibility: privateChannel ? "private" : "open",
           ...(lifetime === "temporary" ? { ttlSeconds: temporaryTtl } : {}),
           ...(description.trim() ? { description: description.trim() } : {}),
-          ...(groupId
+          ...(groupId || templateSetup?.agents.length || templateSetup?.canvas
             ? {
                 setup: {
-                  agents: [],
-                  canvas: "",
+                  agents: templateSetup?.agents ?? [],
+                  canvas: templateSetup?.canvas ?? "",
                   groupId,
-                  templateId: "",
-                  ...(groupSource ? { groupSource } : {}),
+                  templateId,
+                  ...(groupId && groupSource ? { groupSource } : {}),
                 },
               }
             : {}),
@@ -387,6 +428,31 @@ function OpenCreateChannelDialog({
                 setError("");
               }}
             />
+            {!pending && templates.length > 0 && (
+              <Select
+                label="Template"
+                variant="field"
+                value={templateId}
+                description={templateNote}
+                groups={[
+                  {
+                    label: "",
+                    options: [
+                      { value: "", label: "None" },
+                      ...templates.map((item) => ({
+                        value: item.id,
+                        label: item.name,
+                      })),
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (!editing.current) return;
+                  setTemplateId(value);
+                  setError("");
+                }}
+              />
+            )}
             <ChannelDurationField
               temporary={lifetime === "temporary"}
               ttlSeconds={temporaryTtl}
