@@ -2362,8 +2362,28 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .audienceLine:hover {
   background: var(--affordance-subtle-hover);
 }
-.audienceLine[aria-expanded="true"] {
+.audienceEntry {
+  display: flex;
+  align-items: flex-start;
+  border-radius: var(--radius-control);
+}
+.audienceRow[data-open] .audienceEntry {
   background: var(--affordance-subtle);
+}
+.audienceRow[data-open] .audienceEntry:has(> .audienceLine:hover) {
+  background: var(--affordance-subtle-hover);
+}
+.audienceRow[data-open] .audienceLine {
+  flex: none;
+  inline-size: auto;
+  background: none;
+}
+.audienceBody {
+  flex: 1;
+  min-inline-size: 0;
+}
+.audienceBody .message[data-layout="continuation"] .messageGutter {
+  display: none;
 }
 .audienceAvatar {
   display: grid;
