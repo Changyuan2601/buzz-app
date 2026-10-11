@@ -1,6 +1,7 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { steerPrompt, systemPrompt, timerPrompt, turnPrompt } from "./prompt";
 
 const alice = "a".repeat(64);
@@ -36,6 +37,7 @@ it("builds the harness system prompt with instructions and core memory", () => {
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
+  expect(prompt).toContain(BUZZ_PROMPT);
   expect(prompt).toContain("## Session Model");
   expect(prompt).toContain(
     "<workspace>\nCurrent working directory: ~/.buzz\n</workspace>",

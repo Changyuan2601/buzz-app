@@ -2368,9 +2368,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: var(--radius-control);
 }
 .audienceRow[data-open] .audienceEntry {
+  cursor: pointer;
   background: var(--affordance-subtle);
 }
-.audienceRow[data-open] .audienceEntry:has(> .audienceLine:hover) {
+.audienceRow[data-open] .audienceEntry:hover {
   background: var(--affordance-subtle-hover);
 }
 .audienceRow[data-open] .audienceLine {
@@ -2378,9 +2379,29 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   inline-size: auto;
   background: none;
 }
+/* Open, the text keeps the line's size and colour and starts where its
+   preview was, so expanding only lets it run on. */
 .audienceBody {
   flex: 1;
   min-inline-size: 0;
+  padding-block-start: calc(
+    (
+      var(--size-control-sm) *
+      0.75 -
+      var(--text-caption) *
+      var(--text-caption--line-height)
+    ) /
+    2
+  );
+  color: var(--text-subtle);
+}
+.audienceBody .message[data-layout="continuation"] {
+  padding-inline-end: var(--space-1);
+}
+.audienceBody .message[data-layout="continuation"] .text {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
 .audienceBody .message[data-layout="continuation"] .messageGutter {
   display: none;
