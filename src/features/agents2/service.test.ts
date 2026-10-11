@@ -65,6 +65,8 @@ function fakeRelay(origin = "https://relay.example.test") {
   const statuses = new Set<() => void>();
   const session = {
     archives,
+    // STOPGAP(agent-local-typing): delete with local-typing.ts.
+    typing: { local: vi.fn() },
     live: {
       snapshot: () => ({ status }),
       subscribe(listener: () => void) {
@@ -428,8 +430,9 @@ it("delivers mentions and matching watches once, and never the agent's own event
   expect(first?.config).toEqual({ reply: "ok" });
 });
 
+// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
 it("reacts 👀 and 💬 to a mention until the work its run handed off settles", async () => {
-  const { service, run, emit, native } = await setup();
+  const { service, run, emit, native, relay } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   let finish = () => {};
   const turn = new Promise<void>((resolve) => {
@@ -454,6 +457,18 @@ it("reacts 👀 and 💬 to a mention until the work its run handed off settles"
         ["e", mention.id],
       ],
     ]),
+  );
+  // STOPGAP(agent-local-typing): this device shows the agent typing in the
+  // mention's thread meanwhile.
+  expect(relay.snapshot().session.typing.local).toHaveBeenCalledWith(
+    expect.objectContaining({
+      pubkey: bot,
+      kind: 20002,
+      tags: [
+        ["h", channel],
+        ["e", mention.id, "", "reply"],
+      ],
+    }),
   );
   // `run` has returned, but the turn it handed off is still going.
   expect(await published(native, 5)).toEqual([]);
