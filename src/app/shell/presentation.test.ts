@@ -77,7 +77,7 @@ test("bundled pages get their own icons and Bestie's row shows its artwork", () 
   expect(
     renderToStaticMarkup(
       createElement(
-        pagePresentation(page("buzz.agents/agents", "Agents")).icon,
+        pagePresentation(page("buzz.agents2/agents2", "Agents2")).icon,
       ),
     ),
   ).toContain("tabler-icon-robot-face");

@@ -23,12 +23,9 @@ import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
 import { createAgentControl } from "../features/agents/control";
-import { controlFixture } from "../features/agents/control-testing";
 
-let agentFixture: ReturnType<typeof controlFixture> | undefined;
 vi.mock("../features/agents/control-native", () => ({
-  createNativeAgentControl: () =>
-    createAgentControl(agentFixture?.host ?? null),
+  createNativeAgentControl: () => createAgentControl(null),
 }));
 
 vi.mock("../bundled", async () => ({
@@ -42,8 +39,8 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/projects"),
     },
     {
-      manifest: { id: "buzz.agents", name: "Agents", apiVersion: 1 },
-      module: await import("../bundled/agents"),
+      manifest: { id: "buzz.agents2", name: "Agents2", apiVersion: 1 },
+      module: await import("../bundled/agents2"),
     },
     {
       manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
@@ -101,7 +98,6 @@ afterEach(async () => {
   stop();
   await services?.dispose();
   services = undefined;
-  agentFixture = undefined;
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
@@ -192,93 +188,6 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   ).not.toBeInTheDocument();
 });
 
-it("reconnects a failed routed Agents edit from the shell and opens its exact editor", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  vi.stubEnv("VITE_BUZZ_LIVE", "1");
-  agentFixture = controlFixture();
-  agentFixture.agent.relayUrl = "wss://community.example";
-  agentFixture.data.agents.push({
-    ...structuredClone(agentFixture.agent),
-    id: "different-agent",
-    pubkey: "cd".repeat(32),
-    name: "Different agent",
-  });
-  localStorage.setItem(
-    `buzz-client.v1:${viewer}`,
-    JSON.stringify({
-      profile: { name: "Fixture", picture: "" },
-      memberships: [{ id: origin, name: "Fixture community" }],
-      selected: origin,
-    }),
-  );
-  let attempts = 0;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/identity")) return Response.json({ viewer });
-      if (url.endsWith("/register")) return Response.json({});
-      if (url.endsWith("/session")) {
-        attempts++;
-        return attempts === 1
-          ? Response.json({ error: "relay offline" }, { status: 503 })
-          : Response.json({
-              viewer,
-              relayAuthor: viewer,
-              relayUrl: "wss://community.example",
-            });
-      }
-      if (url.endsWith("/query")) return Response.json([]);
-      return Response.json({});
-    }),
-  );
-  services = createServices();
-  const current = services;
-  const target = {
-    version: 1 as const,
-    kind: "page" as const,
-    pluginId: "buzz.agents",
-    pageId: "agents",
-    scope: { viewer, communityOrigin: origin },
-    route: {
-      version: 1 as const,
-      params: { pubkey: agentFixture.agent.pubkey },
-    },
-  };
-  render(<App services={current} />);
-  await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
-  void current.navigation.open(target);
-  await screen.findByRole("button", { name: "Retry navigation" });
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "failed",
-    reason: "unavailable",
-    entry: { target },
-  });
-  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
-  expect(attempts).toBe(1);
-
-  await userEvent.click(
-    screen.getByRole("button", { name: "Retry navigation" }),
-  );
-  await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
-  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  expect(within(dialog).getByLabelText("Name")).toHaveValue("Fixture agent");
-  expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
-    "Help with the project.",
-  );
-  expect(current.navigation.snapshot()).toMatchObject({
-    status: "opened",
-    entry: { target },
-  });
-  expect(attempts).toBe(2);
-});
-
 it("lists only active primary pages in the channel sidebar", async () => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -311,7 +220,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
       within(pages)
         .getAllByRole("button")
         .map((row) => row.textContent),
-    ).toEqual(["Inbox", "Bestie", "Projects", "Agents"]),
+    ).toEqual(["Inbox", "Bestie", "Projects", "Agents2"]),
   );
 
   // The fixture page is active and searchable but never a sidebar row.
@@ -319,7 +228,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
     "fixture.notes/notes",
   );
 
-  await act(() => current.plugins.change("disable", "buzz.agents"));
+  await act(() => current.plugins.change("disable", "buzz.agents2"));
   await waitFor(() =>
     expect(
       within(screen.getByRole("navigation", { name: "Pages" }))
@@ -334,7 +243,7 @@ it("lists only active primary pages in the channel sidebar", async () => {
     within(search).getByRole("option", { name: "Fixture notes" }),
   ).toBeInTheDocument();
   expect(
-    within(search).queryByRole("option", { name: "Agents" }),
+    within(search).queryByRole("option", { name: "Agents2" }),
   ).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
 

@@ -155,20 +155,6 @@ it("does not retry failed authorization or native log errors", async () => {
   expect(authorize).toHaveBeenCalledTimes(1);
 });
 
-it("pending mentions annotate the existing native launch without another Start", async () => {
-  vi.mocked(invoke).mockClear();
-  vi.mocked(isTauri).mockReturnValue(true);
-  await nativeAgentControlHost()?.attachMention?.("exact-id", 3, 1234567890);
-  expect(invoke).toHaveBeenCalledExactlyOnceWith(
-    "agent_control_attach_mention",
-    {
-      id: "exact-id",
-      expectedRevision: 3,
-      replayFloor: 1234567890,
-    },
-  );
-});
-
 it("retained inventory actions use native custody commands", async () => {
   vi.mocked(invoke).mockReset();
   vi.mocked(isTauri).mockReturnValue(true);

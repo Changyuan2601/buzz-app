@@ -41,9 +41,7 @@ export function useNonmemberMentions(
     try {
       for (const person of request.people) {
         check();
-        await session.memberAdditions.add(channelId, person.pubkey, undefined, {
-          startAgent: false,
-        });
+        await session.memberAdditions.add(channelId, person.pubkey);
       }
       check();
       request.finish([]);

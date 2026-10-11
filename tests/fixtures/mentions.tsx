@@ -459,7 +459,7 @@ function Fixture() {
         />
       </div>
       {new URLSearchParams(location.search).has("settings") && (
-        <AgentSettings control={browserControl} />
+        <AgentSettings />
       )}
     </main>
   );

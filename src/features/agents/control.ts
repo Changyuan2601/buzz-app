@@ -3,7 +3,6 @@ import type { TeamSnapshot, BundleMember } from "./team-bundles";
 // Keep injection reachable from the generated author contract, not host construction.
 import type {} from "@deepseek-ai/cordis";
 import { communityRequest } from "../communities/api";
-import { relayOrigin } from "../communities/destination";
 import { createAgentModels, type AgentModels, type ModelHost } from "./models";
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -298,12 +297,6 @@ export interface AgentControlHost {
   ): Promise<ControlSnapshot>;
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
-  /** Attach replay input only; never starts or restarts a process. */
-  attachMention?(
-    id: string,
-    expectedRevision: number,
-    replayFloor: number,
-  ): Promise<void>;
   action(
     id: string,
     action: AgentAction,
@@ -333,7 +326,6 @@ export interface AgentControlState {
   /** Accepted process actions, keyed by native ID across all control surfaces. */
   actionVersions?: Readonly<Record<string, number>>;
   pendingCredentialWrite?: boolean;
-  mentionError?: string | null;
   stopping?: boolean;
   error: string | null;
 }
@@ -382,13 +374,6 @@ export interface AgentControl {
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
-  prepareMention(
-    pubkeys: readonly string[],
-    relayUrl: string,
-    replayFloor: number,
-    signal: AbortSignal,
-  ): (earliestPending?: number) => Promise<void>;
-  dismissMentionError(): void;
 }
 
 /** Shared launch availability; Stop intentionally has its own recovery policy. */
@@ -456,7 +441,6 @@ export function createAgentControl(
   const listeners = new Set<() => void>();
   let disposed = false;
   let generation = 0;
-  let stopped = 0;
   let read: Promise<void> | null = null;
   let installNeedsRefresh = false;
   const update = (patch: Partial<AgentControlState>) => {
@@ -583,7 +567,6 @@ export function createAgentControl(
   }
 
   const action: AgentControlHost["action"] = (id, command, replayFloor) => {
-    if (command === "stop") stopped++;
     return run(
       (native) => {
         update({
@@ -846,82 +829,6 @@ export function createAgentControl(
         }
       : {}),
     action,
-    dismissMentionError: () => update({ mentionError: null }),
-    prepareMention(pubkeys, relayUrl, replayFloor, signal) {
-      const beforeStop = stopped;
-      return async (earliestPending = replayFloor) => {
-        if (!host || disposed || signal.aborted || !pubkeys.length) return;
-        const valid = () =>
-          !disposed && !signal.aborted && stopped === beforeStop;
-        await refresh();
-        if (!valid()) return;
-        if (state.status !== "ready") {
-          update({
-            mentionError:
-              "Message sent, but local agents could not be read. Open Agents to retry.",
-          });
-          return;
-        }
-        const agents =
-          state.data?.agents.filter(
-            (agent) =>
-              agent.configured !== false &&
-              pubkeys.includes(agent.pubkey) &&
-              relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
-          ) ?? [];
-        const failures: string[] = [];
-        for (const agent of agents) {
-          if (!valid()) return;
-          if (agent.status === "running" && state.pendingLaunch !== agent.id)
-            continue;
-          if (
-            agent.status === "waiting" ||
-            agent.status === "starting" ||
-            state.pendingLaunch === agent.id
-          ) {
-            try {
-              if (!host.attachMention)
-                throw new Error("Replay attachment unavailable");
-              // Replay metadata has its own native admission. It never mutates the
-              // projection or supersedes the in-flight Start/Stop write lane.
-              await host.attachMention(
-                agent.id,
-                agent.revision,
-                Math.min(replayFloor, earliestPending),
-              );
-            } catch {
-              if (!valid()) return;
-              failures.push(
-                `${agent.name}'s pending launch could not confirm replay of this mention. Open Agents to check its status.`,
-              );
-            }
-            continue;
-          }
-          try {
-            const result = await action(
-              agent.id,
-              "start",
-              Math.min(replayFloor, earliestPending),
-            );
-            if (!valid()) return;
-            const started = result.agents.find((item) => item.id === agent.id);
-            if (started?.status !== "running")
-              failures.push(
-                `${agent.name} could not start. ${started?.error ?? "Open Agents to check its status."}`,
-              );
-          } catch {
-            // Do not retry uncertain writes or bypass the existing busy/fresh-read gate.
-            // Later recipients still get an explicit outcome, not silent omission.
-            if (!valid()) return;
-            failures.push(
-              `${agent.name} could not start. ${state.error ?? "Open Agents to retry."}`,
-            );
-          }
-        }
-        if (valid() && failures.length)
-          update({ mentionError: `Message sent, but ${failures.join(" ")}` });
-      };
-    },
     ...(host?.configureHere
       ? {
           configureHere: (id: string, resolution: CommunityResolution) =>

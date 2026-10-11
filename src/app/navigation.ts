@@ -304,7 +304,7 @@ export function useAppNavigation(services: AppServices) {
       if (
         (pageKey === channelsKey ||
           pageKey === "buzz.projects/projects" ||
-          pageKey === "buzz.agents/agents" ||
+          pageKey === "buzz.agents2/agents2" ||
           settings) &&
         !state.ingress &&
         (!failure ||

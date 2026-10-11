@@ -107,7 +107,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(renders).toHaveBeenCalledTimes(rendered);
 
   // A selection change still reaches the page rows the sidebar renders.
-  rerender(shell("buzz.agents/agents"));
+  rerender(shell("buzz.agents2/agents2"));
   expect(renders.mock.calls.length).toBeGreaterThan(rendered);
   expect(row()).not.toHaveAttribute("aria-current");
 });

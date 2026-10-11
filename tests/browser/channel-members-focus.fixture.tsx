@@ -1,13 +1,23 @@
 import { useState } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { AgentSelection } from "../../src/bundled/channel-templates/TemplateFields";
 import { Dialog } from "../../src/shared/design-system/ui/Dialog";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { createRoot } from "react-dom/client";
 import { ChannelMembersButton } from "../../src/bundled/channels/ChannelMembersDialog";
-import { createRelaySession } from "../../src/features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../src/features/relay/session";
+import { npubEncode } from "nostr-tools/nip19";
+import { AgentOwnerPreview } from "../../src/features/profiles/AgentOwnerPreview";
+import { publicKeyLabels } from "../../src/shared/identity/public-key";
+import { IdentityRow } from "../../src/shared/identity/IdentityRow";
+import { Checkbox } from "../../src/shared/design-system/ui/Checkbox";
+import { Field } from "../../src/shared/design-system/ui/Field";
+import { Input } from "../../src/shared/design-system/ui/Input";
+import styles from "../../src/bundled/channels/ChannelTemplates.module.css";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { matchesEvent } from "../../src/features/relay/projection";
 import { bindNames } from "../../src/features/identity-names/service";
@@ -255,6 +265,66 @@ const session: typeof sharedSession = {
 session.channels.ensureList();
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
+// A searchable checklist of identity rows, as a picker inside a dialog would
+// show them, so previews are exercised inside a modal's own scroller.
+function IdentityChecklist({
+  session,
+  selected,
+  agents,
+  onChange,
+}: {
+  session: RelaySession;
+  selected: readonly string[];
+  agents: readonly { pubkey: string; name: string }[];
+  onChange(keys: string[]): void;
+}) {
+  const [search, setSearch] = useState("");
+  const labels = publicKeyLabels(agents.map((agent) => agent.pubkey));
+  const matches = agents.filter((agent) =>
+    `${agent.name} ${npubEncode(agent.pubkey)} ${agent.pubkey}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
+  return (
+    <div className={styles.stack}>
+      <Field label="Find individual agents">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Name or npub"
+        />
+      </Field>
+      <div className={styles.choices}>
+        {matches.map((agent) => (
+          <IdentityRow
+            key={agent.pubkey}
+            pubkey={agent.pubkey}
+            name={agent.name}
+            isAgent
+            previewDetail={
+              <AgentOwnerPreview session={session} pubkey={agent.pubkey} />
+            }
+            keyLabel={labels.get(agent.pubkey)}
+            render={(content, previewProps) => (
+              <Checkbox
+                {...previewProps}
+                label={content}
+                checked={selected.includes(agent.pubkey)}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...selected, agent.pubkey]
+                      : selected.filter((key) => key !== agent.pubkey),
+                  )
+                }
+              />
+            )}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 function Fixture() {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -268,7 +338,7 @@ function Fixture() {
       />
       <Button onClick={() => setOpen(true)}>Edit team</Button>
       <Dialog open={open} onOpenChange={setOpen} title="Team">
-        <AgentSelection
+        <IdentityChecklist
           session={session}
           selected={selected}
           onChange={setSelected}

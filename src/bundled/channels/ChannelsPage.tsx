@@ -1,6 +1,5 @@
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import type { AgentControl } from "../../features/agents/control";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
@@ -86,7 +85,6 @@ import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
-  agentControl,
   providers,
   extensions,
   relay,
@@ -96,7 +94,6 @@ export function ChannelsPage({
   navigation,
   navigator,
 }: {
-  agentControl?: AgentControl | undefined;
   providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
@@ -141,7 +138,6 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
-          agentControl={agentControl}
           providers={providers}
           extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
@@ -162,7 +158,6 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
-  agentControl,
   providers,
   extensions,
   queries,
@@ -175,7 +170,6 @@ function ChannelWorkspace({
   navigator,
   viewer,
 }: {
-  agentControl?: AgentControl | undefined;
   providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
@@ -1207,7 +1201,6 @@ function ChannelWorkspace({
           key={current.id}
           session={queries}
           channelId={current.id}
-          control={agentControl}
           close={() => setMembersOpen(false)}
           trigger={
             membersTrigger.current?.isConnected

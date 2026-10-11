@@ -83,7 +83,8 @@ export function AppShell({
 }) {
   const fillsWorkspace = workspace || selected === "settings";
   const channelsNavigation =
-    selected === "buzz.channels/channels" || selected === "buzz.agents/agents";
+    selected === "buzz.channels/channels" ||
+    selected === "buzz.agents2/agents2";
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
   );

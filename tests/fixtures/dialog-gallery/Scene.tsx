@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PageSearch } from "../../../src/app/shell/PageSearch";
 import { CommunityDialog } from "../../../src/features/communities/CommunityDialog";
-import { AgentCreateDialog } from "../../../src/bundled/agents/AgentCreateDialog";
 import { AgentEditor } from "../../../src/bundled/agents/AgentEditor";
 import { ConfirmAction } from "../../../src/bundled/workflows/ConfirmAction";
 import { WorkflowWebhookSecretDialog } from "../../../src/bundled/workflows/WorkflowWebhookSecretDialog";
@@ -31,7 +30,7 @@ const pages = ["Messages", "Agents", "Sessions", "Workflows", "Projects"].map(
   }),
 );
 
-function AgentScene({ create, close }: { create: boolean; close(): void }) {
+function AgentScene({ close }: { close(): void }) {
   const [fixture] = useState(agentFixture);
   const state = useSyncExternalStore(
     fixture.control.subscribe,
@@ -42,15 +41,7 @@ function AgentScene({ create, close }: { create: boolean; close(): void }) {
     return () => fixture.control.dispose();
   }, [fixture]);
   if (state.status !== "ready") return null;
-  return create ? (
-    <AgentCreateDialog
-      control={fixture.control}
-      state={state}
-      destination="https://relay.example.test"
-      owner={"de".repeat(32)}
-      onClose={close}
-    />
-  ) : (
+  return (
     <AgentEditor
       control={fixture.control}
       state={state}
@@ -120,9 +111,7 @@ export function Scene({ id }: { id: DialogId }) {
       {open && id === "join" && (
         <CommunityDialog communities={communities} mode="join" close={close} />
       )}
-      {open && (id === "create" || id === "edit") && (
-        <AgentScene create={id === "create"} close={close} />
-      )}
+      {open && id === "edit" && <AgentScene close={close} />}
       {open && confirmation && (
         <ConfirmAction
           {...confirmation}

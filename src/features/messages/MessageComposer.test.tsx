@@ -3334,7 +3334,6 @@ for (const threadRootId of [undefined, "f".repeat(64)])
             new AbortController().signal,
             intent,
           ),
-        vi.fn(),
       ),
     });
     try {
@@ -3441,7 +3440,6 @@ it.each([false, true])(
             new AbortController().signal,
             intent,
           ),
-        vi.fn(),
       ),
     });
     try {
@@ -5027,9 +5025,7 @@ it("Enter invites a nonmember before sending", async () => {
   await waitFor(() => expect(invite).toHaveFocus());
   await userEvent.setup().keyboard("{Enter}");
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(add).toHaveBeenCalledWith("channel", first.pubkey, undefined, {
-    startAgent: false,
-  });
+  expect(add).toHaveBeenCalledWith("channel", first.pubkey);
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
 
@@ -6372,47 +6368,3 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.uploadCalls).toHaveLength(0);
   expect(h.publish).not.toHaveBeenCalled();
 });
-
-it.each(["agent", "team"])(
-  "pastes a copied %s snapshot as an attachment and sends only on Send",
-  async (kind) => {
-    const h = await mountUploadComposer({
-      media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
-    });
-    const descriptor = {
-      name: `helper.${kind}.png`,
-      url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
-      type: "image/png",
-      size: 2048,
-      sha256: "a".repeat(64),
-    };
-    const html = snapshotClipboardHtml(descriptor, "Helper");
-    fireEvent.paste(h.input(), {
-      clipboardData: {
-        items: [],
-        getData: (type: string) =>
-          type === "text/html" ? html : descriptor.url,
-      },
-    });
-    expect(
-      await within(h.form()).findByRole("button", {
-        name: `Remove ${descriptor.name}`,
-      }),
-    ).toBeVisible();
-    expect(h.input()).toHaveValue("");
-    expect(h.publish).not.toHaveBeenCalled();
-    expect(h.uploadCalls).toHaveLength(0);
-    fireEvent.click(h.send());
-    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
-    expect(h.uploadCalls).toHaveLength(0);
-    const event = h.publish.mock.calls[0]?.[0];
-    expect(event?.content).toContain(descriptor.url);
-    expect(event?.tags).toContainEqual(
-      expect.arrayContaining([
-        "imeta",
-        `filename ${descriptor.name}`,
-        `x ${descriptor.sha256}`,
-      ]),
-    );
-  },
-);
