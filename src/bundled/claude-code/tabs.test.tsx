@@ -143,7 +143,7 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
   expect(cancel).not.toHaveAttribute("disabled");
 });
 
-it("saves settings as one config and warns before answering anyone", async () => {
+it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 1);
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
@@ -153,8 +153,6 @@ it("saves settings as one config and warns before answering anyone", async () =>
     "true",
   );
   await choose("Model", "Sonnet");
-  await choose("Answers", "Anyone who mentions it");
-  expect(screen.getByText(/with no approval step/)).toBeVisible();
   expect(screen.getByLabelText("Workspace")).toHaveAccessibleDescription(
     "The folder Claude Code works in. Use ~/ for your home folder.",
   );
@@ -163,7 +161,6 @@ it("saves settings as one config and warns before answering anyone", async () =>
   expect(save).toHaveBeenCalledWith({
     ...DEFAULT_CONFIG,
     model: "sonnet",
-    respondTo: "anyone",
     workspace: "~/.buzz",
   });
 });

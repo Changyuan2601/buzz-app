@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
@@ -10,6 +13,7 @@ import {
   type AgentCommunities,
   type AgentType,
   type Delivery,
+  fromOwner,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
 
@@ -815,7 +819,7 @@ it("is not woken by reactions, deletions or DMs", async () => {
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({ type: "mention" });
 });
 
-it("does not let one owner's agents wake each other by replying", async () => {
+it("wakes on another of the owner's agents only when it names the agent", async () => {
   const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.create({ type: "example/echo", name: "Sibling" });
@@ -823,45 +827,73 @@ it("does not let one owner's agents wake each other by replying", async () => {
     if (trigger.type === "timer") return;
     await agent.publish({ kind: 9, content: "hi" });
   });
-  const start = event("start", {
-    tags: [
-      ["h", channel],
-      ["p", bot],
+  emit({
+    events: [
+      event("start", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
     ],
   });
-  emit({ events: [start] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  // The sibling replies to Echo's message, naming it, and also says "deploy",
-  // which Echo's watch matches. Neither wakes Echo.
   const echoMessage = (await published(native, 9))[0]?.id;
+  const auth = ["auth", viewer, "", "f".repeat(128)];
+  // The sibling replies to Echo's message without naming it, and says "deploy",
+  // which Echo's watch matches. Neither wakes Echo: two agents replying to each
+  // other would otherwise never stop.
   emit({
     events: [
       event("reply", {
         pubkey: sibling,
         content: "deploy",
-        tags: [
-          ["h", channel],
-          ["e", echoMessage],
-          ["p", bot],
-        ],
+        tags: [["h", channel], ["e", echoMessage], auth],
       }),
     ],
   });
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
-  // A fresh mention from the sibling still does.
+  // Naming Echo wakes it, even in reply to Echo's own message.
   emit({
     events: [
-      event("ask", {
+      event("callback", {
         pubkey: sibling,
-        tags: [
-          ["h", channel],
-          ["p", bot],
-        ],
+        tags: [["h", channel], ["e", echoMessage], ["p", bot], auth],
       }),
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "mention",
+    event: { pubkey: sibling },
+  });
+});
+
+it("answers the owner and agents the owner attested, nobody else", async () => {
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const agent = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${agent}:`)
+    .digest();
+  const auth = ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))];
+  const from = (pubkey: string, tags: string[][] = []) => ({
+    pubkey,
+    kind: 9,
+    created_at: 100,
+    tags,
+  });
+  expect(await fromOwner(from(owner), owner)).toBe(true);
+  expect(await fromOwner(from(agent, [auth]), owner)).toBe(true);
+  expect(await fromOwner(from(agent), owner)).toBe(false);
+  // Another key cannot borrow the agent's attestation, nor claim an owner.
+  expect(await fromOwner(from(other, [auth]), owner)).toBe(false);
+  expect(
+    await fromOwner(from(agent, [["auth", owner, "", "0".repeat(128)]]), owner),
+  ).toBe(false);
 });
 
 it("sets and clears a picture through native, and publishes it", async () => {

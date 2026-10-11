@@ -31,10 +31,6 @@ const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
 ]);
-const RESPOND_TO = options([
-  ["owner", "Only you"],
-  ["anyone", "Anyone who mentions it"],
-]);
 
 export function createTabs({
   setup,
@@ -213,23 +209,6 @@ export function createTabs({
             setDraft({
               ...draft,
               scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <Select
-          label="Answers"
-          variant="field"
-          value={draft.respondTo}
-          groups={RESPOND_TO}
-          description={
-            draft.respondTo === "anyone"
-              ? "Claude runs commands on this computer as you, with no approval step. Anyone who can mention it can ask it to."
-              : "Messages from anyone else are ignored."
-          }
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              respondTo: value === "anyone" ? "anyone" : "owner",
             })
           }
         />
