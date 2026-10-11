@@ -2333,3 +2333,93 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .composerActions[hidden] {
   display: none;
 }
+
+/* Messages between agents: one quiet line each, in time order, on a rail
+   that joins adjacent lines. */
+.audienceRow {
+  margin-inline-start: calc(var(--size-control-sm) / 2);
+  padding-inline-start: var(--space-2);
+  border-inline-start: 1px solid var(--border-standard);
+}
+.audienceLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--space-half) var(--space-1);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  cursor: pointer;
+  color: var(--text-subtle);
+  font: inherit;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  text-align: start;
+}
+.audienceLine:hover {
+  background: var(--affordance-subtle-hover);
+}
+.audienceEntry {
+  display: flex;
+  align-items: flex-start;
+  border-radius: var(--radius-control);
+}
+.audienceRow[data-open] .audienceEntry {
+  cursor: pointer;
+  background: var(--affordance-subtle);
+}
+.audienceRow[data-open] .audienceEntry:hover {
+  background: var(--affordance-subtle-hover);
+}
+.audienceRow[data-open] .audienceLine {
+  flex: none;
+  inline-size: auto;
+  background: none;
+}
+/* Open, the text keeps the line's size and colour and starts where its
+   preview was, so expanding only lets it run on. */
+.audienceBody {
+  flex: 1;
+  min-inline-size: 0;
+  padding-block-start: calc(
+    (
+      var(--size-control-sm) *
+      0.75 -
+      var(--text-caption) *
+      var(--text-caption--line-height)
+    ) /
+    2
+  );
+  color: var(--text-subtle);
+}
+.audienceBody .message[data-layout="continuation"] {
+  padding-inline-end: var(--space-1);
+}
+.audienceBody .message[data-layout="continuation"] .text {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.audienceBody .message[data-layout="continuation"] .messageGutter {
+  display: none;
+}
+.audienceAvatar {
+  display: grid;
+  flex: none;
+  inline-size: calc(var(--size-control-sm) * 0.75);
+  block-size: calc(var(--size-control-sm) * 0.75);
+}
+.audienceArrow {
+  flex: none;
+  color: var(--text-subtle);
+}
+.audiencePreview {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
