@@ -68,6 +68,8 @@ const CHAT = [9, 40002];
 type Entry = {
   sessions: AgentSessions;
   config: Config;
+  /** The team sections of the latest run; a change restarts idle sessions. */
+  team: string;
   memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
@@ -222,6 +224,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    team,
     workingUntil,
   }: Delivery) {
     const settings = config(raw);
@@ -233,6 +236,7 @@ export class ClaudeRuntime {
       return;
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
+    entry.team = team ?? "";
     // Read while the turn's prompt is built, not after: a new session's prompt
     // needs it, and a spare is only faster if nothing else is awaited.
     void this.memory(agent.pubkey, entry);
@@ -409,6 +413,7 @@ export class ClaudeRuntime {
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
+      team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
@@ -443,6 +448,7 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
+          entry.team,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -454,6 +460,7 @@ export class ClaudeRuntime {
             scope,
             cwd: workspace,
             instructions,
+            team: entry.team,
             ...(memory === undefined ? {} : { memory }),
           }),
         };

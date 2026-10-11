@@ -1,9 +1,12 @@
 import { expect, it } from "vitest";
 import {
   STORAGE_KEY,
+  TEAMS_KEY,
   readRecords,
+  readTeams,
   setAttention,
   writeRecords,
+  writeTeams,
   type AgentRecord,
 } from "./store";
 import { memoryStorage } from "./test-fakes";
@@ -151,4 +154,22 @@ it("reads nothing from missing or malformed storage", () => {
   expect(readRecords(storage)).toEqual({});
   storage.setItem(STORAGE_KEY, "{");
   expect(readRecords(storage)).toEqual({});
+});
+
+it("round-trips teams and skips any that is not one", () => {
+  const storage = memoryStorage();
+  expect(readTeams(storage)).toEqual([]);
+  const team = { id: "t", name: "Crew", instructions: "Hi", members: [pubkey] };
+  writeTeams(storage, [team]);
+  expect(readTeams(storage)).toEqual([team]);
+  storage.setItem(
+    TEAMS_KEY,
+    JSON.stringify({
+      version: 1,
+      teams: [{ ...team, members: [pubkey, "nope"] }, { id: 1 }, null],
+    }),
+  );
+  expect(readTeams(storage)).toEqual([team]);
+  storage.setItem(TEAMS_KEY, "{");
+  expect(readTeams(storage)).toEqual([]);
 });

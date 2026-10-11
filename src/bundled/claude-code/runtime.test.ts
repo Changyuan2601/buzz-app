@@ -225,6 +225,56 @@ it("runs a mention on the model and effort its delivery picked", async () => {
   expect((await runtime.models(self)).current).toBe("opus");
   runtime.dispose();
 });
+it("puts the agent's teams in its system prompt, resuming idle sessions when they change", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  // A reply in the root's thread, so the same session.
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const mention = (id: string) => (id === "2" ? root : reply);
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (id: string, team?: string) =>
+    runtime.run({
+      trigger: { type: "mention", event: mention(id) },
+      channelId: channel,
+      agent,
+      config: DEFAULT_CONFIG,
+      ...(team ? { team } : {}),
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as Delivery);
+  const system = (process: ReturnType<typeof claudes>[number] | undefined) =>
+    String(
+      (
+        process?.received.find(
+          (wire) =>
+            (wire.request as { subtype?: string } | undefined)?.subtype ===
+            "initialize",
+        )?.request as { appendSystemPrompt?: string } | undefined
+      )?.appendSystemPrompt,
+    );
+  await run("2", "<team>\nCrew roster\n</team>");
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(system(first)).toContain("<team>\nCrew roster\n</team>");
+  await run("3");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(system(second)).not.toContain("<team>");
+  runtime.dispose();
+});
+
 it("reads model ids and aliases as names", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
   expect(modelName("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");
