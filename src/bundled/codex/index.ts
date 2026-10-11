@@ -16,8 +16,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   const runtime = new CodexRuntime(start, ctx.agents2.relay);
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
-  // Agents that stop running stop their servers; switching communities or a
-  // reconnect does not.
+  // Agents that stop running stop their turns, and the last one stops the
+  // server; switching communities or a reconnect does not.
   const sync = () => {
     const snapshot = ctx.agents2.snapshot();
     if (snapshot.status === "loading") return;

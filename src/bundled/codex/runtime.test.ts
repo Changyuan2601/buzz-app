@@ -421,6 +421,135 @@ it("hands over promptly and runs conversations independently on one server", asy
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
+/** A second agent on the same runtime, with its own identity and publisher. */
+function second(f: ReturnType<typeof fixture>) {
+  const other = "9".repeat(64);
+  const base = f.delivery("unused").agent;
+  const agent = {
+    ...base,
+    pubkey: other,
+    name: "Other",
+    publish: vi.fn(async (event: unknown) => ({
+      ...(event as object),
+      id: "8".repeat(64),
+    })),
+  } as unknown as Delivery["agent"];
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: other } as Agent]);
+  return {
+    agent,
+    delivery: (content: string) => ({
+      ...f.delivery(content, "7".repeat(64)),
+      agent,
+    }),
+  };
+}
+const contents = (publish: { mock: { calls: unknown[][] } }) =>
+  publish.mock.calls.map(([event]) => (event as { content: string }).content);
+const servers = (f: ReturnType<typeof fixture>) =>
+  f.spawn.mock.calls.filter(([id]) => id === "app-server");
+it("serves every agent from one server and routes each tool call to its own agent", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run(b.delivery("@Other second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(servers(f)).toHaveLength(1);
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": { value: expect.stringContaining("Other") },
+    },
+  });
+  await f.complete(1, "FROM OTHER");
+  await f.complete(0, "FROM CODEX");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["FROM CODEX"]);
+  expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
+  expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
+});
+it("stops a removed agent's turn without ending the server the others share", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("other work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const removed = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  f.runtime.sync([{ pubkey } as Agent]);
+  await vi.waitFor(() =>
+    expect(
+      f.sent.some(
+        (wire) =>
+          wire.method === "thread/unsubscribe" &&
+          (wire.params as { threadId: string }).threadId === removed,
+      ),
+    ).toBe(true),
+  );
+  for (const method of ["turn/interrupt", "thread/backgroundTerminals/clean"])
+    expect(f.sent.find((wire) => wire.method === method)?.params).toMatchObject(
+      { threadId: removed },
+    );
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.runtime.sessions("9".repeat(64))).toHaveLength(0);
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["STILL HERE"]);
+  expect(b.agent.publish).not.toHaveBeenCalled();
+  f.runtime.sync([]);
+  await f.exits.promise;
+  expect(f.process.end).toHaveBeenCalled();
+});
+it("ends a stopped agent's leftover shells and lets it start again only after letting go", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(b.delivery("busy again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  const index = (method: string) =>
+    f.sent
+      .map(
+        (wire) =>
+          wire.method === method &&
+          (wire.params as { threadId: string }).threadId === thread,
+      )
+      .lastIndexOf(true);
+  const before = index("thread/unsubscribe");
+  f.runtime.sync([{ pubkey } as Agent]);
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: "9".repeat(64) } as Agent]);
+  await f.runtime.run(b.delivery("back"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
+  expect(index("thread/unsubscribe")).toBeGreaterThan(before);
+  expect(index("thread/backgroundTerminals/clean")).toBeGreaterThan(
+    index("thread/unsubscribe"),
+  );
+  expect(index("thread/resume")).toBeGreaterThan(
+    index("thread/backgroundTerminals/clean"),
+  );
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(3, "BACK");
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(b.agent.publish as never)).toEqual([
+    "SERVER RUNNING",
+    "BACK",
+  ]);
+});
+it("reopens the shared server after it exits", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("again"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+});
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("first"));

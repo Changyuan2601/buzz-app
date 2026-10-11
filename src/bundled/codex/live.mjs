@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "rolldown";
 import { JSDOM } from "jsdom";
@@ -20,6 +20,7 @@ const { CodexRuntime } = await import(join(workspace, "runtime.mjs"));
 const { AppServer } = await import(join(workspace, "rpc.mjs"));
 const children = new Set();
 const notices = [];
+let servers = 0;
 const sent = [];
 let acceptedSteers = 0;
 const nativeSpawn = async (_id, options = {}) => {
@@ -46,6 +47,7 @@ const nativeSpawn = async (_id, options = {}) => {
       exited,
     };
   }
+  servers++;
   const child = spawn(
     "codex",
     [
@@ -58,7 +60,8 @@ const nativeSpawn = async (_id, options = {}) => {
       `mcp_servers={"fixture.tools"={command="sh",args=["-c",${JSON.stringify(`touch '${join(workspace, "mcp-must-not-start")}'`)}]}}`,
     ],
     {
-      cwd: options.cwd,
+      // Like the desktop host, expand ~ in a process's working directory.
+      cwd: options.cwd?.replace(/^~(?=\/|$)/, homedir()),
       detached: true,
       env: Object.fromEntries(
         Object.entries(process.env).filter(
@@ -169,7 +172,7 @@ const relay = {
     },
   }),
 };
-const runtime = new CodexRuntime(nativeSpawn, relay, store);
+const runtime = new CodexRuntime(nativeSpawn, () => relay, store);
 runtime.sync([{ pubkey }], scope);
 let id = 0;
 const delivery = (content) => {
@@ -468,6 +471,52 @@ try {
   assert.equal(published.length, 7);
   console.log(
     "PASS real dynamic callbacks, resumed tools, shared reads, memory, workspace file read/upload and final send without duplicate replies",
+  );
+  const other = "9".repeat(64);
+  const otherWorkspace = await mkdtemp(join(tmpdir(), "buzz-codex-other-"));
+  const otherPublished = [];
+  runtime.sync([{ pubkey }, { pubkey: other }]);
+  const before = servers;
+  const first = delivery(
+    "Reply exactly FIRST_AGENT_OK. No coding tools. Send the reply with buzz.send.",
+  );
+  const second = delivery(
+    "Run pwd, then reply with its output. Send the reply with buzz.send.",
+  );
+  await runtime.run(first);
+  await runtime.run({
+    ...second,
+    agent: {
+      ...second.agent,
+      pubkey: other,
+      name: "Other",
+      publish: async (event) => {
+        otherPublished.push(event);
+        return { ...event, id: "8".repeat(64) };
+      },
+    },
+    config: {
+      ...second.config,
+      workspace: otherWorkspace,
+      instructions: `${second.config.instructions} Every final answer MUST contain OTHER_AGENT.`,
+    },
+  });
+  await condition(
+    () =>
+      published.length === 8 &&
+      otherPublished.length === 1 &&
+      runtime.sessions(pubkey)[0]?.status === "Idle" &&
+      runtime.sessions(other)[0]?.status === "Idle",
+    "two agents on one server",
+  );
+  // The previous step's server is still open and serves both agents.
+  assert.equal(servers, before);
+  assert.match(published.at(-1).content, /FIRST_AGENT_OK/);
+  assert.doesNotMatch(published.at(-1).content, /OTHER_AGENT/);
+  assert.match(otherPublished[0].content, /OTHER_AGENT/);
+  assert(otherPublished[0].content.includes(otherWorkspace.split("/").at(-1)));
+  console.log(
+    "PASS two agents share one server with their own workspace, instructions and replies",
   );
 } finally {
   await inspect?.close();
