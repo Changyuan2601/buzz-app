@@ -97,7 +97,7 @@ below are labelled separately. No product fixes are included in this documentati
 | Explicit-save settings | [ProfileSettings](../src/app/ProfileSettings.tsx): scoped description, labelled fields, preserved draft/save behavior, separate identity details |
 | Bounded modal | [ChannelMembersDialog](../src/bundled/channels/ChannelMembersDialog.tsx): stable shell, fixed search/filter area, bounded results; [RemindDialog](../src/bundled/reminders/RemindDialog.tsx) is the short-form source reference |
 | Anchored actions | [ChannelHeaderMenu](../src/bundled/channels/ChannelHeaderMenu.tsx): shared Menu parts, grouped actions, and focus handoff; account-menu composition is feature-specific |
-| Contributed detail | [ChannelUsage](../src/bundled/channel-usage/ChannelUsage.tsx) inside [PanelCard](../src/features/panels/PanelCard.tsx): body content within host-supplied framing |
+| Contributed detail | [ProfilePanel](../src/bundled/profiles/ProfilePanel.tsx) inside [PanelCard](../src/features/panels/PanelCard.tsx): body content and tabs within host-supplied framing |
 
 ### Gaps to address when migrating owners
 

@@ -696,9 +696,9 @@ write service. Dispose owned views when their plugin or session scope ends.
 For kind 30177 publication, follow the
 [managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 
-No bundled plugin supplies a profile panel. A plugin may register a panel that
-matches exact public-key targets; shared message UI opens them through ordinary
-page callbacks and leaves them inert when no panel matches.
+The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
+Shared message UI opens exact public-key targets through ordinary page callbacks;
+no inline-renderer or panel contract extension is needed.
 
 ## Navigation targets and visits
 

@@ -50,7 +50,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
   await expect(
-    row.locator(`[data-mention-name="Fixture Reader"]`),
+    row.getByRole("button", { name: "View Fixture Reader profile" }),
   ).toBeVisible();
   await expect(row.getByRole("link", { name: "#Beta" })).toBeVisible();
   await expect(row.getByRole("link", { name: "Alpha" })).toHaveCount(2);

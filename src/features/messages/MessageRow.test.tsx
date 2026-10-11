@@ -405,7 +405,7 @@ it("renders exact identity controls only while a target can be opened", () => {
   expect(renderProfile(false)).not.toContain(
     'aria-label="View Author profile"',
   );
-  expect(renderProfile(false)).toContain('data-mention-name="Mic"');
+  expect(renderProfile(false)).toContain("@Mic");
 });
 
 it.each(["~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic"])(

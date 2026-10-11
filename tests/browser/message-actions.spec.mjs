@@ -11,9 +11,7 @@ test.use({
 
 // Native Tab must discover deferred controls before the browser chooses focus;
 // continuation rows have no avatar that could activate them on the way in.
-// Rows no longer start with a focusable avatar, so only forward entry has a
-// stable predecessor.
-for (const direction of ["forward"]) {
+for (const direction of ["forward", "backward"]) {
   test(`Tab enters untouched continuation actions ${direction} without an extra stop`, async ({
     page,
     app,
@@ -50,9 +48,15 @@ for (const direction of ["forward"]) {
     await expect(
       actions.getByRole("button", { includeHidden: true }),
     ).toHaveCount(0);
-    await row(before)
-      .getByRole("link", { name: "Before", exact: true })
-      .focus();
+    if (direction === "forward")
+      await row(before)
+        .getByRole("link", { name: "Before", exact: true })
+        .focus();
+    else
+      await row(after)
+        .getByRole("button", { name: /^View .* profile$/ })
+        .first()
+        .focus();
     await expect(
       actions.getByRole("button", { includeHidden: true }),
     ).toHaveCount(0);

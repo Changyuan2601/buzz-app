@@ -239,6 +239,10 @@ confirmedPresence(
       name: "Settings",
       exact: true,
     });
+    const viewProfile = account.getByRole("menuitem", {
+      name: "View your profile",
+      exact: true,
+    });
     const statusEntry = account.getByRole("menuitem", {
       name: "Set a status",
       exact: true,
@@ -295,18 +299,19 @@ confirmedPresence(
       await expect(account).toBeHidden();
       await avatar.focus();
       await page.keyboard.press("Enter");
-      // With no profile entry, the header's availability control comes first.
-      await expect(availability).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await page.keyboard.press("End");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
+      await expect(viewProfile).toBeFocused();
+      await page.keyboard.press("ArrowDown");
       await expect(statusEntry).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(feedback).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
-      await expect(statusEntry).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await tab(true);
       await expect(account).toBeHidden();
       await expect(avatar).toBeFocused();
@@ -316,7 +321,7 @@ confirmedPresence(
     await page.setViewportSize({ width: 1280, height: 844 });
     await avatar.focus();
     await page.keyboard.press("Enter");
-    await expect(availability).toBeFocused();
+    await expect(viewProfile).toBeFocused();
     await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Enter");

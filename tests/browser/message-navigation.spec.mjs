@@ -134,6 +134,44 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await expect
     .poll(() => thread(page).evaluate((element) => element.scrollTop))
     .toBe(position);
+  // Use an unedited reply to exercise exact mention/profile identity plumbing.
+  expect(
+    await openTarget(page, target(app, app.exact.replies.at(-2).id)),
+  ).toEqual({ status: "opened" });
+  const mention = thread(page)
+    .locator(`[data-message-id="${app.exact.replies.at(-2).id}"]`)
+    .getByRole("button", {
+      name: "View Alice Fixture profile",
+      exact: true,
+    });
+  await mention.click();
+  await expect(
+    page.getByRole("region", { name: "Profile details" }),
+  ).toBeVisible();
+  const profile = page.locator('[aria-label="Profile details"]');
+  await profile.evaluate((element) => {
+    window.retainedSettingsProfile = element;
+  });
+  await openChannelDetails(page);
+  await expect(profile).toBeHidden();
+  await page
+    .getByRole("button", { name: "Close Channel settings tab" })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Thread", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Alice Fixture", exact: true }).click();
+  await expect(profile).toBeVisible();
+  expect(
+    await profile.evaluate(
+      (element) => element === window.retainedSettingsProfile,
+    ),
+  ).toBe(true);
+  await page
+    .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
+    .click();
+  // Closing the profile returns to its retained thread tab.
+  await expect(thread(page)).toBeVisible();
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   await page
     .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })

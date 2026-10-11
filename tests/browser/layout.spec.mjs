@@ -1299,7 +1299,7 @@ for (const [control, key] of [
       const added = app.append(
         "primary",
         "alpha",
-        `Read ${target} ||aside||`,
+        `Read ${target}`,
         true,
         false,
       );
@@ -1312,7 +1312,7 @@ for (const [control, key] of [
       const focused =
         control === "link"
           ? row.getByRole("link", { name: target, exact: true })
-          : row.getByRole("button", { name: "Reveal spoiler", exact: true });
+          : row.getByRole("button", { name: /^View .* profile$/ }).first();
       await focused.evaluate((element) =>
         element.focus({ preventScroll: true }),
       );

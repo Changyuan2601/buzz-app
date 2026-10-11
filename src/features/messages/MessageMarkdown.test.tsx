@@ -590,6 +590,8 @@ describe("Markdown profile mentions", () => {
       { patch: { edited: true } },
       { patch: { mentions: [] } },
       { participantProfiles: undefined },
+      { canOpenLink: undefined },
+      { canOpenLink: () => false },
       {
         patch: { mentions: [mic, other] },
         participantProfiles: new Map([
@@ -602,15 +604,6 @@ describe("Markdown profile mentions", () => {
       const html = render("**@Mic**", options);
       expect(html).not.toContain("<button");
       expect(html).toContain("<strong>@Mic</strong>");
-    }
-    // Without a profile panel the bound mention stays an inert chip.
-    for (const options of [
-      { canOpenLink: undefined },
-      { canOpenLink: () => false },
-    ] satisfies RenderOptions[]) {
-      const html = render("**@Mic**", options);
-      expect(html).not.toContain("<button");
-      expect(html).toContain('data-mention-name="Mic"');
     }
     const html = render("@Mic Smith and @Mic", {
       patch: { mentions: [smith, mic, other] },

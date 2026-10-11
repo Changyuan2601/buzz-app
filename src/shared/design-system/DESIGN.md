@@ -99,8 +99,9 @@ content on the opaque surface; do not use backdrop/chrome tabs inside it.
 Use the existing panel navigation/subview mechanism for related details. Preserve
 the original panel's scroll and draft state, the host's close/back behavior, and
 focus restoration. Do not create another overlay, navigation history, or global
-panel selection to show a local detail. The
-[`PanelSubview`](../../features/panels/PanelSubview.tsx) host shows this boundary.
+panel selection to show a local detail. Profile content in
+[`ProfilePanel`](../../bundled/profiles/ProfilePanel.tsx) and the
+[`PanelSubview`](../../features/panels/PanelSubview.tsx) host show this boundary.
 Media, diffs, browser content, and terminals retain their renderer-owned geometry
 and input semantics; shared framing does not turn them into padded forms.
 

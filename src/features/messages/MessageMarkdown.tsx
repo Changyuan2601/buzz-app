@@ -555,8 +555,11 @@ function PreparedMessageMarkdown({
         (participantProfiles ?? directory.profiles).get(key)?.isAgent);
     const clickable =
       interactive && typeof target === "string" && !!canOpenLink?.(target);
-    // Without a profile panel the chip stays inert but keeps its identity.
-    if (typeof text === "string" && typeof target === "string") {
+    if (
+      typeof text === "string" &&
+      typeof target === "string" &&
+      (!interactive || clickable || agent)
+    ) {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";
