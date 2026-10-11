@@ -10,6 +10,7 @@ import type {
   Agents2,
   AgentsSnapshot,
   RegisteredAgentType,
+  TeamChange,
 } from "../../features/agents2/service";
 import type { PortableAgent } from "../../features/agents2/native";
 import type { RelayData } from "../../features/relay/service";
@@ -66,7 +67,12 @@ const portable: PortableAgent[] = [
 ];
 
 function setup(agents: Agent[], { shown = true } = {}) {
-  let snapshot: AgentsSnapshot = { status: "ready", agents, running: agents };
+  let snapshot: AgentsSnapshot = {
+    status: "ready",
+    agents,
+    running: agents,
+    teams: [],
+  };
   const listeners = new Set<() => void>();
   const type = {
     key: "test/echo",
@@ -103,6 +109,22 @@ function setup(agents: Agent[], { shown = true } = {}) {
     port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
+    saveTeam: vi.fn(async (change: TeamChange) => {
+      const team = { ...change, id: change.id ?? "team-1" };
+      snapshot = {
+        ...snapshot,
+        teams: [...snapshot.teams.filter((t) => t.id !== team.id), team],
+      };
+      for (const listener of listeners) listener();
+      return team;
+    }),
+    removeTeam: vi.fn(async (id: string) => {
+      snapshot = {
+        ...snapshot,
+        teams: snapshot.teams.filter((t) => t.id !== id),
+      };
+      for (const listener of listeners) listener();
+    }),
   } satisfies Agents2;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -267,4 +289,35 @@ it("shows why bringing an agent over failed and keeps it listed", async () => {
     "Keychain access was denied",
   );
   expect(screen.getByRole("button", { name: "Bring over Ada" })).toBeEnabled();
+});
+
+it("makes a team of chosen agents and lists it with its members", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents2 } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  expect(screen.getByText("No teams yet.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.type(
+    screen.getByRole("textbox", { name: "Instructions" }),
+    "Ada leads.",
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("checkbox", { name: "Cy" }));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+
+  expect(agents2.saveTeam).toHaveBeenCalledWith({
+    name: "Crew",
+    instructions: "Ada leads.",
+    members: [ada.pubkey, agent("Cy", 3).pubkey],
+  });
+  const list = screen.getByRole("list", { name: "Teams" });
+  expect(within(list).getByText("Crew")).toBeInTheDocument();
+  expect(within(list).getByText("Ada, Cy")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Edit Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  expect(agents2.removeTeam).toHaveBeenCalledWith("team-1");
+  expect(screen.getByText("No teams yet.")).toBeInTheDocument();
 });
