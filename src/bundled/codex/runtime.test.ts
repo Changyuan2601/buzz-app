@@ -8,6 +8,7 @@ import type { Agent, Delivery } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 
@@ -417,6 +418,7 @@ it("hands over promptly and runs conversations independently on one server", asy
   });
   expect(started.baseInstructions).toBeUndefined();
   expect(started.developerInstructions).toContain("coding agent in Buzz");
+  expect(started.developerInstructions).toContain(BUZZ_PROMPT);
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
