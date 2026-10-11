@@ -544,6 +544,7 @@ fn adopt(old: &OldStores, store: &AppAgents, credentials: &PlatformCredentials) 
         key,
         &found.name,
         found.picture,
+        found.about,
     )
     .unwrap();
     store.commit(prepared, &auth, credentials).unwrap();

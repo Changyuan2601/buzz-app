@@ -1,7 +1,7 @@
 //! Agent identities an earlier agent system saved on this machine, which Agents2
 //! can take over: the harness controller's library and old Buzz's. Only the
-//! identity and its public name and picture move; instructions, harness settings
-//! and memberships stay behind. Neither store is ever written.
+//! identity and its public name, picture and description move; instructions,
+//! harness settings and memberships stay behind. Neither store is ever written.
 use crate::config::{agent_id, canonical_key, canonical_relay, MAX_AGENTS};
 use crate::import::read_json;
 use crate::{Credentials, LegacySource, Result, Secret};
@@ -37,6 +37,8 @@ pub struct Portable {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub picture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
     /// The community it was saved for there; the new identity uses the open one.
     pub relay: String,
 }
@@ -128,12 +130,12 @@ impl OldStores {
             .ok_or_else(|| format!("Could not read {}", path.display()))?;
         Ok(records
             .iter()
-            .filter_map(|record| portable(source, record))
+            .filter_map(|record| portable(source, record, records))
             .collect())
     }
 }
 
-fn portable(source: PortSource, record: &Value) -> Option<(Portable, String)> {
+fn portable(source: PortSource, record: &Value, records: &[Value]) -> Option<(Portable, String)> {
     let text = |key: &str| record.get(key).and_then(Value::as_str).unwrap_or("");
     let harness = source == PortSource::Harness;
     let pubkey = text("pubkey");
@@ -150,19 +152,66 @@ fn portable(source: PortSource, record: &Value) -> Option<(Portable, String)> {
     } else {
         text("private_key_nsec").to_owned()
     };
-    let picture = Some(text(if harness { "picture" } else { "avatar_url" }))
-        .filter(|url| public_picture(url))
-        .map(str::to_owned);
+    // A harness string is authoritative, including "" for explicit removal.
+    // Legacy imports saved no override but retained the identity's artwork and
+    // linked definition; snapshots retained their public profile's avatarUrl.
+    let picture = if harness {
+        record["picture"].as_str().or_else(|| {
+            let imported = &record["imported"];
+            let saved = &imported["record"];
+            if saved["profile"].is_object() {
+                saved["profile"]["avatarUrl"].as_str()
+            } else {
+                saved["avatar_url"]
+                    .as_str()
+                    .or_else(|| imported["definition"]["avatar_url"].as_str())
+            }
+        })
+    } else {
+        record["avatar_url"].as_str()
+    }
+    .filter(|url| public_picture(url))
+    .map(str::to_owned);
     Some((
         Portable {
             source,
             pubkey: pubkey.into(),
             name: name.into(),
             picture,
+            about: description(source, record, records),
             relay,
         },
         credential,
     ))
+}
+
+/// Old Buzz's linked definition owns the authored description, never a stale
+/// instance copy. Harness imports retain either that definition or a snapshot's
+/// public profile. A missing/blank source stays absent; no community lookup.
+fn description(source: PortSource, record: &Value, records: &[Value]) -> Option<String> {
+    let value = if source == PortSource::Harness {
+        let imported = &record["imported"];
+        let saved = &imported["record"];
+        if saved["profile"]["about"].is_string() {
+            &saved["profile"]["about"]
+        } else if saved["persona_id"].is_string() {
+            &imported["definition"]["description"]
+        } else {
+            &saved["description"]
+        }
+    } else if let Some(persona) = record["persona_id"].as_str() {
+        &records.iter().find(|definition| {
+            definition["pubkey"].as_str().unwrap_or("").is_empty()
+                && definition["slug"].as_str() == Some(persona)
+        })?["description"]
+    } else {
+        &record["description"]
+    };
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
 }
 
 /// A profile picture is a public HTTPS URL of bounded length, never inline data.

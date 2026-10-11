@@ -39,10 +39,6 @@ pub struct AppAgent {
     /// The last profile its community accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<Published>,
-    /// Its key came from an earlier agent system, so its community may already
-    /// have a profile for it, which the first publication keeps instead.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub adopted: bool,
     /// Its key is gone. The row stays until its community confirms it left its
     /// channels and was archived, which the owner signs, not the agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -109,36 +105,23 @@ impl AppAgent {
             last.name == self.name && last.picture == self.picture && last.about == self.about
         })
     }
-    /// Its profile as this row describes it, replacing the last one accepted
-    /// and `current`, the newest its community has (content and `created_at`).
-    /// Only the name and bot flag replace what `current` says, and the picture
-    /// is added only where it has none: an adopted key's profile was made
-    /// elsewhere and keeps every other field.
-    pub fn profile_event(
-        &self,
-        key: &Secret,
-        current: Option<(serde_json::Map<String, serde_json::Value>, u64)>,
-    ) -> Result<serde_json::Value> {
+    /// Its profile as this row describes it, replacing the last one accepted.
+    pub fn profile_event(&self, key: &Secret) -> Result<serde_json::Value> {
         valid_name(&self.name)?;
-        let after = current.as_ref().map(|(_, at)| *at);
-        let mut content = current.map(|(content, _)| content).unwrap_or_default();
-        content.insert("name".into(), self.name.as_str().into());
-        if content.contains_key("display_name") {
-            content.insert("display_name".into(), self.name.as_str().into());
-        }
-        content.insert("bot".into(), true.into());
+        let mut content = serde_json::json!({ "name": self.name, "bot": true });
         if let Some(picture) = &self.picture {
-            content
-                .entry("picture")
-                .or_insert_with(|| picture.as_str().into());
+            content["picture"] = picture.as_str().into();
         }
-        let content = serde_json::Value::Object(content).to_string();
+        if let Some(about) = &self.about {
+            content["about"] = about.as_str().into();
+        }
+        let content = content.to_string();
         let tags = self.attested(key, vec![])?;
         key.sign_event_after(
             0,
             content,
             tags,
-            self.profile.as_ref().map(|p| p.created_at).max(after),
+            self.profile.as_ref().map(|p| p.created_at),
         )
     }
     fn attested(&self, key: &Secret, mut tags: Vec<Vec<String>>) -> Result<Vec<Vec<String>>> {
@@ -217,6 +200,7 @@ pub struct NewAppAgent {
     agent_type: String,
     name: String,
     picture: Option<String>,
+    about: Option<String>,
     /// An earlier agent system's key, which may already be saved under this ID.
     adopted: bool,
 }
@@ -243,8 +227,22 @@ impl AppAgents {
     /// Every row, deleted ones included.
     pub fn list(&self) -> Result<Vec<AppAgent>> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|_| "Saved agent identities are malformed".into()),
+            Ok(bytes) => {
+                // Older development builds persisted this boolean. Ignore only
+                // that obsolete field; all other row/schema checks still apply.
+                let malformed = || "Saved agent identities are malformed".to_owned();
+                let mut rows: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|_| malformed())?;
+                for row in rows.as_array_mut().ok_or_else(malformed)? {
+                    if let Some(adopted) = row.as_object_mut().and_then(|row| row.remove("adopted"))
+                    {
+                        if !adopted.is_boolean() {
+                            return Err(malformed());
+                        }
+                    }
+                }
+                serde_json::from_value(rows).map_err(|_| malformed())
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
             Err(_) => Err("Could not read saved agent identities".into()),
         }
@@ -308,12 +306,13 @@ impl AppAgents {
             Secret::generate()?,
             name,
             None,
+            None,
         )?;
         agent.adopted = false;
         Ok(agent)
     }
     /// As `prepare`, for a key an earlier agent system saved, so the agent keeps
-    /// its identity and profile picture.
+    /// its identity and public profile metadata.
     pub fn adopt(
         destination: &str,
         owner: &str,
@@ -321,6 +320,7 @@ impl AppAgents {
         key: Secret,
         name: &str,
         picture: Option<String>,
+        about: Option<String>,
     ) -> Result<NewAppAgent> {
         if !canonical_key(owner) {
             return Err("Choose a signed-in owner".into());
@@ -335,6 +335,7 @@ impl AppAgents {
             agent_type: agent_type.into(),
             name: valid_name(name)?,
             picture: picture.filter(|url| crate::port::public_picture(url)),
+            about,
             adopted: true,
         })
     }
@@ -364,9 +365,8 @@ impl AppAgents {
             agent_type: prepared.agent_type,
             name: prepared.name,
             picture: prepared.picture,
-            about: None,
+            about: prepared.about,
             profile: None,
-            adopted: prepared.adopted,
             deleted: false,
         };
         let id = agent.credential_id();
@@ -426,34 +426,6 @@ impl AppAgents {
             {
                 agent.profile = Some(profile);
             }
-        })
-    }
-    /// Takes the profile its community already has for an adopted key as the
-    /// last one accepted, so the agent keeps that name and picture and nothing
-    /// is republished until it is renamed here. A name the app could not
-    /// publish keeps the one it has here.
-    pub fn keep_profile(
-        &self,
-        pubkey: &str,
-        name: &str,
-        picture: Option<String>,
-        created_at: u64,
-    ) -> Result<()> {
-        let name = valid_name(name).ok();
-        let picture = picture.filter(|url| crate::port::public_picture(url));
-        self.edit(pubkey, |agent| {
-            if let Some(name) = name {
-                agent.name = name;
-            }
-            if picture.is_some() {
-                agent.picture = picture;
-            }
-            agent.profile = Some(Published {
-                name: agent.name.clone(),
-                picture: agent.picture.clone(),
-                about: agent.about.clone(),
-                created_at,
-            });
         })
     }
     /// Deletes the key, then marks the row deleted, so a failed deletion can be
