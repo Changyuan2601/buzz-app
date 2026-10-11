@@ -1108,3 +1108,65 @@ liveTest(
     ).toBeVisible();
   },
 );
+
+// The real editor's DOM lifetime and reply context must survive same-thread
+// exact navigation, not merely reload text from durable drafts.
+test("opening another message in the same thread keeps the reply editor mounted", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const composer = page.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  // First convert an ordinary root opening to exact selection, then retarget
+  // again. This must not depend on starting with an exact-mode reader.
+  expect(
+    await openTarget(page, {
+      ...target(app, app.exact.root.id),
+      threadRootId: app.exact.root.id,
+    }),
+  ).toEqual({ status: "opened" });
+  const replyRow = thread(page).locator(
+    `[data-message-id="${app.exact.replies.at(-2).id}"]`,
+  );
+  await replyRow.hover();
+  await replyRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Cancel reply target", exact: true }),
+  ).toBeVisible();
+  // Capture the chosen reply's context: navigation must not swap its target.
+  const replyTarget = page
+    .locator("form")
+    .filter({ has: composer })
+    .getByText(/^Replying to /)
+    .locator("..");
+  const chosenTarget = await replyTarget.textContent();
+  expect(chosenTarget).toBeTruthy();
+  await composer.fill("Keep my unfinished reply");
+  await composer.evaluate((element) => {
+    window.retainedReplyEditor = element;
+  });
+  const next = app.exact.replies.at(-2).id;
+  expect(await openTarget(page, target(app, next))).toEqual({
+    status: "opened",
+  });
+  await expect(
+    thread(page).locator(`[data-message-id="${next}"]`),
+  ).toBeFocused();
+  await expect(composer).toHaveText("Keep my unfinished reply");
+  expect(
+    await composer.evaluate(
+      (element) => element === window.retainedReplyEditor,
+    ),
+  ).toBe(true);
+  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+  expect(
+    await composer.evaluate(
+      (element) => element === window.retainedReplyEditor,
+    ),
+  ).toBe(true);
+  await expect(composer).toHaveText("Keep my unfinished reply");
+  await expect(replyTarget).toHaveText(chosenTarget);
+});

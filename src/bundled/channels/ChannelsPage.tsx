@@ -1619,6 +1619,10 @@ function ChannelWorkspace({
                               },
                               content: (
                                 <ThreadPanel
+                                  retainThread
+                                  onRetryNavigation={() =>
+                                    void navigator?.retry()
+                                  }
                                   sessionConversation={
                                     current?.channelType === "session"
                                   }

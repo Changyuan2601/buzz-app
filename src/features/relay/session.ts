@@ -1786,54 +1786,49 @@ export function createRelaySession(
         throw new Error("Relay view capacity unavailable");
       if (!/^[0-9a-f]{64}$/.test(messageId))
         throw new Error("Thread needs a valid message ID");
+      // Exact selection is available to an existing ordinary thread too; its
+      // raw evidence keeps the same access, cap and atomic-admission checks.
+      const targetReader: RelayReader = {
+        async read(filters, settings) {
+          if (!canReadRemote(channelId))
+            throw new ReadError(
+              "unavailable",
+              "Reconnect to refresh conversation access.",
+            );
+          const epoch = accessEpoch;
+          let events: readonly RelayEvent[];
+          try {
+            events = await requests.reader.read(filters, settings);
+          } catch (error) {
+            if (
+              !closed &&
+              epoch === accessEpoch &&
+              readErrorKind(error) === "denied"
+            )
+              channels.denyChannel(channelId, error);
+            throw error;
+          }
+          if (closed || epoch !== accessEpoch || !canReadRemote(channelId))
+            throw new DOMException("Stale thread target", "AbortError");
+          settings?.signal?.throwIfAborted();
+          // A capped raw target/overlay read cannot establish a safe fold.
+          if (
+            !filters.some((filter) => filter.depth_limit) &&
+            events.length >= 500
+          )
+            throw new Error("Selected message exceeded its evidence limit");
+          // The thread owner admits the complete target fold atomically.
+          return events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
+        },
+      };
       const thread = createThreadView({
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
         signingAuthority: transport?.archiveAuthority,
-        reader: options?.exact
-          ? {
-              async read(filters, settings) {
-                if (!canReadRemote(channelId))
-                  throw new ReadError(
-                    "unavailable",
-                    "Reconnect to refresh conversation access.",
-                  );
-                const epoch = accessEpoch;
-                let events: readonly RelayEvent[];
-                try {
-                  events = await requests.reader.read(filters, settings);
-                } catch (error) {
-                  if (
-                    !closed &&
-                    epoch === accessEpoch &&
-                    readErrorKind(error) === "denied"
-                  )
-                    channels.denyChannel(channelId, error);
-                  throw error;
-                }
-                if (
-                  closed ||
-                  epoch !== accessEpoch ||
-                  !canReadRemote(channelId)
-                )
-                  throw new DOMException("Stale thread target", "AbortError");
-                settings?.signal?.throwIfAborted();
-                // A capped raw target/overlay read cannot establish a safe fold.
-                if (
-                  !filters.some((filter) => filter.depth_limit) &&
-                  events.length >= 500
-                )
-                  throw new Error(
-                    "Selected message exceeded its evidence limit",
-                  );
-                // The thread owner admits the complete target fold atomically.
-                return events.filter(
-                  (event) => event.kind !== PRODUCT_FEEDBACK_KIND,
-                );
-              },
-            }
-          : verified,
+        reader: options?.exact ? targetReader : verified,
+        targetReader,
+        admitTarget: (events) => accept(events, false),
         exact: options?.exact ?? false,
         admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed: recent.peek(messageId)?.event ?? retainedEvent(messageId),
