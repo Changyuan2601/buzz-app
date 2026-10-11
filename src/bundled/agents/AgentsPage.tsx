@@ -69,6 +69,8 @@ type Frame =
 
 /** The type's one-line summary of an agent; its title when it has none. */
 function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
+  if (agent.place === "elsewhere") return "On another device";
+  if (agent.unfinished) return "Setup unfinished";
   if (!type) return "Type unavailable";
   try {
     return type.summary?.(agent).trim() || type.title;
@@ -100,7 +102,12 @@ export function AgentsPage({
   const creating = side === "creating";
   const browse = (selected?: string) =>
     setFrame(selected ? { view: "browse", selected } : { view: "browse" });
-  const build = (pubkey: string) => setFrame({ view: "build", pubkey });
+  const build = (pubkey: string) => {
+    // A just-made agent may not be shown yet.
+    const agent = find(pubkey);
+    if (agent?.place !== "elsewhere" && !agent?.unfinished)
+      setFrame({ view: "build", pubkey });
+  };
   const newAgent = () => setFrame({ view: "browse", side: "creating" });
   const bringOver = () => setFrame({ view: "browse", side: "porting" });
   const openTeams = () => setFrame({ view: "browse", side: "teams" });
@@ -145,13 +152,14 @@ export function AgentsPage({
     ) : side === "teams" ? (
       <Teams
         agents={agents}
-        saved={snapshot.agents}
+        saved={snapshot.agents.filter((agent) => agent.place === "here")}
         teams={snapshot.teams}
         onClose={() => browse()}
       />
     ) : selected ? (
       <AgentPeek
         key={selected.pubkey}
+        agents={agents}
         agent={selected}
         type={typeOf(selected)}
         channels={channels}
@@ -377,12 +385,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function AgentPeek({
+  agents,
   agent,
   type,
   channels,
   onBuild,
   onClose,
 }: {
+  agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
@@ -391,30 +401,62 @@ function AgentPeek({
 }) {
   const Peek = type?.Peek;
   const summary = summaryOf(agent, type);
+  const [finishing, setFinishing] = useState(false);
+  const [error, setError] = useState("");
+  const finish = async () => {
+    setFinishing(true);
+    setError("");
+    try {
+      await agents.finish(agent.pubkey);
+    } catch (reason) {
+      setError(message(reason));
+    }
+    setFinishing(false);
+  };
+  if (agent.place === "elsewhere")
+    return (
+      <div className={styles.sideBody}>
+        <PeekIdentity agent={agent} detail={summary} onClose={onClose} />
+        <p className="m-0 text-body-sm text-secondary">
+          Its key is on another of your devices, which runs it. Open Agents
+          there to change or delete it.
+        </p>
+      </div>
+    );
   return (
     <div className={styles.sideBody}>
-      <div className={styles.peekIdentity}>
-        <span className={styles.portraitLarge}>
-          <AgentPortrait agent={agent} size="fill" />
-        </span>
-        <div className="grid min-w-0 flex-1 gap-0.5">
-          <h3 className="m-0 truncate text-heading">{agent.name}</h3>
+      <PeekIdentity
+        agent={agent}
+        detail={`${type?.title ?? "Type unavailable"}${
+          type && !Peek && summary !== type.title ? ` · ${summary}` : ""
+        }`}
+        onClose={onClose}
+      />
+      {agent.unfinished ? (
+        <>
           <p className="m-0 text-body-sm text-secondary">
-            {type?.title ?? "Type unavailable"}
-            {type && !Peek && summary !== type.title ? ` · ${summary}` : ""}
+            Its provider made it, but its setup did not finish.
           </p>
-        </div>
-        <IconButton
-          aria-label="Close"
-          size="sm"
-          icon={<XIcon size={16} aria-hidden="true" />}
-          onClick={onClose}
-        />
-      </div>
-      <Button variant="primary" onClick={onBuild}>
-        Open
-      </Button>
-      {Peek ? (
+          <Button
+            variant="primary"
+            loading={finishing}
+            onClick={() => void finish()}
+          >
+            Finish setup
+          </Button>
+          {error && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {error}
+            </p>
+          )}
+          <AgentDelete agents={agents} agent={agent} onRemoved={onClose} />
+        </>
+      ) : (
+        <Button variant="primary" onClick={onBuild}>
+          Open
+        </Button>
+      )}
+      {Peek && !agent.unfinished ? (
         <div className={styles.peekPlugin}>
           <Peek agent={agent} />
         </div>
@@ -423,9 +465,39 @@ function AgentPeek({
           Enable the plugin that provides this agent's type to run or change it.
         </p>
       ) : null}
-      <Section title="Wakes on">
-        <AttentionSummary agent={agent} channels={channels} />
-      </Section>
+      {agent.place === "here" && (
+        <Section title="Wakes on">
+          <AttentionSummary agent={agent} channels={channels} />
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function PeekIdentity({
+  agent,
+  detail,
+  onClose,
+}: {
+  agent: Agent;
+  detail: string;
+  onClose(): void;
+}) {
+  return (
+    <div className={styles.peekIdentity}>
+      <span className={styles.portraitLarge}>
+        <AgentPortrait agent={agent} size="fill" />
+      </span>
+      <div className="grid min-w-0 flex-1 gap-0.5">
+        <h3 className="m-0 truncate text-heading">{agent.name}</h3>
+        <p className="m-0 text-body-sm text-secondary">{detail}</p>
+      </div>
+      <IconButton
+        aria-label="Close"
+        size="sm"
+        icon={<XIcon size={16} aria-hidden="true" />}
+        onClick={onClose}
+      />
     </div>
   );
 }
@@ -492,14 +564,16 @@ function NewAgent({
               key={item.key}
               value={item.key}
               variant="card"
-              label={item.title}
+              label={item.remote ? `${item.title} (hosted)` : item.title}
               {...(item.description ? { description: item.description } : {})}
             />
           ))}
         </RadioGroup>
       </Field>
       <p className="m-0 text-body-sm text-secondary">
-        It gets its own key on this device and runs while the app is open.
+        {chosen?.remote
+          ? "Its provider keeps its key and runs it, whether or not this app is open."
+          : "It gets its own key on this device and runs while the app is open."}
       </p>
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">

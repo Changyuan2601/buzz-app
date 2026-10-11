@@ -14,6 +14,7 @@ const agent = {
   type: "test/echo",
   owner: "f".repeat(64),
   relay: "wss://relay.example",
+  place: "here",
   config: {},
   attention: {},
   skipped: {},

@@ -5,7 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
-import { removeRelayAgent } from "./relay-removal";
+import { publishAgentRecord, removeRelayAgent } from "./relay-removal";
 
 const viewer = keypair(),
   relay = keypair(),
@@ -319,4 +319,82 @@ it("a cancelled removal signs and publishes nothing", async () => {
   await expect(remove(controller.signal)).rejects.toBeDefined();
   expect(fixture.published).toEqual([]);
   expect(fixture.signedBy).toEqual([]);
+});
+
+it("publishes the owner's record of an agent with its runtime", async () => {
+  const { fixture, instance } = setup();
+  await publishAgentRecord(
+    instance.session,
+    {
+      pubkey: agent.pubkey,
+      name: "Agent",
+      picture: "https://example.test/a.png",
+      runtime: "example/echo",
+    },
+    new AbortController().signal,
+  );
+  const [listed] = fixture.published;
+  expect(listed).toMatchObject({ kind: 30177, pubkey: viewer.pubkey });
+  expect(JSON.parse(listed?.content ?? "")).toEqual({
+    name: "Agent",
+    picture: "https://example.test/a.png",
+    parallelism: 1,
+    respond_to: "owner-only",
+  });
+  expect(listed?.tags).toEqual([
+    ["d", agent.pubkey],
+    ["runtime", "example/echo"],
+    ["client-id", expect.any(String)],
+  ]);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("keeps the settings and tags of the record it replaces", async () => {
+  const { fixture, instance } = setup();
+  const written = await publishAgentRecord(
+    instance.session,
+    {
+      pubkey: agent.pubkey,
+      name: "Renamed",
+      runtime: "example/echo",
+      prior: {
+        content: {
+          name: "Agent",
+          picture: "https://example.test/old.png",
+          parallelism: 3,
+          respond_to: "anyone",
+          persona_id: "p1",
+        },
+        tags: [
+          ["d", agent.pubkey],
+          ["runtime", "example/old"],
+          ["a", "30175:owner:p1"],
+          ["client-id", "old"],
+        ],
+      },
+    },
+    new AbortController().signal,
+  );
+  const [listed] = fixture.published;
+  const content = {
+    name: "Renamed",
+    parallelism: 3,
+    respond_to: "anyone",
+    persona_id: "p1",
+  };
+  expect(JSON.parse(listed?.content ?? "")).toEqual(content);
+  expect(listed?.tags).toEqual([
+    ["d", agent.pubkey],
+    ["runtime", "example/echo"],
+    ["a", "30175:owner:p1"],
+    ["client-id", expect.any(String)],
+  ]);
+  expect(written).toEqual({
+    content,
+    tags: [
+      ["d", agent.pubkey],
+      ["runtime", "example/echo"],
+      ["a", "30175:owner:p1"],
+    ],
+  });
 });

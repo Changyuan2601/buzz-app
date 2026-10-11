@@ -47,7 +47,11 @@ export function AgentDelete({
         open={confirming}
         onOpenChange={setConfirming}
         title={`Delete ${agent.name}?`}
-        description="This deletes its key from this device. Then, whenever its community is open, it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
+        description={
+          agent.place === "hosted"
+            ? "Its provider deletes it and its key, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
+            : "This deletes its key from this device. Then, whenever its community is open, it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
+        }
         preventClose={removing}
         actions={
           <>

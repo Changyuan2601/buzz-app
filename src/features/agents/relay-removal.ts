@@ -50,8 +50,68 @@ export async function removeRelayAgent(
   }
 }
 
+/** The content and tags of a kind 30177 record as read. */
+export type AgentRecordBody = Readonly<{
+  content: Readonly<Record<string, unknown>>;
+  tags: readonly (readonly string[])[];
+}>;
+/** The viewer's own kind 30177 record of an agent, as Agents writes it. */
+export type AgentRecordEntry = Readonly<{
+  pubkey: string;
+  name: string;
+  /** An HTTPS image URL. */
+  picture?: string;
+  /** The agent type's key, `pluginId/typeId`, as the `runtime` tag. */
+  runtime: string;
+  /** The record this replaces, whose other settings and tags it keeps. */
+  prior?: AgentRecordBody | undefined;
+}>;
+
+/** Publishes the viewer's kind 30177 record of an agent, replacing any
+ * before it, and resolves with what it wrote once the relay accepts it.
+ * Another desktop applies the record whole to an agent it has with that key,
+ * and its parser requires `parallelism` and `respond_to`, so the record keeps
+ * every setting of the one it replaces and defaults those two
+ * (docs/relay-queries.md, "Managed-agent registration"). */
+export async function publishAgentRecord(
+  session: Pick<RelaySession, "outbox">,
+  { pubkey, name, picture, runtime, prior }: AgentRecordEntry,
+  signal: AbortSignal,
+): Promise<AgentRecordBody> {
+  const outbox = session.outbox;
+  if (!outbox?.supports(30177))
+    throw new Error("This community cannot list agents.");
+  await outbox.ready();
+  signal.throwIfAborted();
+  const kept = Object.entries(prior?.content ?? {}).filter(
+    ([field]) => field !== "picture",
+  );
+  const content = {
+    parallelism: 1,
+    respond_to: "owner-only",
+    ...Object.fromEntries(kept),
+    name,
+    ...(picture ? { picture } : {}),
+  };
+  const tags = [
+    ["d", pubkey],
+    ["runtime", runtime],
+    ...(prior?.tags ?? [])
+      .filter(([tag]) => !["d", "runtime", "client-id"].includes(tag ?? ""))
+      .map((tag) => [...tag]),
+  ];
+  const id = outbox.send(
+    { kind: 30177, content: JSON.stringify(content), tags },
+    undefined,
+    () => !signal.aborted,
+  );
+  await delivered(outbox, id, signal, "The agent list was not updated. Retry.");
+  await outbox.dismiss(id);
+  return { content, tags };
+}
+
 /** NIP-09 coordinate deletion of the viewer's own kind 30177 agent record. */
-async function deleteAgentRecord(
+export async function deleteAgentRecord(
   session: Pick<RelaySession, "outbox">,
   viewer: string,
   pubkey: string,

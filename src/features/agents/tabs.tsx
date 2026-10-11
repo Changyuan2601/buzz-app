@@ -1,6 +1,7 @@
 // An agent's sections, wherever they are shown (its Build view and its
 // profile panel): the type's own tabs, then the app's Attention tab, which every
-// type shares because the app is what wakes the agent.
+// agent here shares because the app is what wakes it. Hosted agents' tabs are
+// their type's alone; an agent on another device has none here.
 import type { ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
@@ -24,8 +25,9 @@ export function agentSections({
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
 }): readonly AgentSection[] {
-  return [
-    ...(type?.tabs ?? []).map(({ id, title, component: Component }) => ({
+  if (agent.place === "elsewhere") return [];
+  const tabs = (type?.tabs ?? []).map(
+    ({ id, title, component: Component }) => ({
       value: `agent:type:${id}` as const,
       label: title,
       render: () => (
@@ -34,7 +36,11 @@ export function agentSections({
           save={(config) => agents.save(agent.pubkey, { config })}
         />
       ),
-    })),
+    }),
+  );
+  if (agent.place === "hosted") return tabs;
+  return [
+    ...tabs,
     {
       value: "agent:attention",
       label: "Attention",
