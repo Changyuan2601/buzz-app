@@ -8,55 +8,101 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { createRef } from "react";
+import { createRef, StrictMode } from "react";
+import { Blob, File } from "node:buffer";
 import type { InstructionEditingActions } from "./AgentInstructions";
 import { AgentInstructions } from "./AgentInstructions";
-const recorder = vi.hoisted(() => ({
-  status: "recording",
-  elapsedSeconds: 4,
-  levels: [0.2, 0.6, 0.3],
-  error: null,
-  cancel: vi.fn(),
-  start: vi.fn(),
-  stop: vi.fn(),
-}));
+const tracks = { stop: vi.fn() };
+const getUserMedia = vi.fn();
+const decodeAudio = vi.fn();
+const closeAudio = vi.fn(async () => {});
+class BrowserRecorder extends EventTarget {
+  static isTypeSupported() {
+    return true;
+  }
+  state = "inactive";
+  mimeType = "audio/webm";
+  start() {
+    this.state = "recording";
+  }
+  stop() {
+    this.state = "inactive";
+    queueMicrotask(() => {
+      this.dispatchEvent(
+        Object.assign(new Event("dataavailable"), {
+          data: new Blob([new Uint8Array([1, 2, 3])]),
+        }),
+      );
+      this.dispatchEvent(new Event("stop"));
+    });
+  }
+}
+class BrowserAudioContext {
+  close = closeAudio;
+  createAnalyser() {
+    return {
+      fftSize: 512,
+      smoothingTimeConstant: 0,
+      getByteTimeDomainData: (samples: Uint8Array) => samples.fill(128),
+    };
+  }
+  createMediaStreamSource() {
+    return { connect: vi.fn() };
+  }
+  decodeAudioData = decodeAudio;
+}
+beforeEach(() => {
+  vi.stubGlobal("MediaRecorder", BrowserRecorder);
+  vi.stubGlobal("AudioContext", BrowserAudioContext);
+  vi.stubGlobal("Blob", Blob);
+  vi.stubGlobal("File", File);
+  vi.stubGlobal("navigator", {
+    mediaDevices: { getUserMedia },
+  });
+  closeAudio.mockResolvedValue(undefined);
+  decodeAudio.mockResolvedValue({
+    numberOfChannels: 1,
+    sampleRate: 16_000,
+    duration: 1,
+    getChannelData: () => new Float32Array([0, 0.5, -0.5]),
+  });
+  getUserMedia.mockResolvedValue({ getTracks: () => [tracks] });
+});
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
 }));
-vi.mock("../../features/agents/voice/useVoiceNoteRecorder", () => ({
-  useVoiceNoteRecorder: () => recorder,
-}));
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  vi.unstubAllGlobals();
 });
-function setup() {
-  recorder.status = "recording";
-  recorder.stop.mockImplementation(async () => {
-    recorder.status = "idle";
-    return {
-      file: { arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer },
-    };
-  });
+async function setup() {
   const onChange = vi.fn();
   render(
-    <AgentInstructions
-      value="Existing instructions"
-      disabled={false}
-      onChange={onChange}
-    />,
+    <StrictMode>
+      <AgentInstructions
+        value="Existing instructions"
+        disabled={false}
+        onChange={onChange}
+      />
+    </StrictMode>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Voice" }));
+  await startRecording();
   return onChange;
+}
+async function startRecording() {
+  fireEvent.click(screen.getByRole("button", { name: "Record" }));
+  await screen.findByRole("button", { name: "Stop recording" });
 }
 it("transcribes locally, sends only text for drafting, and requires explicit apply", async () => {
   vi.mocked(invoke)
     .mockResolvedValueOnce("Help me plan trips")
     .mockResolvedValueOnce("Plan trips for the user.");
-  const onChange = setup();
+  const onChange = await setup();
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
   await waitFor(() =>
     expect(screen.getByLabelText("Instruction draft")).toHaveValue(
@@ -64,26 +110,25 @@ it("transcribes locally, sends only text for drafting, and requires explicit app
     ),
   );
   expect(invoke).toHaveBeenNthCalledWith(1, "agent_instruction_transcribe", {
-    audio: "AQID",
+    audio: expect.any(String),
   });
   expect(invoke).toHaveBeenNthCalledWith(2, "agent_instruction_generate", {
     transcript: "Help me plan trips",
   });
   expect(onChange).not.toHaveBeenCalled();
-  recorder.status = "idle";
-  // The real recorder becomes idle before its stop promise resolves.
+  expect(tracks.stop).toHaveBeenCalledTimes(1);
+  expect(closeAudio).toHaveBeenCalledTimes(1);
   fireEvent.change(screen.getByLabelText("Instruction draft"), {
     target: { value: "Plan short trips." },
   });
   fireEvent.click(screen.getByRole("button", { name: "Use instructions" }));
   expect(onChange).toHaveBeenCalledWith("Plan short trips.");
-  recorder.status = "recording";
 });
 it("shows a re-record action after failure and ignores results after unmount", async () => {
   vi.mocked(invoke)
     .mockResolvedValueOnce("Be a travel helper")
     .mockRejectedValueOnce("Model unavailable");
-  setup();
+  await setup();
   expect(
     screen.queryByRole("button", { name: "Back" }),
   ).not.toBeInTheDocument();
@@ -96,7 +141,8 @@ it("shows a re-record action after failure and ignores results after unmount", a
   );
   expect(screen.queryByLabelText("Transcript")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Re-record" }));
-  expect(recorder.start).toHaveBeenCalled();
+  await screen.findByRole("button", { name: "Stop recording" });
+  expect(getUserMedia).toHaveBeenCalledTimes(2);
   cleanup();
   vi.clearAllMocks();
   let resolve!: (value: string) => void;
@@ -106,7 +152,7 @@ it("shows a re-record action after failure and ignores results after unmount", a
         resolve = done;
       }) as ReturnType<typeof invoke>,
   );
-  setup();
+  await setup();
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
   cleanup();
@@ -114,13 +160,14 @@ it("shows a re-record action after failure and ignores results after unmount", a
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 it("offers choices and retains text when returning to them", () => {
-  recorder.status = "idle";
   render(
-    <AgentInstructions
-      value="Keep this draft"
-      disabled={false}
-      onChange={vi.fn()}
-    />,
+    <StrictMode>
+      <AgentInstructions
+        value="Keep this draft"
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    </StrictMode>,
   );
   expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Text" }));
@@ -129,32 +176,30 @@ it("offers choices and retains text when returning to them", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   fireEvent.click(screen.getByRole("button", { name: "Voice" }));
-  expect(recorder.start).not.toHaveBeenCalled();
+  expect(getUserMedia).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Record" })).toBeInTheDocument();
 });
 
 it("closing embedded editing preserves existing instructions until explicit apply", async () => {
-  recorder.status = "recording";
-  recorder.stop.mockImplementation(async () => {
-    recorder.status = "idle";
-    return { file: { arrayBuffer: async () => new Uint8Array([1]).buffer } };
-  });
   vi.mocked(invoke)
     .mockResolvedValueOnce("New description")
     .mockResolvedValueOnce("New generated instructions");
   const editingRef = createRef<InstructionEditingActions>();
   const onChange = vi.fn();
   render(
-    <AgentInstructions
-      embedded
-      editingRef={editingRef}
-      value="Existing cloned instructions"
-      disabled={false}
-      onChange={onChange}
-    />,
+    <StrictMode>
+      <AgentInstructions
+        embedded
+        editingRef={editingRef}
+        value="Existing cloned instructions"
+        disabled={false}
+        onChange={onChange}
+      />
+    </StrictMode>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Agent instructions" }));
   fireEvent.click(screen.getByRole("button", { name: "Audio" }));
+  await startRecording();
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
   await waitFor(() =>
     expect(screen.getByLabelText("Instruction draft")).toHaveValue(
@@ -170,4 +215,52 @@ it("closing embedded editing preserves existing instructions until explicit appl
   expect(onChange).toHaveBeenCalledExactlyOnceWith(
     "New generated instructions",
   );
+});
+
+it("releases a microphone permission result arriving after unmount", async () => {
+  let grant!: (stream: unknown) => void;
+  getUserMedia.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        grant = resolve;
+      }),
+  );
+  render(
+    <StrictMode>
+      <AgentInstructions value="" disabled={false} onChange={vi.fn()} />
+    </StrictMode>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Voice" }));
+  fireEvent.click(screen.getByRole("button", { name: "Record" }));
+  expect(getUserMedia).toHaveBeenCalledTimes(1);
+  cleanup();
+  await act(async () => grant({ getTracks: () => [tracks] }));
+  expect(tracks.stop).toHaveBeenCalledTimes(1);
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it("cancels pending audio processing on unmount without transcribing", async () => {
+  let decoded!: (audio: unknown) => void;
+  decodeAudio.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        decoded = resolve;
+      }),
+  );
+  await setup();
+  fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+  await waitFor(() => expect(decodeAudio).toHaveBeenCalledTimes(1));
+  cleanup();
+  expect(tracks.stop).toHaveBeenCalledTimes(1);
+  expect(closeAudio).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    decoded({
+      numberOfChannels: 1,
+      sampleRate: 16_000,
+      duration: 1,
+      getChannelData: () => new Float32Array([0]),
+    }),
+  );
+  expect(invoke).not.toHaveBeenCalled();
+  expect(tracks.stop).toHaveBeenCalledTimes(1);
 });
