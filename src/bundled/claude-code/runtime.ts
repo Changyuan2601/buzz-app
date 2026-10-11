@@ -308,15 +308,13 @@ export class ClaudeRuntime {
     event: EventData,
     error: string,
   ) {
-    const root = threadReference(event)?.rootId ?? event.id;
     return agent
       .publish({
         kind: 9,
         content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
         tags: [
           ["h", channel],
-          ...(root === event.id ? [] : [["e", root, "", "root"]]),
-          ["e", event.id, "", "reply"],
+          ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
           ["p", event.pubkey],
         ],
       })
