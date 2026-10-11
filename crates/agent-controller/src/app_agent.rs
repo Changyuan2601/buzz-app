@@ -432,13 +432,15 @@ impl AppAgents {
             if let Some(name) = name {
                 agent.name = name;
             }
-            agent.profile = Some(Published {
-                name: agent.name.clone(),
-                created_at,
-            });
             if picture.is_some() {
                 agent.picture = picture;
             }
+            agent.profile = Some(Published {
+                name: agent.name.clone(),
+                picture: agent.picture.clone(),
+                about: agent.about.clone(),
+                created_at,
+            });
         })
     }
     /// Deletes the key, then marks the row deleted, so a failed deletion can be
