@@ -178,7 +178,7 @@ it("serves whichever agent starts the next conversation", async () => {
 
 it("starts a conversation elsewhere afresh, and the spare follows it", async () => {
   const { pool, spare, claudes } = withSpare();
-  spare.warm({ cwd: "/other", model: "opus" });
+  spare.warm({ cwd: "/other", model: "opus" }, { cwd: "/work", model: "opus" });
   await flush();
   const [other] = claudes();
   await pool.deliver("c/root", "hi", 1);
@@ -354,6 +354,7 @@ it("restarts idle processes when settings change", async () => {
 
 it("stops every process when disposed", async () => {
   const { pool, spare, claudes } = withSpare();
+  spare.warm({ cwd: "/work", model: "opus" });
   await pool.deliver("c/root", "hi", 1);
   await flush();
   pool.dispose();
@@ -364,9 +365,25 @@ it("stops every process when disposed", async () => {
   await expect(pool.deliver("c/root", "late", 2)).resolves.toMatchObject({
     ok: false,
   });
-  spare.warm({ cwd: "/work", model: "opus" });
-  await flush();
   expect(claudes()).toHaveLength(2);
+});
+
+it("starts no spare for a conversation that starts after its agents are gone", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, spare, live } = withSpare({ launched });
+  spare.warm({ cwd: "/work", model: "opus" });
+  const done = pool.deliver("c/root", "hi", 1);
+  await flush();
+  // As the runtime does when its last agent goes, mid-launch.
+  pool.dispose();
+  spare.warm();
+  release();
+  await expect(done).resolves.toMatchObject({ ok: false });
+  await flush();
+  expect(live()).toEqual([]);
 });
 
 it("keeps saved sessions per agent in storage", () => {

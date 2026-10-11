@@ -124,9 +124,7 @@ export class ClaudeRuntime {
         entry.sessions.reconfigure();
       }
     }
-    if (agents.length)
-      this.spare.warm(...agents.map((agent) => where(config(agent.config))));
-    else this.spare.stop();
+    this.spare.warm(...agents.map((agent) => where(config(agent.config))));
     this.notify();
   }
 

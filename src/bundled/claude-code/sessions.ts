@@ -224,15 +224,17 @@ const place = ({ cwd, model }: Where) => JSON.stringify([cwd, model ?? ""]);
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model. Starting is most of the wait
  * before a new conversation's first reply; giving the process its prompt is not.
- * It follows the latest new conversation, the likeliest place for the next. */
+ * It is kept only where the runtime's agents run, and follows the latest new
+ * conversation among those places, the likeliest place for the next. */
 export class Spare {
   private next:
     | { place: string; process: Promise<ClaudeProcess | undefined> }
     | undefined;
+  /** Where a spare is wanted: set by the runtime alone. */
+  private wanted: readonly Where[] = [];
   /** Not started again after it failed to start or died, until a conversation
    * asks for one, so a `claude` that cannot run is not started over and over. */
   private stopped = false;
-  private disposed = false;
 
   constructor(
     private readonly spawn: Spawn,
@@ -241,15 +243,45 @@ export class Spare {
     private readonly newId: () => string = () => crypto.randomUUID(),
   ) {}
 
-  /** Keeps a spare for one of `wheres`: the one there is, when it fits one,
-   * else a new one for the first. */
+  /** Wants a spare for one of `wheres`, or none when there are none. */
   warm(...wheres: Where[]) {
-    const [first] = wheres;
-    if (this.disposed || this.stopped || !first) return;
-    if (this.next) {
-      if (wheres.some((where) => place(where) === this.next?.place)) return;
-      this.stop();
+    this.wanted = wheres;
+    if (!wheres.length) this.stopped = false;
+    this.fill(wheres);
+  }
+
+  /** The spare, when it was started for `where`. Another is started for
+   * `where` when a spare is wanted there, else where one is wanted. */
+  async take(where: Where) {
+    const next = this.next;
+    this.next = undefined;
+    this.stopped = false;
+    const here = this.wanted.some((wanted) => place(wanted) === place(where));
+    this.fill(here ? [where] : this.wanted);
+    if (next?.place !== place(where)) {
+      void next?.process.then((process) => process?.kill());
+      return undefined;
     }
+    const process = await next.process;
+    if (process?.running) return process;
+    void process?.kill();
+    return undefined;
+  }
+
+  dispose() {
+    this.warm();
+  }
+
+  /** Keeps the spare when it fits one of `wheres`, else starts one for the
+   * first; with none, keeps none. */
+  private fill(wheres: readonly Where[]) {
+    const current = this.next;
+    if (current && wheres.some((where) => place(where) === current.place))
+      return;
+    this.next = undefined;
+    void current?.process.then((process) => process?.kill());
+    const [first] = wheres;
+    if (this.stopped || !first) return;
     const next = {
       place: place(first),
       process: ClaudeProcess.spawn(this.spawn, {
@@ -268,36 +300,6 @@ export class Spare {
       this.next = undefined;
       this.stopped = true;
     });
-  }
-
-  /** The spare, when it was started for `where`; a spare for `where` is
-   * started next either way. */
-  async take(where: Where) {
-    const next = this.next;
-    this.next = undefined;
-    this.stopped = false;
-    this.warm(where);
-    if (next?.place !== place(where)) {
-      void next?.process.then((process) => process?.kill());
-      return undefined;
-    }
-    const process = await next.process;
-    if (process?.running) return process;
-    void process?.kill();
-    return undefined;
-  }
-
-  /** Stops the spare until `warm` is called again. */
-  stop() {
-    const next = this.next;
-    this.next = undefined;
-    this.stopped = false;
-    void next?.process.then((process) => process?.kill());
-  }
-
-  dispose() {
-    this.disposed = true;
-    this.stop();
   }
 }
 
