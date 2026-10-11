@@ -31,6 +31,11 @@ pub struct AppAgent {
     pub agent_type: String,
     #[serde(default)]
     pub name: String,
+    /// Public profile metadata, published as kind-0 picture and about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
     /// The last profile its community accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<Published>,
@@ -43,6 +48,10 @@ pub struct AppAgent {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Published {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
     pub created_at: u64,
 }
 impl AppAgent {
@@ -90,11 +99,23 @@ impl AppAgent {
         let tags = self.attested(key, tags)?;
         key.signed(kind, content, tags)
     }
+    /// Whether the community accepted this row's current public metadata.
+    pub fn profile_is_current(&self) -> bool {
+        self.profile.as_ref().is_some_and(|last| {
+            last.name == self.name && last.picture == self.picture && last.about == self.about
+        })
+    }
     /// Its profile as this row describes it, replacing the last one accepted.
-    /// No other writer exists: only this device holds the key.
     pub fn profile_event(&self, key: &Secret) -> Result<serde_json::Value> {
         valid_name(&self.name)?;
-        let content = serde_json::json!({ "name": self.name, "bot": true }).to_string();
+        let mut content = serde_json::json!({ "name": self.name, "bot": true });
+        if let Some(picture) = &self.picture {
+            content["picture"] = picture.as_str().into();
+        }
+        if let Some(about) = &self.about {
+            content["about"] = about.as_str().into();
+        }
+        let content = content.to_string();
         let tags = self.attested(key, vec![])?;
         key.sign_event_after(
             0,
@@ -299,6 +320,8 @@ impl AppAgents {
             auth,
             agent_type: prepared.agent_type,
             name: prepared.name,
+            picture: None,
+            about: None,
             profile: None,
             deleted: false,
         };

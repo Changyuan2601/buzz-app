@@ -336,8 +336,8 @@ pub(crate) async fn app_agent_publish(
     post(&agent, &key, signed).await
 }
 
-/// Publishes the agent's profile if its name differs from the last one its
-/// community accepted. Safe to call any time; one runs per agent at a time.
+/// Publishes changed public metadata. Safe to call any time; one publication
+/// runs per agent at a time and records only what its community accepted.
 #[tauri::command]
 pub(crate) async fn app_agent_publish_profile(
     state: tauri::State<'_, AppAgentHost>,
@@ -346,7 +346,7 @@ pub(crate) async fn app_agent_publish_profile(
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
     let agent = state.agent(pubkey).await?;
-    if agent.profile.as_ref().map(|last| &last.name) == Some(&agent.name) {
+    if agent.profile_is_current() {
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
@@ -361,6 +361,8 @@ pub(crate) async fn app_agent_publish_profile(
             &agent.pubkey,
             Published {
                 name: agent.name,
+                picture: agent.picture,
+                about: agent.about,
                 created_at,
             },
         )
@@ -590,6 +592,8 @@ mod tests {
             auth: "[]".into(),
             agent_type: "p/t".into(),
             name: "Ada".into(),
+            picture: None,
+            about: None,
             profile: None,
             deleted: false,
         };
