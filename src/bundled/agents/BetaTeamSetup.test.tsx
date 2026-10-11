@@ -705,3 +705,97 @@ it("hands focus to the section after a keyboard retry succeeds", async () => {
   const region = screen.getByRole("region", { name: "From old Buzz" });
   await waitFor(() => expect(region).toHaveFocus());
 });
+
+it("forgets the focus handoff when the person clicks away while the catalog reloads", async () => {
+  const user = userEvent.setup();
+  const loading = { status: "loading", entries: [] };
+  let status = "ready";
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const reloading = {
+    ...session,
+    channelKit: {
+      snapshot: () => (status === "ready" ? ready : loading),
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  const betaTeams = vi.fn(async () => [team(["ONE"])]);
+  let release = () => {};
+  runner.runBetaTeamStep.mockReset().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => {
+          betaTeams.mockResolvedValue([]);
+          resolve({ finished: ["a1"], failed: [] });
+        };
+      }),
+  );
+  render(
+    <BetaTeamSetup
+      control={control({ betaTeams })}
+      state={state(writers("pending"))}
+      session={reloading}
+      viewer={viewer}
+    />,
+  );
+  await tabTo(user, "Finish team setup for Writers");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(runner.runBetaTeamStep).toHaveBeenCalled());
+  act(() => {
+    status = "loading";
+    notify();
+  });
+  await act(async () => release());
+  // An empty area takes no focus, so only the pointer says they moved on.
+  await user.pointer({ keys: "[MouseLeft]", target: document.body });
+  act(() => {
+    status = "ready";
+    notify();
+  });
+  const region = await screen.findByRole("region", { name: "From old Buzz" });
+  await act(async () => {});
+  expect(region).not.toHaveFocus();
+  expect(document.body).toHaveFocus();
+});
+
+it("forgets the retry's focus handoff when the person clicks away during the read", async () => {
+  const user = userEvent.setup();
+  let succeed = () => {};
+  const betaTeams = vi
+    .fn<() => Promise<PendingBetaTeam[]>>()
+    .mockRejectedValueOnce(new Error("Pending teams could not be read."))
+    .mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          succeed = () => resolve([team(["ONE"])]);
+        }),
+    );
+  mount(
+    control({ betaTeams, restoreBetaTeam: vi.fn(), restoreBetaTeams: vi.fn() }),
+    writers("completed"),
+  );
+  expect(
+    await screen.findByRole("button", { name: /Find teams/ }),
+  ).toBeDisabled();
+  await tabTo(user, "Try again");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(betaTeams).toHaveBeenCalledTimes(2));
+  await user.pointer({ keys: "[MouseLeft]", target: document.body });
+  await act(async () => succeed());
+  expect(
+    await screen.findByRole("button", {
+      name: "Finish team setup for Writers",
+    }),
+  ).toBeInTheDocument();
+  await act(async () => {});
+  expect(
+    screen.getByRole("region", { name: "From old Buzz" }),
+  ).not.toHaveFocus();
+  expect(document.body).toHaveFocus();
+});

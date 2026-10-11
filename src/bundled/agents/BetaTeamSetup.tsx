@@ -188,8 +188,8 @@ export function BetaTeamSetup({
   // A finished choice removes its row, and a successful retry its button,
   // taking the focused control along. Holds the `data-settle` key whose
   // removal hands focus to the section, from the action until that element
-  // goes, the action fails, or focus moves elsewhere. A pending and a preview
-  // row can share a team, so rows are keyed by kind and team.
+  // goes, the action fails, or focus or a pointer moves elsewhere. A pending
+  // and a preview row can share a team, so rows are keyed by kind and team.
   const settle = useRef<string | null>(null);
   const ready = kit.status === "ready" && state.status === "ready";
   // A refused restore needs a fresh preview. The control hides this section
@@ -200,14 +200,20 @@ export function BetaTeamSetup({
     setRefind(false);
   }, [refind, working, ready]);
   useEffect(() => {
-    const moved = (event: FocusEvent) => {
+    // Clicking empty space moves no focus, so pointers cancel too. A chosen
+    // text arms only on click, after its pointerdown, so dialogs don't cancel.
+    const moved = (event: Event) => {
       const row = settle.current;
       if (row === null || !(event.target instanceof Element)) return;
       const at = event.target.closest<HTMLElement>("[data-settle]");
       if (at?.dataset.settle !== row) settle.current = null;
     };
     document.addEventListener("focusin", moved);
-    return () => document.removeEventListener("focusin", moved);
+    document.addEventListener("pointerdown", moved);
+    return () => {
+      document.removeEventListener("focusin", moved);
+      document.removeEventListener("pointerdown", moved);
+    };
   }, []);
   useEffect(() => {
     const row = settle.current;
