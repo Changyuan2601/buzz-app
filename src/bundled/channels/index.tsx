@@ -4,7 +4,8 @@ import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
-import { FolderSimpleIcon } from "../../shared/design-system/icons";
+import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
+import { CopyIcon, FolderSimpleIcon } from "../../shared/design-system/icons";
 export const inject = [
   "pages",
   "relay",
@@ -33,6 +34,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     icon: FolderSimpleIcon,
     component: ({ active }) => (
       <ChannelSetupSettings relay={relay} active={active} />
+    ),
+  });
+  ctx.settingsCards.register({
+    id: "templates",
+    title: "Channel templates",
+    icon: CopyIcon,
+    component: ({ active }) => (
+      <ChannelTemplateSettings agents2={agents2} active={active} />
     ),
   });
   ctx.pages.register({
