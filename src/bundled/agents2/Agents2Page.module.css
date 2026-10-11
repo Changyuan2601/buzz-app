@@ -195,3 +195,11 @@
     transform: none;
   }
 }
+.portraitEdit {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+.portraitEdit > * {
+  margin-inline: 0;
+}

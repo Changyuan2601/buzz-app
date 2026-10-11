@@ -218,6 +218,11 @@ function fakeNative(identities: AgentIdentity[] = []) {
     rename: vi.fn(async (pubkey: string, name: string) => {
       change(pubkey, { name });
     }),
+    setPicture: vi.fn(async (pubkey: string, picture: string | null) => {
+      const index = at(pubkey);
+      const { picture: _, ...identity } = identities[index] as AgentIdentity;
+      identities[index] = picture ? { ...identity, picture } : identity;
+    }),
     remove: vi.fn(async (pubkey: string) => {
       steps.push("key");
       change(pubkey, { deleted: true });
@@ -777,6 +782,23 @@ it("does not let one owner's agents wake each other by replying", async () => {
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});
+
+it("sets and clears a picture through native, and publishes it", async () => {
+  const { service, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  native.publishProfile.mockClear();
+  const url = "https://relay.example/media/abc";
+  await service.save(bot, { picture: url });
+  expect(native.setPicture).toHaveBeenCalledWith(bot, url);
+  expect(service.find(bot)?.picture).toBe(url);
+  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  // An unchanged picture is not saved again; an empty one clears it.
+  await service.save(bot, { picture: url });
+  expect(native.setPicture).toHaveBeenCalledOnce();
+  await service.save(bot, { picture: "" });
+  expect(native.setPicture).toHaveBeenLastCalledWith(bot, null);
+  expect(service.find(bot)?.picture).toBeUndefined();
 });
 
 it("renames through native, and publishes profiles again on rename and reconnect", async () => {

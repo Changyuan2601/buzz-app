@@ -104,6 +104,7 @@ fn main() {
             "app_agent_portable",
             "app_agent_port",
             "app_agent_rename",
+            "app_agent_set_picture",
             "app_agent_delete",
             "app_agent_forget",
             "app_agent_publish",

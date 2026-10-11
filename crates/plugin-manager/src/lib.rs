@@ -182,6 +182,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("agent activity manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/terminal/manifest.json"))
             .expect("terminal manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/profiles/manifest.json"))
+            .expect("valid bundled Profiles manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/links/manifest.json"))
             .expect("links manifest"),
         serde_json::from_str(include_str!(
@@ -245,6 +247,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.agent-activity"
             | "buzz.channel-usage"
             | "buzz.terminal"
+            | "buzz.profiles"
             | "buzz.links"
             | "buzz.mentions"
             | "buzz.voice-notes"

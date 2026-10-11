@@ -11,7 +11,7 @@ export type AgentIdentity = Readonly<{
   /** The agent type's key, `pluginId/typeId`, fixed at create. */
   type: string;
   name: string;
-  /** The profile picture it brought from an earlier agent system. */
+  /** Its profile picture, an HTTPS image URL. */
   picture?: string;
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
@@ -70,6 +70,8 @@ export type AgentsNative = {
     type: string,
   ): Promise<AgentIdentity>;
   rename(pubkey: string, name: string): Promise<void>;
+  /** Sets its profile picture, an HTTPS image URL, or with `null` clears it. */
+  setPicture(pubkey: string, picture: string | null): Promise<void>;
   /** Deletes the key and marks the identity deleted. */
   remove(pubkey: string): Promise<void>;
   /** Drops a deleted identity. */
@@ -115,6 +117,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
             agentType,
           }),
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
+        setPicture: (pubkey, picture) =>
+          invoke("app_agent_set_picture", { pubkey, picture }),
         remove: (pubkey) => invoke("app_agent_delete", { pubkey }),
         forget: (pubkey) => invoke("app_agent_forget", { pubkey }),
         publish: (pubkey, event) =>

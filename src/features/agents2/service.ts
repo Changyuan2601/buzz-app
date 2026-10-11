@@ -71,6 +71,8 @@ export type Agent<Config = unknown> = Readonly<{
 }>;
 export type AgentChange<Config = unknown> = Readonly<{
   name?: string;
+  /** An HTTPS image URL; `null` or empty removes the picture. */
+  picture?: string | null;
   config?: Config;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
@@ -576,11 +578,15 @@ export class Agents2Service extends Service implements Agents2 {
         );
     }
     if (change.config !== undefined || change.attention) this.write(record);
-    if (name !== undefined && name !== identity.name) {
-      await this.native.rename(pubkey, name);
-      // Shows the new name and publishes it as the agent's profile.
-      await this.refresh();
-    }
+    const picture =
+      change.picture === undefined ? undefined : change.picture || null;
+    const renamed = name !== undefined && name !== identity.name;
+    const repictured =
+      picture !== undefined && picture !== (identity.picture ?? null);
+    if (renamed) await this.native.rename(pubkey, name);
+    if (repictured) await this.native.setPicture(pubkey, picture);
+    // Shows the new name or picture and publishes it as the agent's profile.
+    if (renamed || repictured) await this.refresh();
   }
 
   async remove(pubkey: string) {

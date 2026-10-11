@@ -365,6 +365,16 @@ pub(crate) async fn app_agent_rename(
 }
 
 #[tauri::command]
+pub(crate) async fn app_agent_set_picture(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    picture: Option<String>,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.set_picture(&pubkey, picture)).await
+}
+
+#[tauri::command]
 pub(crate) async fn app_agent_delete(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
