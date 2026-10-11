@@ -1,8 +1,9 @@
-import type {
-  Agent,
-  AgentHandle,
-  Delivery,
-  Models,
+import {
+  fromOwner,
+  type Agent,
+  type AgentHandle,
+  type Delivery,
+  type Models,
 } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -329,7 +330,7 @@ export class CodexRuntime {
       throw new Error(
         "Codex timers are not supported yet; use mentions or event watches.",
       );
-    if (trigger.event.pubkey !== agent.owner) return;
+    if (!(await fromOwner(trigger.event, agent.owner))) return;
     const snapshot = this.relay(agent.pubkey)?.snapshot();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
