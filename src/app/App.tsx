@@ -186,6 +186,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 <ChannelSidebar
                   relay={services.relay}
                   navigator={services.navigation}
+                  agents2={services.agents2}
                   target={route.target}
                   meEnabled={route.pages.some(
                     (page) => page.key === "buzz.me/me",
