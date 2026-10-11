@@ -5,7 +5,6 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
-import type { AgentControl } from "../agents/control";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { Group, KitEntry, Lineup } from "./model";
@@ -45,11 +44,6 @@ export type TemplateProvider = {
   editor: ComponentType<TemplateEditorProps>;
   groupDefault: ComponentType<GroupDefaultProps>;
   saveAs: ComponentType<SaveTemplateProps>;
-  teams?: ComponentType<{
-    session: RelaySession;
-    control?: AgentControl | undefined;
-    active(): boolean;
-  }>;
 };
 export type TemplateProviders = {
   snapshot(): readonly Contribution<TemplateProvider>[];

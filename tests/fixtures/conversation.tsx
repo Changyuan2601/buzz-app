@@ -17,7 +17,6 @@ import { SettingsCardsService } from "../../src/features/settings/service";
 import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { bundledPlugins } from "../../src/bundled";
 import { createRelaySession } from "../../src/features/relay/session";
-import { createAgentControl } from "../../src/features/agents/control";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import {
   keypair,
@@ -213,8 +212,6 @@ const storage: PluginStorage = {
   reloadPlugin: async (id) => withProbe(await api("reload", { id })),
 };
 const ctx = new Context();
-const agentControl = createAgentControl(null);
-ctx.provide("agentControl", agentControl);
 type MentionCommand =
   import("../../src/features/conversation/contracts").ComposerToolProps["insertMention"];
 const recipient = { pubkey: member.pubkey, name: "Member" };
@@ -374,6 +371,5 @@ createRoot(root).render(
 window.addEventListener("pagehide", () => {
   void plugins.dispose();
   void ctx.fiber.dispose();
-  agentControl.dispose();
   for (const owner of owners) owner.dispose();
 });

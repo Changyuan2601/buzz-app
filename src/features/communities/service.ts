@@ -1,5 +1,5 @@
 // FOUNDATION: Client identity and membership selection outlive community query sessions.
-import type { AgentControl } from "../agents/control";
+import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
@@ -43,7 +43,7 @@ export function createCommunities(
   live: boolean,
   identityNames?: IdentityNames,
   openRelay = "",
-  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
+  agentChoices?: LocalAgents,
   identityReady?: Promise<string>,
   nativeConnect?: (id: string, signal: AbortSignal) => Promise<ReadTransport>,
 ) {

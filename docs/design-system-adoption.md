@@ -18,7 +18,7 @@ Use this map to find the shared owner before changing a product surface.
 | Tabs | Tabs | The wide shell Me/Messages topbar links retained page panels and preserves tab focus on selection. Emoji/GIF connects tabs to panels with Base UI keyboard activation. Workflow mode keeps its feature-owned editor view. |
 | Modals | Dialog and AlertDialog | Page search, community setup, and workflow confirmations. Pending work prevents dismissal; focus restoration follows the shared contract. |
 | Panels and headers | Panel and PanelHeader | Settings, channels, and companion cards share appearance. Features own grids, scrolling, docks, and subscriptions. |
-| Feedback | Toast (Sonner) | Agent-start, sidebar preferences, and Settings recovery use the shared bottom-right Sonner stack with source-owned recovery. Completed-action feedback can outlive its row. Channel live-update recovery stays inline above the composer; form errors, blocked pages, and lasting paused-state context stay inline. |
+| Feedback | Toast (Sonner) | Sidebar preferences and Settings recovery use the shared bottom-right Sonner stack with source-owned recovery. Completed-action feedback can outlive its row. Channel live-update recovery stays inline above the composer; form errors, blocked pages, and lasting paused-state context stay inline. |
 | Hints | Tooltip | Control hints and agent activity support keyboard access and dismissal. Controls keep their own accessible names. |
 | Sessions and activity | NavigationItem, Button, IconButton, Panel, PanelHeader | Session history, agent choice, child-channel navigation, and activity actions retain unread, admission, draft, and focus behavior. Base UI owns their menus. |
 | Media stages | `surface-inverse` and `text-inverse` | Preserve the stage’s existing values and measure text pairings. Renderers own image and video pixels. |
@@ -37,10 +37,9 @@ Shared appearance does not transfer ownership of product data or interaction.
 
 ## Form adoption
 
-Agent import uses shared Input and Select styling. Do not add feature selectors
-that repaint shared inputs, textareas, or selects.
+Do not add feature selectors that repaint shared inputs, textareas, or selects.
 
-Field owns environment variable-name and link-lab URL errors. Workflow validation
+Field owns link-lab URL errors. Workflow validation
 stays in `editor-model.ts`, with field and step locations on each issue when known.
 Form mode connects name, message, delay, and timeout errors to their controls and
 reveals step options when a timeout needs attention. YAML mode shows validation
@@ -108,10 +107,9 @@ interaction or authorize a redesign of the feature's behavior.
 | Before | After | Why |
 | --- | --- | --- |
 | [Projects](../src/bundled/projects/ProjectsPage.tsx) and [Workflows](../src/bundled/workflows/WorkflowsPage.tsx) begin with feature-authored large headings; Projects loading replaces the heading too. Observed in the browser. | Adopt the shared pane composition, with filters, scoped notices, and labelled task actions in the body. Keep identity stable across loading and results. | A destination should remain recognizable while its content changes. |
-| [Agents](../src/bundled/agents/AgentsPage.tsx) has a bare header title and browser text Refresh action; [AgentControlPanel](../src/bundled/agents/AgentControlPanel.tsx) supplies the desktop text Add action. [Inbox](../src/bundled/inbox/InboxPage.tsx) uses a text Drafts action. Browser observed; desktop action source-reviewed. | Shared label/navigation treatment and small icon-only header actions; retain accessible names and existing action behavior. | Using the frame alone does not establish correct composition. |
+| [Inbox](../src/bundled/inbox/InboxPage.tsx) uses a text Drafts action. Browser observed. | Shared label/navigation treatment and small icon-only header actions; retain accessible names and existing action behavior. | Using the frame alone does not establish correct composition. |
 | [WorkflowLanding](../src/bundled/workflows/WorkflowLanding.tsx) and [workflows.css](../src/bundled/workflows/workflows.css) make a 15rem-tall, plus-only Button look like a creation card. Observed in the empty landing view. | A named creation action with useful EmptyState guidance for a settled empty collection; ordinary cards remain for populated objects. | The visible next step should be understandable without hovering and should not require a private Button recipe. |
 | [Builderlab Login](../src/bundled/builderlab/login/Login.tsx) uses its own heading/gaps; [PairingSettings](../src/bundled/pairing/PairingSettings.tsx) uses a different hand-built heading. Builderlab observed; Pairing source-reviewed. | Use the Settings content Header and appropriate form/preference/management grouping. Preserve integration-specific instructions and steps. | Settings registration does not render consistent content hierarchy for the plugin. |
-| [AgentCreateDialog](../src/bundled/agents/AgentCreateDialog.tsx) and [AgentDeleteDialog](../src/bundled/agents/AgentDeleteDialog.tsx) assemble Base UI shells with `text-heading` titles. Source-only. | Adopt the shared Dialog/confirmation composition, preserving dirty-draft, pending, cancellation, and focus contracts. | Copying classes does not inherit shared header/body/footer ownership. |
 | Shared [AlertDialog](../src/shared/design-system/ui/AlertDialog.tsx) still uses direct title/description/action markup and `text-heading`, while [Dialog](../src/shared/design-system/ui/Dialog.tsx) owns a structured header/body/footer with `text-label`. Source-only. | Reconcile visual geometry in the shared confirmation owner while retaining alert-dialog semantics. | A guide cannot promise uniform modal composition until the shared owners agree. |
 | [PanelSubview](../src/features/panels/PanelSubview.tsx) focuses its Back control on entry. Adding an IconButton title opens a Tooltip that consumes the first Escape before Back; reproduced in the existing focus/return component test during an isolated trial. | Preserve accessible names and the existing one-Escape Back contract until the shared Tooltip policy supports both. Current controls omit the new hint. | A mandatory hint recipe can conflict with an established keyboard contract; token guards do not detect this. |
 | [SessionsPage](../src/bundled/sessions/SessionsPage.tsx), which now supplies [Me](../src/bundled/me/index.tsx), renders its disconnected state inside PanelFrame with a standalone heading instead of the shared pane header. Source-reviewed at `a6ea532d6`. | Keep pane identity consistent across connection states while preserving contextual connection and recovery guidance. | A host frame alone does not supply the pane's header composition. |

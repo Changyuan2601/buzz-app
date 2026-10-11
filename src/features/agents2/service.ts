@@ -10,6 +10,7 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+import type { LocalAgentsSnapshot } from "../agents/local";
 import { removeAgentFromChannels } from "../agents/relay-removal";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
@@ -446,6 +447,38 @@ export class Agents2Service extends Service implements Agents2 {
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
+  };
+  private localCache:
+    | {
+        identities: readonly AgentIdentity[];
+        state: Pick<AgentsSnapshot, "status" | "error">;
+        value: LocalAgentsSnapshot;
+      }
+    | undefined;
+  /** Every live agent, in any community, for names and mentions. `snapshot`
+   * holds only the selected community's, with their settings. */
+  local = (): LocalAgentsSnapshot => {
+    const { identities, state } = this;
+    const cached = this.localCache;
+    if (
+      cached?.identities === identities &&
+      cached.state.status === state.status &&
+      cached.state.error === state.error
+    )
+      return cached.value;
+    const value: LocalAgentsSnapshot = Object.freeze({
+      status: state.status,
+      agents: Object.freeze(
+        identities
+          .filter((identity) => !identity.deleted)
+          .map(({ pubkey, name, relay, owner }) =>
+            Object.freeze({ pubkey, name, relayUrl: relay, owner }),
+          ),
+      ),
+      ...(state.error ? { error: state.error } : {}),
+    });
+    this.localCache = { identities, state, value };
+    return value;
   };
 
   async create({ type, name }: Readonly<{ type: string; name: string }>) {

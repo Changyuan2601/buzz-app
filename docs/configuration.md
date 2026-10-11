@@ -20,10 +20,15 @@ not in source. Build defaults are readable binary data, **never secret storage**
 
 The three native agent inputs read only repository-root `.env.local` plus explicit
 process values. Process presence wins, even empty. No `.env.production`, arbitrary
-environment passthrough or runtime environment inheritance is added. See the
-[agent-default precedence and example](agent-control.md#nonsecret-build-defaults).
-Restart/rebuild native code to change compiled defaults. Restart Vite to change
-broker/routing configuration. Browser-only builds have no native agent controller;
+environment passthrough or runtime environment inheritance is added.
+`BUZZ_BUILD_AGENT_ENV` is multiline `KEY=value` content, not a file path. Only
+`DATABRICKS_HOST`, `DATABRICKS_MODEL` and `DATABRICKS_MODEL_FILTER` are accepted;
+tokens, unknown or duplicate keys and non-HTTPS hosts fail the build without
+echoing values. Never put credentials here. These defaults feed the native agent
+controller's `agent_control_*` commands, which no frontend feature drives now;
+Agents2 does not read them. Restart/rebuild native code to change compiled
+defaults. Restart Vite to change broker/routing configuration. Browser-only
+builds have no native agent controller;
 production frontend builds neither load the dev broker nor expose the auto-open
 seed. Native settings do not enter Vite `define` or runtime-resource builds.
 

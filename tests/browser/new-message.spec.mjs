@@ -14,7 +14,6 @@ import { watchPageErrors } from "./page-errors.mjs";
 const test = base.extend({
   developmentReact: [false, { scope: "worker" }],
   pluginFixtures: [false, { scope: "worker" }],
-  agentManagement: [false, { scope: "worker" }],
   companionFixture: [false, { scope: "worker" }],
   pairingFixture: [false, { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],

@@ -32,11 +32,11 @@ isolation from other programs running as the same OS user.
 There is no file/environment fallback, automatic legacy migration or human key
 replacement. The human key is deleted from this device only by
 [Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
-delete it. The existing **explicit agent import** may
+delete it. The native agent controller's explicit import commands may
 read only the selected old Buzz service/account and copy the selected agent key
-into this app's separate agent namespace; it never writes the old blob. Agent
-import remains macOS-only; Create also saves new agent keys through the
-Windows/Linux adapters (see [local agent controls](agent-control.md)).
+into this app's separate agent namespace; it never writes the old blob. Import
+remains macOS-only and no screen drives it now; Agents2 creates agents through
+its own `app_agent_*` commands.
 No user key belongs in release configuration.
 
 A shared credential blob can reduce repeated OS prompts by caching many credentials
@@ -166,7 +166,7 @@ webview storage, service or identity read:
    including any API keys entered in their settings, and their keys in the
    keychain. Everything else in `agent-controller`, including saved Databricks
    logins, logs and anything added there later, is deleted; a kept Databricks
-   agent must reconnect through **Browse models**. The dialog says both.
+   agent must sign in again. The dialog says both.
 
 Every step is safe to repeat: deleting an absent key succeeds, and an agent
 registry confirmed absent means its keys are already gone; failing to check it
@@ -185,8 +185,7 @@ window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
 with the same key finds it. Builderlab and hosted-community logins live only in
 memory and end with the restart. Kept agents start only while the signed-in key
-matches the owner in their saved attestation, checked before their key is read
-(see [local agent controls](agent-control.md)).
+matches the owner in their saved attestation, checked before their key is read.
 
 ## Packaged connection
 
@@ -298,10 +297,11 @@ and do not connect that identity to a real community for this storage check.
 - Where two development instances can run, an occupied human/agent item must not
   be overwritten. Lock contention must be retryable; after exit, locks release.
 
-Deferred until agent import/create is enabled on Windows/Linux: explicitly import
-a throwaway old-Buzz agent, restart and verify the exact key, then delete only the
-destination agent and verify the old source remains. This is not a reachable UI
-acceptance step for this storage slice and does not establish Windows execution.
+Deferred until agent import is reachable from the UI on Windows/Linux:
+explicitly import a throwaway old-Buzz agent, restart and verify the exact key,
+then delete only the destination agent and verify the old source remains. This is
+not a reachable UI acceptance step for this storage slice and does not establish
+Windows execution.
 
 Attended Windows/Linux execution and human confirmation are release gates, not
 claims made by cross-compilation, fake-store tests, or the browser fixture.

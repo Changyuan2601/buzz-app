@@ -259,11 +259,12 @@ confirms. This is contract coverage, not a concurrency fix.
 The **+** action in the DMs sidebar header opens **New message**, a routed empty
 conversation in Messages. The header remains available before the first DM exists. Its inline **To:**
 field owns a paginated people picker and up to eight recipient chips, excluding
-this viewer. Agent profiles are offered only when their exact public key appears
-in the ready native control snapshot for this community. Public profile hints and
-the compatibility library do not establish control; this filter also applies to
-searches and cached results. Selected agent chips are revalidated against the
-current ready control snapshot before a fresh open and again before enqueueing.
+this viewer. Agent profiles are offered only when their exact public key is one of the viewer's
+local agents (Agents2) for this community, the `managed` choices of
+`session.agentChoices`. Public profile hints and the inventory library do not
+qualify; this filter also applies to searches and cached results. Selected agent
+chips are revalidated against the current local agents before a fresh open and
+again before enqueueing.
 Already queued messages retain exact-event recovery. Namesake identities show
 unambiguous shared public-key labels in their options and selected chips. Human profiles remain available while controls load
 or fail. The shared popover hugs shorter result lists up to ten rows (or available
@@ -338,7 +339,7 @@ and modeled upstream I/O; it does not send messages to a live community.
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
 (non-compact) menu. **View channel details** is first and opens or focuses the existing
 Channel Settings tab; selecting it again never closes the pane. Editing is available
-from that pane, not directly from the menu. **View canvas**, optional **Save as template…** and
+from that pane, not directly from the menu. **View canvas**, an optional provider-supplied **Save as template…** (none is bundled now) and
 **New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Move replaces the redundant Personal group shortcut. Permission-gated lifecycle
@@ -503,16 +504,15 @@ navigation to a hidden DM remains supported.
 ## Channel-management modal dismissal
 
 Channel-management modals explicitly opt into the shared Dialog's backdrop-click
-cancellation. Canvas, Members, lifecycle confirmations, new sections, personal
-groups and templates/teams use the same Close/Cancel path for outside clicks.
+cancellation. Canvas, Members, lifecycle confirmations, new sections and personal
+groups use the same Close/Cancel path for outside clicks.
 Create and Edit details use their Close path: untouched forms close immediately;
 changed drafts require discard confirmation, while explicit Cancel discards immediately.
 Clicks inside or in portaled controls do not dismiss them.
 The non-modal Settings panel is unchanged; the shared Dialog default stays opt-in.
 
-Canvas reload, template/team deletion and template replacement use nested shared
-Dialogs rather than host-owned confirmation prompts. Cancel, Close, Escape or a
-backdrop click dismisses only that confirmation, keeps the parent draft/library,
+Canvas reload uses a nested shared Dialog rather than a host-owned confirmation
+prompt. Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the parent draft,
 and never executes the action. Confirmations initially focus Cancel and return
 focus to their initiating control; lifecycle focus remains sidebar-owned.
 
@@ -760,8 +760,8 @@ join ownership observation, so the first character cannot mount/enrich the entir
 known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
 manager evidence, presence and invitation state still update through their existing owners.
-Current-member avatars and rows open the existing Profiles panel when its contribution
-is enabled; the Members dialog closes and closing the profile returns focus to the
+Current-member avatars and rows open a profile panel when a plugin contributes one
+(none is bundled now); the Members dialog closes and closing the profile returns focus to the
 Channel members button. Names and smaller, muted inline **managed by** hints sit
 centered at rest with no pills. Hover reveals a longer abbreviated npub underneath
 using the existing 140ms height/opacity transition, just like invitation rows;
@@ -770,20 +770,20 @@ keyboard focus and reduced motion reveal it immediately. The abbreviation shows
 abbreviated: no dwell timer, inline expansion, copy icon, or identity card. Shared
 identity previews on other surfaces remain unchanged. Available presence status
 stays on the profile control. The manager link opens
-Profiles with the same focus handoff; row-profile and owner-profile controls are
+the profile panel with the same focus handoff; row-profile and owner-profile controls are
 siblings, never nested. Every current member has a separate
 ellipsis button (not nested inside profile navigation), with **View profile** first,
 then **View owner profile** for agents with verified ownership and available profile
 navigation, or **Send message** for other humans on a DM-capable connection,
 followed by permitted administration actions. Copying the full npub belongs to
-Profiles, not the member or invitation menu.
+the profile panel, not the member or invitation menu.
 Send message reuses the session's verified direct-message opener and the current
 conversation navigation owner; it sends no message automatically. One dialog-owned
 waiter blocks duplicate opens, shows pending/error status and allows explicit retry.
 Closing Members cancels that waiter and suppresses late navigation; a successful
 handoff leaves destination focus alone. Owner/self protection, missing
 writer support and pending/uncertain writes suppress mutations, not the profile
-menu. If Profiles is unavailable, View profile is disabled. Pointer hover, keyboard
+menu. If no profile panel is available, View profile is disabled. Pointer hover, keyboard
 focus and an open menu reveal the reserved action slot without moving row content;
 non-hover/touch input keeps the trigger visible. Right-click, Context Menu and
 Shift+F10 open the same action list through the shared context menu. The ellipsis
@@ -797,7 +797,7 @@ Escape returns focus to the originating row
 control; profile navigation hands focus to the panel and returns to the external
 Channel members button when closed. Invitation rows reuse the same avatar, name,
 managed-by hint and public-key hover/focus presentation, without a channel-role
-badge. Their avatars and identity rows open Profiles just like current members;
+badge. Their avatars and identity rows open the profile panel just like current members;
 only the separate, extra-small prominent **Add / Adding…** button invites someone.
 Invitation results expose the same identity menu through right-click, long-press,
 Context Menu or Shift+F10 only, with no ellipsis button. Add stays separate and
@@ -805,7 +805,7 @@ there are no role/removal actions. People and agent avatars both use the
 shared 32px default size. Both row types
 share a 48px minimum height, growing with their content rather than
 clipping it; profile targets fill the row height, with identity and actions centered.
-Profile navigation stays available during an invitation; missing Profiles support
+Profile navigation stays available during an invitation; a missing profile panel
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
 one scrolling viewport, with Owners, Admins, Members, Agents and Not in this channel
