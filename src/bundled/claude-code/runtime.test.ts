@@ -256,7 +256,10 @@ it("answers Claude's tool calls as the agent, in the thread it is working in", a
         jsonrpc: "2.0",
         id: 7,
         method: "tools/call",
-        params: { name: "send", arguments: { text: "Looking now" } },
+        params: {
+          name: "send",
+          arguments: { audience: "everyone", text: "Looking now" },
+        },
       },
     },
   });
@@ -313,7 +316,10 @@ it("reads a busy turn's files from the workspace it started in", async () => {
         jsonrpc: "2.0",
         id: 7,
         method: "tools/call",
-        params: { name: "send", arguments: { path: "report.md" } },
+        params: {
+          name: "send",
+          arguments: { audience: "everyone", path: "report.md" },
+        },
       },
     },
   });
