@@ -30,3 +30,11 @@
 .row > :first-child {
   flex-shrink: 1;
 }
+.teams {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
