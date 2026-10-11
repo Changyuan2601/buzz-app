@@ -39,7 +39,7 @@ export const TOOLS: readonly Tool[] = [
         type: "string",
         enum: ["agents"],
         description:
-          "agents: only other agents need this (delegating, asking or answering an agent). People see it as one quiet line. Omit for anything a person should read.",
+          "agents: conversations mentioning or technical notes for other agents (still visible to humans) - prefer this audience unless directly replying to a human",
       },
       final: {
         type: "boolean",
