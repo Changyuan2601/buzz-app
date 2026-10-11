@@ -1,5 +1,10 @@
 # Codex binding readiness
 
+> **Status: superseded by Agents2.** This describes the v1 native Codex binding
+> (Settings rows, Create/Edit form, native model discovery and harness install),
+> which was removed with the v1 Agents system. Codex now reaches the app as an
+> Agents2 agent type registered by the bundled Codex plugin.
+
 Codex is a native integration. New selection requires installed tools; Create
 and Save require no inference check. Settings shows tool presence and, once
 both tools are found, reads the existing CLI login with `codex login status`,

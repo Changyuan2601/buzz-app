@@ -8,9 +8,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 
 | Input | Consumer and boundary |
 | --- | --- |
-| `BUZZ_BUILD_AGENT_ENV` | Native build: allowlisted multiline Databricks host/model/filter defaults. Runtime, OAuth/discovery and editor share one compiled floor. |
-| `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
-| `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
+| `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`, `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: compiled into the agent-controller crate for its v1 listener runtime; the desktop app no longer reads them. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
@@ -24,9 +22,9 @@ environment passthrough or runtime environment inheritance is added.
 `BUZZ_BUILD_AGENT_ENV` is multiline `KEY=value` content, not a file path. Only
 `DATABRICKS_HOST`, `DATABRICKS_MODEL` and `DATABRICKS_MODEL_FILTER` are accepted;
 tokens, unknown or duplicate keys and non-HTTPS hosts fail the build without
-echoing values. Never put credentials here. These defaults feed the native agent
-controller's `agent_control_*` commands, which no frontend feature drives now;
-Agents2 does not read them. Restart/rebuild native code to change compiled
+echoing values. Never put credentials here. These defaults are compiled into the
+agent-controller crate; the desktop app no longer reads them, and Agents2
+never did. Restart/rebuild native code to change compiled
 defaults. Restart Vite to change broker/routing configuration. Browser-only
 builds have no native agent controller;
 production frontend builds neither load the dev broker nor expose the auto-open

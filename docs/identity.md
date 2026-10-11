@@ -32,11 +32,9 @@ isolation from other programs running as the same OS user.
 There is no file/environment fallback, automatic legacy migration or human key
 replacement. The human key is deleted from this device only by
 [Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
-delete it. The native agent controller's explicit import commands may
-read only the selected old Buzz service/account and copy the selected agent key
-into this app's separate agent namespace; it never writes the old blob. Import
-remains macOS-only and no screen drives it now; Agents2 creates agents through
-its own `app_agent_*` commands.
+delete it. Agents2's bring-over (`app_agent_port`) may read only the selected
+old Buzz service/account and copy the selected agent key into this app's separate
+agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
 A shared credential blob can reduce repeated OS prompts by caching many credentials
@@ -117,11 +115,11 @@ human key without them, and older Buzz versions don't take them, so close those
 before signing out. The native
 `sign_out` command deletes nothing: it admits one sign-out per instance, refuses
 unless it can hold the locks it needs alone, writes a marker beside (not inside)
-app data recording the wipe and agent choices, stops agents as Quit does, and
-restarts. The marker is named for the exact human key store (debug or release),
-so another build never acts on it. If the marker can't be written nothing has
-changed; if agents can't be stopped, Buzz exits natively, and the next launch
-finishes the sign-out.
+app data recording the wipe and agent choices, and restarts; agent processes
+stop as they do on Quit. The marker is named for the exact human key store
+(debug or release), so another build never acts on it. If the marker can't be
+written nothing has changed; if a later step fails, Buzz exits natively, and the
+next launch finishes the sign-out.
 
 Once the marker is written, and before any native exit, the native signer is
 closed for the rest of the process: the cached key is dropped, and every key
@@ -249,13 +247,9 @@ separate limitations.
 Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
 (Vite derives `VITE_BUZZ_LIVE=1`), even inside `just desktop`, and does not offer
 native private-key controls. `just desktop` passes Vite's effective public pin
-(including an explicitly empty shell override) to the native agent host. Agent
-starts in this mode read the existing broker's signer-derived public identity
-from the final configured loopback development URL and require it to match both
-the pin and the saved agent owner. Unavailable or mismatched broker identity
-blocks startup without falling back to native credentials. The public pin alone
-is not authorization. Packaged builds always use native identity, ignoring the
-pin. This reuses the broker's trusted-local-process boundary; it does not copy
+(including an explicitly empty shell override) to the native app. The public pin
+alone is not authorization. Packaged builds always use native identity, ignoring
+the pin. This reuses the broker's trusted-local-process boundary; it does not copy
 keys or introduce another signing protocol.
 
 Without the pin, supported desktop development uses

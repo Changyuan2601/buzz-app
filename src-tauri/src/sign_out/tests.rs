@@ -1115,10 +1115,44 @@ fn a_linked_wipe_folder_refuses_before_any_marker() {
     assert!(!paths.marker.exists());
 }
 
+/// The real command handler and generated ACL behind a main webview.
+fn production_app() -> (
+    tauri::App<tauri::test::MockRuntime>,
+    tauri::WebviewWindow<tauri::test::MockRuntime>,
+) {
+    let app = tauri::test::mock_builder()
+        .manage(crate::identity::IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    (app, view)
+}
+fn invoke(
+    view: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    cmd: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tauri::test::get_ipc_response(
+        view,
+        tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: view.url().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.into(),
+        },
+    )
+    .map(|body| body.deserialize().unwrap())
+}
+
 #[test]
 fn production_acl_lets_the_dialog_ask_why_wipe_is_unavailable() {
-    use crate::agents::tests::{fixture, invoke};
-    let (_dir, _host, _app, view) = fixture();
+    let (_app, view) = production_app();
     // Tests are debug builds, where wipe is refused.
     assert_eq!(
         invoke(&view, "sign_out_wipe_refusal", serde_json::json!({})).unwrap(),
@@ -1128,8 +1162,7 @@ fn production_acl_lets_the_dialog_ask_why_wipe_is_unavailable() {
 
 #[test]
 fn production_acl_lets_sign_out_reach_native_validation() {
-    use crate::agents::tests::{fixture, invoke};
-    let (_dir, _host, _app, view) = fixture();
+    let (_app, view) = production_app();
     let error = invoke(
         &view,
         "sign_out",
@@ -1142,8 +1175,6 @@ fn production_acl_lets_sign_out_reach_native_validation() {
             "message": "Removing agents is part of erasing this device"
         })
     );
-    // Refused before any agent was stopped.
-    assert!(invoke(&view, "agent_control_snapshot", serde_json::json!({})).is_ok());
 }
 
 /// While this instance lets go of its locks, another sign-out is committed and

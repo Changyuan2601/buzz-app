@@ -7,8 +7,8 @@ system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
 Channel templates plugin, agent snapshots, team bundles, community catalog and
-agent-management request popups are gone. The native `agent_control_*` commands
-remain in the Rust host for now, but no frontend feature drives them.
+agent-management request popups are gone, as are the native `agent_control_*`,
+model-discovery and harness-install commands behind them.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.

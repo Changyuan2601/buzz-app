@@ -1,8 +1,9 @@
 # Local agent controller
 
-This crate backs the native `agent_control_*` commands. No frontend feature calls
-them now: Agents2 uses the separate `app_agent_*` commands (see
-[agents](../../docs/agents.md)). It owns native configuration/import and listener process lifetime without Tauri,
+The desktop host uses this crate for Agents2's `app_agent_*` commands: identity
+custody, credentials and bringing over agents from earlier stores (see
+[agents](../../docs/agents.md)). The v1 `agent_control_*` commands that drove its
+listener runtime are gone. It owns native configuration/import and listener process lifetime without Tauri,
 React, or the old desktop manager. The `Controller` must be called by one serialized
 native host owner; dropping a page is not dropping this controller. Source and
 fixture validation do not establish live readiness; the attended handover remains
