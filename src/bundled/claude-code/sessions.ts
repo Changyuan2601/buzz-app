@@ -1,19 +1,18 @@
 // One agent's Claude sessions: one per conversation (a thread, or a whole DM),
 // each continuing across messages and app restarts. A conversation in use keeps
 // its process; a quiet one is stopped and resumed from its saved session when it
-// is next addressed. A spare process waits for the next new conversation, so
-// that starts without a spawn.
+// is next addressed. One spare process, shared by every agent, waits for the
+// next new conversation, so that starts without a spawn.
 import {
   ClaudeProcess,
   type ClaudeLaunch,
   type ClaudeModel,
   type Settled,
   type Spawn,
+  type ToolServer,
   type TurnPick,
 } from "./claude";
 
-/** Processes an agent keeps, the spare included. */
-export const MAX_LIVE = 6;
 /** A conversation's process stops after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
 /** Saved sessions per agent; the least recently used are forgotten. */
@@ -34,6 +33,8 @@ export type SessionStore = {
 
 export type SessionsOptions = Readonly<{
   spawn: Spawn;
+  /** Where a new conversation looks for a process already started. */
+  spare?: Spare;
   store: SessionStore;
   /** How to start a process with the agent's current settings. */
   launch(): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
@@ -55,9 +56,17 @@ type Live = {
 export class AgentSessions {
   private readonly live = new Map<string, Live>();
   private readonly opening = new Map<string, Promise<Live | undefined>>();
-  private spare: Promise<Live | undefined> | undefined;
-  private reported: string | undefined;
-  private listed: readonly ClaudeModel[] = [];
+  private discovery:
+    | {
+        fingerprint: string;
+        result: Promise<{
+          models: readonly ClaudeModel[];
+          model: string | undefined;
+          effort: string | undefined;
+        }>;
+        process?: ClaudeProcess | undefined;
+      }
+    | undefined;
   private disposed = false;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -79,42 +88,62 @@ export class AgentSessions {
     }));
   }
 
-  /** Resolve the model from a live or warm process, without starting a turn. */
-  async model() {
-    const process = await this.someProcess();
-    this.reported = (await process?.readModel()) ?? this.reported;
-    return this.reported;
-  }
-  /** The effort a turn without a pick runs at, from a live or warm process. */
-  async effort() {
-    return (await this.someProcess())?.readEffort();
-  }
-  /** The models a session can switch to, from a live or warm process. */
-  async models() {
-    const models = await (await this.someProcess())?.models();
-    if (models?.length) this.listed = models;
-    return this.listed;
-  }
-  private async someProcess() {
-    return (
-      this.live.values().next().value?.process ?? (await this.spare)?.process
-    );
-  }
-
-  /** Starts a spare process unless one exists or the agent is at its limit. */
-  warm() {
-    if (this.disposed || this.spare || this.count() >= MAX_LIVE) return;
-    const spare = this.start(undefined).catch((error) => {
-      console.warn("Claude Code could not start a spare session", error);
-      return undefined;
+  /** Read defaults without assigning the shared spare to this agent. */
+  async metadata() {
+    const fingerprint = this.options.fingerprint();
+    const read = async (process: ClaudeProcess) => {
+      const [models, model, effort] = await Promise.all([
+        process.models(),
+        process.readModel(),
+        process.readEffort(),
+      ]);
+      return { models, model, effort };
+    };
+    for (const live of this.live.values())
+      if (live.fingerprint === fingerprint && live.process.running) {
+        const metadata = await read(live.process);
+        const discovered =
+          this.discovery?.fingerprint === fingerprint
+            ? await this.discovery.result
+            : undefined;
+        return { ...metadata, model: metadata.model ?? discovered?.model };
+      }
+    if (this.disposed)
+      return { models: [], model: undefined, effort: undefined };
+    if (this.discovery?.fingerprint === fingerprint)
+      return this.discovery.result;
+    this.clearDiscovery();
+    const discovery: NonNullable<AgentSessions["discovery"]> = {
+      fingerprint,
+      result: Promise.resolve().then(async () => {
+        const launch = await this.options.launch();
+        if (this.disposed || this.discovery !== discovery)
+          throw new Error("Claude Code was stopped");
+        const process = await ClaudeProcess.start(this.options.spawn, {
+          cwd: launch.cwd,
+          ...(launch.model ? { model: launch.model } : {}),
+          systemPrompt: "",
+        });
+        discovery.process = process;
+        try {
+          if (this.disposed || this.discovery !== discovery)
+            throw new Error("Claude Code was stopped");
+          return await read(process);
+        } finally {
+          await process.kill();
+          discovery.process = undefined;
+        }
+      }),
+    };
+    this.discovery = discovery;
+    void discovery.result.catch(() => {
+      if (this.discovery === discovery) this.discovery = undefined;
     });
-    this.spare = spare;
-    void spare.then((live) => {
-      // A spare that dies, or was started with old settings, is not kept.
-      live?.process.exited.then(() => {
-        if (this.spare === spare) this.spare = undefined;
-      });
-    });
+    return discovery.result;
+  }
+  private clearDiscovery() {
+    void this.discovery?.process?.kill();
+    this.discovery = undefined;
   }
 
   /** Sends `text` into the conversation `key`, and resolves when the session
@@ -154,22 +183,10 @@ export class AgentSessions {
       return this.answer(key, live, live.process.busy ? steer : text, pick);
     }
     const saved = this.options.store.get(key);
-    // A new conversation takes the spare's place; any other start needs room,
-    // reserved here, before anything is awaited.
-    if ((saved || !this.spare) && !this.room())
-      return {
-        ok: false,
-        error: `Claude Code is already working in ${MAX_LIVE} conversations; try again when one finishes`,
-      };
-    const starting = (async () =>
-      saved
-        ? this.start(saved.id)
-        : ((await this.claimSpare()) ?? this.start(undefined)))().catch(
-      (error) => {
-        console.warn("Claude Code could not start", error);
-        return undefined;
-      },
-    );
+    const starting = this.start(saved?.id).catch((error) => {
+      console.warn("Claude Code could not start", error);
+      return undefined;
+    });
     this.opening.set(key, starting);
     live = await starting;
     if (this.opening.get(key) === starting) this.opening.delete(key);
@@ -190,51 +207,49 @@ export class AgentSessions {
     return delivered;
   }
 
-  /** Stops idle processes started with old settings and replaces the spare;
-   * busy ones stop when they next fall idle. */
+  /** Stops idle processes started with old settings; busy ones stop when they
+   * next fall idle. */
   reconfigure() {
+    this.clearDiscovery();
     const fingerprint = this.options.fingerprint();
     for (const [key, live] of this.live)
       if (live.fingerprint !== fingerprint && !live.process.busy)
         this.drop(key, live);
-    const spare = this.spare;
-    this.spare = undefined;
-    void spare?.then((live) => live?.process.kill());
-    this.warm();
   }
 
   dispose() {
     this.disposed = true;
+    this.clearDiscovery();
     for (const [key, live] of this.live) this.drop(key, live);
-    void this.spare?.then((live) => live?.process.kill());
-    this.spare = undefined;
   }
 
   private async start(resume: string | undefined): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
     const launch = await this.options.launch();
-    const process = await ClaudeProcess.start(this.options.spawn, {
-      ...launch,
-      ...(resume ? { resume } : { sessionId: this.newId() }),
-    });
+    const process = resume
+      ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
+      : await this.fresh(launch);
     if (fingerprint === this.options.fingerprint() || this.disposed)
       return { process, fingerprint, used: this.now() };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
     return this.start(resume);
   }
-  private async claimSpare() {
-    const spare = this.spare;
-    this.spare = undefined;
-    const live = await spare;
-    if (
-      live?.process.running &&
-      live.fingerprint === this.options.fingerprint()
-    )
-      return live;
-    void live?.process.kill();
-    return undefined;
+  /** A process for a new session: the spare when it fits, else a new one. */
+  private async fresh(launch: Omit<ClaudeLaunch, "resume" | "sessionId">) {
+    const spare = await this.options.spare?.take(launch);
+    if (spare)
+      try {
+        await spare.initialize(launch);
+        return spare;
+      } catch {
+        void spare.kill();
+      }
+    return ClaudeProcess.start(this.options.spawn, {
+      ...launch,
+      sessionId: this.newId(),
+    });
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
@@ -244,7 +259,6 @@ export class AgentSessions {
     void live.process.exited.then(() => {
       if (this.live.get(key) === live) this.drop(key, live);
     });
-    this.warm();
   }
   private async answer(key: string, live: Live, text: string, pick: TurnPick) {
     const settled = await live.process.send(text, pick);
@@ -272,25 +286,6 @@ export class AgentSessions {
       at: live.used,
     });
   }
-  /** Processes running or starting, the spare included. */
-  private count() {
-    return this.live.size + this.opening.size + (this.spare ? 1 : 0);
-  }
-  /** Makes room for one more process by stopping the longest-idle
-   * conversation, else the spare. False when every process is working. */
-  private room() {
-    while (this.count() >= MAX_LIVE) {
-      const idle = [...this.live]
-        .filter(([, live]) => !live.process.busy)
-        .sort(([, a], [, b]) => a.used - b.used)[0];
-      if (idle) this.drop(...idle);
-      else if (this.spare) {
-        void this.spare.then((live) => live?.process.kill());
-        this.spare = undefined;
-      } else return false;
-    }
-    return true;
-  }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);
     if (this.live.get(key) === live) {
@@ -298,6 +293,92 @@ export class AgentSessions {
       this.options.onChange?.();
     }
     void live.process.kill();
+  }
+}
+
+/** Where a process runs and its model: all a spare is started with. */
+type Where = Pick<ClaudeLaunch, "cwd" | "model">;
+const place = ({ cwd, model }: Where) => JSON.stringify([cwd, model ?? ""]);
+
+/** One process started ahead of need, for whichever agent next starts a
+ * conversation where it runs and with its model. Starting is most of the wait
+ * before a new conversation's first reply; giving the process its prompt is not.
+ * It is kept only where the runtime's agents run, and follows the latest new
+ * conversation among those places, the likeliest place for the next. */
+export class Spare {
+  private next:
+    | { place: string; process: Promise<ClaudeProcess | undefined> }
+    | undefined;
+  /** Where a spare is wanted: set by the runtime alone. */
+  private wanted: readonly Where[] = [];
+  /** Not started again after it failed to start or died, until a conversation
+   * asks for one, so a `claude` that cannot run is not started over and over. */
+  private stopped = false;
+
+  constructor(
+    private readonly spawn: Spawn,
+    /** Answers the tool server before any agent has it: it lists the tools. */
+    private readonly tools: ToolServer,
+    private readonly newId: () => string = () => crypto.randomUUID(),
+  ) {}
+
+  /** Wants a spare for one of `wheres`, or none when there are none. */
+  warm(...wheres: Where[]) {
+    this.wanted = wheres;
+    if (!wheres.length) this.stopped = false;
+    this.fill(wheres);
+  }
+
+  /** The spare, when it was started for `where`. Another is started for
+   * `where` when a spare is wanted there, else where one is wanted. */
+  async take(where: Where) {
+    const next = this.next;
+    this.next = undefined;
+    this.stopped = false;
+    const here = this.wanted.some((wanted) => place(wanted) === place(where));
+    this.fill(here ? [where] : this.wanted);
+    if (next?.place !== place(where)) {
+      void next?.process.then((process) => process?.kill());
+      return undefined;
+    }
+    const process = await next.process;
+    if (process?.running) return process;
+    void process?.kill();
+    return undefined;
+  }
+
+  dispose() {
+    this.warm();
+  }
+
+  /** Keeps the spare when it fits one of `wheres`, else starts one for the
+   * first; with none, keeps none. */
+  private fill(wheres: readonly Where[]) {
+    const current = this.next;
+    if (current && wheres.some((where) => place(where) === current.place))
+      return;
+    this.next = undefined;
+    void current?.process.then((process) => process?.kill());
+    const [first] = wheres;
+    if (this.stopped || !first) return;
+    const next = {
+      place: place(first),
+      process: ClaudeProcess.spawn(this.spawn, {
+        ...first,
+        sessionId: this.newId(),
+        tools: this.tools,
+      }).catch((error) => {
+        console.warn("Claude Code could not start a spare session", error);
+        return undefined;
+      }),
+    };
+    this.next = next;
+    void next.process.then(async (process) => {
+      await process?.exited;
+      if (this.next !== next) return;
+      this.next = undefined;
+      this.stopped = true;
+    });
   }
 }
 

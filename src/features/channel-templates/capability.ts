@@ -16,28 +16,8 @@ import {
   type KitEntry,
   type KitRecord,
   type KitValue,
-  type Team,
-  type PayloadRecord,
-  type TextRecord,
-  parsePayloadRecord,
-  parseTextRecord,
-  privateCoordinate,
-  TEAM_TEXT_TAG,
-  textCoordinate,
 } from "./model";
-import {
-  TEAM_MANIFEST_TAG,
-  TEAM_PAYLOAD_TAG,
-  encodeTeamPayload,
-  encodeTeamText,
-  decodeTeamPayload,
-  decodeTeamText,
-  payloadCoordinate,
-  parseTeamManifest,
-  type TeamManifest,
-  type TeamPayload,
-} from "./team-payload";
-import type { TeamSnapshot } from "../agents/team-bundles";
+import { TEAM_MANIFEST_TAG } from "./team-payload";
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -92,21 +72,6 @@ export function createChannelKit({
   };
   const fresh = (filters: readonly ReadFilter[], readSignal = signal) =>
     reader.read(filters, { signal: readSignal, fresh: true });
-  async function readRecord(record: KitRecord, readSignal = signal) {
-    return selectedHead(
-      await fresh(
-        [
-          {
-            kinds: [30078],
-            authors: [viewer],
-            "#d": [coordinate(record)],
-            limit: 1,
-          },
-        ],
-        readSignal,
-      ),
-    );
-  }
   /** `after: true` never joins a read that began before this call, so the
    * result reflects every change visible when the caller asked. */
   async function refresh({ after = false } = {}) {
@@ -221,179 +186,16 @@ export function createChannelKit({
       throw error;
     }
   }
-  // Teams whose text head this session has seen; its later absence is an
-  // error, never permission to fall back to legacy bundle text.
-  const knownText = new Set<string>();
-  async function decodeText(event: RelayEvent, readSignal: AbortSignal) {
-    if (!host) throw new Error("Team instructions are unavailable");
-    const rows = await host.decode([event], readSignal);
-    const row = rows[0];
-    if (!row || rows.length !== 1 || row.eventId !== event.id)
-      throw new Error("Incomplete team instructions decode");
-    const record: TextRecord = parseTextRecord(row.record, community);
-    const d = privateCoordinate(record);
-    if (
-      record.value.owner !== viewer ||
-      !event.tags.some(([tag, value]) => tag === "d" && value === d)
-    )
-      throw new Error("Team instructions coordinate mismatch");
-    return record;
-  }
-  /** `undefined` only when a fresh read proves no head exists; a head this
-   * session saw that is now missing is an error. */
-  async function textHead(teamId: string, readSignal: AbortSignal) {
-    if (!host) throw new Error("Team instructions are unavailable");
-    const event = selectedHead(
-      await fresh(
-        [
-          {
-            kinds: [30078],
-            authors: [viewer],
-            "#d": [textCoordinate(community, viewer, teamId)],
-            limit: 1,
-            consistency: "strong",
-          },
-        ],
-        readSignal,
-      ),
-    );
-    if (!event) {
-      if (knownText.has(teamId))
-        throw new Error("This team's saved instructions are unavailable");
-      return undefined;
-    }
-    // Seen counts before decoding: an invalid head that later disappears
-    // stays unreadable rather than unlocking the legacy fallback.
-    knownText.add(teamId);
-    const record = await decodeText(event, readSignal);
-    return { record, head: event.id };
-  }
-  /** Exact revision reads only. Never include chunks in recipe discovery. */
-  async function readChunks(
-    teamId: string,
-    manifest: TeamManifest,
-    readSignal = signal,
-  ) {
-    if (!host) throw new Error("Portable team payload is unavailable");
-    const payloads: TeamPayload[] = [];
-    for (let index = 0; index < manifest.chunks; index++) {
-      readSignal.throwIfAborted();
-      const d = payloadCoordinate({
-        community,
-        owner: viewer,
-        teamId,
-        revision: manifest.revision,
-        index,
-      });
-      const event = selectedHead(
-        await fresh(
-          [
-            {
-              kinds: [30078],
-              authors: [viewer],
-              "#d": [d],
-              limit: 2,
-              consistency: "strong",
-            },
-          ],
-          readSignal,
-        ),
-      );
-      if (!event) throw new Error("Portable team payload is unavailable");
-      const decoded = await host.decode([event], readSignal);
-      const row = decoded[0];
-      if (!row || decoded.length !== 1 || row.eventId !== event.id)
-        throw new Error("Incomplete portable team payload decode");
-      const record = parsePayloadRecord(row.record, community);
-      if (
-        privateCoordinate(record) !== d ||
-        !event.tags.some(([tag, value]) => tag === "d" && value === d)
-      )
-        throw new Error("Portable team payload coordinate mismatch");
-      payloads.push(record.value);
-    }
-    return payloads;
-  }
-  /** Publishes immutable chunks, reusing identical ones. Never rewrites a
-   * revision with different bytes. */
-  async function writeChunks(
-    payloads: readonly TeamPayload[],
-    preparing: AbortSignal,
-  ) {
-    if (!host || !outbox) throw new Error("Recipe saving is unavailable");
-    await ready;
-    for (const payload of payloads) {
-      preparing.throwIfAborted();
-      const record: PayloadRecord = {
-        version: 1,
-        community,
-        deleted: false,
-        value: {
-          ...payload,
-          type: "team-payload",
-          id: `${payload.revision}-${payload.index}`,
-        },
-      };
-      const d = privateCoordinate(record);
-      const existing = selectedHead(
-        await fresh(
-          [
-            {
-              kinds: [30078],
-              authors: [viewer],
-              "#d": [d],
-              limit: 1,
-              consistency: "strong",
-            },
-          ],
-          preparing,
-        ),
-      );
-      if (existing) {
-        const rows = await host.decode([existing], preparing);
-        const row = rows[0];
-        if (
-          !row ||
-          row.eventId !== existing.id ||
-          JSON.stringify(parsePayloadRecord(row.record, community)) !==
-            JSON.stringify(record)
-        )
-          throw new Error(
-            "Portable team revision already has different content",
-          );
-        continue;
-      }
-      const pending = local
-        ?.snapshot()
-        .find(
-          (item) =>
-            item.event.kind === 30078 &&
-            item.event.tags.some(([tag, value]) => tag === "d" && value === d),
-        );
-      const id =
-        pending?.event.id ??
-        outbox.send({
-          kind: 30078,
-          content: await host.prepare(record, preparing),
-          tags: [
-            ["d", d],
-            ["t", TEAM_PAYLOAD_TAG],
-          ],
-        });
-      await confirm(id);
-    }
-  }
   /** One replaceable private-record write: fresh head check, unresolved-save
    * guard, enqueue, exact confirmation and selected-head readback. With
    * `resume.id` it confirms that earlier event instead of enqueueing again. */
   async function publish(
-    record: KitRecord | TextRecord,
+    record: KitRecord,
     d: string,
     tag: string,
     expected: string | undefined,
     resume: Resume | undefined,
     operationSignal: AbortSignal | undefined,
-    guard?: (preparing: AbortSignal) => Promise<void>,
   ) {
     // Before enqueue, the caller can cancel preparation. After enqueue, the
     // durable outbox and session own delivery; caller cancellation cannot undo it.
@@ -406,10 +208,6 @@ export function createChannelKit({
     saving = true;
     try {
       await ready;
-      // A text head is read from the writer, as in `textHead()`, so a lagging
-      // replica can't hide another device's first text save.
-      const consistency =
-        tag === TEAM_TEXT_TAG ? ("strong" as const) : undefined;
       const head = async (readSignal = signal) =>
         selectedHead(
           await fresh(
@@ -419,7 +217,6 @@ export function createChannelKit({
                 authors: [viewer],
                 "#d": [d],
                 limit: 1,
-                ...(consistency && { consistency }),
               },
             ],
             readSignal,
@@ -428,7 +225,6 @@ export function createChannelKit({
       let id = resume?.id;
       if (!id) {
         preparing.throwIfAborted();
-        await guard?.(preparing);
         const current = await head(preparing);
         preparing.throwIfAborted();
         if (current?.id !== expected)
@@ -454,7 +250,6 @@ export function createChannelKit({
           );
         const content = await host.prepare(record, preparing);
         preparing.throwIfAborted();
-        await guard?.(preparing);
         id = outbox.send({
           kind: 30078,
           content,
@@ -488,161 +283,6 @@ export function createChannelKit({
       if (state.status === "idle") void refresh();
     },
     refresh,
-    async loadTeam(team: Team): Promise<unknown> {
-      if (!host || !team.portable)
-        throw new Error("This team has no portable definition");
-      const manifest = parseTeamManifest(team.portable);
-      if (manifest.owner !== viewer)
-        throw new Error("Portable team belongs to another viewer");
-      return decodeTeamPayload(
-        manifest,
-        await readChunks(team.id, manifest),
-        community,
-        viewer,
-        team.id,
-      );
-    },
-    async savePortable(
-      team: Omit<Team, "portable">,
-      snapshot: TeamSnapshot,
-      expected: string | undefined,
-      revision: string,
-      operationSignal?: AbortSignal,
-    ) {
-      const preparing = operationSignal
-        ? AbortSignal.any([signal, operationSignal])
-        : signal;
-      preparing.throwIfAborted();
-      if (
-        !host ||
-        !outbox ||
-        !team.agents.length ||
-        team.agents.length !== snapshot.members.length ||
-        team.name !== snapshot.team.name
-      )
-        throw new Error("Portable team members do not match their definitions");
-      const { manifest, payloads } = await encodeTeamPayload(
-        snapshot,
-        community,
-        viewer,
-        team.id,
-        revision,
-      );
-      await writeChunks(payloads, preparing);
-      const value: Team = { ...team, portable: manifest };
-      // Confirm complete payload availability/integrity before replacing the manifest.
-      await capability.loadTeam(value);
-      return capability.save(value, expected, false, preparing);
-    },
-    /** The current team-text head: `undefined` when a fresh read proves none
-     * exists, otherwise its text (empty for a tombstone). Anything unreadable
-     * throws, including a head this session saw that is now missing. */
-    async readText(
-      teamId: string,
-      readSignal = signal,
-    ): Promise<{ text: string; head: string } | undefined> {
-      const current = await textHead(teamId, readSignal);
-      if (!current) return undefined;
-      const { manifest } = current.record.value;
-      return {
-        text: manifest
-          ? await decodeTeamText(
-              manifest,
-              await readChunks(teamId, manifest, readSignal),
-              community,
-              viewer,
-              teamId,
-            )
-          : "",
-        head: current.head,
-      };
-    },
-    /** The current text head without its chunks, so a delete can retire a
-     * head whose text is unreadable. */
-    async readTextHead(teamId: string, readSignal = signal) {
-      const current = await textHead(teamId, readSignal);
-      return current && { head: current.head, deleted: current.record.deleted };
-    },
-    /** Writes and verifies the immutable chunks for one text revision. The
-     * head stays untouched until `publishText`. */
-    async prepareText(
-      teamId: string,
-      text: string,
-      revision: string,
-      operationSignal?: AbortSignal,
-    ): Promise<TeamManifest> {
-      const preparing = operationSignal
-        ? AbortSignal.any([signal, operationSignal])
-        : signal;
-      if (!host || !outbox)
-        throw new Error("Team instructions are unavailable");
-      const { manifest, payloads } = await encodeTeamText(
-        text,
-        community,
-        viewer,
-        teamId,
-        revision,
-      );
-      await writeChunks(payloads, preparing);
-      if (
-        (await decodeTeamText(
-          manifest,
-          await readChunks(teamId, manifest, preparing),
-          community,
-          viewer,
-          teamId,
-        )) !== text
-      )
-        throw new Error("Team instructions could not be verified");
-      return manifest;
-    },
-    /** Moves the text head to prepared chunks, or to a tombstone when
-     * `manifest` is null. A live head needs the team's expected live head. */
-    async publishText(
-      teamId: string,
-      manifest: TeamManifest | null,
-      expected: string | undefined,
-      team: string | undefined,
-      resume?: Resume,
-      operationSignal?: AbortSignal,
-    ) {
-      const record = parseTextRecord(
-        {
-          version: 1,
-          community,
-          deleted: !manifest,
-          value: { type: "team-text", id: teamId, owner: viewer, manifest },
-        },
-        community,
-      );
-      const d = privateCoordinate(record);
-      const guard = async (preparing: AbortSignal) => {
-        if (!manifest) return;
-        const entry = state.entries.find((e) => e.eventId === team);
-        const head = entry && (await readRecord(entry.record, preparing));
-        if (
-          !entry ||
-          entry.record.deleted ||
-          entry.record.value.type !== "team" ||
-          entry.record.value.id !== teamId ||
-          head?.id !== team
-        )
-          throw new Error(
-            "This team changed or was deleted. Refresh and review it before saving its instructions.",
-          );
-      };
-      const id = await publish(
-        record,
-        d,
-        TEAM_TEXT_TAG,
-        expected,
-        resume,
-        operationSignal,
-        guard,
-      );
-      knownText.add(teamId);
-      return id;
-    },
     async save(
       value: KitValue,
       expected: string | undefined,

@@ -1,6 +1,6 @@
 import { createNameProvider } from "./directory";
 import type { NamingIdentity } from "./policy";
-import type { AgentControl } from "../agents/control";
+import type { LocalAgents } from "../agents/local";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ProfileQueries } from "../relay/profile-directory";
 import type { AgentLibrary } from "../agents/library";
@@ -83,7 +83,7 @@ export class IdentityNamesService extends Service implements IdentityNames {
 
   constructor(
     ctx: Context,
-    private readonly control?: AgentControl,
+    private readonly control?: LocalAgents,
   ) {
     super(ctx, "identityNames");
     this.entries = createContributions<NameProvider>(ctx);

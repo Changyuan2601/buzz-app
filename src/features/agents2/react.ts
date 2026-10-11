@@ -51,7 +51,7 @@ export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {
 export const Agents2Context = createContext<Agents2 | undefined>(undefined);
 
 export type MentionModelChoice = Models &
-  Readonly<{ pubkey: string; name: string }>;
+  Readonly<{ pubkey: string; name: string; loading?: boolean }>;
 /** The mentioned agents, of the viewer's own, whose type offers a choice of
  * model or effort. */
 export function useMentionModels(
@@ -109,7 +109,21 @@ export function useMentionModels(
     resolved?.types === types &&
     resolved?.key === key
     ? resolved.choices
-    : [];
+    : key.split(":").flatMap((pubkey) => {
+        const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);
+        const type = agent && types?.find((item) => item.key === agent.type);
+        return agent && type?.models
+          ? [
+              {
+                pubkey,
+                name: agent.name,
+                current: "",
+                models: [],
+                loading: true,
+              },
+            ]
+          : [];
+      });
 }
 
 const noList = () => undefined;

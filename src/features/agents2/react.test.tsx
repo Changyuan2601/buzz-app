@@ -50,7 +50,9 @@ it("loads models and their effort levels asynchronously before an agent runs", a
   const { result } = renderHook(() => useMentionModels(["agent"]), {
     wrapper,
   });
-  expect(result.current).toEqual([]);
+  expect(result.current).toEqual([
+    { pubkey: "agent", name: "Codex", current: "", models: [], loading: true },
+  ]);
   await act(async () => {
     pending.resolve(models("GPT test"));
   });

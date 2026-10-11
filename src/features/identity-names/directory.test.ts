@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { AgentControlState, AgentView } from "../agents/control";
+import type { LocalAgent, LocalAgentsSnapshot } from "../agents/local";
 import { bindNames, type NameSource } from "./service";
 import { npubEncode } from "nostr-tools/nip19";
 import {
@@ -12,24 +12,19 @@ import { foldProfiles } from "../relay/profiles";
 import { createProfileDirectory } from "../relay/profile-directory";
 import { keypair, profile } from "../relay/testing";
 
-it("scopes native names to the session community and follows edits and disposal", () => {
+it("scopes local agent names to the session community and follows edits and disposal", () => {
   const key = "a".repeat(64);
   const listeners = new Set<() => void>();
-  let state: AgentControlState = {
+  const owner = "f".repeat(64);
+  let state: LocalAgentsSnapshot = {
     status: "ready",
-    busy: false,
-    error: null,
-    data: {
-      runtimeAvailable: true,
-      agents: [
-        { pubkey: key, relayUrl: "wss://other.example", name: "Other" },
-        { pubkey: key, relayUrl: "wss://here.example/", name: " Here " },
-      ] as AgentView[],
-    },
+    agents: [
+      { pubkey: key, relayUrl: "wss://other.example", name: "Other", owner },
+      { pubkey: key, relayUrl: "wss://here.example/", name: " Here ", owner },
+    ],
   };
   const provider = createAgentDirectory({
     snapshot: () => state,
-    refresh: vi.fn(async () => {}),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {
@@ -62,16 +57,9 @@ it("scopes native names to the session community and follows edits and disposal"
   expect(names.resolve(key)).toBe("Here");
   const changed = vi.fn();
   names.subscribe(changed);
-  const data = state.data;
-  const agent = data?.agents[1];
-  if (!data || !agent) throw new Error("Missing fixture agent");
-  state = {
-    ...state,
-    data: {
-      ...data,
-      agents: [{ ...agent, name: "Edited" }],
-    },
-  };
+  const agent = state.agents[1];
+  if (!agent) throw new Error("Missing fixture agent");
+  state = { ...state, agents: [{ ...agent, name: "Edited" }] };
   for (const listener of listeners) listener();
   expect(changed).toHaveBeenCalledOnce();
   expect(names.resolve(key)).toBe("Edited");
@@ -128,22 +116,18 @@ it("suffixes equal names across profiles, without merging keys or suffixing uniq
   expect(agentDirectory.scope(source)(b)?.name).toBeUndefined();
 });
 
-it("recomputes collisions for native edits, community scope, and profile fallbacks", () => {
+it("recomputes collisions for local agent edits, community scope, and profile fallbacks", () => {
   const a = "a".repeat(64),
     b = "b".repeat(64),
     c = "c".repeat(64);
-  let agent = {
+  let agent: LocalAgent = {
     pubkey: a,
     name: "Native Larry",
     relayUrl: "wss://here.test",
-  } as AgentView;
-  const listeners = new Set<() => void>();
-  let native: AgentControlState = {
-    status: "ready",
-    busy: false,
-    error: null,
-    data: { runtimeAvailable: false, agents: [agent] },
+    owner: "f".repeat(64),
   };
+  const listeners = new Set<() => void>();
+  let native: LocalAgentsSnapshot = { status: "ready", agents: [agent] };
   const library = {
     status: "ready",
     definitions: [],
@@ -181,7 +165,6 @@ it("recomputes collisions for native edits, community scope, and profile fallbac
         listeners.delete(listener);
       };
     },
-    refresh: async () => {},
   });
   const names = bindNames(source, {
     snapshot: () => [provider],
@@ -197,7 +180,7 @@ it("recomputes collisions for native edits, community scope, and profile fallbac
   expect(agent.name).toBe("Native Larry");
 
   agent = { ...agent, name: "Legacy" };
-  native = { ...native, data: { runtimeAvailable: false, agents: [agent] } };
+  native = { ...native, agents: [agent] };
   for (const listener of listeners) listener();
   expect(changed).toHaveBeenCalledOnce();
   for (const key of [a, b])
@@ -213,7 +196,7 @@ it("recomputes collisions for native edits, community scope, and profile fallbac
   expect(listeners.size).toBe(0);
 });
 
-it("includes native-only identities but ignores other-community and unready native records", () => {
+it("includes local-only identities but ignores other-community and unready local records", () => {
   const a = "a".repeat(64),
     b = "b".repeat(64);
   const library = {
@@ -221,16 +204,16 @@ it("includes native-only identities but ignores other-community and unready nati
     definitions: [],
     identities: [{ pubkey: a, name: "Larry" }],
   };
-  let native: AgentControlState = {
+  let native: LocalAgentsSnapshot = {
     status: "ready",
-    busy: false,
-    error: null,
-    data: {
-      runtimeAvailable: false,
-      agents: [
-        { pubkey: b, name: "Larry", relayUrl: "wss://here.test" } as AgentView,
-      ],
-    },
+    agents: [
+      {
+        pubkey: b,
+        name: "Larry",
+        relayUrl: "wss://here.test",
+        owner: "f".repeat(64),
+      },
+    ],
   };
   const profiles = new Map();
   const source: NameSource = {
@@ -250,7 +233,6 @@ it("includes native-only identities but ignores other-community and unready nati
   const provider = createAgentDirectory({
     snapshot: () => native,
     subscribe: () => () => {},
-    refresh: async () => {},
   });
   for (const key of [a, b])
     expect(provider.scope(source)(key)?.name).toBe(

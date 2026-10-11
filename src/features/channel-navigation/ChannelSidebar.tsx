@@ -14,7 +14,6 @@ import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMen
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { useMePlacement } from "../sessions/personal";
 import { personalGroups } from "../channel-templates/setup";
-import type { TemplateProviders } from "../channel-templates/provider";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
@@ -90,7 +89,6 @@ import styles from "../../bundled/channels/Channels.module.css";
 type Props = {
   relay: RelayData;
   navigator: Navigation;
-  providers: TemplateProviders;
   target: OpenTarget;
   sessionsEnabled: boolean;
   meEnabled?: boolean;
@@ -188,7 +186,6 @@ class SidebarBoundary extends Component<
 function ReadySidebar({
   relay,
   navigator,
-  providers,
   target,
   children,
   queries,
@@ -1375,7 +1372,6 @@ function ReadySidebar({
           pending={pendingChannelCreation}
           finalFocus={createChannelTrigger}
           session={queries}
-          providers={providers}
           groups={groups}
           destinations={displayedPreferences?.sections ?? []}
           {...(preferences.data?.groupSource !== "personal"

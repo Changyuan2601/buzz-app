@@ -141,6 +141,34 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
 }
 
 #[test]
+fn a_set_picture_is_published_and_can_be_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let url = "https://relay.example/media/abc";
+    for refused in [
+        "http://relay.example/a",
+        "https://u:p@relay.example/a",
+        "nope",
+    ] {
+        assert!(agents
+            .set_picture(&agent.pubkey, Some(refused.into()))
+            .is_err());
+    }
+    agents.set_picture(&agent.pubkey, Some(url.into())).unwrap();
+    let pictured = agents.get(&agent.pubkey).unwrap();
+    assert_eq!(pictured.picture.as_deref(), Some(url));
+    assert!(!pictured.profile_is_current());
+    assert_eq!(
+        pictured.profile_event(&key).unwrap()["content"],
+        format!(r#"{{"bot":true,"name":"Ada","picture":"{url}"}}"#)
+    );
+    agents.set_picture(&agent.pubkey, None).unwrap();
+    assert_eq!(agents.get(&agent.pubkey).unwrap().picture, None);
+}
+
+#[test]
 fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -328,6 +356,125 @@ fn concurrent_writers_on_one_file_keep_every_identity() {
 }
 
 #[test]
+fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
+    let credentials = Memory::default();
+    let key = Secret::generate().unwrap();
+    let pubkey = key.pubkey().to_owned();
+    // A harness agent already keeps this key under the same community's ID.
+    let id = agent_id(&pubkey, "wss://relay.example");
+    credentials.add(&id, &key).unwrap();
+    set(&credentials.1.add, true);
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let store = |n: usize| AppAgents::open(dirs[n].path().join("agents2/identities.json"));
+    let adopt = |picture: &str| {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            "p/t",
+            Secret::parse(&key.hex(), &pubkey).unwrap(),
+            "Ada",
+            Some(picture.into()),
+            Some("Reviews pull requests".into()),
+        )
+        .unwrap()
+    };
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(&pubkey)).unwrap();
+    let agents = store(0);
+    let (agent, _) = agents
+        .commit(
+            adopt("https://relay.example/media/a.png"),
+            &auth,
+            &credentials,
+        )
+        .unwrap();
+    assert_eq!(agent.pubkey, pubkey);
+    assert!(!serde_json::to_value(&agent)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("adopted"));
+    assert_eq!(
+        agents.get(&pubkey).unwrap().about.as_deref(),
+        Some("Reviews pull requests")
+    );
+    let profile = agent
+        .profile_event(&agent.read_key(&credentials).unwrap())
+        .unwrap();
+    assert_eq!(
+        profile["content"],
+        r#"{"about":"Reviews pull requests","bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"}"#
+    );
+    // Once here, it is not taken over again, nor while it is being removed.
+    let again = adopt("https://a.example/b.png");
+    assert!(agents.commit(again, &auth, &credentials).is_err());
+    agents.edit(&pubkey, |agent| agent.deleted = true).unwrap();
+    let again = adopt("https://a.example/b.png");
+    assert!(agents.commit(again, &auth, &credentials).is_err());
+    // A shared key that fails to verify is left where it was.
+    set(&credentials.1.read, true);
+    assert!(store(1)
+        .commit(adopt("https://a.example/b.png"), &auth, &credentials)
+        .is_err());
+    set(&credentials.1.read, false);
+    assert!(credentials.read(&id, &pubkey).unwrap().is_some());
+    assert!(rows(&store(1)).is_empty());
+    // Inline pictures are not profile pictures.
+    let (agent, _) = store(2)
+        .commit(adopt("data:image/png;base64,AA"), &auth, &credentials)
+        .unwrap();
+    assert_eq!(agent.picture, None);
+}
+
+#[test]
+fn an_adopted_key_that_cannot_be_saved_withdraws_only_its_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let agents = AppAgents::open(dir.path().join("agents2/identities.json"));
+    let key = Secret::generate().unwrap();
+    let pubkey = key.pubkey().to_owned();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(&pubkey)).unwrap();
+    let adopt = || {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            "p/t",
+            Secret::parse(&key.hex(), &pubkey).unwrap(),
+            "Ada",
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    set(&credentials.1.add, true);
+    assert!(agents.commit(adopt(), &auth, &credentials).is_err());
+    assert!(rows(&agents).is_empty());
+    set(&credentials.1.add, false);
+    let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
+    assert_eq!(agent.read_key(&credentials).unwrap().pubkey(), pubkey);
+}
+
+#[test]
+fn deleting_keys_removes_every_agents_key_and_repeats_safely() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, first) = created(dir.path(), &credentials);
+    let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Bea").unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    let (second, _) = agents.commit(prepared, &auth, &credentials).unwrap();
+    agents.delete_keys(&credentials).unwrap();
+    assert!(first.read_key(&credentials).is_err());
+    assert!(second.read_key(&credentials).is_err());
+    agents.delete_keys(&credentials).unwrap();
+    // No saved identities is nothing to delete.
+    AppAgents::open(dir.path().join("absent/identities.json"))
+        .delete_keys(&credentials)
+        .unwrap();
+}
+
+#[test]
 fn saved_public_profile_survives_updates_and_is_signed() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -390,4 +537,31 @@ fn saved_public_profile_survives_updates_and_is_signed() {
     }
     let event: nostr::event::Event = serde_json::from_value(event).unwrap();
     event.verify().unwrap();
+}
+
+#[test]
+fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let original = serde_json::to_value(agents.list().unwrap()).unwrap();
+    for adopted in [false, true] {
+        let mut saved = original.clone();
+        saved[0]["adopted"] = adopted.into();
+        std::fs::write(&agents.path, saved.to_string()).unwrap();
+        assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
+        agents.rename(&agent.pubkey, "Bea").unwrap();
+        let rewritten: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
+        assert!(!rewritten[0].as_object().unwrap().contains_key("adopted"));
+    }
+    for (field, value) in [
+        ("adopted", serde_json::json!("true")),
+        ("unknown", serde_json::json!(true)),
+    ] {
+        let mut saved = original.clone();
+        saved[0][field] = value;
+        std::fs::write(&agents.path, saved.to_string()).unwrap();
+        assert!(agents.list().is_err());
+    }
 }

@@ -1,4 +1,3 @@
-import { snapshotClipboardHtml } from "../agents/snapshot-link";
 // @vitest-environment jsdom
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -38,8 +37,8 @@ import type {
 } from "../conversation/contracts";
 import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
-import { createAgentControl, type AgentControl } from "../agents/control";
-import { controlFixture } from "../agents/control-testing";
+import type { LocalAgents } from "../agents/local";
+import { localAgentsFixture } from "../agents/local-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
@@ -104,9 +103,16 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
+const localAgent = {
+  pubkey: "ab".repeat(32),
+  name: "Fixture agent",
+  relayUrl: "wss://relay.example.test",
+  owner: "d".repeat(64),
+};
+
 function mount(
   options: Partial<MessageComposerProps> = {},
-  control?: AgentControl,
+  control?: LocalAgents,
   viewer?: string,
   agents2?: Agents2,
 ) {
@@ -2050,6 +2056,50 @@ it("retries publish-unknown attachment sends with the same signed event and no r
   expect(h.uploadCalls).toHaveLength(1);
 });
 
+it("opens the model picker while discovery is pending, then fills its controls", async () => {
+  const models = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ],
+  };
+  const pending = deferred<typeof models>();
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const types = [{ key: "test/agent", models: () => pending.promise }];
+  const agents2 = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents2;
+  const h = mount({}, undefined, undefined, agents2);
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    screen.getByRole("button", { name: "Model and effort for the next run" }),
+  );
+  expect(
+    screen.getByText("Loading model and effort…").closest("[role=status]"),
+  ).toHaveAttribute("aria-busy", "true");
+  await act(async () => {
+    pending.resolve(models);
+  });
+  expect(
+    await screen.findByLabelText("Effort for Honey's next run"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("Loading model and effort…"),
+  ).not.toBeInTheDocument();
+});
+
 it("asks a mentioned agent of the viewer's for a model and effort on the next run only", async () => {
   // Snapshots are stable, as the service's are.
   const snapshot = {
@@ -3203,10 +3253,9 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
 // The production composer must perform enrollment, not a pre-populated test roster.
 for (const threadRootId of [undefined, "f".repeat(64)])
   it(`adds a selected local agent only on Send, then sends after membership confirmation (thread=${!!threadRootId})`, async () => {
-    const f = controlFixture();
-    f.agent.pubkey = first.pubkey;
-    const control = createAgentControl(f.host);
-    await control.refresh();
+    const control = localAgentsFixture([
+      { ...localAgent, pubkey: first.pubkey, owner: "d".repeat(64) },
+    ]);
     const h = mount(
       {
         scope: `https://relay.example.test:${"d".repeat(64)}`,
@@ -3290,58 +3339,50 @@ for (const threadRootId of [undefined, "f".repeat(64)])
             new AbortController().signal,
             intent,
           ),
-        vi.fn(),
       ),
     });
-    try {
-      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
-      expect(add).not.toHaveBeenCalled();
-      fireEvent.submit(screen.getByRole("form"));
-      await act(async () => {});
-      expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-      await act(async () => {});
-      expect(add).toHaveBeenCalledWith(
-        {
-          kind: 9000,
-          content: "",
-          tags: [
-            ["h", "channel"],
-            ["p", first.pubkey],
-            ["role", "bot"],
-          ],
-        },
-        { key: `member-add:channel:${first.pubkey}`, value: "1" },
-      );
-      expect(h.messages.send).not.toHaveBeenCalled();
-      expect(h.messages.reply).not.toHaveBeenCalled();
-      await act(async () => {
-        operations = operations.map((item) => ({
-          ...item,
-          delivery: "accepted",
-        }));
-        for (const listener of listeners) listener();
-      });
-      const send = threadRootId ? h.messages.reply : h.messages.send;
-      expect(send).toHaveBeenCalledOnce();
-      expect(retry).not.toHaveBeenCalled();
-      expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([
-        first.pubkey,
-      ]);
-      // Native evidence now shares the ordinary remember-agent classification.
-      expect(h.input().value).toBe("@Honey ");
-    } finally {
-      control.dispose();
-    }
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    expect(add).not.toHaveBeenCalled();
+    fireEvent.submit(screen.getByRole("form"));
+    await act(async () => {});
+    expect(add).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    await act(async () => {});
+    expect(add).toHaveBeenCalledWith(
+      {
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", "channel"],
+          ["p", first.pubkey],
+          ["role", "bot"],
+        ],
+      },
+      { key: `member-add:channel:${first.pubkey}`, value: "1" },
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.messages.reply).not.toHaveBeenCalled();
+    await act(async () => {
+      operations = operations.map((item) => ({
+        ...item,
+        delivery: "accepted",
+      }));
+      for (const listener of listeners) listener();
+    });
+    const send = threadRootId ? h.messages.reply : h.messages.send;
+    expect(send).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([first.pubkey]);
+    // Native evidence now shares the ordinary remember-agent classification.
+    expect(h.input().value).toBe("@Honey ");
   });
 
 it.each([false, true])(
   "keeps the selected draft on an enrollment error (expired=%s) without sending the message",
   async (expired) => {
-    const f = controlFixture();
-    f.agent.pubkey = first.pubkey;
-    const control = createAgentControl(f.host);
-    await control.refresh();
+    const control = localAgentsFixture([
+      { ...localAgent, pubkey: first.pubkey, owner: "d".repeat(64) },
+    ]);
     const h = mount(
       { scope: `https://relay.example.test:${"d".repeat(64)}` },
       control,
@@ -3397,30 +3438,24 @@ it.each([false, true])(
             new AbortController().signal,
             intent,
           ),
-        vi.fn(),
       ),
     });
-    try {
-      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
-      fireEvent.submit(screen.getByRole("form"));
-      await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-      await act(async () => {});
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        expired ? "addition expired" : "Cannot add agent",
-      );
-      expect(
-        (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement)
-          .value,
-      ).toBe("@Honey ");
-      expect(h.messages.send).not.toHaveBeenCalled();
-      if (expired) expect(add).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Close" }));
-      await act(async () => {});
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-    } finally {
-      control.dispose();
-    }
+    fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+    fireEvent.submit(screen.getByRole("form"));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      expired ? "addition expired" : "Cannot add agent",
+    );
+    expect(
+      (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement).value,
+    ).toBe("@Honey ");
+    expect(h.messages.send).not.toHaveBeenCalled();
+    if (expired) expect(add).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await act(async () => {});
+    expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
   },
 );
 
@@ -3899,10 +3934,9 @@ it.each([false, true])(
     const viewer = keypair(),
       relay = keypair();
     const scope = `https://relay.example.test:${viewer.pubkey}`;
-    const f = controlFixture();
-    f.agent.pubkey = second.pubkey;
-    const native = createAgentControl(f.host);
-    await native.refresh();
+    const native = localAgentsFixture([
+      { ...localAgent, pubkey: second.pubkey, owner: viewer.pubkey },
+    ]);
     let members = [viewer.pubkey, first.pubkey];
     let time = 1700000000;
     const sign = vi.fn(async (template: EventTemplate) =>
@@ -3969,7 +4003,6 @@ it.each([false, true])(
     } finally {
       h.unmount();
       owner.dispose();
-      native.dispose();
     }
   },
 );
@@ -4983,9 +5016,7 @@ it("Enter invites a nonmember before sending", async () => {
   await waitFor(() => expect(invite).toHaveFocus());
   await userEvent.setup().keyboard("{Enter}");
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(add).toHaveBeenCalledWith("channel", first.pubkey, undefined, {
-    startAgent: false,
-  });
+  expect(add).toHaveBeenCalledWith("channel", first.pubkey);
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
 
@@ -6314,7 +6345,7 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
       items: [],
       getData: (type: string) =>
         type === "text/html"
-          ? snapshotClipboardHtml(descriptor, "Helper")
+          ? `<a href="${descriptor.url}">Helper</a>`
           : descriptor.url,
     },
   });
@@ -6328,47 +6359,3 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.uploadCalls).toHaveLength(0);
   expect(h.publish).not.toHaveBeenCalled();
 });
-
-it.each(["agent", "team"])(
-  "pastes a copied %s snapshot as an attachment and sends only on Send",
-  async (kind) => {
-    const h = await mountUploadComposer({
-      media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
-    });
-    const descriptor = {
-      name: `helper.${kind}.png`,
-      url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
-      type: "image/png",
-      size: 2048,
-      sha256: "a".repeat(64),
-    };
-    const html = snapshotClipboardHtml(descriptor, "Helper");
-    fireEvent.paste(h.input(), {
-      clipboardData: {
-        items: [],
-        getData: (type: string) =>
-          type === "text/html" ? html : descriptor.url,
-      },
-    });
-    expect(
-      await within(h.form()).findByRole("button", {
-        name: `Remove ${descriptor.name}`,
-      }),
-    ).toBeVisible();
-    expect(h.input()).toHaveValue("");
-    expect(h.publish).not.toHaveBeenCalled();
-    expect(h.uploadCalls).toHaveLength(0);
-    fireEvent.click(h.send());
-    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
-    expect(h.uploadCalls).toHaveLength(0);
-    const event = h.publish.mock.calls[0]?.[0];
-    expect(event?.content).toContain(descriptor.url);
-    expect(event?.tags).toContainEqual(
-      expect.arrayContaining([
-        "imeta",
-        `filename ${descriptor.name}`,
-        `x ${descriptor.sha256}`,
-      ]),
-    );
-  },
-);

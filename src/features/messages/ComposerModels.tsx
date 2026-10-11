@@ -134,6 +134,13 @@ function AgentChoice({
   pick(next: RunPick): void;
   thumb?: Ref<HTMLInputElement>;
 }) {
+  if (choice.loading)
+    return (
+      <div className={styles.loading} role="status" aria-busy="true">
+        {named && <span>{choice.name}</span>}
+        <span>Loading model and effort…</span>
+      </div>
+    );
   const runs = runModel(choice, value.model);
   const several = choice.models.length > 1;
   // Picking the agent's own model is no pick; an effort the new model lacks

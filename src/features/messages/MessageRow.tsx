@@ -1,5 +1,3 @@
-import { SnapshotAttachment } from "./SnapshotAttachment";
-import { snapshotAttachmentKind } from "../agents/snapshot-preview";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { LightningIcon } from "../../shared/design-system/icons";
 import { WorkflowByline } from "./WorkflowByline";
@@ -657,15 +655,6 @@ export const MessageRow = memo(function MessageRow({
               const url = safeMessageUrl(attachment.url);
               if (!url) return null;
               const source = media(url);
-              if (session && snapshotAttachmentKind(attachment))
-                return (
-                  <SnapshotAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    session={session}
-                    cached={cached}
-                  />
-                );
               if (attachment.kind === "file")
                 return (
                   <FileAttachment

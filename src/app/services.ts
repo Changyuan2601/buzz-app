@@ -1,15 +1,11 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
-import { bindTeamTextSync } from "../features/agents/team-instructions";
 import {
   createIdentity,
   nativeIdentityEnabled,
 } from "../features/identity/service";
-import { AgentSecurityService } from "../features/agents/security";
 import { SettingsCardsService } from "../features/settings/service";
-import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
-import { bindAgentMentions } from "../features/agents/mention-wake";
-import { provideAgentControl } from "../features/agents/control-service";
+import { createLocalAgents } from "../features/agents/local";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
@@ -48,8 +44,7 @@ export function createServices() {
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
-  const agentControl = provideAgentControl(ctx);
-  new AgentSecurityService(ctx);
+  const localAgents = createLocalAgents();
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
@@ -59,15 +54,14 @@ export function createServices() {
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
-  const channelTemplates = new TemplateProvidersService(ctx);
-  const identityNames = new IdentityNamesService(ctx, agentControl);
+  const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
     import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
-    agentControl,
+    localAgents.agents,
     identity?.ready,
     identity ? connectNativeTransport : undefined,
   );
@@ -76,9 +70,10 @@ export function createServices() {
     subscribe: communities.subscribe,
   });
   const relay = communities.relay;
-  const agents2 = new Agents2Service(ctx, relay);
-  ctx.effect(() => bindAgentMentions(agentControl, communities));
-  ctx.effect(() => bindTeamTextSync(agentControl, communities));
+  const agents2 = new Agents2Service(ctx, communities);
+  ctx.effect(() =>
+    localAgents.bind({ snapshot: agents2.local, subscribe: agents2.subscribe }),
+  );
   const notifications = new NotificationsService(
     ctx,
     navigation,
@@ -109,7 +104,6 @@ export function createServices() {
   let disposal: Promise<void> | undefined;
   return {
     identity,
-    agentControl,
     browser,
     notifications,
     navigation,
@@ -120,7 +114,6 @@ export function createServices() {
     shortcutBindings,
     conversation,
     settingsCards,
-    channelTemplates,
     pages,
     panels,
     plugins,

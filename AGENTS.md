@@ -193,15 +193,11 @@ Tests must control the ordering they assert, not depend on runner speed.
 
 ## Commit attribution and DCO
 
-Every PR commit requires `Signed-off-by`. Use `git commit --signoff` with your
-verified effective `git config user.name` / `user.email`; stop if missing or
-incorrect. Preserve actual authorship; requesting or reviewing work does not
-justify substituting the human's identity or adding their sign-off.
-
-DCO, cryptographic signing, and co-author credit are separate; hooks do not supply
-DCO. Audit **every commit against the PR base**, including after rebases or
-cherry-picks. Preserve valid trailers; add only certifications you can make.
-After repairs, verify the hosted **DCO Check** at the new head.
+Every PR commit needs a `Signed-off-by` (the hosted **DCO Check** fails without
+one, and hooks do not add it): commit with `git commit --signoff`, which signs
+off as your effective git identity. Credit the other party with a
+`Co-authored-by` trailer: an agent committing as its human credits itself, and
+an agent committing as itself credits its human.
 
 ## Before opening a PR
 

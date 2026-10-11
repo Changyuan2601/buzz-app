@@ -18,7 +18,6 @@ import {
   type PointerEvent,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type { AgentControl } from "../../features/agents/control";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -335,7 +334,6 @@ type MemberNavigation = {
 export function ChannelMembersButton({
   session,
   channelId,
-  control,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
@@ -343,7 +341,6 @@ export function ChannelMembersButton({
 }: {
   session: RelaySession;
   channelId: string;
-  control?: AgentControl | undefined;
   presentation?:
     | { open: boolean; onOpenChange(open: boolean): void }
     | undefined;
@@ -369,7 +366,6 @@ export function ChannelMembersButton({
           key={channelId}
           session={session}
           channelId={channelId}
-          control={control}
           canOpenLink={canOpenLink}
           onOpenLink={onOpenLink}
           onOpenConversation={onOpenConversation}
@@ -385,7 +381,6 @@ export function ChannelMembersButton({
 export function ChannelMembersDialog({
   session,
   channelId,
-  control,
   close,
   trigger,
   canOpenLink,
@@ -394,7 +389,6 @@ export function ChannelMembersDialog({
 }: {
   session: RelaySession;
   channelId: string;
-  control?: AgentControl | undefined;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
 } & MemberNavigation) {
@@ -792,7 +786,7 @@ export function ChannelMembersDialog({
       if (!signal) return;
       setNotice("");
       try {
-        await session.memberAdditions.add(channelId, key, control);
+        await session.memberAdditions.add(channelId, key);
         if (!signal.aborted)
           setNotice(
             `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? formatPublicKey(key) ?? "Unknown member")} is in the channel.`,
@@ -801,7 +795,7 @@ export function ChannelMembersDialog({
         // Session-owned recovery remains visible if this dialog closes and reopens.
       }
     },
-    [session, channelId, control],
+    [session, channelId],
   );
 
   // Typed text highlights the first person not in the channel, so Enter adds
@@ -1327,15 +1321,13 @@ export function ChannelMembersDialog({
             {Object.entries(errors).map(([key, error]) => (
               <p role="alert" key={key} className="text-body-sm text-danger">
                 {label(key)}: {error}{" "}
-                {!additions.find((item) => item.pubkey === key)?.removed && (
-                  <Button
-                    variant="outline"
-                    disabled={busy.has(key) || !canAdd}
-                    onClick={() => void add(key)}
-                  >
-                    {busy.has(key) ? "Retrying…" : "Retry"}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  disabled={busy.has(key) || !canAdd}
+                  onClick={() => void add(key)}
+                >
+                  {busy.has(key) ? "Retrying…" : "Retry"}
+                </Button>
               </p>
             ))}
             {openingMessage && (

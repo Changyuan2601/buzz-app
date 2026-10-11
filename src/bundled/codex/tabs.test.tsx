@@ -11,7 +11,6 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import type { AgentViewProps } from "../../features/agents2/service";
 import type { HostProcessOptions } from "../../features/host/service";
-import type { RelayData } from "../../features/relay/service";
 import { defaults, type Config } from "./config";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
@@ -72,7 +71,7 @@ function fixture() {
     processes.push(process);
     return process;
   });
-  const runtime = new CodexRuntime(spawn, {} as RelayData, {} as Storage);
+  const runtime = new CodexRuntime(spawn, () => undefined, {} as Storage);
   const tabs = createTabs(React, spawn, runtime);
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({

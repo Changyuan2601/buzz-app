@@ -4,8 +4,6 @@ import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
 import { createAgentActivity } from "../../features/agents/activity";
-import { createAgentControl } from "../../features/agents/control";
-import { controlFixture } from "../../features/agents/control-testing";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -246,83 +244,6 @@ it("recovers provider-owned names in the same live session and releases demand w
   }
 });
 
-it.each(["action", "initial read"])(
-  "Info gives %s failures one recovery owner",
-  async (failure) => {
-    const fixture = controlFixture();
-    const person = keypair();
-    const owner = createRelaySession({
-      viewer: key,
-      relayAuthor: keypair().pubkey,
-      media: () => undefined,
-      query: async () => [
-        profile(person, { name: "Owned agent", is_agent: true }),
-      ],
-    });
-    const control = createAgentControl(fixture.host);
-    const snapshot = {
-      status: "ready" as const,
-      generation: 1,
-      scope: `https://relay.example.test:${key}`,
-      viewer: key,
-      session: owner.session,
-    };
-    const relay: RelayData = {
-      snapshot: () => snapshot,
-      subscribe: () => () => {},
-      retry() {},
-      disconnect() {},
-      clearCache: async () => {},
-    };
-    // Seed a known-agent hint; authority still comes only from the native snapshot.
-    fixture.agent.pubkey = person.pubkey;
-    await owner.session.profiles.ensure([person.pubkey]);
-    if (failure === "initial read")
-      vi.spyOn(fixture.host, "snapshot").mockRejectedValueOnce(
-        "snapshot rejected",
-      );
-    else
-      vi.spyOn(fixture.host, "action").mockRejectedValueOnce("stop rejected");
-    const user = userEvent.setup();
-    try {
-      render(
-        <ProfilePanel
-          relay={relay}
-          control={control}
-          target={profileTarget(person.pubkey) ?? ""}
-          close={() => {}}
-        />,
-      );
-      if (failure === "action")
-        await user.click(await screen.findByRole("button", { name: "Stop" }));
-      await screen.findByText(
-        failure === "action"
-          ? /stop rejected/
-          : /Could not refresh local agents/,
-      );
-      expect(screen.getAllByRole("alert")).toHaveLength(1);
-      expect(
-        screen.queryByRole("button", { name: "Retry agents" }),
-      ).not.toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Retry status" }));
-      await waitFor(() =>
-        expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-      );
-      expect(
-        screen.getByRole("region", { name: "Instances" }),
-      ).toHaveTextContent(fixture.agent.name);
-      expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
-    } finally {
-      cleanup();
-      control.dispose();
-      owner.dispose();
-    }
-  },
-);
-
 it("offers the activity preview to known agents only, never to people", async () => {
   const person = keypair();
   const agent = keypair();
@@ -411,75 +332,6 @@ it("offers the activity preview to known agents only, never to people", async ()
   }
 });
 
-it.each(["ambiguous", "unmatched"])(
-  "Info retains recovery for a known %s identity",
-  async (kind) => {
-    const fixture = controlFixture();
-    const person = keypair();
-    const owner = createRelaySession({
-      viewer: key,
-      relayAuthor: keypair().pubkey,
-      media: () => undefined,
-      query: async () => [
-        profile(person, { name: "Known agent", is_agent: true }),
-      ],
-    });
-    if (kind === "ambiguous") {
-      fixture.agent.pubkey = person.pubkey;
-      fixture.data.agents.push({ ...fixture.agent, id: "duplicate" });
-    }
-    await owner.session.profiles.ensure([person.pubkey]);
-    const control = createAgentControl(fixture.host);
-    const snapshot = {
-      status: "ready" as const,
-      generation: 1,
-      scope: `https://relay.example.test:${key}`,
-      viewer: key,
-      session: owner.session,
-    };
-    const relay: RelayData = {
-      snapshot: () => snapshot,
-      subscribe: () => () => {},
-      retry() {},
-      disconnect() {},
-      clearCache: async () => {},
-    };
-    try {
-      render(
-        <ProfilePanel
-          relay={relay}
-          control={control}
-          target={profileTarget(person.pubkey) ?? ""}
-          close={() => {}}
-        />,
-      );
-      await waitFor(() => expect(control.snapshot().status).toBe("ready"));
-      vi.spyOn(fixture.host, "snapshot").mockRejectedValueOnce("read failed");
-      await act(() => control.refresh());
-      expect(screen.getAllByRole("alert")).toHaveLength(1);
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Managed agent status is unconfirmed.",
-      );
-      expect(
-        screen.queryByRole("region", { name: "Local agent actions" }),
-      ).not.toBeInTheDocument();
-      await userEvent
-        .setup()
-        .click(screen.getByRole("button", { name: "Retry agents" }));
-      await waitFor(() =>
-        expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-      );
-      expect(
-        screen.getByRole("region", { name: "Instances" }),
-      ).toBeInTheDocument();
-    } finally {
-      cleanup();
-      control.dispose();
-      owner.dispose();
-    }
-  },
-);
-
 it("exposes thinking through the named profile avatar across tabs", async () => {
   const agent = keypair();
   const owner = createRelaySession({
@@ -554,6 +406,9 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
     await userEvent
       .setup()
       .click(screen.getByRole("tab", { name: "Channels" }));
+    // The first channel list changes access, which clears cached profiles;
+    // the rest of the app reads them again.
+    await act(() => owner.session.profiles.ensure([agent.pubkey]));
     expect(
       screen.getByRole("img", { name: "Thinking agent avatar, thinking" }),
     ).toBeVisible();

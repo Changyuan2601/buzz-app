@@ -7,24 +7,14 @@ import {
   waitFor,
   fireEvent,
 } from "@testing-library/react";
-import { useEffect } from "react";
-import type { TemplateEditorProps } from "../../features/channel-templates/provider";
-import { emptyLineup } from "../../features/channel-templates/model";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 
-const providers = {
-  snapshot: () => emptyProviders,
-  subscribe: () => () => {},
-  register: () => {},
-};
-const emptyProviders = Object.freeze([]);
 let store = createRelaySession(null);
 const setupProps = () => ({
   session: store.session,
-  providers,
   groups: undefined,
   initialGroup: "",
   groupsReady: true,
@@ -850,81 +840,3 @@ it("does not offer to discard frozen recovery when it arrives during confirmatio
   expect(props.onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
   expect(props.onCreate).not.toHaveBeenCalled();
 });
-
-it.each([false, true])(
-  "protects template-only edits without treating group defaults as edits (default: %s)",
-  async (hasDefault) => {
-    const user = userEvent.setup();
-    const onOpenChange = vi.fn();
-    function Editor({ value, initialDefault, onChange }: TemplateEditorProps) {
-      useEffect(() => {
-        if (
-          initialDefault &&
-          value?.problem === "Group default is awaiting selection."
-        )
-          onChange({
-            templateId: initialDefault,
-            lineup: { ...emptyLineup(), canvas: "Saved plan" },
-            agents: [],
-          });
-      });
-      return (
-        <button
-          type="button"
-          onClick={() =>
-            onChange({
-              templateId: "custom",
-              lineup: { ...emptyLineup(), canvas: "My plan" },
-              agents: [],
-            })
-          }
-        >
-          Customize setup
-        </button>
-      );
-    }
-    const entries = [
-      {
-        key: "test/templates",
-        id: "templates",
-        pluginId: "test",
-        revision: "1",
-        title: "Templates",
-        editor: Editor,
-        groupDefault: () => null,
-        saveAs: () => null,
-      },
-    ];
-    render(
-      <CreateChannelDialog
-        {...setupProps()}
-        open
-        onOpenChange={onOpenChange}
-        onCreate={async () => {}}
-        providers={{ ...providers, snapshot: () => entries }}
-        groups={
-          hasDefault
-            ? {
-                type: "groups",
-                id: "personal",
-                groups: [
-                  { id: "work", name: "Work", defaultTemplateId: "saved" },
-                ],
-                assignments: {},
-              }
-            : undefined
-        }
-        initialGroup={hasDefault ? "work" : ""}
-      />,
-    );
-    await user.click(
-      document.querySelector(".buzz-dialog-backdrop") as Element,
-    );
-    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
-    onOpenChange.mockClear();
-    await user.click(screen.getByRole("button", { name: "Customize setup" }));
-    await user.keyboard("{Escape}");
-    expect(screen.getByRole("dialog")).toHaveAccessibleName("Discard changes?");
-    expect(onOpenChange).not.toHaveBeenCalled();
-  },
-);

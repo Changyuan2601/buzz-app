@@ -58,7 +58,7 @@ function setup(thread: readonly EventData[] = []) {
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new ClaudeRuntime(host, relay, storage);
+  const runtime = new ClaudeRuntime(host, () => relay, storage);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
     published.push(template);
@@ -141,7 +141,7 @@ it("knows the agent's own model once one of its sessions has begun", async () =>
   await flush(10);
   expect((await runtime.models(self)).current).toBe("opus");
 });
-it("lists the models a warm process can switch to, at its own effort, without a user turn", async () => {
+it("discovers models and effort without a turn or retaining a per-agent spare", async () => {
   const { runtime, claudes } = setup();
   runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
   try {
@@ -158,8 +158,10 @@ it("lists the models a warm process can switch to, at its own effort, without a 
         { id: "legacy", label: "Legacy 1", efforts: [] },
       ],
     });
-    expect(claudes()).toHaveLength(1);
-    expect(claudes()[0]?.prompts).toEqual([]);
+    expect(claudes().filter((process) => !process.killed)).toHaveLength(1);
+    expect(claudes().every((process) => process.prompts.length === 0)).toBe(
+      true,
+    );
   } finally {
     runtime.dispose();
   }
@@ -189,6 +191,8 @@ it("runs a mention on the model and effort its delivery picked", async () => {
     ],
   });
   const { runtime, claudes, agent } = setup([mention]);
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  expect((await runtime.models(self)).current).toBe("opus");
   await runtime.run({
     trigger: { type: "mention", event: mention },
     channelId: channel,
@@ -202,6 +206,8 @@ it("runs a mention on the model and effort its delivery picked", async () => {
   const claude = claudes().find((process) => process.prompts.length);
   expect(claude?.models).toEqual(["haiku"]);
   expect(claude?.efforts).toEqual(["low"]);
+  expect((await runtime.models(self)).current).toBe("opus");
+  runtime.dispose();
 });
 it("reads model ids and aliases as names", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
@@ -386,7 +392,8 @@ it("shows the whole thread to a session started over from a lost one", async () 
   );
   await deliver({ type: "mention", event: mention });
   await flush(20);
-  const [lost, fresh] = claudes();
+  const [lost] = claudes();
+  const fresh = claudes().find((process) => process.prompts.length);
   expect(lost?.options.args).toContain("lost");
   expect(lost?.prompts).toEqual([]);
   expect(fresh?.prompts[0]).toContain('<thread-context included="1" total="2"');
@@ -431,13 +438,31 @@ it("runs a timer in its own session", async () => {
   expect(claude?.prompts[0]).toContain("Timer: watch/daily");
 });
 
-it("warms a spare for each agent of its type and stops those that go away", async () => {
+it("keeps one spare for all its agents, and none once they are gone", async () => {
   const { runtime, claudes } = setup();
-  const agent = { pubkey: self, config: DEFAULT_CONFIG } as Agent;
-  runtime.sync([agent]);
+  const agent = (pubkey: string) =>
+    ({ pubkey, config: DEFAULT_CONFIG }) as Agent;
+  runtime.sync([agent(self), agent(alice)]);
   await flush(10);
   expect(claudes()).toHaveLength(1);
+  expect(claudes()[0]?.options.cwd).toBe(DEFAULT_CONFIG.workspace);
   runtime.sync([]);
   await flush(10);
   expect(claudes().every((process) => process.killed)).toBe(true);
+});
+
+it("replaces the spare when no agent runs where it was started", async () => {
+  const { runtime, claudes } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  runtime.sync([
+    { pubkey: self, config: { ...DEFAULT_CONFIG, model: "sonnet" } } as Agent,
+  ]);
+  await flush(10);
+  const [old, next] = claudes();
+  expect(old?.killed).toBe(true);
+  expect(next?.options.args).toEqual(
+    expect.arrayContaining(["--model", "sonnet"]),
+  );
+  expect(claudes()).toHaveLength(2);
 });
