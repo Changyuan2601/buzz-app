@@ -105,6 +105,25 @@ it("replies in the current thread and notifies the members it names", async () =
   ]);
 });
 
+it("tags a message for agents, and only that audience", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  await callTool(client, context, "send", {
+    text: "@Bob run the suite",
+    audience: "agents",
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["p", bob],
+    ["audience", "agents"],
+  ]);
+  await expect(
+    callTool(client, context, "send", { text: "hi", audience: "everyone" }),
+  ).rejects.toThrow("audience must be agents");
+  expect(published).toHaveLength(1);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
@@ -118,7 +137,7 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   expect(published[0]?.tags).toContainEqual(["p", bob]);
 });
 
-it("nests a reply to a message inside a thread, and posts a file's text and images", async () => {
+it("replies to a message inside a thread at the thread's root, and posts a file's text and images", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
     reply: nested,
@@ -130,8 +149,7 @@ it("nests a reply to a message inside a thread, and posts a file's text and imag
     content: "# notes.md\n![image](https://relay/media/x.png)",
     tags: [
       ["h", "chan"],
-      ["e", root, "", "root"],
-      ["e", nested, "", "reply"],
+      ["e", root, "", "reply"],
       [
         "imeta",
         "url https://relay/media/x.png",

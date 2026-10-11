@@ -60,6 +60,7 @@ import type {
   LiveListener,
 } from "./incoming";
 import { objectBody } from "./body";
+import { agentAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
@@ -2382,6 +2383,7 @@ export function createRelaySession(
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
               previewContent: content.slice(0, 4096),
+              ...(agentAudience(event) ? { audience: "agents" as const } : {}),
             }),
           ];
         }),
