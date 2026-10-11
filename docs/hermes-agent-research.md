@@ -101,7 +101,6 @@ failure feedback. Browse reduces typos but cannot prevent stale or rejected pick
 
 | Owner | Current behavior | Hermes change |
 | --- | --- | --- |
-| [Native snapshot](../src-tauri/src/agents.rs) | `harness_options` emits exactly Buzz Agent, Goose and Pi. | Detect `hermes-acp` with existing `installed`, emit its absolute executable path when found, empty args/providers, and disable automatic installation. Keep a missing entry visible. |
 | [Old Buzz import](../crates/agent-controller/src/import.rs) | A normal `runtime: hermes` preset reference is rejected unless an override/custom definition supplies a command. | Separate follow-up: choose an import-time absolute-path mapping or launch-time resolution. Preserve missing-install recovery and source data; do not auto-start imported agents. |
 
 The [controller launch path](../crates/agent-controller/src/runtime.rs) already

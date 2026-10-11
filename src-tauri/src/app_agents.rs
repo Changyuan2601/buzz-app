@@ -2,7 +2,6 @@
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
-use crate::agents::profile_http::authorization;
 use buzz_agent_controller::{
     AppAgent, AppAgents, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
     Published, Secret, CREDENTIALS_BUSY,
@@ -13,6 +12,16 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+/// A NIP-98 `Authorization` header for one signed HTTP auth event.
+fn authorization(event: Value) -> Result<String, String> {
+    use base64::Engine;
+    Ok(format!(
+        "Nostr {}",
+        base64::engine::general_purpose::STANDARD
+            .encode(serde_json::to_vec(&event).map_err(|_| "Could not authorize profile request")?)
+    ))
+}
 
 const BUSY_WAITS: u32 = 50;
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);

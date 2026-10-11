@@ -1,5 +1,5 @@
 //! Sign out of Buzz. The command only records intent in a marker outside app
-//! data, stops agents and restarts. The next launch, holding alone the lock for
+//! data and restarts, which stops agents. The next launch, holding alone the lock for
 //! its key (and, for a wipe, the lock every Buzz shares), does every deletion before any window, service or identity read:
 //! agent keys (when asked), the wipe, then the human key. Each step is safe to
 //! repeat; any failure keeps the marker and Buzz exits, so the next launch retries.
@@ -635,7 +635,7 @@ fn fenced() -> Failure {
     }
 }
 
-/// Commit intent, close signing, then stop agents. Deleting is left to the next launch.
+/// Commit intent, close signing, then run `shutdown`. Deleting is left to the next launch.
 async fn prepare<S>(
     paths: &Paths,
     choices: Choices,
@@ -661,7 +661,7 @@ where
     })
 }
 
-/// Admit, commit and stop agents. A refusal before the marker withdraws; any
+/// Admit, commit and shut down. A refusal before the marker withdraws; any
 /// fenced failure, before or after it, closes signing and goes to `exit`, never
 /// to the dialog.
 async fn attempt<S, E>(
@@ -697,8 +697,8 @@ where
     }
 }
 
-/// Tear down as Quit does, however that goes, then explain and exit. Supervisors
-/// stop their agents when Buzz exits; a pending erase waits for them at launch.
+/// Tear down as Quit does, however that goes, then explain and exit. Agent
+/// processes stop when Buzz exits; a pending erase waits for any ownership lock at launch.
 async fn exit_fenced<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), Failure> {
     let handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
@@ -754,7 +754,7 @@ pub(crate) fn sign_out_wipe_refusal() -> Option<&'static str> {
     current_refusal(true, false)
 }
 
-/// Records the choices, stops agents and restarts; the next launch deletes.
+/// Records the choices and restarts; the next launch deletes.
 #[tauri::command]
 pub(crate) async fn sign_out<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -774,15 +774,8 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         wipe,
         remove_agents,
     };
-    let stop = app.clone();
-    let shutdown = || async move {
-        tauri::async_runtime::spawn_blocking(move || {
-            stop.state::<crate::agent_models::ModelHost>().shutdown();
-            stop.state::<crate::AgentHost>().shutdown()
-        })
-        .await
-        .map_err(|error| error.to_string())?
-    };
+    // Agents2 agents run as plugin host processes, which stop when Buzz exits.
+    let shutdown = || async { Ok(()) };
     let identity = app.state::<crate::identity::IdentityHost>().inner().clone();
     let pairing = app.state::<crate::pairing::Pairing>().inner().clone();
     // Close the signer and any pairing that already holds a copy of the key.

@@ -101,7 +101,6 @@ window.fetch = async (input, init) => {
     profiles.set(id, event);
     return Response.json({ accepted: true, event_id: event.id });
   }
-  if (url.endsWith("/authorize-agent")) return Response.json({ auth: [] });
   // Inventory reads stay on the network so browser tests can route them.
   if (url.endsWith("/agent-inventory")) return networkFetch(input, init);
   throw new Error(`Unexpected fixture request: ${url}`);

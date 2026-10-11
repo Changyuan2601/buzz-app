@@ -1,5 +1,10 @@
 # Codex Create and Edit acceptance
 
+> **Status: superseded by Agents2.** This describes the v1 native Codex binding
+> (Settings rows, Create/Edit form, native model discovery and harness install),
+> which was removed with the v1 Agents system. Codex now reaches the app as an
+> Agents2 agent type registered by the bundled Codex plugin.
+
 This is the current contract after the October 8, 2026 simplification. Historical
 validation/proof test results in earlier stack revisions do not establish this
 contract.
