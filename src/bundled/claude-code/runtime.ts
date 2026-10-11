@@ -10,6 +10,8 @@ import type {
   Agent,
   AgentHandle,
   Delivery,
+  Effort,
+  Models,
 } from "../../features/agents2/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -26,6 +28,15 @@ import {
   turnPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions } from "./sessions";
+
+/** What a session can switch to between turns. Claude Code runs `max` as
+ * `xhigh` in a stream-json session, so it is not offered. */
+const EFFORTS = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra high" },
+];
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude Code's own default. */
@@ -114,6 +125,59 @@ export class ClaudeRuntime {
     this.notify();
   }
 
+  /** The models the agent's next turn can run on, with their effort levels.
+   * Without a pick it uses its own: the configured one, or else the one its
+   * sessions report. `default` duplicates a listed model, so it is not offered. */
+  async models(pubkey: string): Promise<Models> {
+    const entry = this.agents.get(pubkey);
+    const configured = entry?.config.model.trim();
+    const [listed, reported, effort] = await Promise.all([
+      entry?.sessions.models() ?? [],
+      configured ? undefined : entry?.sessions.model(),
+      entry?.sessions.effort(),
+    ]);
+    // A turn without a pick keeps the session's effort on any model.
+    const resting = (efforts: readonly Effort[]) =>
+      effort && efforts.some((level) => level.id === effort) ? { effort } : {};
+    const own = configured || reported || "";
+    const offered = listed.filter((model) => model.value !== "default");
+    const models = offered.map((model) => {
+      const efforts =
+        model.supportsEffort === false
+          ? []
+          : EFFORTS.filter(
+              (level) =>
+                !model.supportedEffortLevels ||
+                model.supportedEffortLevels.includes(level.id),
+            );
+      return {
+        id: model.value,
+        label: modelName(model.resolvedModel ?? model.value),
+        efforts,
+        ...resting(efforts),
+      };
+    });
+    const current =
+      offered.find(
+        (model) => own === model.value || own === model.resolvedModel,
+      )?.value ?? own;
+    // An own model Claude Code does not list is still the one it runs.
+    return models.some((model) => model.id === current)
+      ? { current, models }
+      : {
+          current,
+          models: [
+            {
+              id: current,
+              label: current ? modelName(current) : "Claude Code",
+              efforts: EFFORTS,
+              ...resting(EFFORTS),
+            },
+            ...models,
+          ],
+        };
+  }
+
   /** Conversations each agent has running, for its status view. */
   sessions(pubkey: string) {
     let view = this.views.get(pubkey);
@@ -139,7 +203,14 @@ export class ClaudeRuntime {
     this.agents.clear();
   }
 
-  async run({ trigger, agent, config: raw, channelId }: Delivery) {
+  async run({
+    trigger,
+    agent,
+    config: raw,
+    channelId,
+    model,
+    effort,
+  }: Delivery) {
     const settings = config(raw);
     if (
       trigger.type !== "timer" &&
@@ -193,6 +264,7 @@ export class ClaudeRuntime {
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
+      pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
     });
     this.notify();
     this.watch(done, async (error) => {
@@ -434,4 +506,15 @@ export class ClaudeRuntime {
       view.dispose();
     }
   }
+}
+
+/** `claude-opus-5-5` reads as `Opus 5.5`, and an alias such as `opus` as
+ * `Opus`. Anything else is shown as it is. */
+export function modelName(model: string) {
+  const id =
+    /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[.*\])?$/.exec(model);
+  const family = id?.[1] ?? (/^[a-z]+$/.test(model) ? model : undefined);
+  if (!family) return model;
+  const name = family[0]?.toUpperCase() + family.slice(1);
+  return id ? `${name} ${id[2]}${id[3] ? `.${id[3]}` : ""}` : name;
 }

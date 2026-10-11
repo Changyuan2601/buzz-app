@@ -414,7 +414,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "outline",
       "inverted",
       "link",
-      "size: xs | sm | md | lg",
+      "size: inline | xs | sm | md | lg",
       "shape: capsule (default) | control (12px)",
       "loading",
     ],

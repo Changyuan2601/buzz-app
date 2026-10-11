@@ -76,8 +76,21 @@ function fixture(
           data: [
             {
               model: "test-model",
+              displayName: "Test Model",
               isDefault: true,
               defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["low", "medium", "high"].map(
+                (reasoningEffort) => ({ reasoningEffort, description: "" }),
+              ),
+            },
+            {
+              model: "deep-model",
+              displayName: "",
+              isDefault: false,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["high", "xhigh"].map(
+                (reasoningEffort) => ({ reasoningEffort, description: "" }),
+              ),
             },
           ],
           nextCursor: null,
@@ -438,6 +451,111 @@ it("hands over promptly and runs conversations independently on one server", asy
       ["e", "1".padStart(64, "0"), "", "reply"],
     ]),
   });
+});
+it("discovers models and efforts before any turn, sharing one read-only lookup", async () => {
+  const f = fixture();
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  const one = f.runtime.preview(agent);
+  const two = f.runtime.preview(agent);
+  expect(one).toBe(two);
+  await expect(one).resolves.toEqual({
+    current: "test-model",
+    models: [
+      {
+        id: "test-model",
+        label: "Test Model",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+        effort: "medium",
+      },
+      {
+        id: "deep-model",
+        label: "deep-model",
+        efforts: [
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra high" },
+        ],
+        effort: "high",
+      },
+    ],
+  });
+  expect(f.spawn).toHaveBeenCalledTimes(1);
+  expect(f.spawn.mock.calls[0]?.[1]?.cwd).toBe("/tmp/codex-test");
+  expect(f.starts()).toEqual([]);
+  expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+  expect(f.process.end).toHaveBeenCalledOnce();
+  expect(f.runtime.preview(agent)).toBe(one);
+  f.runtime.sync([], scope);
+  f.spawn.mockRejectedValueOnce(new Error("offline"));
+  await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
+});
+it("still offers the listed models when the configured one is not listed", async () => {
+  const f = fixture();
+  const agent = {
+    pubkey,
+    config: { workspace: "/tmp/codex-test", model: "newer-model" },
+  } as Agent;
+  const { current, models } = await f.runtime.preview(agent);
+  expect(current).toBe("newer-model");
+  expect(models.map((model) => [model.id, model.efforts.length])).toEqual([
+    ["newer-model", 0],
+    ["test-model", 3],
+    ["deep-model", 2],
+  ]);
+});
+it("previews each model at the configured effort when it has it", async () => {
+  const f = fixture();
+  const agent = {
+    pubkey,
+    config: { workspace: "/tmp/codex-test", effort: "low" },
+  } as Agent;
+  const { models } = await f.runtime.preview(agent);
+  expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
+});
+it("starts a turn at the effort its owner picked when the model supports it", async () => {
+  const f = fixture();
+  await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("@Codex other", "e".repeat(64)),
+    effort: "max",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.starts().map((wire) => (wire.params as { effort?: string }).effort),
+  ).toEqual(["high", "low"]);
+});
+it("starts a turn on the model its owner picked, at an effort that model supports", async () => {
+  const f = fixture();
+  const run = async (
+    thread: string,
+    pick: { model?: string; effort?: string },
+  ) => {
+    const before = f.starts().length;
+    await f.runtime.run({ ...f.delivery("@Codex", thread), ...pick });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(before + 1));
+  };
+  await run("a".repeat(64), { model: "deep-model", effort: "xhigh" });
+  // The configured `low` is not one of its levels, so it runs at its default.
+  await run("b".repeat(64), { model: "deep-model" });
+  // A model Codex no longer lists falls back to the agent's own.
+  await run("c".repeat(64), { model: "gone-model" });
+  expect(
+    f.starts().map((wire) => {
+      const { model, effort } = wire.params as {
+        model: string;
+        effort: string;
+      };
+      return { model, effort };
+    }),
+  ).toEqual([
+    { model: "deep-model", effort: "xhigh" },
+    { model: "deep-model", effort: "high" },
+    { model: "test-model", effort: "low" },
+  ]);
 });
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();

@@ -442,3 +442,6 @@ import TablerCircleIcon from "@tabler/icons-react/dist/esm/icons/IconCircle.mjs"
 export const CircleIcon = defineIcon("tabler", TablerCircleIcon);
 import TablerCircleHalfIcon from "@tabler/icons-react/dist/esm/icons/IconCircleHalf.mjs";
 export const CircleHalfIcon = defineIcon("tabler", TablerCircleHalfIcon);
+
+import TablerGaugeIcon from "@tabler/icons-react/dist/esm/icons/IconGauge.mjs";
+export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);

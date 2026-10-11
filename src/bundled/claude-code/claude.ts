@@ -39,6 +39,18 @@ const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };
 
+/** A model Claude Code lists as one a session can switch to. */
+export type ClaudeModel = Readonly<{
+  /** What `set_model` takes: an alias such as `opus`, or a model id. */
+  value: string;
+  resolvedModel?: string;
+  displayName?: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: readonly string[];
+}>;
+/** What the next turn is asked to run with; absent is the session's own. */
+export type TurnPick = Readonly<{ model?: string; effort?: string }>;
+
 /** How a burst of work ended: every message sent so far has been answered,
  * or the process is gone. */
 export type Settled = Readonly<{
@@ -76,6 +88,8 @@ export class ClaudeProcess {
   private pending = 0;
   /** It has begun a turn, so its session loaded. */
   private began = false;
+  /** The model the session reported when it began. */
+  private reported: string | undefined;
   private waiters: ((settled: Settled) => void)[] = [];
   private buffer = "";
   private stderr = "";
@@ -84,16 +98,32 @@ export class ClaudeProcess {
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   private requests = 0;
+  /** Control requests awaiting Claude Code's answer, by request id. */
+  private calls = new Map<string, (response: Message) => void>();
+  /** The models Claude Code lists, from its answer to `initialize`. */
+  private listed: Promise<readonly ClaudeModel[]> = Promise.resolve([]);
+  /** The model the next turn runs on; undefined is the session's own. */
+  private pickedModel: string | undefined;
+  /** The effort the next turn runs at; undefined is the session's own. */
+  private effort: string | undefined;
+  /** The session's own effort, read before the first change to restore it. */
+  private ownEffort: string | undefined;
+  private readingEffort: Promise<void> | undefined;
   readonly exited: Promise<number | null>;
 
   private constructor(
     private readonly process: HostProcess,
     resume: string | undefined,
     private readonly tools: ToolServer | undefined,
+    /** The session's own model, as launched; undefined is Claude Code's default. */
+    private readonly ownModel: string | undefined,
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
       this.alive = false;
+      for (const resolve of this.calls.values())
+        resolve({ subtype: "error", error: "Claude Code exited" });
+      this.calls.clear();
       const error =
         this.lastError ??
         (this.stderr.trim().split("\n").at(-1) ||
@@ -147,11 +177,13 @@ export class ClaudeProcess {
       process,
       launch.resume ?? launch.sessionId,
       launch.tools,
+      launch.model,
     );
     for (const data of earlyErrors) claude.readError(data);
     for (const data of early) claude.read(data);
-    // Loads settings, tools and MCP servers now rather than on the first message.
-    await claude.request({
+    // Loads settings, tools and MCP servers now rather than on the first
+    // message. The answer lists the models a session can switch to.
+    const { written, answer } = claude.request({
       subtype: "initialize",
       appendSystemPrompt: launch.systemPrompt,
       ...(launch.tools
@@ -165,6 +197,15 @@ export class ClaudeProcess {
           }
         : {}),
     });
+    await written;
+    claude.listed = answer.then((response) => {
+      const models = (response.response as Message | undefined)?.models;
+      return Array.isArray(models)
+        ? models.filter(
+            (model): model is ClaudeModel => typeof model?.value === "string",
+          )
+        : [];
+    });
     return claude;
   }
 
@@ -177,15 +218,43 @@ export class ClaudeProcess {
   get started() {
     return this.began;
   }
+  get model() {
+    return this.reported;
+  }
+  /** The models this session can switch to, without sending a turn. */
+  models() {
+    return this.listed;
+  }
+  /** The effort a turn without a pick runs at, when Claude Code reports it. */
+  async readEffort() {
+    await this.readOwnEffort();
+    return this.ownEffort;
+  }
+  /** Settings resolve the default model without sending a paid user turn. */
+  async readModel() {
+    // Settings report a picked model, which is not the session's own.
+    if (this.reported || this.pickedModel !== undefined) return this.reported;
+    const answer = await this.call({ subtype: "get_settings" });
+    const applied = (answer.response as Message | undefined)?.applied as
+      | Message
+      | undefined;
+    if (typeof applied?.model === "string") this.reported = applied.model;
+    return this.reported;
+  }
 
   /** Sends one user message. Resolves when it, and anything sent after it, has
-   * been answered and the session is idle again. */
-  send(text: string): Promise<Settled> {
+   * been answered and the session is idle again. A new turn runs with the
+   * picked model and effort, or the session's own without them; a message
+   * folded into a running turn changes only what it asks for. */
+  send(text: string, { model, effort }: TurnPick = {}): Promise<Settled> {
     if (!this.alive)
       return Promise.resolve({
         ok: false,
         error: "Claude Code is not running",
       });
+    // The model first: effort applies to whichever model runs.
+    this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
+    this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
     this.pending++;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
@@ -211,12 +280,74 @@ export class ClaudeProcess {
   private write(message: Message) {
     return this.process.write(`${JSON.stringify(message)}\n`);
   }
-  private async request(request: Message) {
-    await this.write({
+  /** Writes a control request: `written` settles with the write, `answer`
+   * with Claude Code's response. */
+  private request(request: Message) {
+    const id = `buzz-${++this.requests}`;
+    const answer = new Promise<Message>((resolve) =>
+      this.calls.set(id, resolve),
+    );
+    const written = this.write({
       type: "control_request",
-      request_id: `buzz-${++this.requests}`,
+      request_id: id,
       request,
     });
+    return { written, answer };
+  }
+  /** Sends a control request and resolves with Claude Code's response. */
+  private call(request: Message): Promise<Message> {
+    const { written, answer } = this.request(request);
+    return written.then(() => answer);
+  }
+  /** Switches model without restarting, as the SDK's `setModel` does. Back to
+   * the session's own is the model it was launched with, or the default. A
+   * new model misses the prompt cache, which the owner accepts by picking. */
+  private setModel(model: string | undefined) {
+    if (model === this.pickedModel) return;
+    this.pickedModel = model;
+    const next = model ?? this.ownModel;
+    void this.call({
+      subtype: "set_model",
+      ...(next ? { model: next } : {}),
+    }).then((answer) => {
+      if (answer.subtype !== "success")
+        console.warn("Claude Code did not change its model", answer.error);
+    });
+  }
+  /** Changes effort without restarting, which keeps the prompt cache: Claude
+   * Code sends effort per message. Clearing the flag setting would not restore
+   * the session's own level, so that is read before the first change and set
+   * back explicitly. Written ahead of the message without waiting, as Claude
+   * Code takes its input in order, so a turn never waits on it. */
+  private setEffort(effort: string | undefined) {
+    if (effort === this.effort) return;
+    void this.readOwnEffort();
+    const level = effort ?? this.ownEffort;
+    if (!level) {
+      console.warn("Claude Code's own effort is unknown; keeping the last one");
+      return;
+    }
+    this.effort = effort;
+    void this.call({
+      subtype: "apply_flag_settings",
+      settings: { effortLevel: level },
+    }).then((answer) => {
+      if (answer.subtype !== "success")
+        console.warn("Claude Code did not change its effort", answer.error);
+    });
+  }
+  /** Read once, ahead of the first change, so it is the session's own. */
+  private readOwnEffort() {
+    this.readingEffort ??= this.call({ subtype: "get_settings" }).then(
+      (answer) => {
+        const applied = (answer.response as Message | undefined)?.applied as
+          | Message
+          | undefined;
+        if (typeof applied?.effort === "string")
+          this.ownEffort = applied.effort;
+      },
+    );
+    return this.readingEffort;
   }
   private settle(settled: Settled) {
     this.pending = 0;
@@ -247,10 +378,21 @@ export class ClaudeProcess {
   private handle(message: Message) {
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
-    if (message.type === "system" && message.subtype === "init")
+    if (message.type === "system" && message.subtype === "init") {
       this.began = true;
+      // A picked model is not the session's own.
+      if (typeof message.model === "string" && this.pickedModel === undefined)
+        this.reported = message.model;
+    }
     if (message.type === "control_request") {
       void this.answer(message);
+      return;
+    }
+    if (message.type === "control_response") {
+      const response = (message.response ?? {}) as Message;
+      const id = String(response.request_id);
+      this.calls.get(id)?.(response);
+      this.calls.delete(id);
       return;
     }
     if (

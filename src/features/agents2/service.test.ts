@@ -195,6 +195,20 @@ async function setup({
         },
       },
     }),
+    models: async () => ({
+      current: "fast",
+      models: [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+        { id: "deep", label: "Deep", efforts: [{ id: "max", label: "Max" }] },
+      ],
+    }),
     run,
   };
   plugin.agents2.register(type);
@@ -284,6 +298,37 @@ it("treats a reply to something the agent published as addressed", async () => {
   emit({ events: [event("r", { tags: [["e", "p1".padEnd(64, "0")]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   expect(run.mock.calls[1]?.[0].trigger.type).toBe("mention");
+});
+
+it("passes the model and effort its owner asked for, and no other", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const asked = (id: string, pubkey: string, ...tags: string[][]) =>
+    event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
+  emit({
+    events: [
+      asked("owner", viewer, ["effort", bot, "high"]),
+      asked("stranger", other, ["effort", bot, "high"], ["model", bot, "deep"]),
+      asked("unlisted", viewer, ["effort", bot, "max"]),
+      asked("elsewhere", viewer, ["effort", sibling, "high"]),
+      asked("model", viewer, ["model", bot, "deep"], ["effort", bot, "max"]),
+      asked("mismatch", viewer, ["model", bot, "deep"], ["effort", bot, "low"]),
+      asked("unknown", viewer, ["model", bot, "gone"], ["effort", bot, "low"]),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(7));
+  expect(
+    run.mock.calls.map(([{ model, effort }]) => ({ model, effort })),
+  ).toEqual([
+    { model: undefined, effort: "high" },
+    { model: undefined, effort: undefined },
+    { model: undefined, effort: undefined },
+    { model: undefined, effort: undefined },
+    // An effort counts only for the model the run uses.
+    { model: "deep", effort: "max" },
+    { model: "deep", effort: undefined },
+    { model: undefined, effort: "low" },
+  ]);
 });
 
 it("keeps the in-flight run and the queue across edits; each job reads the agent as it starts", async () => {

@@ -154,6 +154,21 @@ it("starts over when a saved session no longer loads", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 9 });
 });
 
+it("runs a turn with the model and effort it was delivered with, starting over included", async () => {
+  const store = memoryStore();
+  store.set("c/root", { id: "lost", seen: 4, at: 1 });
+  const { pool, claudes } = sessions({ store });
+  await pool.deliver("c/root", "hello", 9, {
+    fresh: async () => "hello again",
+    pick: { model: "haiku", effort: "low" },
+  });
+  await pool.deliver("c/root", "next", 10);
+  const fresh = claudes().find((process) => process.prompts.length);
+  expect(fresh?.prompts).toEqual(["hello again", "next"]);
+  expect(fresh?.models).toEqual(["haiku", "opus"]);
+  expect(fresh?.efforts).toEqual(["low", "high"]);
+});
+
 it("stops the longest-idle conversation to stay within its process limit", async () => {
   const { pool, live } = sessions();
   for (let index = 0; index < MAX_LIVE + 2; index++)

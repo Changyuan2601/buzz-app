@@ -6,8 +6,10 @@
 import {
   ClaudeProcess,
   type ClaudeLaunch,
+  type ClaudeModel,
   type Settled,
   type Spawn,
+  type TurnPick,
 } from "./claude";
 
 /** Processes an agent keeps, the spare included. */
@@ -54,6 +56,8 @@ export class AgentSessions {
   private readonly live = new Map<string, Live>();
   private readonly opening = new Map<string, Promise<Live | undefined>>();
   private spare: Promise<Live | undefined> | undefined;
+  private reported: string | undefined;
+  private listed: readonly ClaudeModel[] = [];
   private disposed = false;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -75,6 +79,28 @@ export class AgentSessions {
     }));
   }
 
+  /** Resolve the model from a live or warm process, without starting a turn. */
+  async model() {
+    const process = await this.someProcess();
+    this.reported = (await process?.readModel()) ?? this.reported;
+    return this.reported;
+  }
+  /** The effort a turn without a pick runs at, from a live or warm process. */
+  async effort() {
+    return (await this.someProcess())?.readEffort();
+  }
+  /** The models a session can switch to, from a live or warm process. */
+  async models() {
+    const models = await (await this.someProcess())?.models();
+    if (models?.length) this.listed = models;
+    return this.listed;
+  }
+  private async someProcess() {
+    return (
+      this.live.values().next().value?.process ?? (await this.spare)?.process
+    );
+  }
+
   /** Starts a spare process unless one exists or the agent is at its limit. */
   warm() {
     if (this.disposed || this.spare || this.count() >= MAX_LIVE) return;
@@ -93,7 +119,8 @@ export class AgentSessions {
 
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
-   * `fresh` builds it again for a new session when the saved one is lost. */
+   * `fresh` builds it again for a new session when the saved one is lost;
+   * `pick` is the model and effort the turn was asked to run with. */
   async deliver(
     key: string,
     text: string,
@@ -101,7 +128,12 @@ export class AgentSessions {
     {
       steer = text,
       fresh,
-    }: Readonly<{ steer?: string; fresh?: () => Promise<string> }> = {},
+      pick = {},
+    }: Readonly<{
+      steer?: string;
+      fresh?: () => Promise<string>;
+      pick?: TurnPick;
+    }> = {},
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude Code was stopped" };
     // A message that arrives while its conversation's process starts uses it.
@@ -119,7 +151,7 @@ export class AgentSessions {
     }
     if (live) {
       this.touch(key, live, seen);
-      return this.answer(key, live, live.process.busy ? steer : text);
+      return this.answer(key, live, live.process.busy ? steer : text, pick);
     }
     const saved = this.options.store.get(key);
     // A new conversation takes the spare's place; any other start needs room,
@@ -147,13 +179,13 @@ export class AgentSessions {
       void live.process.kill();
       return { ok: false, error: "Claude Code was stopped" };
     }
-    const delivered = await this.answer(key, live, text);
+    const delivered = await this.answer(key, live, text, pick);
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
       this.options.store.delete(key);
       this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen);
+      return this.deliver(key, fresh ? await fresh() : text, seen, { pick });
     }
     return delivered;
   }
@@ -214,8 +246,8 @@ export class AgentSessions {
     });
     this.warm();
   }
-  private async answer(key: string, live: Live, text: string) {
-    const settled = await live.process.send(text);
+  private async answer(key: string, live: Live, text: string, pick: TurnPick) {
+    const settled = await live.process.send(text, pick);
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (live.fingerprint !== this.options.fingerprint() && !live.process.busy)

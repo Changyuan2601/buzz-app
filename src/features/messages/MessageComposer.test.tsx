@@ -44,6 +44,8 @@ import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { Agents2Context } from "../agents2/react";
+import type { Agents2 } from "../agents2/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
@@ -106,6 +108,7 @@ function mount(
   options: Partial<MessageComposerProps> = {},
   control?: AgentControl,
   viewer?: string,
+  agents2?: Agents2,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -331,11 +334,13 @@ function mount(
   bindChoices();
   let presented = true;
   const tree = () => (
-    <ConversationPresentation value={presented}>
-      <div hidden={!presented} inert={!presented}>
-        <MessageComposer {...props} />
-      </div>
-    </ConversationPresentation>
+    <Agents2Context.Provider value={agents2}>
+      <ConversationPresentation value={presented}>
+        <div hidden={!presented} inert={!presented}>
+          <MessageComposer {...props} />
+        </div>
+      </ConversationPresentation>
+    </Agents2Context.Provider>
   );
   const view = render(tree(), {
     reactStrictMode: true,
@@ -2043,6 +2048,192 @@ it("retries publish-unknown attachment sends with the same signed event and no r
   expect(h.publish.mock.calls[1]?.[0]).toEqual(firstEvent);
   expect(h.sign).toHaveBeenCalledTimes(1);
   expect(h.uploadCalls).toHaveLength(1);
+});
+
+it("asks a mentioned agent of the viewer's for a model and effort on the next run only", async () => {
+  // Snapshots are stable, as the service's are.
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const models = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      },
+      {
+        id: "deep",
+        label: "Deep",
+        efforts: [
+          { id: "high", label: "High" },
+          { id: "max", label: "Max" },
+        ],
+      },
+    ],
+  };
+  const types = [{ key: "test/agent", models: () => models }];
+  const agents2 = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents2;
+  const h = mount({}, undefined, undefined, agents2);
+  const picker = () =>
+    screen.queryByRole("button", {
+      name: "Model and effort for the next run",
+    });
+  const open = async () => {
+    // Choices load asynchronously each time the agent is mentioned again.
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    // The edge-aligned thumb stays hidden until it is measured, which jsdom
+    // cannot do, so the slider is not in the accessibility tree here.
+    return screen.findByLabelText("Effort for Honey's next run");
+  };
+  const model = () =>
+    screen.getByRole("button", { name: "Model for Honey's next run" });
+  // Writes the message and mentions an agent before any pick is made.
+  const write = async (name: string, text: string) => {
+    await h.user.type(h.input(), text);
+    await h.user.click(screen.getByRole("button", { name }));
+  };
+  const send = async () => {
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  };
+  expect(picker()).toBeNull();
+  await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
+  // Someone else's agent, or a person, offers no choice.
+  expect(picker()).toBeNull();
+  await write("First Honey", "think hard");
+  const slider = await open();
+  expect(model()).toHaveTextContent("Fast");
+  expect(slider).toHaveAttribute("aria-valuetext", "Default");
+  expect(slider.closest("[data-unknown]")).not.toBeNull();
+  slider.focus();
+  await h.user.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await send();
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("think hard"),
+    [second.pubkey, first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { effort: "high" } },
+  );
+  await write("First Honey", "think deeper");
+  const again = await open();
+  expect(again).toHaveAttribute("aria-valuetext", "Default");
+  // A new model keeps an effort it also offers.
+  again.focus();
+  await h.user.keyboard("{ArrowRight}");
+  await h.user.click(model());
+  await h.user.click(
+    await screen.findByRole("menuitemradio", { name: "Deep" }),
+  );
+  expect(model()).toHaveTextContent("Deep");
+  const deep = await screen.findByLabelText("Effort for Honey's next run");
+  expect(deep).toHaveAttribute("aria-valuetext", "High");
+  await send();
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("think deeper"),
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { model: "deep", effort: "high" } },
+  );
+  await write("First Honey", "as usual");
+  await open();
+  await h.user.click(model());
+  await h.user.click(
+    await screen.findByRole("menuitemradio", { name: "Deep" }),
+  );
+  // Back to the agent's own model is no pick at all.
+  await h.user.click(model());
+  await h.user.click(
+    await screen.findByRole("menuitemradio", { name: "Fast" }),
+  );
+  expect(model()).toHaveTextContent("Fast");
+  await send();
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("as usual"),
+    [first.pubkey],
+    [],
+  );
+});
+
+it("opens the effort picker at the effort the agent's next run uses", async () => {
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const models = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+        effort: "medium",
+      },
+    ],
+  };
+  const types = [{ key: "test/agent", models: () => models }];
+  const agents2 = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents2;
+  const h = mount({}, undefined, undefined, agents2);
+  const open = async () => {
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    return screen.findByLabelText("Effort for Honey's next run");
+  };
+  const send = async () => {
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  };
+  await h.user.type(h.input(), "think hard");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const slider = await open();
+  expect(slider).toHaveAttribute("aria-valuetext", "Medium");
+  // A known level is drawn like a picked one, not muted.
+  expect(slider.closest("[data-unknown]")).toBeNull();
+  slider.focus();
+  await h.user.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  // Back to the agent's own effort is no pick at all.
+  await h.user.keyboard("{ArrowLeft}");
+  expect(slider).toHaveAttribute("aria-valuetext", "Medium");
+  await send();
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("think hard"),
+    [first.pubkey],
+    [],
+  );
 });
 
 it("sends channel messages and thread replies through real form and keyboard events", async () => {

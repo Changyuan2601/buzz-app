@@ -3,6 +3,7 @@ import { SectionHeading } from "./primitives";
 import { useState } from "react";
 import {
   ArrowRightIcon,
+  CaretDownIcon,
   PlusIcon,
   DotsThreeIcon,
   GearIcon,
@@ -140,6 +141,16 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview
+        code={`<Button size="inline" variant="ghost">Model <CaretDownIcon aria-hidden="true" /></Button>`}
+      >
+        <Button size="inline" variant="ghost">
+          Model <CaretDownIcon aria-hidden="true" />
+        </Button>
+        <Button size="inline" variant="ghost" disabled>
+          Model <CaretDownIcon aria-hidden="true" />
+        </Button>
+      </ExamplePreview>
       <section
         aria-label="Button behavior"
         className="component-specimen-group"

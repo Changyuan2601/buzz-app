@@ -4,7 +4,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./claude-testing";
-import { ClaudeRuntime, DEFAULT_CONFIG } from "./runtime";
+import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -118,6 +118,98 @@ it("hands a mention to its thread's session", async () => {
   expect(published).toEqual([]);
 });
 
+const EFFORTS = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra high" },
+];
+it("knows the agent's own model once one of its sessions has begun", async () => {
+  const mention = message("2", "@Claude can you look?", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, deliver } = setup([mention]);
+  // Before then nothing says which model it runs, nor what else it could.
+  expect(await runtime.models(self)).toEqual({
+    current: "",
+    models: [{ id: "", label: "Claude Code", efforts: EFFORTS }],
+  });
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  expect((await runtime.models(self)).current).toBe("opus");
+});
+it("lists the models a warm process can switch to, at its own effort, without a user turn", async () => {
+  const { runtime, claudes } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  try {
+    expect(await runtime.models(self)).toEqual({
+      current: "opus",
+      models: [
+        { id: "opus", label: "Opus 5.5", efforts: EFFORTS, effort: "high" },
+        {
+          id: "haiku",
+          label: "Haiku 5.5",
+          efforts: [EFFORTS[0], EFFORTS[2]],
+          effort: "high",
+        },
+        { id: "legacy", label: "Legacy 1", efforts: [] },
+      ],
+    });
+    expect(claudes()).toHaveLength(1);
+    expect(claudes()[0]?.prompts).toEqual([]);
+  } finally {
+    runtime.dispose();
+  }
+});
+it("still offers a configured model Claude Code does not list", async () => {
+  const { runtime } = setup();
+  const config = { ...DEFAULT_CONFIG, model: "claude-sonnet-9-9" };
+  runtime.sync([{ pubkey: self, config } as Agent]);
+  try {
+    const { current, models } = await runtime.models(self);
+    expect(current).toBe("claude-sonnet-9-9");
+    expect(models.map((model) => model.label)).toEqual([
+      "Sonnet 9.9",
+      "Opus 5.5",
+      "Haiku 5.5",
+      "Legacy 1",
+    ]);
+  } finally {
+    runtime.dispose();
+  }
+});
+it("runs a mention on the model and effort its delivery picked", async () => {
+  const mention = message("2", "@Claude think hard", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([mention]);
+  await runtime.run({
+    trigger: { type: "mention", event: mention },
+    channelId: channel,
+    agent,
+    config: DEFAULT_CONFIG,
+    model: "haiku",
+    effort: "low",
+    signal: new AbortController().signal,
+  } as Delivery);
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(claude?.models).toEqual(["haiku"]);
+  expect(claude?.efforts).toEqual(["low"]);
+});
+it("reads model ids and aliases as names", () => {
+  expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
+  expect(modelName("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");
+  expect(modelName("claude-opus-4[1m]")).toBe("Opus 4");
+  expect(modelName("opus")).toBe("Opus");
+  expect(modelName("my-proxy/model")).toBe("my-proxy/model");
+});
 it("answers Claude's tool calls as the agent, in the thread it is working in", async () => {
   const root = message("1", "Build is red");
   const mention = message("2", "@Claude can you look?", {

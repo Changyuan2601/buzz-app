@@ -2,6 +2,7 @@ import type {
   Agent,
   AgentHandle,
   Delivery,
+  Models,
 } from "../../features/agents2/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -10,6 +11,7 @@ import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
   config,
   absoluteWorkspace,
+  effortName,
   validWorkspace,
   type Config,
 } from "./config";
@@ -37,6 +39,9 @@ type Request = {
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   interest: string;
+  /** The model and effort the owner picked for this turn. */
+  model?: string;
+  effort?: string;
 };
 type Saved = { threadId: string; workspace: string };
 type Active = {
@@ -80,6 +85,11 @@ export class CodexRuntime {
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
   private scope = "";
+  /** Read-only model discovery, kept per agent until its settings change. */
+  private previews = new Map<
+    string,
+    { key: string; rpc: AppServer; ready: Promise<Models> }
+  >();
   constructor(
     private readonly spawn: Spawn,
     private readonly relay: RelayData,
@@ -93,6 +103,80 @@ export class CodexRuntime {
   };
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
+  preview(agent: Agent) {
+    const settings = config(agent.config);
+    const key = JSON.stringify([
+      settings.workspace,
+      settings.model,
+      settings.effort,
+    ]);
+    const existing = this.previews.get(agent.pubkey);
+    if (existing?.key === key) return existing.ready;
+    if (existing) void existing.rpc.close();
+    const rpc = new AppServer();
+    const ready = (async () => {
+      try {
+        const workspace = await this.workspace(settings.workspace);
+        await rpc.open(this.spawn, workspace);
+        const normalized = await rpc.request<{
+          config: { model?: string | null };
+        }>("config/read", { cwd: workspace });
+        const models = await listModels(rpc);
+        const model =
+          settings.model ||
+          normalized.config.model ||
+          models.find((row) => row.isDefault)?.model;
+        const offered = models.map((row) => {
+          const efforts = row.supportedReasoningEfforts.map(
+            ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
+          );
+          // As a run picks it: the configured effort if the model has it.
+          const effort = efforts.some((level) => level.id === settings.effort)
+            ? settings.effort
+            : row.defaultReasoningEffort;
+          return {
+            id: row.model,
+            label: row.displayName || row.model,
+            efforts,
+            ...(effort ? { effort } : {}),
+          };
+        });
+        // A configured model this Codex does not list still leaves the
+        // listed ones to pick, so the picker stays.
+        return !model || models.some((row) => row.model === model)
+          ? { current: model ?? "", models: offered }
+          : {
+              current: model,
+              models: [{ id: model, label: model, efforts: [] }, ...offered],
+            };
+      } finally {
+        await rpc.close();
+      }
+    })();
+    const entry = { key, rpc, ready };
+    this.previews.set(agent.pubkey, entry);
+    void ready.catch(() => {
+      if (this.previews.get(agent.pubkey) === entry)
+        this.previews.delete(agent.pubkey);
+    });
+    return ready;
+  }
+
+  private async workspace(path: string) {
+    if (absoluteWorkspace(path)) return path;
+    let directory = "";
+    const process = await this.spawn("workspace", {
+      cwd: path,
+      onStdout: (data) => {
+        directory += data;
+      },
+    });
+    const code = await process.exited;
+    const workspace = directory.trim();
+    if (code !== 0 || !absoluteWorkspace(workspace))
+      throw new Error("Could not resolve the default Codex workspace.");
+    return workspace;
+  }
   private status(pubkey: string, key: string, status: string, detail = "") {
     const others = this.sessions(pubkey).filter((view) => view.key !== key);
     this.views.set(pubkey, [
@@ -107,6 +191,11 @@ export class CodexRuntime {
       this.scope = scope;
     }
     const present = new Set(agents.map((agent) => agent.pubkey));
+    for (const [pubkey, preview] of this.previews)
+      if (!present.has(pubkey)) {
+        void preview.rpc.close();
+        this.previews.delete(pubkey);
+      }
     for (const [pubkey, entry] of this.entries)
       if (!present.has(pubkey)) {
         entry.abort.abort();
@@ -117,6 +206,8 @@ export class CodexRuntime {
     for (const listener of this.listeners) listener();
   }
   dispose() {
+    for (const preview of this.previews.values()) void preview.rpc.close();
+    this.previews.clear();
     for (const entry of this.entries.values()) {
       entry.abort.abort();
       void entry.rpc.close();
@@ -214,6 +305,8 @@ export class CodexRuntime {
       agent,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
+      ...(delivery.model ? { model: delivery.model } : {}),
+      ...(delivery.effort ? { effort: delivery.effort } : {}),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -522,21 +615,8 @@ export class CodexRuntime {
       signal.throwIfAborted();
       // The process host expands ~/.buzz and creates it; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
-      let workspace = settings.workspace;
-      if (!absoluteWorkspace(workspace)) {
-        let directory = "";
-        const process = await this.spawn("workspace", {
-          cwd: workspace,
-          onStdout: (data) => {
-            directory += data;
-          },
-        });
-        const code = await process.exited;
-        workspace = directory.trim();
-        if (code !== 0 || !absoluteWorkspace(workspace))
-          throw new Error("Could not resolve the default Codex workspace.");
-        signal.throwIfAborted();
-      }
+      const workspace = await this.workspace(settings.workspace);
+      signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
       const normalized = await rpc.request<{
@@ -546,16 +626,26 @@ export class CodexRuntime {
         };
       }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
-      const model =
+      const own =
         settings.model ||
         normalized.config.model ||
         models.find((row) => row.isDefault)?.model;
-      const selected = models.find((row) => row.model === model);
+      // Model and effort are per turn, so a pick changes nothing after it.
+      const picked = models.find((row) => row.model === request.model);
+      const selected = picked ?? models.find((row) => row.model === own);
       if (!selected)
         throw new Error(
           "The selected Codex model is unavailable. Choose an available model in Settings.",
         );
-      const effort = settings.effort || selected.defaultReasoningEffort;
+      const model = selected.model;
+      const supported = selected.supportedReasoningEfforts.map(
+        (level) => level.reasoningEffort,
+      );
+      // A picked model may not support the configured effort.
+      const effort =
+        [request.effort, settings.effort].find(
+          (level) => level && supported.includes(level),
+        ) ?? selected.defaultReasoningEffort;
       const mcp = Object.fromEntries(
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [
