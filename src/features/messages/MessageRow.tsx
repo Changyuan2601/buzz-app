@@ -1,5 +1,11 @@
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { LightningIcon } from "../../shared/design-system/icons";
+import {
+  ArrowRightIcon,
+  LightningIcon,
+} from "../../shared/design-system/icons";
+import { messagePreviewText } from "../conversation/message-preview-text";
+import { profileMentionParts } from "./profile-mentions";
+import { addressedMessage } from "./audience-address";
 import { WorkflowByline } from "./WorkflowByline";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
@@ -140,8 +146,9 @@ function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
   else if (rect.left < start) strip.scrollLeft -= start - rect.left;
 }
 
-export const MessageRow = memo(function MessageRow({
+const FullMessageRow = memo(function MessageRow({
   row,
+  shownRow,
   getThreadRoot,
   session,
   scope,
@@ -168,7 +175,10 @@ export const MessageRow = memo(function MessageRow({
   onMediaTime,
   onOpenMediaReview,
   agentPubkeys,
-}: MessageRowProps) {
+}: MessageRowProps & {
+  /** The message as its body shows, when that differs from `row`. */
+  shownRow?: ChannelMessage;
+}) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
   const threadUnread = useThreadUnread(
@@ -252,8 +262,11 @@ export const MessageRow = memo(function MessageRow({
   );
   const presenceId = useId();
   const thinkingId = useId();
-  const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
-  const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
+  const shown = shownRow ?? row;
+  const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
+  const displayRow = timeReply
+    ? { ...shown, content: timeReply.content }
+    : shown;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -883,6 +896,104 @@ export const MessageRow = memo(function MessageRow({
     </div>
   );
 });
+/** Coordination between agents reads as one quiet line in time order: who
+ * wrote it, who it is for, and its first paragraph. Opening the line shows
+ * the whole message. The mentions it opens with become the line's recipients,
+ * so they are not repeated in its text. */
+export const MessageRow = memo(function AudienceMessageRow(
+  props: MessageRowProps,
+) {
+  return props.row.audience === "agents" ? (
+    <AgentsMessageRow {...props} />
+  ) : (
+    <FullMessageRow {...props} />
+  );
+});
+
+function AgentsMessageRow(props: MessageRowProps) {
+  const { row, session, media, participantProfiles, agentPubkeys } = props;
+  const [open, setOpen] = useState(false);
+  const resolveName = useChannelIdentityNames(session, row.channelId);
+  const directory = useReferenceDirectory(session, participantProfiles);
+  const { recipients, body } = useMemo(
+    () =>
+      addressedMessage(
+        row,
+        profileMentionParts(row, directory.profiles, directory.agents),
+      ),
+    [row, directory.profiles, directory.agents],
+  );
+  const person = (pubkey: string, profile: Profile | undefined) => {
+    const name = resolveName(pubkey, profile?.name ?? pubkey.slice(0, 10));
+    const agent =
+      agentPubkeys?.has(pubkey) ||
+      !!profile?.isAgent ||
+      directory.agents.some((item) => item.pubkey === pubkey);
+    return {
+      pubkey,
+      name,
+      picture: profile?.picture ? media(profile.picture, "small") : undefined,
+      shape: agent ? ("squircle" as const) : ("circle" as const),
+    };
+  };
+  const author = person(row.authorId, props.profile);
+  const to = recipients.map((pubkey) =>
+    person(pubkey, directory.profiles.get(pubkey)),
+  );
+  const preview = messagePreviewText(body.content);
+  const avatar = (who: typeof author) => (
+    <span key={who.pubkey} className={styles.audienceAvatar} title={who.name}>
+      <AgentAvatar
+        session={session}
+        agentPubkey={who.pubkey}
+        channelId={row.channelId}
+        src={who.picture}
+        alt=""
+        fallback={who.name}
+        size="fill"
+        shape={who.shape}
+      />
+    </span>
+  );
+  return (
+    <div className={styles.audienceRow} data-audience="agents">
+      {props.day && <DayDivider createdAt={row.createdAt} />}
+      <button
+        type="button"
+        data-buzz-ui=""
+        className={styles.audienceLine}
+        // Collapsed, the line stands in for the message as a scroll anchor.
+        data-message-id={open ? undefined : row.id}
+        aria-expanded={open}
+        aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
+        onClick={() => setOpen(!open)}
+      >
+        {avatar(author)}
+        {to.length > 0 && (
+          <>
+            <ArrowRightIcon
+              size={12}
+              aria-hidden="true"
+              className={styles.audienceArrow}
+            />
+            {to.map(avatar)}
+          </>
+        )}
+        <span className={styles.audiencePreview}>{open ? "" : preview}</span>
+        <MessageTimestamp createdAt={row.createdAt} />
+      </button>
+      {open && (
+        <FullMessageRow
+          {...props}
+          shownRow={body}
+          day={false}
+          layout="continuation"
+        />
+      )}
+    </div>
+  );
+}
+
 // Subscribe only for mounted thread buttons. Evidence and reading remain session-owned;
 // rendering a row must not initiate per-thread reads or acknowledge unseen replies.
 function useThreadUnread(
