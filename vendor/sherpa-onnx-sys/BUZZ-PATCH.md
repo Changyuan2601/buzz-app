@@ -14,7 +14,8 @@ reproducibility. Updating a version requires reviewing and updating these pins.
 Downloaded and locally supplied archives are copied into a private snapshot,
 SHA-256 checked before extraction, and extracted afresh into the build's OUT_DIR.
 Previously extracted caches are never consumed. Cargo watches both the archive
-and resulting library directory for changes. Unverified SHERPA_ONNX_LIB_DIR
+and individual resulting library files for changes. Watching the newly created
+directory would invalidate every warm build; archived file mtimes remain intact. Unverified SHERPA_ONNX_LIB_DIR
 overrides and unpinned targets/link modes fail closed. SHERPA_ONNX_ARCHIVE_DIR
 remains available for offline builds, subject to the same pins. DOCS_RS does not
 bypass verification.

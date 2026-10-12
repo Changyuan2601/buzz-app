@@ -140,7 +140,7 @@ fn download_prebuilt_libs(
     println!("cargo:rerun-if-changed={}", archive_path.display());
     // Rebuild from the authenticated archive, never trust an extracted cache.
     let lib_dir = verified_archive::unpack(&archive_path, expected, &out_dir)?;
-    println!("cargo:rerun-if-changed={}", lib_dir.display());
+    verified_archive::watch_libraries(&lib_dir)?;
     Ok(lib_dir)
 }
 

@@ -50,3 +50,17 @@ pub fn unpack(path: &Path, expected: &str, out_dir: &Path) -> Result<PathBuf> {
     fs::rename(staging.path(), &destination)?;
     Ok(destination.join(stem).join("lib"))
 }
+
+// Archive members retain their original mtimes. Newly created directory mtimes
+// would self-invalidate Cargo, so watch linked files rather than their containers.
+pub fn watch_libraries(directory: &Path) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            watch_libraries(&path)?;
+        } else {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+    Ok(())
+}
