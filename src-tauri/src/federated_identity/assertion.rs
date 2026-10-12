@@ -209,6 +209,20 @@ impl FederatedIdentity {
         }
         Ok(())
     }
+    pub(crate) async fn admit_response(
+        &self,
+        identity: &IdentityHost,
+        assertion: &Assertion,
+        mutation: bool,
+    ) -> Result<(), String> {
+        self.admit_assertion(identity, assertion).await.map_err(|error| {
+            if mutation {
+                "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying.".into()
+            } else {
+                error
+            }
+        })
+    }
     pub(crate) async fn reject_assertion(&self, assertion: &Assertion) {
         let key = format!(
             "{}:{}:{}",
@@ -609,6 +623,36 @@ mod tests {
                     .duration_since(std::time::SystemTime::now())
                     .unwrap()
                     + std::time::Duration::from_millis(1)
+        );
+    }
+    #[tokio::test(start_paused = true)]
+    async fn retired_write_results_are_uncertain_and_do_not_offer_sign_in_retry() {
+        use super::super::tests::{host, record, Memory};
+        let host = host(Arc::new(Memory::default()));
+        let identity = IdentityHost::fixture();
+        let assertion = Assertion {
+            header: Zeroizing::new("Bearer fixture".into()),
+            expires_at: now().unwrap() as u64 + 60,
+            revision: host.snapshot().revision,
+            viewer: identity.viewer().await.unwrap(),
+            relay: "wss://relay.example".into(),
+            refresh_at: 0,
+        };
+        {
+            let mut state = host.state();
+            state.session = Some(record());
+            state.snapshot.status = Status::SignedIn;
+            state.restored = true;
+        }
+        host.admit_assertion(&identity, &assertion).await.unwrap();
+        host.retire(Status::SignedOut, None);
+        assert_eq!(host.admit_response(&identity, &assertion, true).await.unwrap_err(),
+            "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying.");
+        assert_eq!(
+            host.admit_response(&identity, &assertion, false)
+                .await
+                .unwrap_err(),
+            "Federated authorization changed"
         );
     }
     #[tokio::test(start_paused = true)]

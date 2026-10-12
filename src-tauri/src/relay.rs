@@ -879,7 +879,10 @@ async fn send(
         }
     }
     let response = read_response(response, response_limit).await?;
-    admit(host, fi, assertion.as_ref()).await?;
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
+        fi.admit_response(host, assertion, mutation).await?;
+    }
     Ok(response)
 }
 
@@ -1311,7 +1314,9 @@ async fn upload_file(
         }
     }
     let response = read_response(response, 8192).await?;
-    admit(host, fi, assertion.as_ref()).await?;
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.admit_response(host, assertion, true).await?;
+    }
     Ok(response)
 }
 
