@@ -254,6 +254,11 @@ export function useVoiceNoteRecorder() {
         return Promise.resolve(null);
       }
       setStatus("processing");
+      // Stop capture immediately; retain the context only for decoding.
+      session.stream?.getTracks().forEach((track) => {
+        track.stop();
+      });
+      session.stream = null;
       return new Promise((resolve) => {
         session.resolveStop = resolve;
         recorder.stop();

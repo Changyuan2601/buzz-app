@@ -250,6 +250,8 @@ it("cancels pending audio processing on unmount without transcribing", async () 
   await setup();
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
   await waitFor(() => expect(decodeAudio).toHaveBeenCalledTimes(1));
+  expect(tracks.stop).toHaveBeenCalledTimes(1);
+  expect(closeAudio).not.toHaveBeenCalled();
   cleanup();
   expect(tracks.stop).toHaveBeenCalledTimes(1);
   expect(closeAudio).toHaveBeenCalledTimes(1);
@@ -264,3 +266,37 @@ it("cancels pending audio processing on unmount without transcribing", async () 
   expect(invoke).not.toHaveBeenCalled();
   expect(tracks.stop).toHaveBeenCalledTimes(1);
 });
+
+it.each([false, true])(
+  "disables Windows voice before microphone access (embedded=%s)",
+  (embedded) => {
+    vi.stubGlobal("navigator", {
+      platform: "Win32",
+      mediaDevices: { getUserMedia },
+    });
+    render(
+      <StrictMode>
+        <AgentInstructions
+          embedded={embedded}
+          value="Keep text"
+          disabled={false}
+          onChange={vi.fn()}
+        />
+      </StrictMode>,
+    );
+    if (embedded)
+      fireEvent.click(
+        screen.getByRole("button", { name: "Agent instructions" }),
+      );
+    const voice = screen.getByRole("button", {
+      name: embedded ? "Audio" : "Voice",
+    });
+    expect(voice).toBeDisabled();
+    fireEvent.click(voice);
+    expect(getUserMedia).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Text" }));
+    expect(screen.getByLabelText("Agent instructions")).toHaveValue(
+      "Keep text",
+    );
+  },
+);

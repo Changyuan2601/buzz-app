@@ -38,6 +38,7 @@ export function AgentInstructions({
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
 }) {
+  const windowsDesktop = isTauri() && /Win/i.test(navigator.platform);
   const [mode, setMode] = useState<"text" | "voice" | null>(null);
   const [expanded, setExpanded] = useState(false);
   const view = embedded && !expanded ? "entry" : (mode ?? "choices");
@@ -131,6 +132,7 @@ export function AgentInstructions({
     },
   }));
   const record = () => {
+    if (windowsDesktop) return;
     generation.current++;
     setError(null);
     setSuggestion("");
@@ -200,7 +202,12 @@ export function AgentInstructions({
                 </Button>
                 <Button
                   shape="control"
-                  disabled={disabled}
+                  disabled={disabled || windowsDesktop}
+                  title={
+                    windowsDesktop
+                      ? "Voice drafting is not available on Windows."
+                      : undefined
+                  }
                   style={{ minHeight: "7rem" }}
                   onClick={() => {
                     setError(null);
@@ -298,7 +305,10 @@ export function AgentInstructions({
                 )}
                 {!busy && (
                   <div className="flex items-center justify-center gap-3">
-                    <Button disabled={disabled || !isTauri()} onClick={record}>
+                    <Button
+                      disabled={disabled || !isTauri() || windowsDesktop}
+                      onClick={record}
+                    >
                       {suggestion || error || recorder.error
                         ? "Re-record"
                         : "Record"}
