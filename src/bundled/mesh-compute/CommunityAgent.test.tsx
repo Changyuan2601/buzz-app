@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -102,4 +103,32 @@ it("lists each example with an icon and offers a custom agent last", async () =>
       name: "Create Custom agent",
     }),
   ).toBeVisible();
+});
+it("keeps an edited preset open when a later sync drops defaults, and retries when they never arrive", async () => {
+  const fixture = controlFixture();
+  fixture.data.createAvailable = true;
+  fixture.data.defaultWorkspace = "";
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  render(
+    <CommunityAgent
+      control={control}
+      destination="wss://relay.example.test"
+      owner={"de".repeat(32)}
+    />,
+  );
+  // No workspace from the re-read: offer Retry instead of loading forever.
+  fireEvent.click(screen.getByRole("button", { name: "Create Custom agent" }));
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fixture.data.defaultWorkspace = "/fixture/workspace";
+  fireEvent.click(retry);
+  const name = within(await screen.findByRole("dialog")).getByLabelText("Name");
+  fireEvent.change(name, { target: { value: "Eo9" } });
+  // A later full read without defaults must not unmount the edited form.
+  fixture.data.defaultWorkspace = "";
+  await act(() => control.refresh());
+  expect(within(screen.getByRole("dialog")).getByLabelText("Name")).toHaveValue(
+    "Eo9",
+  );
 });
