@@ -88,6 +88,22 @@ body filters and list/detail ownership; [Sessions](../../bundled/sessions/Sessio
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.
 
+### Progressive disclosure in repeated content
+
+Keep repeated surfaces easy to scan by revealing secondary actions when someone
+engages with an item. Reveal on pointer hover and keyboard focus, and keep actions
+available on touch. Primary actions, essential information, and persistent state
+remain visible without discovery. Hidden-looking controls must remain keyboard
+reachable; do not use hover as the only way to complete a task.
+
+`CollectionCard` demonstrates this pattern for visual collections. Its frame
+provides artwork, copy and an optional secondary-action slot; the collection owns
+navigation and selection. A selectable option contains no independent controls.
+Static cards may compose controls, including a visible creation action. Keep those
+controls separate from any primary click target. Reuse the frame rather than
+repainting shared buttons or creating another surface style. Layout and product
+behavior remain with the feature. The viewer shows object and creation compositions.
+
 ### Detail panels
 
 First inspect the mounting host. `PanelCard` and `PanelWorkspace` can already supply
@@ -132,6 +148,24 @@ See [settings fills and spacing](../../../docs/design-system.md#content-headers-
 [`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
 preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
 explicit-save form. Their save behavior is not interchangeable.
+
+### Explicit drafts and native text editing
+
+Keep related configuration edits together as a local draft with visible Save and
+Discard actions. Merely leaving a field must not commit an unfinished form.
+Retain input elements while switching between an editor's tabs so their text,
+selection and native undo history survive; use `Tabs retainVisited` for this
+purpose, not to eagerly load every hidden section. Standard Input and Textarea
+retain browser Command/Control-Z behavior. Do not capture undo at page level or
+promise undo of already-saved settings without a separate product contract.
+
+Saving is an operation, not a dismissal. Keep failed edits and contextual error
+feedback in place. Editors report dirty and pending-save state to their host;
+the host coordinates one confirmation before user actions that would destroy
+those drafts. Keep unrelated retained editors out of that decision. Losing
+permission or retiring an account is not an optional user close and must still
+revoke the editor. A local draft is not autosave or crash recovery, and preserving
+only its string does not preserve the browser's undo stack.
 
 ### Modal composition
 

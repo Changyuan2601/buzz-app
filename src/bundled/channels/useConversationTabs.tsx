@@ -1,3 +1,5 @@
+import { useDraftProtection } from "../../features/drafts/DraftProtection";
+import { DraftScope } from "../../features/drafts/react";
 import {
   useCallback,
   useEffect,
@@ -70,6 +72,7 @@ export function useConversationTabs({
   personalWorkspace?: boolean | undefined;
   onOpenDrawer?(): void;
 }) {
+  const drafts = useDraftProtection();
   const currentId = current?.id;
   const viewer = queries.viewer;
   const { entries, setEntries } = tabState;
@@ -125,7 +128,7 @@ export function useConversationTabs({
     [tabState.select],
   );
   const open = useCallback(
-    (next: Opening | undefined, append = false) => {
+    (next: Opening | undefined, append = false, approved = false) => {
       const existing =
         append && next
           ? entryList.current.find(
@@ -144,11 +147,22 @@ export function useConversationTabs({
           );
       const updated =
         selected && !existing ? [...retained, selected] : retained;
+      const removed = entryList.current.filter(
+        (entry) => !updated.includes(entry),
+      );
+      if (!approved && drafts?.hasRisk(removed)) {
+        const before = entryList.current;
+        void drafts.request(removed).then((leave) => {
+          if (leave && mounted.current && entryList.current === before)
+            open(next, append, true);
+        });
+        return;
+      }
       entryList.current = updated;
       setEntries(updated);
       selectOpening(selected);
     },
-    [selectOpening, setEntries],
+    [selectOpening, setEntries, drafts],
   );
   const panelTabs = entries.filter(
     (entry) =>
@@ -182,6 +196,12 @@ export function useConversationTabs({
     canOpen: (target: string) => !!panels.resolve(target),
     open: (target: string) => {
       if (!panelActive(entry)) return false;
+      if (drafts?.hasRisk(entry)) {
+        void drafts.request(entry).then((leave) => {
+          if (leave && panelActive(entry)) panelContext(entry).open(target);
+        });
+        return false;
+      }
       const next = panels.resolve(target);
       if (!next) return false;
       const existing = entryList.current.find(
@@ -204,8 +224,14 @@ export function useConversationTabs({
     },
   });
   const tabId = panelTabId;
-  const closeTab = (entry: Opening) => {
+  const closeTab = (entry: Opening, force = false) => {
     if (!currentVisit() || !entryList.current.includes(entry)) return;
+    if (!force && drafts?.hasRisk(entry)) {
+      void drafts.request(entry).then((leave) => {
+        if (leave) closeTab(entry, true);
+      });
+      return;
+    }
     const remaining = entryList.current.filter((item) => item !== entry);
     entryList.current = remaining;
     setEntries(remaining);
@@ -493,13 +519,15 @@ export function useConversationTabs({
         }),
         close: () => closeTab(entry),
         content: (
-          <PanelCard
-            panel={entry.panel}
-            target={entry.target}
-            context={panelContext(entry)}
-            channelContext={entry.channelContext}
-            close={() => closeTab(entry)}
-          />
+          <DraftScope scope={entry}>
+            <PanelCard
+              panel={entry.panel}
+              target={entry.target}
+              context={panelContext(entry)}
+              channelContext={entry.channelContext}
+              close={() => closeTab(entry, true)}
+            />
+          </DraftScope>
         ),
       })),
     ],

@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { createDraftGuard } from "../drafts/guard";
+import { expect, it, vi } from "vitest";
 import { createBrowserHistory } from "./browser-history";
 import { createNavigationController } from "./controller";
 import { homeTarget } from "./history";
@@ -29,6 +30,9 @@ function browser(initialHash = "") {
       location.hash = new URL(url, "https://app.example").hash;
       entries.push({ state, hash: location.hash });
       index++;
+    },
+    go(delta: number) {
+      traverse(delta);
     },
     back() {
       traverse(-1);
@@ -149,3 +153,42 @@ it("resolving a visit rewrites its address without losing identity or the forwar
   expect(host.navigation.snapshot().entry).toEqual(forward);
   host.dispose();
 });
+
+it.each(["back", "forward", "hash"] as const)(
+  "protects native %s without rewriting the canceled destination",
+  async (kind) => {
+    const b = browser();
+    const guard = createDraftGuard();
+    const driver = createBrowserHistory(b.host, guard);
+    driver.push(settings);
+    if (kind === "forward") driver.back();
+    const previous = driver.snapshot();
+    const reset = vi.fn();
+    guard
+      .register({}, "instructions", reset)
+      .update({ dirty: true, saving: false });
+    let notifications = 0;
+    driver.attach(() => notifications++);
+    const depart = () =>
+      kind === "hash"
+        ? b.edit(hash({ ...settings, section: "agents" }))
+        : b.host.history[kind]();
+    depart();
+    expect(driver.snapshot().current).toBe(previous.current);
+    expect(guard.snapshot()).toBeDefined();
+    expect(notifications).toBe(kind === "hash" ? 1 : 0);
+    if (kind === "hash") expect(driver.snapshot().canGoForward).toBe(true);
+    guard.cancel();
+    await Promise.resolve();
+    expect(driver.snapshot().current).toBe(previous.current);
+    expect(reset).not.toHaveBeenCalled();
+    depart();
+    guard.discard();
+    await Promise.resolve();
+    expect(driver.snapshot().current.id).not.toBe(previous.current.id);
+    expect(notifications).toBe(kind === "hash" ? 2 : 1);
+    expect(reset).toHaveBeenCalledOnce();
+    driver.dispose();
+    guard.dispose();
+  },
+);

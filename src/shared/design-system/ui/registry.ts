@@ -111,6 +111,26 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "collection-card",
+    name: "CollectionCard",
+    purpose:
+      "Present visual objects with consistent artwork, copy, and secondary actions.",
+    behavior:
+      "A visual frame. The collection owns selection and keyboard navigation; option cards cannot contain independent actions. Static cards compose controls. Secondary actions reveal on hover or focus and remain visible on touch. Creation cards compose decorative artwork and a visible Button.",
+    variants: [
+      "object",
+      "open action",
+      "selected option",
+      "secondary action",
+      "creation composition",
+    ],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/CollectionCard.tsx",
+    baseUi: [BASE_UI_PARTS.button],
+    composes: [],
+  },
+  {
     slug: "empty-state",
     name: "EmptyState",
     purpose:

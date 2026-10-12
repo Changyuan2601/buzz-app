@@ -1,181 +1,147 @@
-/* Inventory with an optional side panel (peek or new agent). */
-.browse {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-}
-.browse[data-side] {
-  grid-template-columns: minmax(0, 1fr) 22rem;
-}
 .inventory {
   min-height: 0;
   overflow: auto;
-}
-.side {
-  min-height: 0;
-  overflow: auto;
-  border-left: 1px solid var(--border-standard);
-  background: var(--surface-panel);
-  animation: side-in var(--duration-fast, 160ms) var(--ease-out, ease-out);
-}
-@keyframes side-in {
-  from {
-    opacity: 0;
-    transform: translateX(var(--space-4));
-  }
 }
 .sideBody {
   display: grid;
   align-content: start;
   gap: var(--space-5);
-  padding: var(--space-4) var(--space-5) var(--space-6);
 }
 
 .grid {
   display: grid;
-  /* Fixed columns, so opening the side panel never resizes a tile. */
-  grid-template-columns: repeat(auto-fill, 10rem);
+  grid-template-columns: var(
+      --agent-inventory-columns,
+      repeat(auto-fill, minmax(min(100%, 14rem), 14rem))
+    );
   gap: var(--space-3);
-  padding: var(--space-6);
-  outline: none;
+  max-width: 52rem;
+  padding: var(--agent-inventory-inset, var(--space-6));
 }
-.tile {
+.inventoryCollection {
+  position: relative;
+}
+.grid[data-creation]::before {
+  content: "";
+  min-height: 14rem;
+}
+.creationCell {
+  position: absolute;
+  inset-block-start: var(--agent-inventory-inset, var(--space-6));
+  inset-inline: var(--agent-inventory-inset, var(--space-6));
+  max-width: calc(52rem - var(--agent-inventory-inset, var(--space-6)) * 2);
+  display: grid;
+  grid-template-columns: var(--agent-inventory-columns, minmax(0, 14rem));
+  gap: var(--space-3);
+  height: 14rem;
+  pointer-events: none;
+}
+.creationCell > * {
+  pointer-events: auto;
+}
+.emptyInventory {
   display: flex;
+  min-height: 100%;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  padding: var(--space-5) var(--space-3) var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-container);
-  background: var(--surface-panel);
-  text-align: center;
-  cursor: pointer;
-  user-select: none;
-  transition:
-    transform var(--duration-fast, 160ms) var(--ease-out, ease-out),
-    background-color var(--duration-fast, 160ms) var(--ease-out, ease-out),
-    border-color var(--duration-fast, 160ms) var(--ease-out, ease-out);
-}
-.tile:hover {
-  background: var(--affordance-panel-hover);
-  transform: translateY(-1px);
-}
-.tile[aria-selected="true"] {
-  border-color: var(--border-focus);
-  background: var(--affordance-selected);
-}
-.tile:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.portrait {
-  width: 4.5rem;
-  height: 4.5rem;
-  margin-bottom: var(--space-2);
-}
-.tile[data-unavailable] .portrait {
-  opacity: 0.5;
-}
-.tileName {
-  max-width: 100%;
-  overflow: hidden;
-  font-weight: var(--type-weight-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tileSummary {
-  display: -webkit-box;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--text-body-sm-size, 0.8125rem);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.peekIdentity {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-}
-.portraitLarge {
-  flex: none;
-  width: 4rem;
-  height: 4rem;
-}
-.peekPlugin {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-container);
-  background: var(--surface-inset);
-}
-
-/* Build: identity rail, then the work. */
-.build {
-  display: grid;
-  grid-template-columns: 15rem minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-}
-.rail {
-  display: flex;
-  flex-direction: column;
+  justify-content: center;
   gap: var(--space-4);
-  padding: var(--space-6) var(--space-5);
-  border-right: 1px solid var(--border-standard);
-  overflow: auto;
+  padding: var(--space-6);
 }
-.rail .portraitLarge {
-  width: 6rem;
-  height: 6rem;
+.emptyCreation {
+  width: min(100%, 22rem);
 }
-.facts {
-  display: grid;
-  gap: var(--space-1);
-  margin: 0;
-  font-size: var(--text-body-sm-size, 0.8125rem);
+.creationArt {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
 }
-.facts dt {
-  color: var(--text-secondary);
+.creationArt img {
+  position: absolute;
+  width: 25%;
+  height: 36%;
+  object-fit: contain;
+  transition:
+    translate var(--duration-state) var(--easing-settle),
+    rotate var(--duration-state) var(--easing-settle);
 }
-.facts dt:not(:first-child) {
-  margin-top: var(--space-2);
+.creationArt img:nth-child(1) {
+  --drift: -3px -2px;
+  --tilt: -2deg;
+  left: 16%;
+  top: 2%;
 }
-.facts dd {
-  min-width: 0;
-  margin: 0;
+.creationArt img:nth-child(2) {
+  --drift: 2px -3px;
+  --tilt: 2.5deg;
+  left: 57%;
+  top: 5%;
 }
-.work {
-  min-width: 0;
-  max-width: 44rem;
-  padding: var(--space-4) var(--space-6) var(--space-8);
-  overflow: auto;
+.creationArt img:nth-child(3) {
+  --drift: -1px 3px;
+  --tilt: -1.5deg;
+  left: 38%;
+  top: 66%;
 }
-
-@media (max-width: 52rem) {
-  .browse[data-side] {
-    grid-template-columns: minmax(0, 1fr) 18rem;
+.creationArt img:nth-child(4) {
+  --drift: 4px 1px;
+  --tilt: 3deg;
+  left: 78%;
+  top: 50%;
+}
+.creationArt img:nth-child(5) {
+  --drift: -4px -1px;
+  --tilt: -2.5deg;
+  left: -5%;
+  top: 30%;
+}
+.creationArt img:nth-child(6) {
+  --drift: 3px -3px;
+  --tilt: 2deg;
+  left: 78%;
+  top: -10%;
+}
+.creationArt img:nth-child(7) {
+  --drift: -1px -4px;
+  --tilt: -3deg;
+  left: 36%;
+  top: -6%;
+}
+.creationArt img:nth-child(8) {
+  --drift: -3px 3px;
+  --tilt: 1.5deg;
+  left: 8%;
+  top: 65%;
+}
+.creationArt img:nth-child(9) {
+  --drift: 2px 4px;
+  --tilt: -2deg;
+  left: 64%;
+  top: 76%;
+}
+.creationArt img:nth-child(10) {
+  --drift: -3px 2px;
+  --tilt: 2.5deg;
+  left: -5%;
+  top: 82%;
+}
+/* Decorative life on engagement: the scatter loosens a few pixels, never the
+   card or its button. The button stays the card's only action. */
+.newAgent {
+  height: 100%;
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .newAgent:not([data-disabled]):is(:hover, :has(:focus-visible))
+    .creationArt
+    img {
+    translate: var(--drift);
+    rotate: var(--tilt);
+    transition-duration: var(--duration-settle);
+    transition-timing-function: var(--easing-enter);
   }
-  .build {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  .rail {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    border-right: 0;
-    border-bottom: 1px solid var(--border-standard);
-  }
 }
-@media (prefers-reduced-motion: reduce) {
-  .side {
-    animation: none;
-  }
-  .tile,
-  .tile:hover {
-    transition: none;
-    transform: none;
-  }
+.creationAction {
+  position: relative;
 }

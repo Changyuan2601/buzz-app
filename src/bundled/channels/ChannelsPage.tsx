@@ -1,3 +1,4 @@
+import { useDraftProtection } from "../../features/drafts/DraftProtection";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import type { AgentControl } from "../../features/agents/control";
@@ -876,6 +877,7 @@ function ChannelWorkspace({
       setThread,
     ],
   );
+  const drafts = useDraftProtection();
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
     channelId: string;
@@ -907,6 +909,14 @@ function ChannelWorkspace({
       initialTime: number,
       hasComments = false,
     ) => {
+      if (drafts?.hasRisk(panelTabs)) {
+        const before = destination.current;
+        void drafts.request(panelTabs).then((leave) => {
+          if (leave && destination.current === before)
+            openMediaReview(messageId, attachment, initialTime, hasComments);
+        });
+        return;
+      }
       const { current, navigation } = destination.current;
       if (!current) return;
       setSettings(undefined);
@@ -925,7 +935,7 @@ function ChannelWorkspace({
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
-    [setSettings, setThread],
+    [setSettings, setThread, drafts, panelTabs],
   );
   const closeThread = () => {
     setReplyRequest(undefined);
@@ -1003,6 +1013,14 @@ function ChannelWorkspace({
         // Internal panel targets also use buzz:. Only routable links belong
         // to the navigator; registered panels handle the remaining targets.
         if (target) {
+          if (drafts?.hasRisk()) {
+            const before = destination.current;
+            void drafts.request().then((leave) => {
+              if (leave && destination.current === before)
+                openLink(url, fromThread, returnFocus);
+            });
+            return false;
+          }
           if (target.kind === "conversation" && target.messageId)
             threadTrigger.current =
               document.activeElement instanceof HTMLElement
@@ -1041,6 +1059,7 @@ function ChannelWorkspace({
       return false;
     },
     [
+      drafts,
       panels,
       open,
       relay,

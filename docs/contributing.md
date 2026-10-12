@@ -702,6 +702,7 @@ use fixture identities/transports rather than the live broker:
 
 | URL | Purpose |
 | --- | --- |
+| `/tests/fixtures/agents2.html` | Agents2 inventory and community-agent concept; in-memory sample data only. Run `bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1458`. The Real page view exercises existing UI; community additions are simulations, not catalog integration. |
 | `/tests/fixtures/communities.html` | Local profile and join dialog; first profile publication deliberately rejected |
 | `/tests/fixtures/relay-composer.html` (optional `?durable`) | Delayed signing/publication and one-time rejection for messages containing `reject` |
 | `/tests/fixtures/relay-storage.html` | Real IndexedDB migration, signed restore, deletion and partition isolation |

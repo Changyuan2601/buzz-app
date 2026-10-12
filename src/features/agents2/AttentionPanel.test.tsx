@@ -225,3 +225,39 @@ it("never names a new object after a skipped one it would replace", async () => 
     attention: { "watch/messages-2": expect.any(Object) },
   });
 });
+
+it("keeps a dirty JSON editor mounted when the saved watch changes", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn(async () => {});
+  const view = render(
+    <AttentionPanel agent={agent} save={save} channels={[]} />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Messages in 1 channel" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Edit JSON" }));
+  const editor = screen.getByLabelText("watch/questions");
+  await user.clear(editor);
+  await user.type(editor, "unfinished draft");
+  const watch = agent.attention["watch/questions"];
+  if (watch?.value.type !== "event") throw new Error("fixture");
+  view.rerender(
+    <AttentionPanel
+      agent={{
+        ...agent,
+        attention: {
+          ...agent.attention,
+          "watch/questions": {
+            ...watch,
+            modifiedAt: 2,
+            value: { ...watch.value, enabled: false },
+          },
+        },
+      }}
+      save={save}
+      channels={[]}
+    />,
+  );
+  expect(screen.getByLabelText("watch/questions")).toBe(editor);
+  expect(editor).toHaveValue("unfinished draft");
+});

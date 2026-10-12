@@ -2,7 +2,7 @@ import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { NavigationItem } from "./NavigationItem";
 import { IconButton } from "./IconButton";
 import { XIcon } from "../icons";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 export type TabItem<Value extends string> = {
   value: Value;
@@ -40,9 +40,12 @@ export function Tabs<Value extends string>({
   previewValue,
   arrivalValue,
   renderPanel,
+  retainVisited = false,
 }: {
   /** Omit only when composing an existing externally owned view. */
   renderPanel?: (value: Value) => ReactNode;
+  /** Retain visited editors and native undo; never eagerly start unopened tabs. */
+  retainVisited?: boolean;
   value: Value | null;
   items: readonly TabItem<Value>[];
   label: string;
@@ -56,6 +59,8 @@ export function Tabs<Value extends string>({
   /** Brief visual confirmation of a tab arriving after a completed move. */
   arrivalValue?: Value | undefined;
 }) {
+  const visited = useRef(new Set<Value>());
+  if (value !== null) visited.current.add(value);
   const strip = (
     <>
       <BaseTabs.List className="buzz-tabs-list" aria-label={label}>
@@ -161,6 +166,7 @@ export function Tabs<Value extends string>({
           <BaseTabs.Panel
             key={item.value}
             value={item.value}
+            keepMounted={retainVisited && visited.current.has(item.value)}
             className="buzz-tabs-panel"
           >
             {renderPanel(item.value)}

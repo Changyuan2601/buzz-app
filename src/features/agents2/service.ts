@@ -78,6 +78,13 @@ export type AgentViewProps<Config = unknown> = {
   /** Replaces the type's whole config. Spread `agent.config` to change one
    * field, or tabs that each save a part will erase each other's fields. */
   save(config: Config): Promise<void>;
+  /** Optional host protection. Report local edits/pending saves; no draft data is stored. */
+  reportDraft?(state: {
+    dirty: boolean;
+    saving: boolean;
+    revision?: unknown;
+    discard(): void;
+  }): void;
 };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;

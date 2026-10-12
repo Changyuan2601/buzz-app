@@ -1,3 +1,4 @@
+import type { DraftGuard } from "../drafts/guard";
 import type { Context } from "@deepseek-ai/cordis";
 import {
   createNavigationController,
@@ -33,9 +34,12 @@ declare module "@deepseek-ai/cordis" {
 export function provideNavigation(
   ctx: Context,
   host = typeof window === "undefined" ? undefined : window,
+  drafts?: DraftGuard,
 ) {
   const controller = createNavigationController(
-    host ? createBrowserHistory(host) : createMemoryHistory(),
+    host ? createBrowserHistory(host, drafts) : createMemoryHistory(),
+    15_000,
+    drafts,
   );
   ctx.provide("navigation", controller.navigation);
   const positions = new Map<string, JsonValue>();

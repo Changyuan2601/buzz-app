@@ -1,3 +1,4 @@
+import { AgentNameField } from "../../features/agents2/AgentNameField";
 import {
   usePanelTabHost,
   usePanelTabTitle,
@@ -280,11 +281,13 @@ function ProfileDetails({
   }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const identityName = useChannelIdentityNames(session, context?.channelId);
-  const name = identityName(
-    pubkey,
-    profile?.name ??
-      (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
-  );
+  const name =
+    plugin?.agent.name ??
+    identityName(
+      pubkey,
+      profile?.name ??
+        (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
+    );
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
@@ -405,7 +408,15 @@ function ProfileDetails({
             />
           </div>
           <div className="min-w-0">
-            <h2 className="text-heading">{name}</h2>
+            {plugin && agents2 && plugin.agent.owner === viewer ? (
+              <AgentNameField
+                key={pubkey}
+                name={plugin.agent.name}
+                onSave={(name) => agents2.save(pubkey, { name })}
+              />
+            ) : (
+              <h2 className="text-heading">{name}</h2>
+            )}
             {presence !== "unknown" && (
               <p className="text-body-sm text-secondary">
                 {
@@ -433,6 +444,7 @@ function ProfileDetails({
           ]}
           label="Profile sections"
           variant="panel"
+          retainVisited={!!plugin}
           renderPanel={(selected) => (
             <div className={styles.tabContent}>
               {selected.startsWith("agent:") ? (

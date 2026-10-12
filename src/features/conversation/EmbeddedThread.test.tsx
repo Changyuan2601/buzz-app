@@ -1,3 +1,7 @@
+import { createDraftGuard } from "../drafts/guard";
+import { DraftProtection } from "../drafts/DraftProtection";
+import { useDraftState } from "../drafts/react";
+import { useState, type ComponentType } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -73,6 +77,7 @@ afterEach(() => {
 function fixture(
   channelType: "stream" | "session" = "stream",
   operations: readonly OutgoingEvent[] = [],
+  Editor?: ComponentType,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -91,7 +96,7 @@ function fixture(
     matches: () => true,
     component: (props: PanelProps) => {
       captured = props;
-      return <p>Linked content</p>;
+      return Editor ? <Editor /> : <p>Linked content</p>;
     },
   } as RegisteredPanel;
   let panels = [panel];
@@ -274,4 +279,43 @@ it("offers recovery for a failed edit left in the outbox", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
   expect(h.outbox.retry).toHaveBeenCalledExactlyOnceWith("edit");
+});
+
+it("guards replacing an edited profile with media without tearing down the field on Cancel", async () => {
+  const guard = createDraftGuard();
+  function Editor() {
+    const [text, setText] = useState("");
+    useDraftState(
+      "profile",
+      { dirty: !!text, saving: false, revision: text },
+      () => setText(""),
+    );
+    return (
+      <textarea
+        aria-label="Profile instructions"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+    );
+  }
+  const h = fixture("stream", [], Editor);
+  render(
+    <DraftProtection guard={guard}>
+      <EmbeddedThread {...h.props} />
+    </DraftProtection>,
+  );
+  fireEvent.click(screen.getByText("Open linked panel"));
+  const field = screen.getByLabelText("Profile instructions");
+  fireEvent.change(field, { target: { value: "Keep this draft" } });
+  fireEvent.click(screen.getByText("Open media review"));
+  expect(guard.snapshot()).toMatchObject({ label: "profile" });
+  expect(screen.queryByLabelText("Media review")).toBeNull();
+  await act(async () => guard.cancel());
+  expect(screen.getByLabelText("Profile instructions")).toBe(field);
+  expect(field).toHaveValue("Keep this draft");
+  fireEvent.click(screen.getByText("Open media review"));
+  await act(async () => guard.discard());
+  expect(screen.getByLabelText("Media review")).toBeVisible();
+  expect(screen.queryByLabelText("Profile instructions")).toBeNull();
+  guard.dispose();
 });

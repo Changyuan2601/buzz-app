@@ -1,4 +1,6 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { DraftScope } from "../features/drafts/react";
+import { DraftProtection } from "../features/drafts/DraftProtection";
 import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { MeSidebar } from "../bundled/me/MeSidebar";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
@@ -45,7 +47,7 @@ export function App({ services }: { services: AppServices }) {
     return identity.subscribe(update);
   }, [identity]);
   return (
-    <>
+    <DraftProtection guard={services.drafts}>
       <LaunchWindowControls />
       {services.identity ? (
         <IdentitySetup identity={services.identity}>
@@ -54,7 +56,7 @@ export function App({ services }: { services: AppServices }) {
       ) : (
         <ConnectedApp services={services} />
       )}
-    </>
+    </DraftProtection>
   );
 }
 
@@ -116,14 +118,16 @@ function ConnectedApp({ services }: { services: AppServices }) {
     ? pagePresentation(route.page)
     : shellPresentation.settings;
   const selectedPanel = launcher.selected;
-  const companion = selectedPanel && (
-    <PanelCard
-      key={launcher.openingId}
-      ref={launcher.panelRef}
-      panel={selectedPanel}
-      target={launcher.target ?? ""}
-      close={launcher.close}
-    />
+  const companion = selectedPanel && launcher.opening && (
+    <DraftScope scope={launcher.opening}>
+      <PanelCard
+        key={launcher.openingId}
+        ref={launcher.panelRef}
+        panel={selectedPanel}
+        target={launcher.target ?? ""}
+        close={launcher.close}
+      />
+    </DraftScope>
   );
   // Personal space has no community profile to view; the panel needs a session.
   const ownProfile =
@@ -204,11 +208,20 @@ function ConnectedApp({ services }: { services: AppServices }) {
             <NavigationControls navigation={services.navigation} />
           }
           onCommunitySelect={(id) => {
-            const recovering =
-              services.navigation.snapshot().ingress &&
-              services.navigation.snapshot().retryable;
-            services.communities.select(id);
-            if (!recovering) select("buzz.channels/channels");
+            const before = services.communities.snapshot();
+            const change = () => {
+              if (services.communities.snapshot() !== before) return;
+              const recovering =
+                services.navigation.snapshot().ingress &&
+                services.navigation.snapshot().retryable;
+              services.communities.select(id);
+              if (!recovering) select("buzz.channels/channels");
+            };
+            if (services.drafts.hasRisk())
+              void services.drafts.request().then((leave) => {
+                if (leave) change();
+              });
+            else change();
           }}
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}

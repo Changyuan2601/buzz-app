@@ -1057,6 +1057,7 @@
     justify-content: center;
   }
 
+  html[data-keyboard-navigation] .buzz-collection-card:focus-visible,
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {

@@ -1,14 +1,16 @@
 import type { PluginModule } from "../../plugins/api";
 import { Agents2Page } from "./Agents2Page";
 
-export const inject = ["pages", "agents2", "relay"];
+export const inject = ["pages", "agents2", "relay", "panels"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  const { agents2, relay } = ctx;
+  const { agents2, relay, panels } = ctx;
   ctx.pages.register({
     id: "agents2",
     title: "Agents2",
     layout: "workspace",
     primary: true,
-    component: () => <Agents2Page agents2={agents2} relay={relay} />,
+    component: () => (
+      <Agents2Page agents2={agents2} relay={relay} panels={panels} />
+    ),
   });
 };

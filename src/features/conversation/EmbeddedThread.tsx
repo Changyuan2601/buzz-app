@@ -1,3 +1,5 @@
+import { useDraftProtection } from "../drafts/DraftProtection";
+import { DraftScope } from "../drafts/react";
 import type { Context } from "@deepseek-ai/cordis";
 import {
   useLayoutEffect,
@@ -69,6 +71,7 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
     session.channels.list,
   );
   const [overlay, setOverlay] = useState<Overlay>();
+  const drafts = useDraftProtection();
   // A panel never outlives its contribution.
   if (overlay?.panel && !panels.includes(overlay.panel)) setOverlay(undefined);
   // Captured callbacks may run late: nothing acts after unmount, and a plugin
@@ -92,17 +95,27 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
     );
   };
   const canOpen = (target: string) => !!host.panels.resolve(target);
+  const replace = (next: Overlay | undefined) => {
+    const previous = shown.current;
+    if (previous && drafts?.hasRisk(previous)) {
+      void drafts.request(previous).then((leave) => {
+        if (leave && active() && shown.current === previous) setOverlay(next);
+      });
+    } else setOverlay(next);
+  };
   const open = (url: string) => {
     if (!active()) return false;
     const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
-      setOverlay(undefined);
+      // Navigation owns the departure guard; don't destroy the editor first.
       void host.navigation.open(target);
       return true;
     }
     const panel = host.panels.resolve(url);
     if (!panel) return false;
-    setOverlay({ panel, target: url });
+    if (shown.current?.panel === panel && shown.current.target === url)
+      return true;
+    replace({ panel, target: url });
     return true;
   };
   return (
@@ -123,7 +136,7 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
           hasComments = false,
         ) => {
           if (active())
-            setOverlay({
+            replace({
               media: { messageId, attachment, initialTime, hasComments },
             });
         }}
@@ -135,32 +148,34 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
           placement="right"
           height="stable"
           onOpenChange={(next) => {
-            if (!next) setOverlay(undefined);
+            if (!next) replace(undefined);
           }}
         >
-          <PanelView
-            panel={overlay.panel}
-            target={overlay.target}
-            close={() => {
-              if (shown.current === overlay) setOverlay(undefined);
-            }}
-            channelContext={{
-              scope,
-              channelId,
-              channelName,
-              viewer,
-              relayUrl,
-              threadId: props.messageId,
-            }}
-            context={{
-              channelId,
-              canOpen,
-              open: (target) =>
-                shown.current === overlay &&
-                host.panels.snapshot().includes(overlay.panel) &&
-                open(target),
-            }}
-          />
+          <DraftScope scope={overlay}>
+            <PanelView
+              panel={overlay.panel}
+              target={overlay.target}
+              close={() => {
+                if (shown.current === overlay) setOverlay(undefined);
+              }}
+              channelContext={{
+                scope,
+                channelId,
+                channelName,
+                viewer,
+                relayUrl,
+                threadId: props.messageId,
+              }}
+              context={{
+                channelId,
+                canOpen,
+                open: (target) =>
+                  shown.current === overlay &&
+                  host.panels.snapshot().includes(overlay.panel) &&
+                  open(target),
+              }}
+            />
+          </DraftScope>
         </Dialog>
       )}
       {overlay?.media && (

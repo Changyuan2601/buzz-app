@@ -1,6 +1,6 @@
 // The type's tabs: Claude Code's setup on this computer, and the agent's
 // settings.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { AgentViewProps } from "../../features/agents2/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -157,13 +157,27 @@ export function createTabs({
   }
 
   /** What the agent runs with. Saving restarts idle sessions with the change. */
-  function SettingsTab({ agent, save }: AgentViewProps<Config>) {
-    const saved = readConfig(agent.config);
+  function SettingsTab({ agent, save, reportDraft }: AgentViewProps<Config>) {
+    const saved = useMemo(() => readConfig(agent.config), [agent.config]);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
+    const [baseline, setBaseline] = useState(saved);
+    if (baseline !== saved) {
+      setBaseline(saved);
+      if (JSON.stringify(draft) === JSON.stringify(baseline)) setDraft(saved);
+    }
     const [error, setError] = useState("");
     const changed = JSON.stringify(draft) !== JSON.stringify(saved);
+    useEffect(() => {
+      reportDraft?.({
+        dirty: changed,
+        saving,
+        revision: draft,
+        discard: () => setDraft(saved),
+      });
+    }, [changed, saving, draft, saved, reportDraft]);
     const submit = async () => {
+      if (saving) return;
       setSaving(true);
       setError("");
       try {
@@ -250,7 +264,10 @@ export function createTabs({
             {error}
           </p>
         )}
-        <div>
+        <div className="flex gap-2">
+          <Button disabled={!changed || saving} onClick={() => setDraft(saved)}>
+            Discard
+          </Button>
           {/* Stays focusable while saving and once there is nothing to save. */}
           <Button
             type="submit"

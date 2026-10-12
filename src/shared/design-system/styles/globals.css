@@ -26,6 +26,7 @@
 @import "./forms.css";
 @import "./content-header.css";
 @import "./empty-state.css";
+@import "./collection-card.css";
 @import "./settings-group.css";
 @import "./settings-controls.css";
 @import "./overlays.css";

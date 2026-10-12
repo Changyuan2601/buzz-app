@@ -193,15 +193,26 @@ export function createTabs(
       ),
     );
   }
-  function SettingsTab({ agent, save }: AgentViewProps<Config>) {
-    const saved = config(agent.config);
+  function SettingsTab({ agent, save, reportDraft }: AgentViewProps<Config>) {
+    const saved = React.useMemo(() => config(agent.config), [agent.config]);
     const [draft, setDraft] = React.useState(saved);
     const [saving, setSaving] = React.useState(false);
+    const [baseline, setBaseline] = React.useState(saved);
+    if (baseline !== saved) {
+      setBaseline(saved);
+      if (JSON.stringify(draft) === JSON.stringify(baseline)) setDraft(saved);
+    }
     const [error, setError] = React.useState("");
-    const { data, error: catalogError, checking, retry } = useCatalog();
+    const changed = JSON.stringify(draft) !== JSON.stringify(saved);
     React.useEffect(() => {
-      setDraft(config(agent.config));
-    }, [agent.config]);
+      reportDraft?.({
+        dirty: changed,
+        saving,
+        revision: draft,
+        discard: () => setDraft(config(agent.config)),
+      });
+    }, [changed, saving, draft, agent.config, reportDraft]);
+    const { data, error: catalogError, checking, retry } = useCatalog();
     const selected =
       data?.models.find((model) => model.model === draft.model) ??
       (!draft.model
@@ -215,6 +226,7 @@ export function createTabs(
       className: "buzz-input",
     };
     const submit = async () => {
+      if (saving) return;
       setSaving(true);
       setError("");
       try {
@@ -378,6 +390,11 @@ export function createTabs(
       h(
         "div",
         null,
+        button(
+          "Discard",
+          () => setDraft(config(agent.config)),
+          saving || !changed,
+        ),
         h(
           "button",
           {

@@ -1,3 +1,5 @@
+import { DraftScope } from "../../features/drafts/react";
+import { useDraftProtection } from "../../features/drafts/DraftProtection";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { UnifiedInventory } from "./UnifiedInventory";
@@ -119,6 +121,22 @@ export function AgentsPage({
     trigger: HTMLButtonElement;
     opening: number;
   }>();
+  const drafts = useDraftProtection();
+  const liveProfile = useRef(profile);
+  liveProfile.current = profile;
+  const replaceProfile = (next: typeof profile) => {
+    const before = liveProfile.current;
+    const apply = () => {
+      if (liveProfile.current !== before) return;
+      if (next) opening.current = next.opening;
+      setProfile(next);
+    };
+    if (before && drafts?.hasRisk(before)) {
+      void drafts.request(before).then((leave) => {
+        if (leave) apply();
+      });
+    } else apply();
+  };
   const previousProfile = useRef(profile);
   const restoreProfileFocus = useRef(true);
   useEffect(() => {
@@ -149,11 +167,19 @@ export function AgentsPage({
     const before = previousCompanionOpening.current;
     previousCompanionOpening.current = companionOpening;
     if (profile && companionOpening && companionOpening !== before) {
-      opening.current++;
-      restoreProfileFocus.current = false;
-      setProfile(undefined);
+      const supersede = () => {
+        if (liveProfile.current !== profile) return;
+        opening.current++;
+        restoreProfileFocus.current = false;
+        setProfile(undefined);
+      };
+      if (drafts?.hasRisk(profile))
+        void drafts.request(profile).then((leave) => {
+          if (leave) supersede();
+        });
+      else supersede();
     }
-  }, [companionOpening, profile]);
+  }, [companionOpening, profile, drafts]);
   const currentOpening = profile?.opening;
   const canOpenProfile = (target: string) =>
     currentOpening !== undefined &&
@@ -170,11 +196,8 @@ export function AgentsPage({
         opening.current !== currentOpening
       )
         return false;
-      setProfile((current) =>
-        current?.opening === currentOpening
-          ? { ...current, panel, target }
-          : current,
-      );
+      if (profile?.panel === panel && profile.target === target) return true;
+      if (profile) replaceProfile({ ...profile, panel, target });
       return true;
     },
   };
@@ -191,7 +214,12 @@ export function AgentsPage({
     const panel = target && panels?.resolve(target);
     return target && panel
       ? (trigger: HTMLButtonElement) =>
-          setProfile({ panel, target, trigger, opening: ++opening.current })
+          replaceProfile({
+            panel,
+            target,
+            trigger,
+            opening: opening.current + 1,
+          })
       : undefined;
   };
   const resolveName = useIdentityNames(connection.session.names);
@@ -256,13 +284,15 @@ export function AgentsPage({
       <>
         {companion && <div hidden={profile !== undefined}>{companion}</div>}
         {profile && (
-          <PanelCard
-            ref={profileCard}
-            panel={profile.panel}
-            target={profile.target}
-            context={panelContext}
-            close={closeProfile}
-          />
+          <DraftScope scope={profile}>
+            <PanelCard
+              ref={profileCard}
+              panel={profile.panel}
+              target={profile.target}
+              context={panelContext}
+              close={closeProfile}
+            />
+          </DraftScope>
         )}
       </>
     ) : undefined;

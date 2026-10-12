@@ -1,0 +1,71 @@
+@layer components {
+  .buzz-collection-card {
+    position: relative;
+    min-inline-size: 0;
+    block-size: 100%;
+    border-radius: var(--radius-container);
+    background: var(--surface-inset);
+    color: var(--text-standard);
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .buzz-collection-card-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    min-block-size: 14rem;
+    block-size: 100%;
+    padding: var(--space-6) var(--space-4);
+  }
+  .buzz-collection-card-artwork {
+    inline-size: 5rem;
+    block-size: 5rem;
+    flex: none;
+  }
+  .buzz-collection-card-copy {
+    display: grid;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+  .buzz-collection-card-title {
+    @apply text-label;
+  }
+  .buzz-collection-card-description {
+    @apply text-body-sm;
+    color: var(--text-secondary);
+  }
+  .buzz-collection-card:is([role="option"], [data-interactive]) {
+    cursor: pointer;
+    user-select: none;
+  }
+  .buzz-collection-card:is([role="option"], [data-interactive]):hover:not(
+    [aria-selected="true"]
+  ) {
+    background: var(--affordance-subtle-hover);
+  }
+  .buzz-collection-card[aria-selected="true"] {
+    background: var(--affordance-selected);
+  }
+  .buzz-collection-card[data-unavailable] .buzz-collection-card-artwork {
+    opacity: 0.5;
+  }
+  .buzz-collection-card-action {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-end: var(--space-2);
+  }
+  /* Only secondary actions reveal. Keep focusable controls mounted, and never
+     make a touch user discover a mouse-only interaction. */
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-collection-card-action {
+      opacity: 0;
+    }
+    .buzz-collection-card:hover .buzz-collection-card-action,
+    .buzz-collection-card:focus-within .buzz-collection-card-action {
+      opacity: 1;
+    }
+  }
+}

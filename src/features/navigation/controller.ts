@@ -1,3 +1,4 @@
+import type { DraftGuard } from "../drafts/guard";
 import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
 import type { NavigationEntry, NavigationHistory } from "./history";
 
@@ -52,6 +53,7 @@ export type Navigation = Readonly<{
 export function createNavigationController(
   history: NavigationHistory,
   timeoutMs = 15_000,
+  drafts?: Pick<DraftGuard, "hasRisk" | "request">,
 ) {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1)
     throw new Error("Invalid open timeout");
@@ -172,6 +174,21 @@ export function createNavigationController(
   let openingFocus: NavigationFocus | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
+      const latest = history.snapshot();
+      if (
+        !resolving &&
+        active &&
+        latest.current === snapshot.entry &&
+        latest.invalidAddress !== true
+      ) {
+        snapshot = Object.freeze({
+          ...snapshot,
+          canGoBack: latest.canGoBack,
+          canGoForward: latest.canGoForward,
+        });
+        emit();
+        return;
+      }
       if (resolving && active === resolving) {
         // Domain normalization keeps the caller, visit, signal and original deadline.
         // Rotate the immutable attempt token so an old presentation cannot complete it.
@@ -205,7 +222,20 @@ export function createNavigationController(
         listeners.delete(listener);
       };
     },
-    open(input: OpenTarget, options?: NavigationOpenOptions) {
+    open(
+      input: OpenTarget,
+      options?: NavigationOpenOptions,
+    ): Promise<OpenResult> {
+      if (drafts?.hasRisk()) {
+        const admitted = active;
+        return drafts
+          .request()
+          .then((leave) =>
+            leave && !disposed && active === admitted
+              ? navigation.open(input, options)
+              : { status: "cancelled" as const },
+          );
+      }
       return transaction(() => {
         if (disposed)
           return Promise.resolve<OpenResult>({ status: "cancelled" });
@@ -240,16 +270,40 @@ export function createNavigationController(
       });
     },
     back() {
+      if (drafts?.hasRisk()) {
+        const admitted = active;
+        void drafts.request().then((leave) => {
+          if (leave && !disposed && active === admitted) navigation.back();
+        });
+        return;
+      }
       transaction(() => {
         if (!disposed) history.back();
       });
     },
     forward() {
+      if (drafts?.hasRisk()) {
+        const admitted = active;
+        void drafts.request().then((leave) => {
+          if (leave && !disposed && active === admitted) navigation.forward();
+        });
+        return;
+      }
       transaction(() => {
         if (!disposed) history.forward();
       });
     },
-    retry() {
+    retry(): Promise<OpenResult> {
+      if (drafts?.hasRisk()) {
+        const admitted = active;
+        return drafts
+          .request()
+          .then((leave) =>
+            leave && !disposed && active === admitted
+              ? navigation.retry()
+              : { status: "cancelled" as const },
+          );
+      }
       if (snapshot.ingress) {
         if (disposed) return Promise.resolve({ status: "cancelled" as const });
         return (
@@ -316,17 +370,24 @@ export function createNavigationController(
     },
     /** Keep pre-navigation recovery separate from the previous history visit. */
     fail(reason: OpenFailure, retry?: () => Promise<OpenResult>) {
-      transaction(() => {
-        if (disposed) return;
-        void start();
-        ingressRetry = retry;
-        snapshot = Object.freeze({
-          ...snapshot,
-          ingress: true,
-          retryable: !!retry,
+      const admitted = active;
+      const apply = () =>
+        transaction(() => {
+          if (disposed || active !== admitted) return;
+          void start();
+          ingressRetry = retry;
+          snapshot = Object.freeze({
+            ...snapshot,
+            ingress: true,
+            retryable: !!retry,
+          });
+          finish(active, { status: "failed", reason });
         });
-        finish(active, { status: "failed", reason });
-      });
+      if (drafts?.hasRisk())
+        void drafts.request().then((leave) => {
+          if (leave) apply();
+        });
+      else apply();
     },
     dispose() {
       transaction(() => {

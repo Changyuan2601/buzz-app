@@ -194,3 +194,24 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
+
+it("refreshes clean settings from another view but preserves a dirty draft until Discard", async () => {
+  const Settings = tab(installed().type, 1);
+  const save = vi.fn(async () => undefined);
+  const view = render(<Settings agent={agent()} save={save} />);
+  const latest = { ...DEFAULT_CONFIG, instructions: "Updated elsewhere" };
+  view.rerender(<Settings agent={agent(latest)} save={save} />);
+  expect(screen.getByLabelText("Instructions")).toHaveValue(
+    "Updated elsewhere",
+  );
+  const user = userEvent.setup();
+  await user.clear(screen.getByLabelText("Instructions"));
+  await user.type(screen.getByLabelText("Instructions"), "My draft");
+  const newest = { ...latest, instructions: "New external revision" };
+  view.rerender(<Settings agent={agent(newest)} save={save} />);
+  expect(screen.getByLabelText("Instructions")).toHaveValue("My draft");
+  await user.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.getByLabelText("Instructions")).toHaveValue(
+    "New external revision",
+  );
+});

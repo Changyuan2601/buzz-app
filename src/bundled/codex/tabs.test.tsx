@@ -179,3 +179,24 @@ it("shows the default workspace and restores it when the field is cleared", asyn
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
 });
+
+it("refreshes clean settings from another view but preserves a dirty draft until Discard", async () => {
+  const f = fixture();
+  const first = f.props();
+  const view = render(<f.tabs.SettingsTab {...first} />);
+  const latest = { ...defaults, instructions: "Updated elsewhere" };
+  view.rerender(<f.tabs.SettingsTab {...f.props(latest)} />);
+  expect(screen.getByLabelText("Instructions")).toHaveValue(
+    "Updated elsewhere",
+  );
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "My draft" },
+  });
+  const newest = { ...latest, instructions: "New external revision" };
+  view.rerender(<f.tabs.SettingsTab {...f.props(newest)} />);
+  expect(screen.getByLabelText("Instructions")).toHaveValue("My draft");
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.getByLabelText("Instructions")).toHaveValue(
+    "New external revision",
+  );
+});

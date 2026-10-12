@@ -1,3 +1,4 @@
+import { useDraftState } from "../drafts/react";
 // The app's editor for an agent's `agent-attention/v1` objects. Every agent type is
 // woken through them, so the app edits them once instead of each plugin. Watches
 // and timers sit under the Interest they serve; raw JSON covers what the forms
@@ -105,6 +106,11 @@ const message = (error: unknown) =>
 function useAction() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  useDraftState(
+    "attention update",
+    { dirty: false, saving: pending },
+    () => {},
+  );
   const run = async (action: () => Promise<void>) => {
     setPending(true);
     setError("");
@@ -141,7 +147,7 @@ export function AttentionPanel({
   const skipped = Object.values(agent.skipped);
   const row = (object: WatchObject) => (
     <WatchRow
-      key={`${object.slug}:${object.modifiedAt}`}
+      key={object.slug}
       object={object}
       agent={agent}
       channels={channels}
@@ -201,11 +207,7 @@ export function AttentionPanel({
           </div>
           <SettingsGroup>
             {skipped.map((object) => (
-              <SkippedRow
-                key={`${object.slug}:${object.modifiedAt}`}
-                object={object}
-                save={save}
-              />
+              <SkippedRow key={object.slug} object={object} save={save} />
             ))}
           </SettingsGroup>
         </section>
@@ -251,6 +253,18 @@ function InterestGroup({
   const [text, setText] = useState(instructions);
   const [draft, setDraft] = useState<"event" | "timer">();
   const action = useAction();
+  useDraftState(
+    "attention instructions",
+    {
+      dirty: editing && text !== instructions,
+      saving: action.pending,
+      revision: text,
+    },
+    () => {
+      setText(instructions);
+      setEditing(false);
+    },
+  );
   const remove = () =>
     action.run(() => save({ attention: { [object.slug]: null } }));
   return (
@@ -594,8 +608,26 @@ function JsonEditor({
   save: Save;
   onDone(): void;
 }) {
-  const [text, setText] = useState(JSON.stringify(value ?? {}, null, 2));
+  const saved = JSON.stringify(value ?? {}, null, 2);
+  const [text, setText] = useState(saved);
+  const [baseline, setBaseline] = useState(saved);
+  if (baseline !== saved) {
+    setBaseline(saved);
+    if (text === baseline) setText(saved);
+  }
   const action = useAction();
+  useDraftState(
+    "attention rule",
+    {
+      dirty: text !== JSON.stringify(value ?? {}, null, 2),
+      saving: action.pending,
+      revision: text,
+    },
+    () => {
+      setText(JSON.stringify(value ?? {}, null, 2));
+      onDone();
+    },
+  );
   const submit = () => {
     let next: unknown;
     try {
@@ -663,6 +695,19 @@ function NewInterest({
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const action = useAction();
+  useDraftState(
+    "new interest",
+    {
+      dirty: !!(name || instructions),
+      saving: action.pending,
+      revision: name + instructions,
+    },
+    () => {
+      setName("");
+      setInstructions("");
+      onDone();
+    },
+  );
   const submit = () => {
     const slug = freeSlug("interest", name, agent);
     const value = { type: "interest", instructions } as const;
@@ -740,6 +785,25 @@ function WatchForm({
   const [limit, setLimit] = useState("");
   const [until, setUntil] = useState("");
   const action = useAction();
+  const revision = JSON.stringify([
+    name,
+    scope,
+    kinds,
+    exactly,
+    replies,
+    advanced,
+    prompt,
+    count,
+    unit,
+    limit,
+    until,
+  ]);
+  const [initial] = useState(revision);
+  useDraftState(
+    "new attention rule",
+    { dirty: revision !== initial, saving: action.pending, revision },
+    onDone,
+  );
   let filterProblem = "";
   if (advanced.trim())
     try {

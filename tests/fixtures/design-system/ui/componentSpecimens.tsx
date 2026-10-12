@@ -1,3 +1,4 @@
+import { CollectionCardSpecimens } from "./CollectionCardSpecimens";
 import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
 import { ExamplePreview } from "./ExamplePreview";
@@ -1754,6 +1755,7 @@ function RadioGroupSpecimen() {
 }
 
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
+  "collection-card": CollectionCardSpecimens,
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimens,
   toast: ToastSpecimens,

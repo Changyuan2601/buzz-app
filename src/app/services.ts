@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { createDraftGuard } from "../features/drafts/guard";
 import { bindTeamTextSync } from "../features/agents/team-instructions";
 import {
   createIdentity,
@@ -50,7 +51,13 @@ export function createServices() {
   });
   const agentControl = provideAgentControl(ctx);
   new AgentSecurityService(ctx);
-  const navigationHost = provideNavigation(ctx);
+  const drafts = createDraftGuard();
+  ctx.effect(() => () => drafts.dispose());
+  const navigationHost = provideNavigation(
+    ctx,
+    typeof window === "undefined" ? undefined : window,
+    drafts,
+  );
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
@@ -114,6 +121,7 @@ export function createServices() {
     notifications,
     navigation,
     navigationHost,
+    drafts,
     shortcuts,
     agents2,
     accountActions,
