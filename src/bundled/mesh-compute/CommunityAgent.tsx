@@ -1,4 +1,10 @@
-import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { AgentControl } from "../../features/agents/control";
 import { AgentCreateDialog } from "../agents/AgentCreateDialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -24,9 +30,20 @@ export function CommunityAgent({
   const titleId = useId();
   // undefined: closed; null: custom (blank) agent; otherwise the chosen preset.
   const [open, setOpen] = useState<CommunityAgentPreset | null>();
+  // The dialog seeds its form once, so admit it only after a re-read that
+  // carries native defaults (a team sync can drop them), then keep it open.
+  const [admit, setAdmit] = useState<"loading" | "ready" | "failed">("loading");
+  const attempt = useRef(0);
   const start = (preset: CommunityAgentPreset | null) => {
+    const current = ++attempt.current;
     setOpen(preset);
-    void control.refresh();
+    setAdmit("loading");
+    const done = () => {
+      if (attempt.current !== current) return;
+      const ok = Boolean(control.snapshot().data?.defaultWorkspace);
+      setAdmit(ok ? "ready" : "failed");
+    };
+    control.refresh().then(done, done);
   };
   return (
     <section aria-labelledby={titleId} className={styles.sharing}>
@@ -58,7 +75,30 @@ export function CommunityAgent({
           onSelect={() => start(null)}
         />
       </ul>
-      {open !== undefined && (
+      {open !== undefined && admit !== "ready" && (
+        <p role="status">
+          {admit === "failed" ? (
+            <>
+              Couldn’t load agent settings.{" "}
+              <Button variant="subtle" onClick={() => start(open)}>
+                Retry
+              </Button>
+            </>
+          ) : (
+            "Loading agent settings… "
+          )}
+          <Button
+            variant="subtle"
+            onClick={() => {
+              attempt.current++;
+              setOpen(undefined);
+            }}
+          >
+            Cancel
+          </Button>
+        </p>
+      )}
+      {open !== undefined && admit === "ready" && (
         <AgentCreateDialog
           control={control}
           state={state}
