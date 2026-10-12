@@ -98,9 +98,11 @@ and cleanup.
 
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
-- Replies use Agents2's host signer. Codex receives no Buzz agent key and does not
-  publish through the Buzz CLI. Short Buzz guidance and custom instructions are
-  supplied as developer instructions, preserving Codex’s native coding prompt.
+- Replies use Agents2's host signer. Codex receives no Buzz agent key.
+  Buzz CLI use is permitted for authorized tasks when the CLI is available and configured.
+  This plugin does not provide CLI authentication; commands that need it must report the missing authentication instead of searching for credentials.
+  Prefer the shared Buzz tools for the actions they support.
+  Short Buzz guidance and custom instructions are supplied as developer instructions, preserving Codex’s native coding prompt.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
   Claude Code's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
