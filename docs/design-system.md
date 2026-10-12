@@ -188,7 +188,10 @@ attended desktop shortcut try remains necessary for native acceptance.
 The host entry `src/shared/styles/globals.css` loads the shared palette, typography,
 materials, and components with one Tailwind reset.
 It does not import the viewer's global entry, preference owner, docking vendor CSS
-or workspace experiments. Panel styling remains defined only by the shared system.
+or workspace experiments. Panel styling remains defined only by the shared system,
+except the shell's corner caps on its joined Panel (`globals.css`), which clip its
+content to a rectangle and redraw its edge from `--panel-border`, `--panel-radius`
+and `--panel-shadow`.
 
 Bundled screens use semantic colors and shared controls. Compatibility names
 forward to the same shared roles; they are not the vocabulary for new work.

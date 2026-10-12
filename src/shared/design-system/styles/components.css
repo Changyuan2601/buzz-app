@@ -506,12 +506,13 @@
      `:where()` keeps the vendor selector at zero specificity, so a Panel
      variant can still override it without an escalation.
 
-     The edge is named so the shell's corner caps (globals.css) can redraw it
-     without restating it. */
+     The edge and corner are named so the shell's corner caps (globals.css)
+     can redraw them without restating them. */
   .panel,
   :where(.bento-workspace .dv-groupview) {
     @apply interaction-panel;
     --panel-border: 1px solid var(--border-standard);
+    --panel-radius: var(--radius-panel);
     --panel-shadow: var(--shadow-xs);
     width: 100%;
     height: 100%;
@@ -519,7 +520,7 @@
     min-height: 0;
     overflow: hidden;
     border: var(--panel-border);
-    border-radius: var(--radius-panel);
+    border-radius: var(--panel-radius);
     background: var(--surface-panel);
     box-shadow: var(--panel-shadow);
   }

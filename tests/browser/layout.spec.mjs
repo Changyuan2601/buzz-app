@@ -288,6 +288,33 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     return value;
   });
   expect(background).toBe(gradient);
+  // The corner caps draw the visible edge and the backdrop outside its arcs.
+  const caps = await page
+    .locator(".shell-body > [data-joined]")
+    .evaluate((el) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--border-standard)";
+      el.append(probe);
+      const standard = getComputedStyle(probe).color;
+      probe.remove();
+      const [backdrop, edge] = ["::before", "::after"].map((pseudo) =>
+        getComputedStyle(el, pseudo),
+      );
+      return {
+        content: [backdrop.content, edge.content],
+        backdrop: backdrop.backgroundImage,
+        mask: backdrop.maskImage.includes("radial-gradient"),
+        border: [edge.borderTopWidth, edge.borderTopColor === standard],
+        shadow: edge.boxShadow !== "none",
+      };
+    });
+  expect(caps).toEqual({
+    content: ['""', '""'],
+    backdrop: gradient,
+    mask: true,
+    border: ["1px", true],
+    shadow: true,
+  });
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

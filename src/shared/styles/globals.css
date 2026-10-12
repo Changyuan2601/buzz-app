@@ -299,7 +299,8 @@
      content to a rectangle and redraws its rounded corner on top: ::before
      repaints the backdrop outside the arc and ::after the Panel's edge. Both
      ignore pointers and keep their own compositor layers; merged into a
-     content layer they would fail the hit test again. */
+     content layer they would fail the hit test again. Every engine draws the
+     caps, though only Chromium gains speed, so all hosts share one shell. */
   .shell-body {
     @apply relative flex min-h-0 min-w-0 flex-1;
     --shell-gutter: var(--space-2);
@@ -332,10 +333,12 @@
     inset: 0 var(--shell-gutter) var(--shell-gutter) 0;
     z-index: 1;
     pointer-events: none;
-    will-change: transform;
+    /* Not `transform`: a transform layer snaps to whole pixels, which would
+       part the caps from the Panel at fractional Interface sizes. */
+    will-change: opacity;
   }
   .shell-body > .panel::before {
-    --r: var(--radius-panel);
+    --r: var(--panel-radius);
     --far: calc(100% - var(--r));
     --outside: transparent calc(var(--r) - 0.5px), black 0;
     --tile: calc(var(--r) + 2px);
@@ -347,21 +350,36 @@
     background-size: 100vw 100dvh;
     background-repeat: no-repeat;
     /* Each corner square minus its arc. Full-box circles, rather than circles
-       in corner tiles, keep fractional sizes from leaking the fill. */
-    mask:
-      radial-gradient(circle var(--r) at var(--r) var(--r), var(--outside))
-      intersect,
-      radial-gradient(circle var(--r) at var(--far) var(--r), var(--outside))
-      intersect,
-      radial-gradient(circle var(--r) at var(--r) var(--far), var(--outside))
-      intersect,
-      radial-gradient(circle var(--r) at var(--far) var(--far), var(--outside))
-      intersect,
-      linear-gradient(black 0 0) left top / var(--tile) var(--tile) no-repeat,
-      linear-gradient(black 0 0) right top / var(--tile) var(--tile) no-repeat,
-      linear-gradient(black 0 0) left bottom / var(--tile) var(--tile) no-repeat,
-      linear-gradient(black 0 0) right bottom / var(--tile) var(--tile)
-      no-repeat;
+       in corner tiles, keep fractional sizes from leaking the fill. Longhands
+       let the build add the -webkit-mask-composite that Chromium < 120 needs. */
+    mask-image:
+      radial-gradient(circle var(--r) at var(--r) var(--r), var(--outside)),
+      radial-gradient(circle var(--r) at var(--far) var(--r), var(--outside)),
+      radial-gradient(circle var(--r) at var(--r) var(--far), var(--outside)),
+      radial-gradient(circle var(--r) at var(--far) var(--far), var(--outside)),
+      linear-gradient(black 0 0), linear-gradient(black 0 0),
+      linear-gradient(black 0 0), linear-gradient(black 0 0);
+    mask-position:
+      0 0,
+      0 0,
+      0 0,
+      0 0,
+      left top,
+      right top,
+      left bottom,
+      right bottom;
+    mask-size:
+      auto,
+      auto,
+      auto,
+      auto,
+      var(--tile) var(--tile),
+      var(--tile) var(--tile),
+      var(--tile) var(--tile),
+      var(--tile) var(--tile);
+    mask-repeat: no-repeat;
+    mask-composite:
+      intersect, intersect, intersect, intersect, add, add, add, add;
   }
   .shell-body > .panel::after {
     border: var(--panel-border);
