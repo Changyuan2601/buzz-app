@@ -119,6 +119,10 @@ let Page: ComponentType<{ community?: { id: string; name: string } }> = () =>
   null;
 apply({
   relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+  communityReader: {
+    snapshot: () => ({ viewer: snapshot.viewer }),
+    subscribe: () => () => {},
+  },
   effect: () => {},
   settingsCards: {
     register: (card: { component: typeof Page }) => {

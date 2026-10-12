@@ -39,7 +39,12 @@ type MeshStatus = {
   };
   reason?: string;
 };
-export const inject = ["relay", "settingsCards", "agentControl"];
+export const inject = [
+  "relay",
+  "settingsCards",
+  "agentControl",
+  "communityReader",
+];
 
 // Settles when the most recent Share action has fully finished, so tests can
 // prove a retired action completed instead of waiting an arbitrary tick.
@@ -102,22 +107,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   const sync = () => {
     const snapshot = ctx.relay.snapshot();
-    const identityChanged = viewer !== undefined && snapshot.viewer !== viewer;
+    const account = ctx.communityReader.snapshot();
+    const identityChanged = viewer !== undefined && account.viewer !== viewer;
     if (snapshot.status !== "ready" && !identityChanged) return;
     if (identityChanged) {
       release(lease);
       lease = undefined;
       scope = undefined;
     }
-    viewer = snapshot.viewer;
+    viewer = account.viewer;
     const next =
       snapshot.status === "ready" &&
+      snapshot.viewer === viewer &&
       snapshot.viewer &&
       snapshot.scope?.endsWith(`:${snapshot.viewer}`)
         ? snapshot.scope.slice(0, -(snapshot.viewer.length + 1))
         : undefined;
     // Foreground navigation is not permission to move the app-owned compute.
-    if (scope && next && !identityChanged) return;
+    if (scope && !identityChanged) return;
     if (next === scope) return;
     scope = next;
     const old = lease;
@@ -127,9 +134,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   sync();
   const unsubscribe = ctx.relay.subscribe(sync);
+  const unsubscribeAccount = ctx.communityReader.subscribe(sync);
   ctx.effect(() => () => {
     disposed = true;
     unsubscribe();
+    unsubscribeAccount();
     if (isTauri()) {
       widgetQueue = widgetQueue
         .catch(() => {})

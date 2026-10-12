@@ -1,3 +1,6 @@
+import { Context } from "@deepseek-ai/cordis";
+import { createCommunities } from "../../features/communities/service";
+import { flush } from "../../features/relay/testing";
 import userEvent from "@testing-library/user-event";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -11,7 +14,17 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PluginModule } from "../../plugins/api";
-import { apply, shareActionSettled } from "./index";
+import { apply as applyPlugin, shareActionSettled } from "./index";
+// Legacy unit fixtures model account changes alongside relay updates. Navigation
+// regressions below supply the real, independent community identity owner.
+const apply: typeof applyPlugin = (ctx) =>
+  applyPlugin({
+    ...ctx,
+    communityReader: ctx.communityReader ?? {
+      snapshot: () => ({ viewer: ctx.relay.snapshot().viewer }),
+      subscribe: ctx.relay.subscribe,
+    },
+  } as Parameters<typeof applyPlugin>[0]);
 const native = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: () => true }));
 vi.mock("@tauri-apps/api/core", () => ({
   ...native,
@@ -1409,3 +1422,167 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
     vi.useRealTimers();
   }
 });
+
+it("real community snapshots preserve sharing through Personal and a connecting community", async () => {
+  const viewer = "a".repeat(64);
+  const root = new Context();
+  let connectB!: () => void;
+  const pendingB = new Promise<void>((resolve) => {
+    connectB = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string) => {
+      if (input.endsWith("/identity")) return Response.json({ viewer });
+      if (input.endsWith("/session")) {
+        const id = decodeURIComponent(input.split("/")[3] ?? "");
+        if (id === "https://b.example") await pendingB;
+        return Response.json({
+          viewer,
+          relayAuthor: "b".repeat(64),
+          relayUrl: id,
+        });
+      }
+      return Response.json([]);
+    }),
+  );
+  localStorage.clear();
+  native.invoke.mockImplementation((command) =>
+    Promise.resolve(
+      command === "mesh_compute_select"
+        ? "sharing-lease"
+        : {
+            available: true,
+            boundCommunity: "https://a.example",
+            sharing: "model",
+            lifecycle: { state: "ready" },
+          },
+    ),
+  );
+  let dispose!: () => void;
+  try {
+    const client = createCommunities(root, true);
+    await flush();
+    client.joined(
+      { id: "https://a.example", name: "A" },
+      { name: "", picture: "" },
+    );
+    await waitFor(() => expect(client.relay.snapshot().status).toBe("ready"));
+    apply({
+      relay: client.relay,
+      communityReader: {
+        snapshot: client.snapshot,
+        subscribe: client.subscribe,
+      },
+      effect: (setup: () => () => void) => {
+        dispose = setup();
+      },
+      settingsCards: { register: () => {} },
+    } as unknown as Parameters<typeof apply>[0]);
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
+        community: "https://a.example",
+        restoreSharing: true,
+      }),
+    );
+    client.select(null);
+    expect(client.relay.snapshot()).toMatchObject({ status: "disconnected" });
+    expect(client.relay.snapshot().viewer).toBeUndefined();
+    client.joined(
+      { id: "https://b.example", name: "B" },
+      { name: "", picture: "" },
+    );
+    expect(client.relay.snapshot().status).toBe("connecting");
+    expect(client.relay.snapshot().viewer).toBeUndefined();
+    await flush();
+    connectB();
+    await waitFor(() => expect(client.relay.snapshot().status).toBe("ready"));
+    client.relay.disconnect();
+    client.relay.retry();
+    await waitFor(() => expect(client.relay.snapshot().status).toBe("ready"));
+    client.select("https://a.example");
+    await flush();
+    expect(
+      native.invoke.mock.calls.filter(([cmd]) => cmd === "mesh_compute_select"),
+    ).toHaveLength(1);
+    expect(
+      native.invoke.mock.calls.filter(
+        ([cmd]) => cmd === "mesh_compute_release",
+      ),
+    ).toHaveLength(0);
+    dispose();
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith("mesh_compute_release", {
+        lease: "sharing-lease",
+      }),
+    );
+  } finally {
+    connectB();
+    await root.fiber.dispose();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  }
+});
+
+for (const nextViewer of [undefined, "other"] as const) {
+  it(`retires sharing on app identity ${nextViewer ?? "removal"} while Personal is foreground`, async () => {
+    let account: { viewer?: string } = { viewer: "viewer" };
+    let relay: { status: string; viewer?: string; scope?: string } = {
+      status: "ready",
+      viewer: "viewer",
+      scope: "https://a.example:viewer",
+    };
+    const accountListeners = new Set<() => void>();
+    const relayListeners = new Set<() => void>();
+    let dispose!: () => void;
+    native.invoke.mockImplementation((command) =>
+      Promise.resolve(
+        command === "mesh_compute_select" ? "lease" : { available: true },
+      ),
+    );
+    apply({
+      relay: {
+        snapshot: () => relay,
+        subscribe: (fn: () => void) => {
+          relayListeners.add(fn);
+          return () => relayListeners.delete(fn);
+        },
+      },
+      communityReader: {
+        snapshot: () => account,
+        subscribe: (fn: () => void) => {
+          accountListeners.add(fn);
+          return () => accountListeners.delete(fn);
+        },
+      },
+      settingsCards: { register: () => {} },
+      effect: (setup: () => () => void) => {
+        dispose = setup();
+      },
+    } as unknown as Parameters<typeof apply>[0]);
+    try {
+      await waitFor(() =>
+        expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
+          community: "https://a.example",
+          restoreSharing: true,
+        }),
+      );
+      relay = { status: "disconnected" };
+      for (const fn of relayListeners) fn();
+      await flush();
+      expect(native.invoke).not.toHaveBeenCalledWith(
+        "mesh_compute_release",
+        expect.anything(),
+      );
+      account = nextViewer ? { viewer: nextViewer } : {};
+      for (const fn of accountListeners) fn();
+      await waitFor(() =>
+        expect(native.invoke).toHaveBeenCalledWith("mesh_compute_release", {
+          lease: "lease",
+        }),
+      );
+    } finally {
+      dispose();
+    }
+  });
+}
