@@ -335,6 +335,8 @@ if (channels) {
   new PanelsService(context);
   new SettingsCardsService(context);
   provideNavigation(context);
+  // Channels requires Agents for its page/settings, neither mounted here.
+  context.provide("agents2", {});
   // Only the composer is mounted; the Channels page never consumes this service.
   context.provide("relay", {
     snapshot: () => ({ session: namedSession }),
