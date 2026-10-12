@@ -2,6 +2,18 @@ import { useState, useSyncExternalStore } from "react";
 import type { FederatedIdentity } from "./service";
 import { Button } from "../../shared/design-system/ui/Button";
 
+function recoveryMessage(code: string) {
+  if (code === "storage-busy")
+    return "Secure storage is busy. Close another Buzz instance and try again.";
+  if (code.startsWith("storage-"))
+    return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
+  if (code === "sign-in-canceled")
+    return "Sign-in was canceled. Sign in when you’re ready.";
+  if (code === "reauthentication-required")
+    return "Your sign-in has expired. Sign in again to continue.";
+  return "Sign-in did not finish. Try again.";
+}
+
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
   identity,
@@ -77,7 +89,7 @@ function Action({
       </Button>
       {(failure || state.failure) && (
         <p role="alert" className="text-body-sm text-danger">
-          {failure || `Federated identity: ${state.failure}`}
+          {recoveryMessage(failure || state.failure || "")}
         </p>
       )}
     </>

@@ -7,6 +7,25 @@ import { vi } from "vitest";
 import { CommunitySignIn } from "./CommunitySignIn";
 import { federatedFixture } from "./testing";
 afterEach(cleanup);
+it.each(["storage-unavailable", "storage-denied"])(
+  "gives secure-storage recovery instead of exposing %s",
+  (failure) => {
+    const h = federatedFixture();
+    h.publish({ status: "unavailable", failure });
+    render(
+      <CommunitySignIn
+        identity={h.service}
+        error="Federated sign-in is required"
+        retry={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Check your system’s credential permissions and try again.",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(failure);
+    expect(h.service.signIn).not.toHaveBeenCalled();
+  },
+);
 it("requires explicit sign-in before retrying protected community admission", async () => {
   const h = federatedFixture();
   const retry = vi.fn();
