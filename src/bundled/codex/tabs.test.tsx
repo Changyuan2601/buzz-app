@@ -90,6 +90,7 @@ function fixture(machine = { installed: true, signedIn: true }) {
     return process;
   });
   const runtime = new CodexRuntime(spawn, () => undefined, {} as Storage);
+  const reauthorize = vi.spyOn(runtime, "reauthorize");
   const tabs = createTabs(React, spawn, runtime, new CodexSetup(spawn));
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
@@ -101,7 +102,7 @@ function fixture(machine = { installed: true, signedIn: true }) {
     if (!found) throw new Error(`No ${id} process`);
     return found;
   };
-  return { machine, spawn, processes, step, tabs, props };
+  return { machine, spawn, processes, step, tabs, props, reauthorize };
 }
 it("installs a missing Codex, streaming the installer, then checks again", async () => {
   const f = fixture({ installed: false, signedIn: true });
@@ -147,10 +148,13 @@ it("installs a missing Codex, streaming the installer, then checks again", async
     expect(f.spawn.mock.calls.filter(([id]) => id === "install")).toHaveLength(
       1,
     );
+    expect(f.reauthorize).not.toHaveBeenCalled();
   } finally {
     release.resolve();
   }
   await screen.findByText("Codex is ready (test@example.com).");
+  // Agents' shared server learns of the new credentials.
+  expect(f.reauthorize).toHaveBeenCalled();
   expect(
     screen.queryByRole("button", { name: "Install Codex" }),
   ).not.toBeInTheDocument();

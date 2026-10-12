@@ -40,6 +40,7 @@ function fixture(
   let options: HostProcessOptions | undefined;
   let thread = 0;
   let turn = 0;
+  let account: unknown = null;
   const sent: Wire[] = [];
   const toolCalls = new Map<
     number | string,
@@ -94,6 +95,7 @@ function fixture(
             },
           },
         };
+      if (request.method === "account/read") result = { account };
       if (request.method === "thread/start")
         result = { thread: { id: `thread-${++thread}`, cwd: params.cwd } };
       if (request.method === "thread/resume")
@@ -375,6 +377,10 @@ function fixture(
     interrupt,
     snapshot,
     exits,
+    /** What the server's `account/read` reports. */
+    account: (value: unknown) => {
+      account = value;
+    },
   };
 }
 it("hands over promptly and runs conversations independently on one server", async () => {
@@ -447,6 +453,29 @@ const contents = (publish: { mock: { calls: unknown[][] } }) =>
   publish.mock.calls.map(([event]) => (event as { content: string }).content);
 const servers = (f: ReturnType<typeof fixture>) =>
   f.spawn.mock.calls.filter(([id]) => id === "codex-app-server");
+it("after sign-in, retires a server without an account once its turns end", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A server that has an account keeps serving.
+  f.account({ type: "chatgpt" });
+  await f.runtime.reauthorize();
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("more"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(servers(f)).toHaveLength(1);
+  // One that started signed out finishes its turn, then closes.
+  f.account(null);
+  await f.runtime.reauthorize();
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.process.end).toHaveBeenCalled());
+  expect(contents(f.publish)).toEqual(["FIRST", "SECOND"]);
+  // The next turn starts a server that reads the new credentials.
+  await f.runtime.run(f.delivery("after sign-in"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+});
 it("serves every agent from one server and routes each tool call to its own agent", async () => {
   const f = fixture();
   const b = second(f);

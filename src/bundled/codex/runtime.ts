@@ -73,6 +73,8 @@ type Server = {
   opening: Promise<AppServer>;
   /** Threads this process has loaded, and the agent each belongs to. */
   threads: Map<string, string>;
+  /** Turns running on it, which a retired server finishes before closing. */
+  turns: number;
 };
 export type SessionView = { key: string; status: string; detail: string };
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
@@ -165,6 +167,19 @@ export class CodexRuntime {
     void this.server?.rpc.close();
     this.server = undefined;
   }
+  /** Codex reads credentials only when its server starts. Once the CLI is
+   * signed in, a server without an account is retired: new turns start one
+   * that reads them, and this one closes when its turns end. */
+  async reauthorize() {
+    const server = this.server;
+    if (!server) return;
+    const read = await server.opening
+      .then((rpc) => rpc.request<{ account: unknown }>("account/read"))
+      .catch(() => undefined);
+    if (read?.account || this.server !== server) return;
+    this.server = undefined;
+    if (!server.turns) void server.rpc.close();
+  }
   private open() {
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
@@ -173,6 +188,7 @@ export class CodexRuntime {
       rpc,
       opening: rpc.open(this.spawn, defaults.workspace),
       threads: new Map(),
+      turns: 0,
     };
     // An exit fails current work and permits the next ordinary mention to reopen.
     rpc.onMessage((wire) => {
@@ -568,6 +584,7 @@ export class CodexRuntime {
         else finish(p.turn.status);
       }
     });
+    server.turns++;
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
@@ -747,6 +764,7 @@ export class CodexRuntime {
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
       if (lane.active === active) delete lane.active;
+      if (!--server.turns && this.server !== server) void server.rpc.close();
     }
   }
 }

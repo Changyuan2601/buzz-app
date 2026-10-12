@@ -108,6 +108,8 @@ export function createTabs(
       void catalog(spawn, abort.signal)
         .then(
           (value) => {
+            // Agents' shared server may have started before this sign-in.
+            void runtime.reauthorize();
             if (current) {
               setData(value);
               setNeed(undefined);
