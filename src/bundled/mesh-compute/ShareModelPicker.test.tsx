@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -51,17 +52,28 @@ function Fixture() {
 it("selects the SDK-backed recommendation and discloses the download before sharing", async () => {
   invoke.mockResolvedValue(catalog);
   render(<Fixture />);
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
-  await screen.findByText("Auto — Fixture model (Q4) for this device");
-  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  expect(screen.getByRole("combobox")).toHaveTextContent("recommended");
-  const fit = screen.getByText("fits comfortably");
-  expect(fit).toHaveAttribute("data-fit", "comfortable");
-  expect(fit.parentElement).toHaveTextContent(
-    "Downloads 6GB when sharing starts · fits comfortably.",
-  );
+  await screen.findByText("Fixture GPU");
+  await screen.findByText("Fixture GPU");
+  expect(screen.getByText("32 GB")).toBeVisible();
+  expect(screen.getAllByText("Auto")).toHaveLength(1);
+  expect(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("Auto");
+  expect(screen.getByText("Download 6GB")).toBeVisible();
+  expect(screen.queryByText("comfortable")).not.toBeInTheDocument();
+  expect(screen.getByText("32 GB")).toHaveAttribute("data-fit", "comfortable");
+
   expect(invoke).toHaveBeenCalledWith("mesh_compute_catalog");
+  await userEvent.click(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: /Fixture model.*recommended/ }),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("Fixture model");
+  expect(screen.queryByText("Manual")).not.toBeInTheDocument();
 });
 it("labels each option's fit and refuses models too large for this machine", async () => {
   invoke.mockResolvedValue({
@@ -79,8 +91,7 @@ it("labels each option's fit and refuses models too large for this machine", asy
     ],
   });
   render(<Fixture />);
-  await screen.findByText("Auto — Fixture model (Q4) for this device");
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await screen.findByText("Fixture GPU");
   fireEvent.click(screen.getByRole("combobox"));
   expect(
     await screen.findByRole("option", {
@@ -99,13 +110,18 @@ it("keeps manual selection usable on catalog failure and retries the catalog", a
     .mockResolvedValue(catalog);
   render(<Fixture />);
   await screen.findByText("Catalog unavailable");
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await userEvent.click(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: "Custom model or local GGUF" }),
+  );
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/local.gguf" } },
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
+  await screen.findByText("Fixture GPU");
   expect(
     screen.getByLabelText("Model reference or local GGUF path"),
   ).toHaveValue("/local.gguf");
@@ -151,9 +167,7 @@ it("bounds loading and ignores a late response after timeout", async () => {
     await act(async () => {
       release(catalog);
     });
-    expect(
-      screen.queryByText("Fixture GPU · 32 GB AI memory"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Fixture GPU")).not.toBeInTheDocument();
     invoke.mockResolvedValue(catalog);
     await act(async () => {
       fireEvent.click(
@@ -161,8 +175,8 @@ it("bounds loading and ignores a late response after timeout", async () => {
       );
     });
     expect(
-      screen.getByText("Auto — Fixture model (Q4) for this device"),
-    ).toBeInTheDocument();
+      screen.getByRole("combobox", { name: "Model to share" }),
+    ).toHaveTextContent("Auto");
   } finally {
     cleanup();
     vi.useRealTimers();
@@ -175,20 +189,26 @@ it("resets a custom selection to the device recommendation without keeping custo
     .mockResolvedValue(catalog);
   render(<Fixture />);
   await screen.findByText("Catalog unavailable");
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await userEvent.click(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: "Custom model or local GGUF" }),
+  );
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/old.gguf" } },
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
-  fireEvent.click(screen.getByRole("button", { name: "Reset to Auto" }));
+  await screen.findByText("Fixture GPU");
+  fireEvent.click(screen.getByRole("combobox", { name: "Model to share" }));
+  await userEvent.click(await screen.findByRole("option", { name: "Auto" }));
   expect(
     screen.queryByLabelText("Model reference or local GGUF path"),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByText("Auto — Fixture model (Q4) for this device"),
-  ).toBeInTheDocument();
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("Auto");
 });
 
 it("reset remains available during sharing and delegates persistence instead of changing the running model", async () => {
@@ -205,9 +225,15 @@ it("reset remains available during sharing and delegates persistence instead of 
       resetDisabled={false}
     />,
   );
-  const reset = await screen.findByRole("button", { name: "Reset to Auto" });
-  expect(reset).toBeEnabled();
-  fireEvent.click(reset);
+  const picker = await screen.findByRole("combobox", {
+    name: "Model to share",
+  });
+  expect(picker).toBeEnabled();
+  fireEvent.click(picker);
+  const reset = await screen.findByRole("option", {
+    name: "Auto",
+  });
+  await userEvent.click(reset);
   expect(onReset).toHaveBeenCalledOnce();
   expect(onChange).not.toHaveBeenCalled();
 });
@@ -223,7 +249,7 @@ it("controlled Auto does not write a recommendation as an override", async () =>
       disabled={false}
     />,
   );
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
+  await screen.findByText("Fixture GPU");
   expect(onChange).not.toHaveBeenCalled();
   expect(
     screen.queryByRole("button", { name: "Reset to Auto" }),
@@ -242,7 +268,7 @@ it("shows a next-start notice only when Auto differs from the running model", as
       disabled={true}
     />,
   );
-  await screen.findByText("Auto — Fixture model (Q4) for this device");
+  await screen.findByText("Fixture GPU");
   expect(
     screen.queryByText("Auto selection applies next time sharing starts."),
   ).not.toBeInTheDocument();
@@ -259,4 +285,65 @@ it("shows a next-start notice only when Auto differs from the running model", as
   expect(
     screen.getByText("Auto selection applies next time sharing starts."),
   ).toBeInTheDocument();
+});
+
+it("shows a warning only for a model that exceeds the machine's memory budget", async () => {
+  invoke.mockResolvedValue({
+    ...catalog,
+    entries: [{ ...catalog.entries[0], fit: "too_large" }],
+  });
+  render(<Fixture />);
+  const memory = await screen.findByText("32 GB");
+  expect(memory).toHaveAttribute("data-fit", "too_large");
+  expect(screen.getByText("Too large").parentElement).toBe(
+    memory.parentElement,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Advanced" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps Auto selected while the catalog loads and after a recommendation arrives", async () => {
+  let release!: (value: typeof catalog) => void;
+  const pending = new Promise<typeof catalog>((resolve) => {
+    release = resolve;
+  });
+  invoke.mockReturnValue(pending);
+  const props = {
+    auto: true,
+    disabled: false,
+    onChange: vi.fn(),
+    onReset: vi.fn(),
+  };
+  const view = render(
+    <ShareModelPicker
+      {...props}
+      model="saved/model"
+      runningModel="running/model"
+    />,
+  );
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("mesh_compute_catalog"),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("Auto");
+  expect(
+    screen.queryByLabelText("Model reference or local GGUF path"),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Chooses on start")).not.toBeInTheDocument();
+  view.rerender(<ShareModelPicker {...props} model="" />);
+  expect(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("Auto");
+  expect(
+    screen.queryByLabelText("Model reference or local GGUF path"),
+  ).not.toBeInTheDocument();
+  await act(async () => {
+    release(catalog);
+    await pending;
+  });
+  expect(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("Auto");
 });

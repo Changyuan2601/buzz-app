@@ -2,6 +2,9 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
+import { EmbeddedActivity } from "./EmbeddedActivity";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { CpuIcon } from "../../shared/design-system/icons";
@@ -9,10 +12,12 @@ import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityAgent } from "./CommunityAgent";
 import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
-import { ShareHex, type ShareHexState } from "./ShareHex";
 import styles from "./Compute.module.css";
 
+import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
+
 type MeshStatus = {
+  activity?: ComputeActivityData | null;
   available: boolean;
   modelReady?: boolean;
   finishingJoin?: boolean;
@@ -40,11 +45,19 @@ export const inject = ["relay", "settingsCards", "agentControl"];
 // prove a retired action completed instead of waiting an arbitrary tick.
 let lastShareAction: Promise<void> = Promise.resolve();
 export const shareActionSettled = () => lastShareAction;
+// The native widget is one app window, including across plugin reloads.
+let widgetQueue: Promise<unknown> = Promise.resolve();
 export const apply: PluginModule["apply"] = (ctx) => {
   let lease: Promise<string | undefined> | undefined;
   let scope: string | undefined;
   let viewer: string | undefined;
   let disposed = false;
+  const openWidget = () => {
+    widgetQueue = widgetQueue
+      .catch(() => {})
+      .then(() => (disposed ? undefined : invoke("mesh_compute_widget_open")));
+    return widgetQueue;
+  };
   let selectionQueue: Promise<unknown> = Promise.resolve();
   const select = (
     community: string,
@@ -117,6 +130,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.effect(() => () => {
     disposed = true;
     unsubscribe();
+    if (isTauri()) {
+      widgetQueue = widgetQueue
+        .catch(() => {})
+        .then(() => invoke("mesh_compute_widget_close"))
+        .catch(() => {});
+    }
     release(lease);
     lease = undefined;
   });
@@ -132,6 +151,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     );
     const [status, setStatus] = useState<MeshStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+      let active = true;
+      if (isTauri() && status?.sharing)
+        void openWidget().catch((reason) => {
+          if (active && !disposed)
+            setError(`Couldn’t open activity widget: ${String(reason)}`);
+        });
+      return () => {
+        active = false;
+      };
+    }, [status?.sharing]);
     useEffect(() => {
       let active = true;
       setStatus(null);
@@ -343,41 +373,31 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const phase = status?.lifecycle?.state;
     // Saved consent and live intent, not runtime health.
     const shareOn = Boolean(status?.sharing || status?.savedSharing?.enabled);
-    // Serving proof, not consent: only a ready runtime with a loaded model glows.
-    const preparing =
-      phase === "ready" && status?.sharing && !status.modelReady;
-    const hexState: ShareHexState =
-      phase === "ready" && status?.sharing && status.modelReady
-        ? "sharing"
-        : busy || phase === "starting" || phase === "stopping" || preparing
-          ? "working"
-          : "idle";
     useEffect(() => {
       if (
         busy ||
         error ||
         (status?.lifecycle?.state !== "starting" &&
           status?.lifecycle?.state !== "stopping" &&
-          !(
-            status?.lifecycle?.state === "ready" &&
-            status.sharing &&
-            !status.modelReady
-          ))
+          status?.lifecycle?.state !== "ready")
       )
         return;
       let active = true;
-      const timer = setTimeout(() => {
-        void invoke<MeshStatus>("mesh_compute_status").then(
-          (result) => {
-            if (active && !disposed && snapshot === ctx.relay.snapshot())
-              setStatus(result);
-          },
-          (reason) => {
-            if (active && !disposed && snapshot === ctx.relay.snapshot())
-              setError(String(reason));
-          },
-        );
-      }, 1000);
+      const timer = setTimeout(
+        () => {
+          void invoke<MeshStatus>("mesh_compute_status").then(
+            (result) => {
+              if (active && !disposed && snapshot === ctx.relay.snapshot())
+                setStatus(result);
+            },
+            (reason) => {
+              if (active && !disposed && snapshot === ctx.relay.snapshot())
+                setError(String(reason));
+            },
+          );
+        },
+        status?.lifecycle?.state === "ready" && !status.sharing ? 5000 : 1000,
+      );
       return () => {
         active = false;
         clearTimeout(timer);
@@ -385,7 +405,29 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }, [status, busy, error, snapshot]);
     return (
       <ConsumerComputeView
-        communityName={community?.name}
+        headerControl={
+          isTauri() && status?.available && !otherCommunity ? (
+            <div className={styles.sharingControl}>
+              <Switch
+                aria-label="Share compute"
+                checked={shareOn}
+                onCheckedChange={(next) => {
+                  if (next) void share();
+                  else void share(!status.sharing);
+                }}
+                disabled={
+                  busy ||
+                  !leaseReady ||
+                  // On may replace a connecting consumer; Off may cancel startup.
+                  // Native teardown must finish before another transition.
+                  phase === "stopping" ||
+                  snapshot.status !== "ready" ||
+                  (!shareOn && (phase === "failed" || (!auto && !model.trim())))
+                }
+              />
+            </div>
+          ) : undefined
+        }
         status={
           !isTauri()
             ? "Open Buzz desktop to use shared compute."
@@ -393,12 +435,29 @@ export const apply: PluginModule["apply"] = (ctx) => {
               ? "Checking shared compute…"
               : status.available === false
                 ? "Shared compute isn’t available in this build."
-                : undefined
+                : leaseReady
+                  ? shareStatus(status, phase, community?.name)
+                  : "Checking shared compute…"
         }
         error={error ?? status?.settingsError ?? status?.reason}
+        attention={
+          !isTauri() ||
+          phase === "failed" ||
+          status?.available === false ||
+          Boolean(
+            status?.savedSharing?.enabled &&
+              !status.sharing &&
+              phase !== "starting",
+          )
+        }
         refreshDisabled={busy || !isTauri()}
         refresh={() => void refresh()}
       >
+        {community?.name && (
+          <p className="m-0 text-body-sm text-secondary">
+            Shared compute for <strong>{community.name}</strong>
+          </p>
+        )}
         {otherCommunity && (
           <section aria-label="Bound compute community">
             <p>
@@ -429,50 +488,53 @@ export const apply: PluginModule["apply"] = (ctx) => {
           </section>
         )}
         {isTauri() && status?.available && !otherCommunity && (
-          <section aria-label="Share compute" className={styles.sharing}>
-            <div className={styles.sharingHeader}>
-              <ShareHex state={hexState} />
-              <div>
-                <h2 className="m-0 text-body">
-                  {hexState === "sharing"
-                    ? "You’re sharing compute"
-                    : "Share your compute"}
-                </h2>
-                <p className="m-0 text-body-sm text-secondary">
-                  Let {community?.name ?? "this community"} run prompts on this
-                  machine. Auto picks the best model for your hardware; Advanced
-                  lets you choose. Sharing resumes when you reopen Buzz.
-                </p>
-              </div>
-            </div>
-            <Switch
-              label="Share this machine"
-              checked={shareOn}
-              disabled={
-                busy ||
-                !leaseReady ||
-                // Only a shutdown must finish first. Off may cancel a serve that
-                // is still starting (e.g. a long download), and On may replace a
-                // consumer that is still connecting; native enforces the same.
-                phase === "stopping" ||
-                snapshot.status !== "ready" ||
-                // Turning on: never replace an unrecovered failed runtime.
-                (!shareOn && (phase === "failed" || (!auto && !model.trim())))
-              }
-              onCheckedChange={(next) => {
-                if (next) void share();
-                else void share(!status.sharing);
-              }}
-            />
-            <p role="status" className="text-body-sm">
-              {leaseReady
-                ? shareStatus(status, phase, community?.name)
-                : "Checking shared compute…"}
+          <section aria-label="Share compute">
+            <p className="m-0 text-body-sm text-secondary">
+              Let {community?.name ?? "this community"} run prompts on this
+              machine. Auto picks the best model for your hardware; you can also
+              choose one. Sharing resumes when you reopen Buzz.
             </p>
             {status.sharing && status.download && !status.download.done && (
               <DownloadProgress download={status.download} />
             )}
             <ShareModelPicker
+              activity={
+                <div className={styles.widgetOverview}>
+                  <div className={styles.widgetCard}>
+                    <EmbeddedActivity
+                      key={snapshot.scope}
+                      data={status.activity ?? null}
+                      sharing={Boolean(status.sharing)}
+                      state={
+                        phase === "ready"
+                          ? status.modelReady
+                            ? "running"
+                            : "starting"
+                          : (phase ?? "stopped")
+                      }
+                    />
+                    <div className={styles.widgetPopout}>
+                      <IconButton
+                        size="xs"
+                        aria-label="Open activity widget"
+                        title="Open activity widget"
+                        icon={<ArrowSquareOutIcon size={16} />}
+                        variant="subtle"
+                        disabled={!status.sharing}
+                        onClick={() => {
+                          setError(null);
+                          void openWidget().catch((reason) => {
+                            if (!disposed)
+                              setError(
+                                `Couldn’t open activity widget: ${String(reason)}`,
+                              );
+                          });
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              }
               model={model}
               auto={auto}
               onRecommendation={setRecommended}
@@ -489,7 +551,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 phase === "stopping" ||
                 Boolean(status.sharing)
               }
-            />
+            >
+              {phase === "ready" && (
+                <ComputeActivity data={status.activity ?? null} />
+              )}
+            </ShareModelPicker>
           </section>
         )}
         {community &&
@@ -505,12 +571,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
             />
           )}
         {isTauri() && status?.available && community && (
-          <CommunityMesh
-            key={community.id}
-            community={community.id}
-            relay={ctx.relay}
-            refreshKey={refreshCount}
-          />
+          <details className={styles.options} open>
+            <summary className="text-body-sm">Community devices</summary>
+            <CommunityMesh
+              key={community.id}
+              community={community.id}
+              relay={ctx.relay}
+              refreshKey={refreshCount}
+            />
+          </details>
         )}
       </ConsumerComputeView>
     );

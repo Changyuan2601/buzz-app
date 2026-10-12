@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Compute</title><script src="/appearance-init.js"></script><style>
+:root{color-scheme:light dark;background:transparent}html,body,canvas{width:100%;height:100%;margin:0;display:block;overflow:hidden}canvas{border-radius:12px;background:var(--surface-inset)}body{user-select:none;cursor:default}body::after{content:"";position:fixed;inset:0;border-radius:12px;box-shadow:inset 0 0 0 1px var(--border-standard);pointer-events:none}
+button{position:fixed;top:6px;right:6px;border:0;border-radius:4px;background:var(--surface-inset);color:var(--text-subtle);font:10px monospace;padding:4px;opacity:0}body:hover button,button:focus-visible{opacity:1}button:focus-visible{outline:1px solid var(--border-focus)}
+body.embedded::after{display:none}body.embedded canvas{border-radius:0}
+</style></head><body><canvas id="display" role="img" aria-label="Compute activity"></canvas><button id="close" type="button" aria-label="Close activity widget">Close</button><script type="module" src="/src/compute-widget.ts"></script></body></html>

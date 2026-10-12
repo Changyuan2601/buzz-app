@@ -3,9 +3,12 @@
 #[cfg(feature = "mesh")]
 use tauri::Manager;
 
+#[cfg(any(feature = "mesh", test))]
+mod activity;
 mod agent;
 #[cfg(feature = "mesh")]
 pub(crate) mod sharing;
+pub(crate) mod widget;
 #[cfg(feature = "mesh")]
 pub(crate) use agent::community_origin as agent_community;
 pub(crate) use agent::prepare_agent;
@@ -90,22 +93,27 @@ pub async fn mesh_compute_status(
             .lock()
             .map(|prefs| (prefs.hint().cloned(), prefs.error().map(str::to_owned)))
             .unwrap_or_default();
-        let model_ready = if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
-            host.lifecycle.status().await.ok().is_some_and(|status| {
-                status
-                    .payload
-                    .get("llama_ready")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true)
-            })
+        let runtime = if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
+            host.lifecycle.status().await.ok()
         } else {
-            false
+            None
         };
+        let model_ready = runtime.as_ref().is_some_and(|status| {
+            status
+                .payload
+                .get("llama_ready")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        });
+        let activity = runtime
+            .as_ref()
+            .and_then(|status| activity::snapshot(&status.payload));
         Ok(serde_json::json!({
             "available": true,
             "modelReady": model_ready,
             "finishingJoin": host.lifecycle.finishing_join(),
             "boundCommunity": host.lease.current()?.map(|(_, community)| community),
+            "activity": activity,
             "savedSharing": saved,
             "settingsError": settings_error,
             "lifecycle": host.lifecycle.phase(),

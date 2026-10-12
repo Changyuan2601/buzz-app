@@ -134,6 +134,8 @@
     "allow-mesh-compute-inventory",
     "allow-mesh-compute-status",
     "allow-mesh-compute-stop",
+    "allow-mesh-compute-widget-open",
+    "allow-mesh-compute-widget-close",
     "allow-mesh-compute-start",
     "allow-mesh-compute-select",
     "allow-mesh-compute-release",

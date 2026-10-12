@@ -32,6 +32,9 @@ mod host_command;
 mod host_process;
 mod host_request;
 mod mesh_compute;
+use mesh_compute::widget::{
+    mesh_compute_widget_close, mesh_compute_widget_open, mesh_compute_widget_status,
+};
 use mesh_compute::{mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, MeshHost};
 mod identity;
 mod image_clipboard;
@@ -441,6 +444,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         mesh_compute_inventory,
         mesh_compute_status,
         mesh_compute_stop,
+        mesh_compute_widget_open,
+        mesh_compute_widget_close,
+        mesh_compute_widget_status,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
