@@ -70,6 +70,8 @@ type Entry = {
   config: Config;
   /** The team sections of the latest run; a change restarts idle sessions. */
   team: string;
+  /** The agent's name, for its prompt; a rename restarts idle sessions. */
+  name?: string;
   memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
@@ -128,9 +130,13 @@ export class ClaudeRuntime {
     for (const agent of agents) {
       const next = config(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next);
-      else if (JSON.stringify(entry.config) !== JSON.stringify(next)) {
+      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
+      else if (
+        JSON.stringify(entry.config) !== JSON.stringify(next) ||
+        entry.name !== agent.name
+      ) {
         entry.config = next;
+        entry.name = agent.name;
         entry.sessions.reconfigure();
       }
     }
@@ -451,6 +457,7 @@ export class ClaudeRuntime {
           entry.config.instructions,
           entry.config.scope,
           entry.team,
+          entry.name,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -461,6 +468,7 @@ export class ClaudeRuntime {
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),

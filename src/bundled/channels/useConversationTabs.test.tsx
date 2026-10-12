@@ -8,7 +8,7 @@ import { useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 
 afterEach(cleanup);
-it("retained offline tabs can close, add and open threads without activating connected plugins", () => {
+it("retained offline tabs can close and open threads without activating connected plugins", () => {
   const channels = [
     { id: "alpha", name: "Alpha" },
     { id: "beta", name: "Beta" },
@@ -52,15 +52,13 @@ it("retained offline tabs can close, add and open threads without activating con
   ).toBe(false);
   act(() => h.result.current.workspace.closeTab(entry));
   expect(h.result.current.state.entries).toEqual([]);
-  act(() => h.result.current.workspace.addTab());
-  expect(h.result.current.state.tabs).toHaveLength(1);
   act(() =>
     h.result.current.workspace.openConversationThread("beta", "root", "root"),
   );
-  expect(h.result.current.state.tabs).toHaveLength(2);
-  const staleAdd = h.result.current.workspace.addTab;
+  expect(h.result.current.state.tabs).toHaveLength(1);
+  const staleOpen = h.result.current.workspace.openConversationThread;
   h.unmount();
-  act(() => staleAdd());
+  act(() => staleOpen("beta", "another-root", "another-root"));
   const restored = renderHook(() => useChannelTabState(session, "alpha"));
-  expect(restored.result.current.tabs).toHaveLength(2);
+  expect(restored.result.current.tabs).toHaveLength(1);
 });

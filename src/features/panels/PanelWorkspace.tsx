@@ -13,9 +13,7 @@ import { createPortal, flushSync } from "react-dom";
 import {
   BrowserIcon,
   TerminalWindowIcon,
-  PlusIcon,
 } from "../../shared/design-system/icons";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
@@ -58,13 +56,11 @@ export function PanelWorkspace({
   items,
   value,
   select,
-  add,
   focusOnMount = true,
 }: {
   items: Item[];
   value: string;
   select(id: string): void;
-  add?: (() => void) | undefined;
   /** Restoring a channel visit leaves focus with its main conversation. */
   focusOnMount?: boolean;
 }) {
@@ -203,19 +199,6 @@ export function PanelWorkspace({
       }}
     >
       <PanelHeader
-        actions={
-          add && (
-            <span className={styles.addTab}>
-              <IconButton
-                size="toolbar"
-                aria-label="Add tab"
-                title="Add tab"
-                icon={<PlusIcon size="1rem" />}
-                onClick={add}
-              />
-            </span>
-          )
-        }
         title={
           <Tabs
             label="Panel tabs"

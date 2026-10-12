@@ -571,6 +571,48 @@ pub(crate) async fn app_agent_upload(
     serde_json::from_slice(&body).map_err(|_| "Invalid upload receipt".into())
 }
 
+/// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
+/// strictest hosts, and base64 is 4 characters per 3 bytes.
+const MEDIA_LIMIT: usize = 5 * 1024 * 1024 / 4 * 3;
+
+/// Downloads one of its community's media blobs (its URL or `sha256[.ext]`)
+/// as the agent, base64.
+#[tauri::command]
+pub(crate) async fn app_agent_media(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    url: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let url = agent.media_url(&url)?;
+    let auth =
+        serde_json::to_vec(&agent.media_auth(&key)?).map_err(|_| "Could not authorize media")?;
+    let response = client(120)?
+        .get(&url)
+        .header(
+            "Authorization",
+            format!(
+                "Nostr {}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(auth)
+            ),
+        )
+        .header("x-auth-tag", &agent.auth)
+        .send()
+        .await
+        .map_err(|_| "Agent media request failed")?;
+    let status = response.status();
+    let body = bounded(response, MEDIA_LIMIT).await?;
+    if !status.is_success() {
+        return Err(format!(
+            "The community refused the media: {}",
+            reason(status, &body)
+        ));
+    }
+    agent.verify_media_hash(&url, &body)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(body))
+}
+
 /// Writes one memory entry, encrypted to the agent's owner. `after` is the
 /// `created_at` of the entry it replaces, or 0.
 #[tauri::command]

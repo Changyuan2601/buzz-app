@@ -11,7 +11,10 @@ const number = (n) => Number(n ?? 0).toLocaleString();
 const money = (n) => `$${n.toFixed(4)}`;
 let state,
   signature = "",
-  pending = false;
+  pending = false,
+  // The session on screen stays put once shown, even when another agent in
+  // the thread becomes the latest; the picker changes it.
+  pinned = null;
 const duration = (ms) => {
   const s = Math.max(0, ms) / 1000;
   if (s < 1) return `${Math.round(s * 1000)}ms`;
@@ -489,6 +492,36 @@ addEventListener(
   () => state?.timing && renderTiming(state.timing, true),
 );
 
+// Shown only when more than one session matches, such as two agents answering
+// in the same thread.
+function renderPicker(candidates = [], file) {
+  const picker = $("session");
+  picker.hidden = candidates.length < 2;
+  if (picker.hidden) return;
+  const who = (c) => (c.agent ? `${c.agent.name} (${c.harness})` : c.harness);
+  const options = [...candidates]
+    .sort((a, b) => String(a.started).localeCompare(String(b.started)))
+    .map((c, _, all) => {
+      // The agent's name, and its start time only to tell two of its sessions apart.
+      const since =
+        all.filter((o) => who(o) === who(c)).length > 1 &&
+        Number.isFinite(Date.parse(c.started))
+          ? ` · started ${clock(Date.parse(c.started))}`
+          : "";
+      return `<option value="${htmlEscape(c.path)}" title="${htmlEscape(c.path)}">${htmlEscape(who(c) + since)}</option>`;
+    })
+    .join("");
+  // Rebuilding an open list would close it, so only when the options change.
+  if (picker.dataset.options !== options) {
+    picker.innerHTML = options;
+    picker.dataset.options = options;
+  }
+  picker.value = file;
+}
+$("session").addEventListener("change", (event) => {
+  pinned = event.target.value;
+  poll();
+});
 function render() {
   if (!state || state.waiting) {
     $("content").textContent = state?.message ?? "Loading…";
@@ -503,8 +536,13 @@ function render() {
   const focusedKey = focused?.closest("details")?.dataset.key;
   const scroll = window.scrollY;
   const query = $("search").value.toLowerCase();
+  renderPicker(state.candidates, state.file);
   const { harness, model, effort } = state.header ?? {};
-  const scope = `<strong>${htmlEscape(harness)}</strong>${model ? `<span class="chip">${htmlEscape(model)}</span>` : ""}${effort ? `<span class="chip effort">${htmlEscape(effort)}</span>` : ""}`;
+  // The picker, when shown, already names the agent and harness.
+  const who = $("session").hidden
+    ? `<strong>${htmlEscape(state.agent?.name ?? harness)}</strong>${state.agent ? `<span>${htmlEscape(harness)}</span>` : ""}`
+    : "";
+  const scope = `${who}${model ? `<span class="chip">${htmlEscape(model)}</span>` : ""}${effort ? `<span class="chip effort">${htmlEscape(effort)}</span>` : ""}`;
   if ($("scope").innerHTML !== scope) $("scope").innerHTML = scope;
   $("scope").title = state.sessionId ?? "";
   renderTiming(state.timing);
@@ -753,11 +791,15 @@ async function poll() {
   if (pending) return;
   pending = true;
   try {
-    const response = await fetch(new URL("state", location.href), {
-      cache: "no-store",
-    });
+    const asked = pinned;
+    const url = new URL("state", location.href);
+    if (asked) url.searchParams.set("session", asked);
+    const response = await fetch(url, { cache: "no-store" });
     const next = await response.json();
     if (!response.ok) throw new Error(next.error ?? "Could not read session");
+    // Picked another session while this read was out: the next poll shows it.
+    if (asked !== pinned) return;
+    pinned ??= next.file ?? null;
     const nextSignature = JSON.stringify(next);
     setStatus("live", "Live", `Checked ${new Date().toLocaleTimeString()}`);
     if (signature !== nextSignature) {
@@ -766,6 +808,8 @@ async function poll() {
       render();
     }
   } catch (error) {
+    // Until a picked session loads, the picker names the one still on screen.
+    if (state?.file) $("session").value = state.file;
     setStatus("error", "Reconnecting…", error.message);
   } finally {
     pending = false;

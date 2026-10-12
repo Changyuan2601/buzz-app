@@ -1071,6 +1071,7 @@
     justify-content: center;
   }
 
+  html[data-keyboard-navigation] .buzz-surface-button:focus-visible,
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {

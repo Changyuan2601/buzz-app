@@ -73,6 +73,9 @@ export const TOOLS: readonly Tool[] = [
     text: str,
     path: str,
   }),
+  tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
+    "url",
+  ]),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -82,7 +85,9 @@ const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
 
 type Args = Readonly<Record<string, unknown>>;
-type Handler = (tools: Tools, args: Args) => Promise<string>;
+/** A tool's answer: text, or an image (base64 `data`) for the agent to see. */
+export type Reply = string | Readonly<{ data: string; type: string }>;
+type Handler = (tools: Tools, args: Args) => Promise<Reply>;
 
 /** Runs tool `name` for an agent working in `context`. A throw is a tool
  * error for the agent to correct. */
@@ -380,6 +385,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     await client.publish({ kind: 40100, content, tags: [["h", channel]] });
     return "saved";
+  },
+
+  async media_get(tools, args) {
+    const data = await tools.client.media(required(args, "url"));
+    // The first 12 bytes name the type.
+    const head = atob(data.slice(0, 16));
+    const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
+    if (!type?.startsWith("image/"))
+      throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
+    return { data, type };
   },
 };
 

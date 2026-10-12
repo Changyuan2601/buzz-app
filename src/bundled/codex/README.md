@@ -19,20 +19,21 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 1. Codex is on by default; **Settings → Plugins** turns it off or on. An older
    profile that installed Codex from a folder gets the bundled copy instead, and
    keeps it off if the installed copy was off.
-2. Open **Agents → New agent**, choose **Codex**, and create an agent. The Codex
-   tab checks the installed CLI and existing account. If Codex is missing,
-   **Install Codex** runs the official installer into `~/.local/bin`; if it is
-   signed out, **Sign in** runs `codex login`. Each checks again when it ends.
-   On Linux, run `codex login` in a terminal instead: it can start the browser
-   inside the login's process group, which Buzz kills when the step ends. After
-   an in-app install the terminal may not find `codex` (the installer sees
-   `~/.local/bin` on Buzz's PATH and leaves the shell profile alone); run
-   `~/.local/bin/codex login` then.
+2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
+   optionally pick a model beside it and add instructions. Name the agent and
+   click **Create agent**. The Codex tab checks the installed CLI and existing
+   account. If Codex is missing, **Install Codex** runs the official installer
+   into `~/.local/bin`; if it is signed out, **Sign in** runs `codex login`.
+   Each checks again when it ends. On Linux, run `codex login` in a terminal
+   instead: it can start the browser inside the login's process group, which
+   Buzz kills when the step ends. After an in-app install the terminal may not
+   find `codex` (the installer sees `~/.local/bin` on Buzz's PATH and leaves
+   the shell profile alone); run `~/.local/bin/codex login` then.
 3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,
    session scope, and instructions, then **Save**.
-4. Mentions and replies are automatic; **Attention** also lets you add event
+4. Mentions are automatic; **Attention** also lets you add event
    watches. In a channel you can write to, select the agent from the `@` picker
    and add it to the channel if prompted. Send: `@Codex Test create hello.txt containing
    hello in the workspace, read it back, and report what you found`. Use the
@@ -67,7 +68,7 @@ To inspect a saved session, see [View a Codex session](../../../docs/view-codex-
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
 `send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
-`mem_set`, and `canvas`. These run inside Buzz through the agent's native-backed
+`mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
 reads use the owner's encrypted-memory view; writes use the agent handle.

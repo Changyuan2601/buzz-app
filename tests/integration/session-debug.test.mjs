@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, writeFile, appendFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  writeFile,
+  appendFile,
+  mkdir,
+  rm,
+  utimes,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  agentOf,
   createInspector,
   ownsThread,
   threadId,
@@ -385,6 +393,96 @@ test("live server follows appended records and rejects cross-origin reads", asyn
     403,
   );
   assert.equal((await fetch(`${url}../../other`)).status, 404);
+});
+
+test("names each matching session's agent and opens the one picked", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "session-pick-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(join(dir, "codex"));
+  await mkdir(join(dir, "claude"));
+  const pubkey = "b".repeat(64);
+  const named = {
+    type: "response_item",
+    timestamp: stamp(0),
+    payload: {
+      type: "message",
+      role: "developer",
+      content: [
+        {
+          type: "input_text",
+          text: `You are codex00 (pubkey ${pubkey}), a coding agent in Buzz.`,
+        },
+      ],
+    },
+  };
+  const codexFile = join(dir, "codex", "rollout.jsonl");
+  await writeFile(
+    codexFile,
+    [codex[0], named, ...codex.slice(1)]
+      .map((r) => JSON.stringify(r))
+      .join("\n"),
+  );
+  // An unnamed Claude session in the same thread, the more recent of the two.
+  const claudeFile = join(dir, "claude", "session.jsonl");
+  await writeFile(
+    claudeFile,
+    JSON.stringify({
+      type: "user",
+      sessionId: "claude-session",
+      timestamp: stamp(5),
+      message: { role: "user", content: `Thread root: ${id}\nhi` },
+    }),
+  );
+  await utimes(codexFile, 1000, 1000);
+  await utimes(claudeFile, 2000, 2000);
+  const { server, url } = await createInspector({
+    target: id,
+    roots: [join(dir, "codex"), join(dir, "claude")],
+    traceRoot: dir,
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const latest = await (await fetch(`${url}state`)).json();
+  assert.equal(latest.file, claudeFile);
+  assert.equal(latest.agent, null);
+  assert.deepEqual(
+    latest.candidates.map((c) => [c.path, c.agent?.name ?? null, c.harness]),
+    [
+      [codexFile, "codex00", "Codex"],
+      [claudeFile, null, "Claude Code"],
+    ],
+  );
+  const picked = await (
+    await fetch(`${url}state?session=${encodeURIComponent(codexFile)}`)
+  ).json();
+  assert.equal(picked.file, codexFile);
+  assert.deepEqual(picked.agent, { name: "codex00", pubkey });
+  // A path that does not match the thread falls back rather than being read.
+  const other = await (
+    await fetch(
+      `${url}state?session=${encodeURIComponent(join(dir, "x.jsonl"))}`,
+    )
+  ).json();
+  assert.equal(other.file, claudeFile);
+});
+
+test("reads the agent from a Claude prompt snapshot, the latest name winning", () => {
+  const pubkey = "d".repeat(64);
+  const snapshot = (name) => ({
+    type: "attachment",
+    attachment: {
+      type: "prompt_snapshot",
+      systemPrompt: [
+        "Claude Code base",
+        `<identity>\nYou are ${name} (pubkey ${pubkey}).\n</identity>\n\n<base>`,
+      ],
+    },
+  });
+  assert.deepEqual(agentOf([snapshot("Old"), snapshot("Pollen")]), {
+    name: "Pollen",
+    pubkey,
+  });
+  // Delivered user text that quotes an identity line is not the agent.
+  assert.equal(agentOf([user(1, `You are Mallory (pubkey ${pubkey}).`)]), null);
 });
 
 test("historical response views never pair a tool with its later result", async (t) => {

@@ -24,6 +24,7 @@ const agent = (name: string, n: number): Agent => ({
   type: "test/echo",
   owner: "f".repeat(64),
   relay: "wss://relay.example",
+  place: "here",
   config: { reply: `${name} says hi` },
   skipped: {},
   timers: {},
@@ -85,6 +86,19 @@ function setup(saved: Agent[], { shown = true } = {}) {
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
     tabs: [{ id: "reply", title: "Reply", component: () => <p>Reply tab</p> }],
+    Create: ({
+      config,
+      onChange,
+    }: {
+      config: { reply: string };
+      onChange(config: { reply: string }): void;
+    }) => (
+      <input
+        aria-label="Reply"
+        value={config.reply}
+        onChange={(event) => onChange({ reply: event.target.value })}
+      />
+    ),
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
   const types = [type];
@@ -105,6 +119,7 @@ function setup(saved: Agent[], { shown = true } = {}) {
       for (const listener of listeners) listener();
       return created;
     }),
+    finish: vi.fn(async (_: string) => created),
     portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
     port: vi.fn(async () => created),
     save: vi.fn(async () => {}),
@@ -132,7 +147,11 @@ function setup(saved: Agent[], { shown = true } = {}) {
     subscribe: () => () => {},
   } as unknown as RelayData;
   render(<AgentsPage agents={agents} relay={relay} />);
-  return { agents };
+  const show = (next: Agent[]) => {
+    snapshot = { ...snapshot, agents: next };
+    for (const listener of listeners) listener();
+  };
+  return { agents, types, show };
 }
 
 it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
@@ -149,7 +168,7 @@ it("peeks at a selected agent beside the grid and follows the arrow keys", async
   );
   expect(screen.getByText("Peek of Ada")).toBeInTheDocument();
   expect(screen.getByText("Every hour")).toBeInTheDocument();
-  expect(screen.getByText("Mentions and replies")).toBeInTheDocument();
+  expect(screen.getByText("Mentions")).toBeInTheDocument();
 
   await user.keyboard("{ArrowRight}");
   expect(screen.getByText("Peek of Bo")).toBeInTheDocument();
@@ -208,16 +227,20 @@ it("edits the picture from the build view and shows why a save failed", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
 });
 
-it("makes a new agent in the side panel and goes straight to building it", async () => {
+it("makes a new agent in the create dialog and goes straight to building it", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("button", { name: "New agent" }));
-  const form = screen.getByRole("form", { name: "New agent" });
-  expect(within(form).getByText("Says its line.")).toBeInTheDocument();
-  await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  expect(within(dialog).getByText("Echo")).toBeInTheDocument();
+  await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
   expect(agents.create).toHaveBeenCalledWith({
     type: "test/echo",
     name: "Nova",
+    picture: expect.stringMatching(/^https:\/\//),
+    config: { reply: "Hi there" },
   });
   expect(await screen.findByRole("tab", { name: "Attention" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
@@ -227,8 +250,9 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)], { shown: false });
   await user.click(screen.getByRole("button", { name: "New agent" }));
-  const form = screen.getByRole("form", { name: "New agent" });
-  await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
   expect(
     await screen.findByRole("listbox", { name: "Agents" }),
@@ -256,39 +280,72 @@ it("saves a rename on Enter and discards it on Escape", async () => {
   });
 });
 
-it("brings over an earlier agent as the chosen type and drops it from the list", async () => {
+it("imports an earlier agent as the chosen type and shows it in Your agents", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("button", { name: "Bring over" }));
-  const list = await screen.findByRole("list", {
-    name: "Agents to bring over",
-  });
-  expect(
-    within(list).getByText(/Buzz 1\.0 harness agent · npub/),
-  ).toBeInTheDocument();
-  expect(within(list).getByText(/Buzz 0\.X · npub/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Bring over Bea" }));
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  const list = await screen.findByRole("region", { name: "Agents to import" });
+  // Names are unique here, so each card shows only where it comes from.
+  expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
+  expect(within(list).getByText("Buzz 0.X")).toBeInTheDocument();
+  expect(within(list).queryByText(/npub/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Import Bea" }));
   expect(agents.port).toHaveBeenCalledWith({
     source: "installed",
     pubkey: "b".repeat(64),
     type: "test/echo",
   });
-  expect(within(list).queryByText("Bea")).not.toBeInTheDocument();
-  expect(within(list).getByText("Ada")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
-it("shows why bringing an agent over failed and keeps it listed", async () => {
+it("tells same-named agents to import apart by their keys", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValueOnce({
+    agents: [
+      ...portable,
+      { source: "development", pubkey: "c".repeat(64), name: "Bea", relay: "" },
+    ],
+    warnings: [],
+  });
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  const list = await screen.findByRole("region", { name: "Agents to import" });
+  expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
+  expect(within(list).getByText(/^Buzz 0\.X · npub…/)).toBeInTheDocument();
+  expect(within(list).getByText(/^Buzz 0\.X dev · npub…/)).toBeInTheDocument();
+});
+
+it("imports agents only as a type that runs here", async () => {
+  const user = userEvent.setup();
+  const { agents, types } = setup([]);
+  types.push({
+    ...types[0],
+    key: "test/cloud",
+    title: "Cloud",
+    remote: {},
+  } as unknown as RegisteredAgentType);
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  const importAda = await screen.findByRole("button", { name: "Import Ada" });
+  expect(screen.queryByLabelText("Import as")).not.toBeInTheDocument();
+  await user.click(importAda);
+  expect(agents.port).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "test/echo" }),
+  );
+});
+
+it("shows why importing an agent failed and keeps it listed", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
   agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
-  await user.click(screen.getByRole("button", { name: "Bring over" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Bring over Ada" }),
-  );
+  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await user.click(await screen.findByRole("button", { name: "Import Ada" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Keychain access was denied",
   );
-  expect(screen.getByRole("button", { name: "Bring over Ada" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Import Ada" })).toBeEnabled();
 });
 
 it("makes a team of chosen agents and lists it with its members", async () => {
@@ -320,4 +377,62 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.getByText("No teams yet.")).toBeInTheDocument();
+});
+
+it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {
+  const user = userEvent.setup();
+  const far: Agent = {
+    ...agent("Far", 3),
+    place: "elsewhere",
+    attention: {},
+  };
+  const sky: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    unfinished: true,
+    attention: {},
+  };
+  const { agents } = setup([far, sky]);
+  const grid = screen.getByRole("listbox", { name: "Agents" });
+  expect(within(grid).getByText("On another device")).toBeInTheDocument();
+  expect(within(grid).getByText("Setup unfinished")).toBeInTheDocument();
+
+  await user.click(within(grid).getByText("Far"));
+  expect(screen.getByText(/another of your devices/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
+  await user.dblClick(within(grid).getByText("Far"));
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+  await user.click(within(grid).getByText("Sky"));
+  expect(
+    screen.queryByRole("button", { name: "Open" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Delete agent" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Finish setup" }));
+  expect(agents.finish).toHaveBeenCalledWith(sky.pubkey);
+  await user.dblClick(within(grid).getByText("Sky"));
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+});
+
+it("moves focus from Finish setup to Open once the setup finishes", async () => {
+  const user = userEvent.setup();
+  const finished: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    attention: {},
+  };
+  const { agents, show } = setup([{ ...finished, unfinished: true }]);
+  agents.finish.mockImplementationOnce(async () => {
+    show([finished]);
+    return finished;
+  });
+  await user.click(screen.getByText("Sky"));
+  screen.getByRole("button", { name: "Finish setup" }).focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("button", { name: "Open" })).toHaveFocus();
 });

@@ -483,6 +483,7 @@ main {
   backdrop-filter: blur(10px);
 }
 #search,
+#session,
 .toolbar button {
   height: 2rem;
   border: 1px solid var(--line);
@@ -523,7 +524,16 @@ main {
   padding: 0;
   color: var(--muted);
 }
-/* Session identity: harness, then model and effort as quiet chips. */
+#session {
+  flex: 0 1 auto;
+  max-width: 18rem;
+  padding: 0 0.5rem;
+  color: var(--text);
+}
+#session[hidden] {
+  display: none;
+}
+/* Session identity: agent and harness, then model and effort as quiet chips. */
 #scope {
   display: flex;
   flex: 1;

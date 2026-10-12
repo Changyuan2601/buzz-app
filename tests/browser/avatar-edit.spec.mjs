@@ -10,7 +10,16 @@ test("avatar image controls retain their hover fill and accessible URL label", a
   await page
     .getByRole("button", { name: "Edit human profile", exact: true })
     .click();
-  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  const editAvatar = page.getByRole("button", {
+    name: "Edit avatar",
+    exact: true,
+  });
+  // The badge owns its outer box; opting into medium preserves the artwork
+  // without replacing that human/agent geometry with the new compact default.
+  await expect(editAvatar).toHaveCSS("width", "32px");
+  await expect(editAvatar).toHaveCSS("height", "32px");
+  await expect(editAvatar.locator("svg")).toHaveCSS("width", "24px");
+  await editAvatar.click();
   const dropzone = page.getByRole("button", {
     name: "Drop or browse",
     exact: true,

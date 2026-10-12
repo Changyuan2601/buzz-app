@@ -344,8 +344,10 @@ const isReply: Predicate = (event) =>
 export const CHAT_KINDS: readonly number[] = [9, 40003, 40007, 46010];
 
 /** Directly addressed events take the runtime's built-in mention path, never a
- * watch: a DM to the agent, a chat event that p-tags it, or any event with an
- * `e` tag naming something it wrote. Its own events are the caller's to skip. */
+ * watch: a DM to the agent, a chat event that p-tags it, or a non-chat event with
+ * an `e` tag naming something it wrote. A chat reply that does not mention it,
+ * even in its own thread, is not addressed: only a watch can wake it for one.
+ * Its own events are the caller's to skip. */
 export function addressedTo(
   event: EventData,
   agent: string,
@@ -353,9 +355,9 @@ export function addressedTo(
 ) {
   if (event.pubkey === agent) return false;
   if (event.kind === 4) return tagsAgent(event, agent);
-  return (
-    (CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent)) ||
-    event.tags.some((tag) => tag[0] === "e" && !!tag[1] && wroteEvent(tag[1]))
+  if (CHAT_KINDS.includes(event.kind)) return tagsAgent(event, agent);
+  return event.tags.some(
+    (tag) => tag[0] === "e" && !!tag[1] && wroteEvent(tag[1]),
   );
 }
 export const tagsAgent = (event: EventData, agent: string) =>

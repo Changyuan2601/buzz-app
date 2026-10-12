@@ -310,7 +310,6 @@ function SessionWork({
     scope,
     channels,
     extensions,
-    personalWorkspace: true,
     leadingIds: [],
     continuingVisit: continuing.current,
     isLive: () => !navigation?.signal.aborted,
@@ -446,10 +445,9 @@ function SessionWork({
               title={showingPanel ? "Close tab pane" : "Open tab pane"}
               aria-expanded={!!showingPanel}
               icon={<SidebarRightIcon size="1rem" />}
-              onClick={() => {
-                tabState.setPaneOpen(!showingPanel);
-                if (!showingPanel && !hasTabs) secondary.addTab();
-              }}
+              disabled={!hasLocalPanel}
+              focusableWhenDisabled
+              onClick={() => tabState.setPaneOpen(!showingPanel)}
             />
           </SessionHeading>
           {renameOpen && (
@@ -558,7 +556,6 @@ function SessionWork({
               <PanelWorkspace
                 value={secondary.selectedTab}
                 select={secondary.selectPanelTab}
-                add={secondary.addTab}
                 items={secondary.items}
                 focusOnMount={continuing.current}
               />

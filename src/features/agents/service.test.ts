@@ -23,8 +23,17 @@ import { memoryStorage } from "./test-fakes";
 // place in the order matters.
 const steps: string[] = [];
 const leaveChannels = vi.hoisted(() => vi.fn());
+// The viewer's kind 30177 records, as the community's outbox writes them.
+const records = vi.hoisted(() => ({
+  publish: vi.fn(),
+  remove: vi.fn(),
+  removeAgent: vi.fn(),
+}));
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
+  publishAgentRecord: records.publish,
+  deleteAgentRecord: records.remove,
+  removeRelayAgent: records.removeAgent,
 }));
 
 const viewer = "a".repeat(64);
@@ -69,8 +78,11 @@ function fakeRelay(origin = "https://relay.example.test") {
   };
   let status = "connected";
   const statuses = new Set<() => void>();
+  /** The viewer's kind 30177 records the community returns. */
+  const listed: RelayEvent[] = [];
   const session = {
     archives,
+    read: vi.fn(async () => [...listed]),
     // STOPGAP(agent-local-typing): delete with local-typing.ts.
     typing: { local: vi.fn() },
     live: {
@@ -131,6 +143,8 @@ function fakeRelay(origin = "https://relay.example.test") {
       for (const listener of live) listener(batch);
     },
     archives,
+    listed,
+    session,
     origin,
   };
 }
@@ -250,6 +264,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
     publishProfile: vi.fn(async (_: string) => {}),
     query: vi.fn(async () => []),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
+    media: vi.fn(async () => ""),
     remember: vi.fn(async (pubkey: string) =>
       event(`m${++published}`, { pubkey }),
     ),
@@ -263,6 +278,7 @@ type Config = { reply: string };
 async function setup({
   storage = memoryStorage(),
   identities = [] as AgentIdentity[],
+  listed = [] as RelayEvent[],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -273,7 +289,18 @@ async function setup({
   const second = fakeRelay("https://other.example.test");
   const client = fakeCommunities(fake, second);
   const native = fakeNative(identities);
-  const service = new AgentsService(ctx, client.communities, native, storage);
+  fake.listed.push(...listed);
+  const authorize = vi.fn(
+    async (_: string, __: AbortSignal) =>
+      ["auth", viewer, "", "f".repeat(128)] as const,
+  );
+  const service = new AgentsService(
+    ctx,
+    client.communities,
+    native,
+    storage,
+    authorize,
+  );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
   });
@@ -327,6 +354,9 @@ async function setup({
     reconnecting: fake.reconnecting,
     recover: fake.recover,
     archives: fake.archives,
+    session: fake.session,
+    authorize,
+    plugin,
     second,
     select: client.select,
     leave: client.leave,
@@ -352,6 +382,12 @@ beforeEach(() => {
   steps.length = 0;
   leaveChannels.mockReset();
   leaveChannels.mockImplementation(async () => void steps.push("channels"));
+  records.publish.mockReset();
+  records.publish.mockImplementation(async () => {});
+  records.remove.mockReset();
+  records.remove.mockImplementation(async () => void steps.push("record"));
+  records.removeAgent.mockReset();
+  records.removeAgent.mockImplementation(async () => void steps.push("leave"));
 });
 afterEach(() => vi.useRealTimers());
 
@@ -411,6 +447,43 @@ it("brings over an identity not already an agent, with its type's defaults and w
   await expect(
     service.port({ source: "harness", pubkey: bot, type: "nope/none" }),
   ).rejects.toThrow("That agent type is not available");
+});
+
+it("imports a shared agent as a new identity with its name and picture, adopting its instructions", async () => {
+  const { service, native } = await setup();
+  const agent = await service.port({
+    source: "shared",
+    type: "example/echo",
+    name: " Baymax ",
+    picture: "https://example.test/baymax.png",
+    instructions: "Open drafts only.",
+  });
+  expect(native.create).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Baymax",
+  );
+  expect(native.port).not.toHaveBeenCalled();
+  expect(native.setPicture).toHaveBeenCalledWith(
+    agent.pubkey,
+    "https://example.test/baymax.png",
+  );
+  expect(agent).toMatchObject({
+    name: "Baymax",
+    picture: "https://example.test/baymax.png",
+    config: { reply: "Open drafts only." },
+  });
+  // Without instructions it starts from the type's defaults.
+  const plain = await service.port({
+    source: "shared",
+    type: "example/echo",
+    name: "Plain",
+  });
+  expect(plain.config).toEqual({ reply: "ok" });
+  await expect(
+    service.port({ source: "shared", type: "example/echo", name: "  " }),
+  ).rejects.toThrow("Name the agent");
 });
 
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
@@ -567,7 +640,7 @@ it("reacts 👀 and 💬 to a mention until the work its run handed off settles"
   expect(await published(native, 7)).toHaveLength(4);
 });
 
-it("treats a reply to something the agent published as addressed", async () => {
+it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   run.mockImplementationOnce(async ({ agent }) => {
@@ -575,10 +648,24 @@ it("treats a reply to something the agent published as addressed", async () => {
   });
   emit({ events: [event("m", { tags: [["p", bot]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  // The publish above returned event p1.
-  emit({ events: [event("r", { tags: [["e", "p1".padEnd(64, "0")]] })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(run.mock.calls[1]?.[0].trigger.type).toBe("mention");
+  // The publish above returned event p1, which the relay sends back.
+  const root = "p1".padEnd(64, "0");
+  const reply = (id: string, patch: Partial<RelayEvent> = {}) =>
+    event(id, {
+      ...patch,
+      tags: [["h", channel], ["e", root, "", "reply"], ...(patch.tags ?? [])],
+    });
+  emit({ events: [event("p1", { pubkey: bot, content: "hi" })] });
+  emit({ events: [reply("quiet")] });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  emit({ events: [reply("watched", { content: "deploy" })] });
+  emit({ events: [reply("named", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls.slice(1).map(([{ trigger }]) => trigger.type)).toEqual([
+    "watch",
+    "mention",
+  ]);
 });
 
 it("passes the model and effort its owner asked for, and no other", async () => {
@@ -697,6 +784,38 @@ it("aborts the in-flight run, and drops what is queued, when the agent is remove
   expect(held?.signal.aborted).toBe(true);
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
+});
+
+// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
+it("keeps a mention's reactions however long its handed-off work runs", async () => {
+  vi.useFakeTimers();
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await published(native, 7)).toHaveLength(2);
+  // Buzz sets no deadline on an agent's work; the harness decides.
+  await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+  expect(await published(native, 5)).toEqual([]);
+  finish();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await published(native, 5)).toHaveLength(2);
 });
 
 it("drops its events while another copy of the app holds the agent, and runs once it holds it", async () => {
@@ -1069,6 +1188,80 @@ it("saves nothing when native create fails", async () => {
   expect(storage.getItem("buzz.agents.v1")).toBeNull();
 });
 
+it("creates an agent with the config it was given, not its type's defaults, and sets its picture", async () => {
+  const storage = memoryStorage();
+  const { service, native } = await setup({ storage });
+  const picture = "https://relay.example/media/pack.png";
+  const agent = await service.create({
+    type: "example/echo",
+    name: " Echo ",
+    picture,
+    config: { reply: "chosen" },
+  });
+  expect(native.create).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Echo",
+  );
+  expect(native.setPicture).toHaveBeenCalledExactlyOnceWith(bot, picture);
+  expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });
+  expect(agent.config).toEqual({ reply: "chosen" });
+  expect(service.find(bot)).toMatchObject({
+    picture,
+    config: { reply: "chosen" },
+  });
+  // Everything but the config still starts from the type's defaults.
+  expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
+    "interest/default",
+    "watch/channel",
+  ]);
+  expect(storage.getItem("buzz.agents.v1")).toContain("chosen");
+});
+
+it("keeps a new agent whose picture could not be set", async () => {
+  const { service, native } = await setup();
+  native.setPicture.mockRejectedValueOnce(new Error("Could not write"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const agent = await service.create({
+    type: "example/echo",
+    name: "Echo",
+    picture: "https://relay.example/media/pack.png",
+    config: { reply: "chosen" },
+  });
+  expect(warn).toHaveBeenCalledWith(
+    expect.stringContaining("picture was not saved"),
+    expect.any(Error),
+  );
+  warn.mockRestore();
+  expect(agent).toMatchObject({
+    pubkey: bot,
+    name: "Echo",
+    config: { reply: "chosen" },
+  });
+  expect(service.find(bot)).toMatchObject({ config: { reply: "chosen" } });
+  expect(agent.picture).toBeUndefined();
+  expect(service.find(bot)?.picture).toBeUndefined();
+  expect(service.snapshot().agents.map((item) => item.pubkey)).toEqual([bot]);
+});
+
+it("sets no picture and uses the type's defaults for a new agent given neither", async () => {
+  const { service, native } = await setup();
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  expect(native.setPicture).not.toHaveBeenCalled();
+  expect(agent.config).toEqual({ reply: "ok" });
+  expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
+});
+
+it("refuses a blank name before making anything", async () => {
+  const { service, native } = await setup();
+  await expect(
+    service.create({ type: "example/echo", name: "   " }),
+  ).rejects.toThrow("Name the agent");
+  expect(native.create).not.toHaveBeenCalled();
+  expect(service.snapshot().agents).toEqual([]);
+});
+
 it("returns the created agent after the community changes mid-create", async () => {
   const { service, native, connect } = await setup();
   const create = native.create.getMockImplementation();
@@ -1311,7 +1504,7 @@ it("deletes the key at once, then leaves its channels and archives it before for
   expect(service.snapshot().agents).toEqual([]);
   expect(storage.getItem("buzz.agents.v1")).not.toContain(bot);
   await vi.waitFor(() =>
-    expect(steps).toEqual(["key", "channels", "archive", "forget"]),
+    expect(steps).toEqual(["key", "channels", "archive", "record", "forget"]),
   );
   expect(leaveChannels).toHaveBeenCalledWith(
     expect.objectContaining({ archives }),
@@ -1473,4 +1666,499 @@ it("keeps an Interest while a watch still uses it", async () => {
     attention: { "watch/channel": null, "interest/default": null },
   });
   expect(service.find(bot)?.attention).toEqual({});
+});
+
+const record = (pubkey: string, patch: Partial<RelayEvent> = {}) =>
+  event(`r${pubkey.slice(0, 4)}`, {
+    pubkey: viewer,
+    kind: 30177,
+    content: JSON.stringify({ name: "Far" }),
+    tags: [
+      ["d", pubkey],
+      ["runtime", "example/echo"],
+    ],
+    ...patch,
+  });
+const hostedKey = "e".repeat(64);
+function cloud() {
+  const remote = {
+    provision: vi.fn(async (_: { name: string; community: string }) => ({
+      pubkey: hostedKey,
+    })),
+    activate: vi.fn(
+      async (_: { pubkey: string; auth: readonly string[] }) => {},
+    ),
+    profile: vi.fn(async (_: { name: string; picture?: string }) => {}),
+    remove: vi.fn(async (_: { pubkey: string }) => void steps.push("provider")),
+  };
+  const type: AgentType = {
+    id: "cloud",
+    title: "Cloud",
+    defaults: () => ({ config: {} }),
+    remote,
+  };
+  return { type, remote };
+}
+
+it("lists each agent here in the owner's agent records, with its type as the runtime", async () => {
+  const { service, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenCalledWith(
+      session,
+      { pubkey: bot, name: "Echo", runtime: "example/echo" },
+      expect.any(AbortSignal),
+    ),
+  );
+  // Listed once: later syncs see the record it wrote.
+  await service.save(bot, { config: { reply: "hi" } });
+  await settle();
+  expect(records.publish).toHaveBeenCalledTimes(1);
+  // A rename replaces it.
+  await service.save(bot, { name: "Echo Two" });
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenLastCalledWith(
+      session,
+      { pubkey: bot, name: "Echo Two", runtime: "example/echo" },
+      expect.any(AbortSignal),
+    ),
+  );
+});
+
+it("leaves an agent already listed under its name and type as it is", async () => {
+  const identity = {
+    pubkey: bot,
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    name: "Echo",
+    deleted: false,
+  };
+  const { service } = await setup({
+    identities: [identity],
+    listed: [record(bot, { content: JSON.stringify({ name: "Echo" }) })],
+  });
+  await vi.waitFor(() => expect(service.find(bot)?.place).toBe("here"));
+  await settle();
+  expect(records.publish).not.toHaveBeenCalled();
+  expect(service.snapshot().agents).toHaveLength(1);
+});
+
+it("shows the owner's agents on other devices without running them, and leaves earlier systems' records alone", async () => {
+  const { service, emit, run, native } = await setup({
+    listed: [
+      record(sibling),
+      record(other, { tags: [["d", other]], content: '{"name":"Old"}' }),
+    ],
+  });
+  await vi.waitFor(() =>
+    expect(service.find(sibling)).toMatchObject({
+      name: "Far",
+      type: "example/echo",
+      place: "elsewhere",
+      relay: "wss://relay.example.test",
+      attention: {},
+    }),
+  );
+  expect(service.find(other)).toBeUndefined();
+  emit({
+    events: [
+      event("hey", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", sibling],
+        ],
+      }),
+    ],
+  });
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  expect(native.claim).not.toHaveBeenCalledWith(sibling);
+  await expect(service.remove(sibling)).rejects.toThrow(/device that runs it/);
+  await expect(service.save(sibling, { name: "Near" })).rejects.toThrow();
+});
+
+it("creates a hosted agent through its provider, attesting the key it returns", async () => {
+  const { service, plugin, session, authorize, native, storage } =
+    await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const agent = await service.create({ type: "example/cloud", name: " Sky " });
+  expect(remote.provision).toHaveBeenCalledWith({
+    name: "Sky",
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
+  expect(authorize).toHaveBeenCalledWith(hostedKey, expect.any(AbortSignal));
+  expect(remote.activate).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    name: "Sky",
+    community: "wss://relay.example.test",
+    auth: ["auth", viewer, "", "f".repeat(128)],
+    signal: expect.any(AbortSignal),
+  });
+  expect(records.publish).toHaveBeenCalledWith(
+    session,
+    { pubkey: hostedKey, name: "Sky", runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
+  expect(agent.unfinished).toBeUndefined();
+  expect(native.create).not.toHaveBeenCalled();
+  expect(native.claim).not.toHaveBeenCalledWith(hostedKey);
+  expect(storage.getItem("buzz.agents.unfinished.v1")).toContain('"agents":[]');
+});
+
+it("keeps a hosted agent whose setup failed, and finishes it without making another", async () => {
+  const storage = memoryStorage();
+  const { service, plugin } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow("provider down");
+  expect(service.find(hostedKey)).toMatchObject({
+    place: "hosted",
+    unfinished: true,
+    name: "Sky",
+  });
+  expect(records.publish).not.toHaveBeenCalled();
+  await expect(service.save(hostedKey, { name: "Sea" })).rejects.toThrow(
+    /Finish the agent's setup/,
+  );
+  // A restart keeps it.
+  const again = await setup({ storage });
+  again.plugin.agents.register(cloud().type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)?.unfinished).toBe(true),
+  );
+  const agent = await service.finish(hostedKey);
+  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(remote.activate).toHaveBeenCalledTimes(2);
+  expect(agent.unfinished).toBeUndefined();
+  expect(records.publish).toHaveBeenCalledTimes(1);
+  expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
+});
+
+it("keeps a hosted agent made without its picture when the picture fails to save", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.profile.mockRejectedValueOnce(new Error("provider down"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const agent = await service.create({
+    type: "example/cloud",
+    name: "Sky",
+    picture: "https://example.test/sky.png",
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
+  expect(agent.picture).toBeUndefined();
+  expect(remote.provision).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent Sky picture was not saved",
+    expect.any(Error),
+  );
+  warn.mockRestore();
+});
+
+it("renames a hosted agent through its provider and relists it; its settings are the provider's", async () => {
+  const { service, plugin, session } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.save(hostedKey, {
+    name: "Sea",
+    picture: "https://example.test/sea.png",
+  });
+  expect(remote.profile).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    name: "Sea",
+    picture: "https://example.test/sea.png",
+    signal: expect.any(AbortSignal),
+  });
+  expect(records.publish).toHaveBeenLastCalledWith(
+    session,
+    {
+      pubkey: hostedKey,
+      name: "Sea",
+      picture: "https://example.test/sea.png",
+      runtime: "example/cloud",
+    },
+    expect.any(AbortSignal),
+  );
+  expect(service.find(hostedKey)).toMatchObject({
+    name: "Sea",
+    picture: "https://example.test/sea.png",
+  });
+  await expect(service.save(hostedKey, { config: {} })).rejects.toThrow(
+    /through its provider/,
+  );
+});
+
+it("deletes a hosted agent from its provider, then from its community", async () => {
+  const { service, plugin, session } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  // A provider that fails leaves it listed, to delete again.
+  remote.remove.mockRejectedValueOnce(new Error("provider down"));
+  await expect(service.remove(hostedKey)).rejects.toThrow("provider down");
+  expect(records.removeAgent).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+  await service.remove(hostedKey);
+  expect(records.removeAgent).toHaveBeenCalledWith(
+    session,
+    viewer,
+    hostedKey,
+    expect.any(AbortSignal),
+  );
+  expect(steps).toEqual(["provider", "leave"]);
+  expect(remote.remove).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
+  expect(service.find(hostedKey)).toBeUndefined();
+});
+
+it("deletes an unfinished hosted agent from its community too, as its profile may be out", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow();
+  await service.remove(hostedKey);
+  expect(steps).toEqual(["provider", "leave"]);
+  expect(service.find(hostedKey)).toBeUndefined();
+});
+
+it("refuses to finish a hosted agent's setup while it is being deleted", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow();
+  let release = () => {};
+  remote.remove.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        release = () => resolve(undefined);
+      }),
+  );
+  const removing = service.remove(hostedKey);
+  await expect(service.finish(hostedKey)).rejects.toThrow(/Wait for/);
+  release();
+  await removing;
+  expect(remote.activate).toHaveBeenCalledTimes(1);
+});
+
+it("keeps an earlier system's settings when it lists an agent here under that record", async () => {
+  const identity = {
+    pubkey: bot,
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    name: "Echo",
+    deleted: false,
+  };
+  const content = { name: "Old", parallelism: 2, respond_to: "anyone" };
+  const tags = [
+    ["d", bot],
+    ["a", "30175:x:y"],
+  ];
+  const { service, session } = await setup({
+    identities: [identity],
+    listed: [record(bot, { tags, content: JSON.stringify(content) })],
+  });
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenCalledWith(
+      session,
+      {
+        pubkey: bot,
+        name: "Echo",
+        runtime: "example/echo",
+        prior: { content, tags },
+      },
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(service.snapshot().agents).toHaveLength(1);
+});
+
+it("keeps what it lists while the community's records are read, and reads again after a failure", async () => {
+  const { service, plugin, session, connect } = await setup();
+  const { type } = cloud();
+  plugin.agents.register(type);
+  const read = vi.mocked(session.read);
+  read.mockRejectedValueOnce(new Error("offline"));
+  connect(false);
+  connect(true);
+  await settle();
+  // The failed read lists nothing, and a sync reads again, held this time.
+  let respond = (_: RelayEvent[]) => {};
+  read.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent[]>((resolve) => {
+        respond = resolve;
+      }) as never,
+  );
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+  // Made meanwhile, it shows at once and stays once the read returns.
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.find(hostedKey)).toMatchObject({ place: "hosted" });
+  respond([]);
+  await settle();
+  expect(service.find(hostedKey)).toMatchObject({ place: "hosted" });
+  // Then the agent here is listed too.
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ pubkey: bot }),
+      expect.any(AbortSignal),
+    ),
+  );
+});
+
+it("lists only an HTTPS picture of a hosted agent", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.save(hostedKey, { picture: "data:image/png;base64,AAAA" }),
+  ).rejects.toThrow(/HTTPS image URL/);
+  expect(remote.profile).not.toHaveBeenCalled();
+});
+
+it("refuses a hosted type that also runs here", async () => {
+  const { plugin } = await setup();
+  const { type } = cloud();
+  expect(() => plugin.agents.register({ ...type, run: () => {} })).toThrow(
+    /hosted agent type/,
+  );
+});
+
+it("brings over no identity as a hosted type, whose key stays with its provider", async () => {
+  const { service, plugin, native } = await setup();
+  plugin.agents.register(cloud().type);
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/cloud",
+    }),
+  ).rejects.toThrow(/stays with its provider/);
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("refuses a key from the provider that the owner already lists", async () => {
+  const { service, plugin } = await setup({ listed: [record(sibling)] });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  remote.provision.mockResolvedValueOnce({ pubkey: sibling });
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow(/already in use/);
+  expect(remote.activate).not.toHaveBeenCalled();
+  expect(service.find(sibling)).toMatchObject({
+    name: "Far",
+    place: "elsewhere",
+  });
+});
+
+it("lists a rename made while the agent's earlier record was being written", async () => {
+  const { service, session } = await setup();
+  let release = () => {};
+  records.publish.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        release = () => resolve(undefined);
+      }) as never,
+  );
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(records.publish).toHaveBeenCalledTimes(1));
+  await service.save(bot, { name: "Echo Two" });
+  await settle();
+  expect(records.publish).toHaveBeenCalledTimes(1);
+  release();
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenLastCalledWith(
+      session,
+      expect.objectContaining({ pubkey: bot, name: "Echo Two" }),
+      expect.any(AbortSignal),
+    ),
+  );
+  await settle();
+  expect(records.publish).toHaveBeenCalledTimes(2);
+});
+
+it("refuses to delete a hosted agent while its new name is being saved", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  let release = () => {};
+  remote.profile.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        release = () => resolve(undefined);
+      }),
+  );
+  const saving = service.save(hostedKey, { name: "Sea" });
+  await vi.waitFor(() => expect(remote.profile).toHaveBeenCalled());
+  await expect(service.remove(hostedKey)).rejects.toThrow(/Wait for/);
+  release();
+  await saving;
+  expect(remote.remove).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
+});
+
+it("keeps what it lists when the community's records cannot be read", async () => {
+  const { service, plugin, session, connect } = await setup();
+  plugin.agents.register(cloud().type);
+  const read = vi.mocked(session.read);
+  read.mockRejectedValueOnce(new Error("offline"));
+  connect(false);
+  connect(true);
+  await settle();
+  // Set up after the read failed, it is listed and shown.
+  const agent = await service.create({ type: "example/cloud", name: "Sky" });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
+  // Renamed while a read is under way that then fails, it keeps the new name.
+  let fail = () => {};
+  read.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent[]>((_, reject) => {
+        fail = () => reject(new Error("offline"));
+      }) as never,
+  );
+  const reads = read.mock.calls.length;
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(read.mock.calls.length).toBe(reads + 1));
+  await service.save(hostedKey, { name: "Sea" });
+  fail();
+  await settle();
+  expect(service.find(hostedKey)).toMatchObject({
+    name: "Sea",
+    place: "hosted",
+  });
+  // The next read that succeeds keeps it too.
+  await service.save(bot, { name: "Echo Two" });
+  await vi.waitFor(() => expect(read.mock.calls.length).toBe(reads + 2));
+  await settle();
+  expect(service.find(hostedKey)).toMatchObject({
+    name: "Sea",
+    place: "hosted",
+  });
 });

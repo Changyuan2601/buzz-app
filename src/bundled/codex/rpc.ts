@@ -25,7 +25,10 @@ export type ToolCall = {
 };
 export type ToolReply = {
   success: boolean;
-  contentItems: { type: "inputText"; text: string }[];
+  contentItems: (
+    | { type: "inputText"; text: string }
+    | { type: "inputImage"; imageUrl: string }
+  )[];
 };
 
 /** One request owner for the JSONL app-server connection. No Node sidecar. */

@@ -91,6 +91,8 @@ export type AgentsNative = {
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
   /** Uploads base64 `data` (an image or MP4) as the agent. */
   upload(pubkey: string, data: string, mime: string): Promise<AgentUpload>;
+  /** Downloads one of its community's media blobs as the agent, as base64. */
+  media(pubkey: string, url: string): Promise<string>;
   /** Writes memory entry `slug`, encrypted to the owner, newer than `after`. */
   remember(
     pubkey: string,
@@ -141,6 +143,7 @@ export const nativeAgents = (): AgentsNative | undefined =>
           eventsDto(await invoke("app_agent_query", { pubkey, filters })),
         upload: (pubkey, data, mime) =>
           invoke("app_agent_upload", { pubkey, data, mime }),
+        media: (pubkey, url) => invoke("app_agent_media", { pubkey, url }),
         remember: (pubkey, slug, body, after) =>
           invoke("app_agent_remember", { pubkey, slug, body, after }),
         publishProfile: (pubkey) =>

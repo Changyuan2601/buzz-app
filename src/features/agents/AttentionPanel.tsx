@@ -83,7 +83,7 @@ export function AttentionSummary({
   return (
     <ul className="m-0 grid list-none gap-1.5 p-0 text-body-sm">
       <li className="flex items-center gap-2">
-        <AtIcon size={14} aria-hidden="true" /> Mentions and replies
+        <AtIcon size={14} aria-hidden="true" /> Mentions
       </li>
       {on.map((object) => (
         <li key={object.slug} className="flex min-w-0 items-center gap-2">
@@ -151,15 +151,16 @@ export function AttentionPanel({
   return (
     <div className="grid content-start gap-6">
       <p className="m-0 text-body-sm text-secondary">
-        What wakes this agent. Mentions and replies always do. For anything
-        else, add an Interest: something it looks after, with instructions. The
-        watches and timers under an Interest decide when it wakes for it.
+        What wakes this agent. Mentions always do. For anything else, including
+        replies in its threads that don't mention it, add an Interest: something
+        it looks after, with instructions. The watches and timers under an
+        Interest decide when it wakes for it.
       </p>
       <SettingsGroup>
         <PreferenceRow
           icon={<AtIcon size={16} />}
-          title="Mentions and replies"
-          subtitle="Messages that mention it or reply to it. Always on."
+          title="Mentions"
+          subtitle="Messages that mention it. Always on."
         />
       </SettingsGroup>
       {interests.map((object) => {

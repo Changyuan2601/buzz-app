@@ -138,26 +138,28 @@ describe("matching", () => {
     expect(watchMatches(watch, event({ kind: 7 }))).toBe(false);
     expect(watchMatches({ ...watch, tags: { t: ["x"] } }, event())).toBe(false);
   });
-  it("treats mentions, DMs and replies to the agent as addressed", () => {
+  it("treats mentions, DMs and reactions to the agent, not replies, as addressed", () => {
     expect(addressedTo(event({ tags: [["p", agent]] }), agent)).toBe(true);
     expect(addressedTo(event({ kind: 1, tags: [["p", agent]] }), agent)).toBe(
       false,
     );
     expect(
-      addressedTo(
-        event({ tags: [["e", "mine"]] }),
-        agent,
-        (id) => id === "mine",
-      ),
-    ).toBe(true);
-    expect(
       addressedTo(event({ pubkey: agent, tags: [["p", agent]] }), agent),
     ).toBe(false);
-    // A DM to it and anything that names its events are addressed too, so no
-    // watch sees them; only a chat p-tag pulls it into a conversation.
     expect(addressedTo(event({ kind: 4, tags: [["p", agent]] }), agent)).toBe(
       true,
     );
+    // A reply in its thread is not addressed unless it names the agent; only a
+    // watch can wake it for one.
+    expect(
+      addressedTo(
+        event({ tags: [["e", "mine", "", "reply"]] }),
+        agent,
+        (id) => id === "mine",
+      ),
+    ).toBe(false);
+    // A reaction to its message is addressed, so no watch sees it, but only a
+    // chat p-tag pulls it into a conversation.
     expect(
       addressedTo(
         event({ kind: 7, tags: [["e", "mine"]] }),

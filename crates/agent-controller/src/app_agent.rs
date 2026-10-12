@@ -58,8 +58,8 @@ impl AppAgent {
     fn credential_id(&self) -> String {
         agent_id(&self.pubkey, &self.relay)
     }
-    /// The community's HTTP endpoints for writes, reads and uploads; nothing
-    /// else is ever sent to.
+    /// The community's HTTP endpoints for writes, reads, uploads and media;
+    /// nothing else is ever sent to.
     pub fn events_url(&self) -> String {
         self.endpoint("/events")
     }
@@ -68,6 +68,50 @@ impl AppAgent {
     }
     pub fn upload_url(&self) -> String {
         self.endpoint("/upload")
+    }
+    /// Its community's URL for one media blob, from that URL or its
+    /// `sha256[.ext]` name. Media elsewhere is refused.
+    pub fn media_url(&self, input: &str) -> Result<String> {
+        let base = self.endpoint("/media/");
+        let name = input.trim();
+        let name = name.strip_prefix(base.as_str()).unwrap_or(name);
+        let parts: Vec<&str> = name.split('.').collect();
+        let ext = |part: &str| {
+            !part.is_empty()
+                && part.len() <= 8
+                && part
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase())
+        };
+        let valid = match parts.as_slice() {
+            [hash] => crate::config::canonical_key(hash),
+            [hash, part] => crate::config::canonical_key(hash) && ext(part),
+            [hash, "thumb", "jpg"] => crate::config::canonical_key(hash),
+            _ => false,
+        };
+        if !valid {
+            return Err("Agents fetch only their community's media".into());
+        }
+        Ok(format!("{base}{name}"))
+    }
+    /// Confirms a downloaded media body matches the hash in its community URL.
+    pub fn verify_media_hash(&self, url: &str, bytes: &[u8]) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        let canonical = self.media_url(url)?;
+        let expected = canonical
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.get(..64))
+            .ok_or("Invalid media hash")?;
+        if canonical.ends_with(".thumb.jpg") {
+            // Thumbnails are derived JPEGs, but keep the source blob's name.
+            return Ok(());
+        }
+        let actual = format!("{:x}", Sha256::digest(bytes));
+        if actual != expected {
+            return Err("Media did not match its SHA-256".into());
+        }
+        Ok(())
     }
     fn endpoint(&self, path: &str) -> String {
         format!("{}{path}", self.relay.replacen("wss://", "https://", 1))
@@ -148,11 +192,31 @@ impl AppAgent {
     /// Blossom authorization (24242) to upload the blob with this SHA-256 to
     /// its community, valid for a minute.
     pub fn upload_auth(&self, key: &Secret, sha256: &str) -> Result<serde_json::Value> {
-        if key.pubkey() != self.pubkey {
-            return Err("Agent identity changed".into());
-        }
         if !crate::config::canonical_key(sha256) {
             return Err("Invalid upload hash".into());
+        }
+        self.blossom_auth(
+            key,
+            "Upload file",
+            vec![
+                vec!["t".into(), "upload".into()],
+                vec!["x".into(), sha256.into()],
+            ],
+        )
+    }
+    /// Blossom authorization (24242) to fetch media from its community, valid
+    /// for a minute.
+    pub fn media_auth(&self, key: &Secret) -> Result<serde_json::Value> {
+        self.blossom_auth(key, "Get media", vec![vec!["t".into(), "get".into()]])
+    }
+    fn blossom_auth(
+        &self,
+        key: &Secret,
+        content: &str,
+        mut tags: Vec<Vec<String>>,
+    ) -> Result<serde_json::Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
         }
         let expiration = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -160,17 +224,9 @@ impl AppAgent {
             .as_secs()
             + 60;
         let server = self.relay.trim_start_matches("wss://");
-        key.sign_event_after(
-            24242,
-            "Upload file".into(),
-            vec![
-                vec!["t".into(), "upload".into()],
-                vec!["x".into(), sha256.into()],
-                vec!["expiration".into(), expiration.to_string()],
-                vec!["server".into(), server.into()],
-            ],
-            None,
-        )
+        tags.push(vec!["expiration".into(), expiration.to_string()]);
+        tags.push(vec!["server".into(), server.into()]);
+        key.sign_event_after(24242, content.into(), tags, None)
     }
     /// Its memory entry `slug`, encrypted to its owner and newer than the
     /// entry it replaces (`after`, that entry's `created_at`).

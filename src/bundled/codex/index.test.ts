@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import * as React from "react";
+import { createElement } from "react";
 import {
   cleanup,
   fireEvent,
@@ -32,7 +32,6 @@ function applied(spawn = vi.fn()) {
   let type: AgentType | undefined;
   const subscribe = () => () => undefined;
   const ctx = {
-    react: React,
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn, request: vi.fn() },
     agents: {
@@ -50,7 +49,11 @@ function applied(spawn = vi.fn()) {
 }
 
 it("registers only where the desktop app can run codex and base64", () => {
-  expect(applied()).toMatchObject({ id: "codex", title: "Codex" });
+  expect(applied()).toMatchObject({
+    id: "codex",
+    title: "Codex",
+    Create: expect.any(Function),
+  });
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   expect(applied()).toBeDefined();
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
@@ -80,7 +83,6 @@ it("stops agents that stop running even when the agent list could not be read", 
   let state = { status: "ready", agents: [agent], running: [agent] };
   let notify = () => undefined;
   apply({
-    react: React,
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
@@ -130,7 +132,7 @@ it("renews agents' server when sign-in finishes after its tab has closed", async
   const tab = applied(spawn)?.tabs?.find((tab) => tab.id === "codex");
   if (!tab) throw new Error("Missing Codex tab");
   const view = render(
-    React.createElement(tab.component, {
+    createElement(tab.component, {
       agent: { pubkey: "a".repeat(64), config: defaults },
       save: vi.fn(),
     } as never),

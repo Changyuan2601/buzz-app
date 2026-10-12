@@ -12,15 +12,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type { Panels } from "../../features/panels/service";
 import { PanelCard } from "../../features/panels/PanelCard";
-import { BrowserIcon } from "../../shared/design-system/icons";
+import { BrowserIcon, InfoIcon } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
-import {
-  ChannelTabPicker,
-  channelToolIcon,
-  isChannelTabTool,
-} from "./ChannelTabPicker";
 import { ConversationTab } from "./ConversationTab";
 import { useChannelPanels } from "./useChannelPanels";
 import {
@@ -49,7 +44,6 @@ export function useConversationTabs({
   eligible,
   threadId,
   onOpenDrawer,
-  personalWorkspace = false,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -67,7 +61,6 @@ export function useConversationTabs({
   fallbackFocus?: RefObject<HTMLElement | null>;
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
-  personalWorkspace?: boolean | undefined;
   onOpenDrawer?(): void;
 }) {
   const currentId = current?.id;
@@ -228,60 +221,10 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
-  const drawer = useChannelPanels(
-    panels,
-    drawerContext,
-    () => {
-      onOpenDrawer?.();
-      tabState.setPaneOpen(true);
-    },
-    (panel) => {
-      const entry = panelTabs.find(
-        (entry) => entry.panel === panel && entry.channelContext,
-      );
-      if (!entry) return false;
-      if (tabState.paneOpen && tabState.selected === panelTabId(entry))
-        tabState.setPaneOpen(false);
-      else selectOpening(entry);
-      return true;
-    },
-  );
-  const tabTools =
-    drawerContext && !current?.archived
-      ? available.filter(isChannelTabTool)
-      : [];
-  const chooseTool = (id: string, panel: RegisteredPanel) => {
-    const connection = relay.snapshot();
-    if (
-      connection.status !== "ready" ||
-      connection.session !== queries ||
-      !drawerContext ||
-      !active() ||
-      !tabTools.includes(panel) ||
-      !panels.snapshot().includes(panel)
-    )
-      return;
-    // A terminal's screen/session has one presentation owner at a time.
-    drawer.close();
-    panelTrigger.current = splitTrigger.current;
-    tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
-    open(
-      {
-        panel,
-        target: drawerContext.channelId,
-        channelId: drawerContext.channelId,
-        channelContext: drawerContext,
-      },
-      true,
-    );
-  };
-  const tabDestinations = channels.filter(
-    (item) =>
-      item.id !== currentId &&
-      !item.cached &&
-      !item.readOnly &&
-      item.channelType !== "session",
-  );
+  const drawer = useChannelPanels(panels, drawerContext, () => {
+    onOpenDrawer?.();
+    tabState.setPaneOpen(true);
+  });
   const rootTabIds = [
     ...leadingIds,
     ...tabState.tabs.map((tab) => tab.id),
@@ -307,48 +250,11 @@ export function useConversationTabs({
         preventScroll: true,
       });
   };
-  const addTab = () => {
-    if (!currentVisit()) return;
-    const id = `new:${crypto.randomUUID()}`;
-    tabState.setTabs((tabs) => [...tabs, { id, kind: "new" }]);
-    selectPanelTab(id);
-  };
   const closeConversationTab = (id: string) => {
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     afterClose(id);
     if (rootTabIds.length === 1)
       splitTrigger.current?.focus({ preventScroll: true });
-  };
-  const chooseConversation = (id: string, channelId: string) => {
-    // Recheck current membership at activation, not just the rendered search result.
-    if (!currentVisit()) return;
-    const target = queries.channels
-      .list()
-      .channels.find((item) => item.id === channelId);
-    if (
-      !target ||
-      target.cached ||
-      target.readOnly ||
-      target.archived ||
-      (target.channelType === "session" &&
-        !target.members?.includes(queries.viewer ?? "")) ||
-      channelId === currentId
-    )
-      return;
-    const existing = tabState.tabs.find(
-      (tab) => tab.kind === "conversation" && tab.channelId === channelId,
-    );
-    const targetId = `conversation:${channelId}`;
-    tabState.setTabs((tabs) =>
-      existing
-        ? tabs.filter((tab) => tab.id !== id)
-        : tabs.map((tab) =>
-            tab.id === id
-              ? { id: targetId, kind: "conversation", channelId }
-              : tab,
-          ),
-    );
-    selectPanelTab(existing?.id ?? targetId);
   };
   const openConversationThread = (
     channelId: string,
@@ -417,9 +323,7 @@ export function useConversationTabs({
     selectOpening,
     selectPanelTab,
     afterClose,
-    addTab,
     closeTab,
-    rootTabIds,
     selectedTab,
     drawer,
     drawerContext,
@@ -429,10 +333,7 @@ export function useConversationTabs({
     openConversationThread,
     items: [
       ...tabState.tabs.map((tab) => {
-        const target =
-          tab.kind === "new"
-            ? undefined
-            : channels.find((item) => item.id === tab.channelId);
+        const target = channels.find((item) => item.id === tab.channelId);
         const usable =
           target &&
           !target.readOnly &&
@@ -443,45 +344,32 @@ export function useConversationTabs({
         return {
           id: tab.id,
           label:
-            tab.kind === "new"
-              ? "New tab"
-              : tab.kind === "thread"
-                ? `Thread · ${target?.name ?? "Unavailable"}`
-                : (target?.name ?? "Unavailable conversation"),
+            tab.kind === "thread"
+              ? `Thread · ${target?.name ?? "Unavailable"}`
+              : (target?.name ?? "Unavailable conversation"),
           icon: target ? conversationIcon(target) : <BrowserIcon size="1rem" />,
           close: () => closeConversationTab(tab.id),
-          content:
-            tab.kind === "new" ? (
-              <ChannelTabPicker
-                channels={tabDestinations}
-                tools={tabTools}
-                chooseTool={(panel) => chooseTool(tab.id, panel)}
-                icon={conversationIcon}
-                usageScope={scope}
-                choose={(channelId) => chooseConversation(tab.id, channelId)}
-              />
-            ) : usable ? (
-              <ConversationTab
-                personalWorkspace={personalWorkspace}
-                focusOnMount={continuingVisit}
-                active={tabState.paneOpen && selectedTab === tab.id}
-                tab={tab}
-                channel={target}
-                session={queries}
-                scope={scope}
-                extensions={extensions}
-                openLink={(url) => openConversationLink(target.id, url)}
-                canOpenLink={canOpenLink}
-                openThread={(id, root, intent) =>
-                  openConversationThread(target.id, id, root, intent)
-                }
-                close={() => closeConversationTab(tab.id)}
-              />
-            ) : (
-              <p role="status" className={styles.empty}>
-                This conversation is no longer available.
-              </p>
-            ),
+          content: usable ? (
+            <ConversationTab
+              focusOnMount={continuingVisit}
+              active={tabState.paneOpen && selectedTab === tab.id}
+              tab={tab}
+              channel={target}
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              openLink={(url) => openConversationLink(target.id, url)}
+              canOpenLink={canOpenLink}
+              openThread={(id, root, intent) =>
+                openConversationThread(target.id, id, root, intent)
+              }
+              close={() => closeConversationTab(tab.id)}
+            />
+          ) : (
+            <p role="status" className={styles.empty}>
+              This conversation is no longer available.
+            </p>
+          ),
         };
       }),
       ...panelTabs.map((entry) => ({
@@ -489,7 +377,7 @@ export function useConversationTabs({
         instance: entry,
         label: entry.panel.title,
         ...(entry.channelContext && {
-          icon: channelToolIcon(entry.panel),
+          icon: <InfoIcon size="1rem" />,
         }),
         close: () => closeTab(entry),
         content: (

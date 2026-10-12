@@ -1,5 +1,4 @@
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
-import { chooseConversationTab } from "./conversation-tabs.mjs";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 const id = "33333333-3333-4333-8333-333333333333";
@@ -184,8 +183,8 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await expect(badge).toHaveCount(0);
 });
 
-// Two browser-mounted readers must keep native drafts and signed sends scoped.
-test("Me tabs retain drafts and send to their own conversation with the Messages tool picker", async ({
+// Me's actual host must not retain the removed blank-tab entry point.
+test("Me leaves an empty pane unavailable until content opens it", async ({
   page,
   app,
 }) => {
@@ -195,64 +194,35 @@ test("Me tabs retain drafts and send to their own conversation with the Messages
     .getByRole("navigation", { name: "Me conversations" })
     .getByRole("button", { name: "Alpha", exact: true })
     .click();
-  const mainDraft = page.getByRole("textbox", {
+  const composer = page.getByRole("textbox", {
     name: "Message your agents",
     exact: true,
   });
-  await mainDraft.fill("Main draft stays here");
+  await composer.fill("Keep this draft");
   const split = page.getByRole("button", {
     name: "Toggle tab pane",
     exact: true,
   });
-  await split.click();
-  await chooseConversationTab(page, "Gamma", { add: false });
-  const workspace = page.locator("[data-panel-workspace]");
-  const tabComposer = workspace.getByRole("textbox", {
-    name: "Message #Gamma",
-    exact: true,
-  });
-  await tabComposer.fill("From the Me secondary tab");
-  await split.click();
-  await expect(workspace).toBeHidden();
-  await split.click();
-  await expect(tabComposer).toHaveText("From the Me secondary tab");
-  await workspace.getByRole("button", { name: "Add tab", exact: true }).click();
-  const picker = workspace.getByRole("region", { name: "Choose a tab" });
-  await expect(
-    picker.getByRole("tab", { name: "DMs", exact: true }),
-  ).toBeVisible();
-  await picker.getByRole("tab", { name: "Tools", exact: true }).click();
-  await expect(
-    picker.getByRole("searchbox", { name: "Find a channel tool" }),
-  ).toBeVisible();
-  // Browser hosts deliberately do not advertise a native Terminal.
-  await expect(
-    picker.getByRole("button", { name: "Terminal", exact: true }),
-  ).toHaveCount(0);
-  await workspace.getByRole("tab", { name: "Gamma", exact: true }).click();
-  await tabComposer.press("Enter");
-  await expect
-    .poll(() =>
-      app.report.publications.some(
-        ({ event }) =>
-          event.kind === 9 &&
-          event.content === "From the Me secondary tab" &&
-          event.tags.some(([key, value]) => key === "h" && value === "gamma"),
-      ),
-    )
-    .toBe(true);
-  await expect(mainDraft).toHaveText("Main draft stays here");
+  await expect(split).toHaveAttribute("aria-disabled", "true");
+  await split.focus();
+  await split.press("Enter");
+  await expect(page.locator("[data-panel-workspace]")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Choose a tab" })).toHaveCount(
+    0,
+  );
+  await expect(composer).toHaveText("Keep this draft");
 });
 
-// Real secondary PersonalComposer -> signing boundary, not a mocked prop assertion.
+// Real PersonalComposer -> signing boundary remains covered through the main reader.
+// Me no longer has a user path that opens another conversation as a side tab.
 // Owner-authored inventory supplies choices; signed membership remains authority.
-test.describe("personal secondary recipients", () => {
+test.describe("personal recipients", () => {
   test.use({
     sessionChannels: [id],
     meAgentNames: ["Owned Honey", "Owned Brain"],
     meOutsideAgentNames: ["Outside Agent"],
   });
-  test("Me tab signs only explicit owned recipients and rejects an outside identity", async ({
+  test("Me signs only explicit owned recipients and rejects an outside identity", async ({
     page,
     app,
   }) => {
@@ -260,15 +230,11 @@ test.describe("personal secondary recipients", () => {
     await openPage(page, "Me");
     await page
       .getByRole("navigation", { name: "Me conversations" })
-      .getByRole("button", { name: "Alpha", exact: true })
+      .getByRole("button", { name: "Beta", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Toggle tab pane", exact: true })
-      .click();
-    await chooseConversationTab(page, "Beta", { add: false });
-    const workspace = page.locator("[data-panel-workspace]");
-    const composer = workspace.getByRole("textbox", {
-      name: "Message #Beta",
+    const workspace = page.getByRole("main");
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
       exact: true,
     });
     const [honey, brain, outsider] = app.meAgents;
@@ -309,10 +275,17 @@ test.describe("personal secondary recipients", () => {
     await composer.fill("");
     await openPage(page, "Messages");
     await page.locator('[data-channel-id="gamma"]').click();
+    // Me-owned conversations are intentionally absent from the Messages
+    // sidebar. A real conversation link still opens their ordinary reader.
+    const link = app.append(
+      "primary",
+      "gamma",
+      `[Open Beta](buzz://channel/${other})`,
+    );
     await page
-      .getByRole("button", { name: "Toggle tab pane", exact: true })
+      .locator(`[data-message-id="${link.id}"]`)
+      .getByRole("link", { name: "Open Beta", exact: true })
       .click();
-    await chooseConversationTab(page, "Beta", { add: false });
     await workspace
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
@@ -332,7 +305,7 @@ test.describe("personal secondary recipients", () => {
     await openPage(page, "Me");
     await page
       .getByRole("navigation", { name: "Me conversations" })
-      .getByRole("button", { name: "Alpha", exact: true })
+      .getByRole("button", { name: "Beta", exact: true })
       .click();
     await expect(composer).toContainText("@Outside Agent");
     await composer.press("Enter");

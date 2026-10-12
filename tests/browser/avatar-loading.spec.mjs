@@ -53,7 +53,15 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
     .toBeGreaterThan(0);
   await expect(image).toHaveCSS("opacity", "1");
   await expect(avatar).toHaveText("");
-  const original = await avatar.boundingBox();
+  // Compare page coordinates: the fallback initial changes the line's baseline,
+  // and the page is scrolled to its end, so a viewport box would move whenever
+  // the document's height changes beneath the avatar.
+  const box = () =>
+    avatar.evaluate((el) => {
+      const { x, y, width, height } = el.getBoundingClientRect();
+      return { x: x + scrollX, y: y + scrollY, width, height };
+    });
+  const original = await box();
 
   let release;
   const held = new Promise((resolve) => {
@@ -68,7 +76,7 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
   );
   await expect(avatar).toContainText("A");
   await expect(image).toHaveCSS("opacity", "0");
-  expect(await avatar.boundingBox()).toEqual(original);
+  expect(await box()).toEqual(original);
   release();
   await expect(avatar).toContainText("A");
   await expect(avatar.locator("img")).toHaveCount(0);

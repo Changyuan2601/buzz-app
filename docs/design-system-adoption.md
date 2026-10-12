@@ -11,7 +11,7 @@ Use this map to find the shared owner before changing a product surface.
 | Area | Shared owner | App uses |
 | --- | --- | --- |
 | Colors and type | Surface, text, border, affordance, and complete type roles | Host aliases forward to shared roles. Feature CSS uses role names; inline links pair text and hover roles. |
-| Actions | Button and IconButton | Retry, refresh, delete, recovery, composer send, and picker triggers. Standard sizes are 32/40/52px minimums. Labels stay on one line; surrounding layouts reflow whole controls or scroll. |
+| Actions | Button and IconButton | Retry, refresh, delete, recovery, composer send, and picker triggers. Standard sizes are 32/40/52px; IconButton defaults to small and labelled Button defaults to medium. Text-button heights are minimums. Labels stay on one line; surrounding layouts reflow whole controls or scroll. |
 | Forms and choices | Field, Input, Textarea, RadioGroup, Checkbox | Profile, community setup, appearance, plugin import, and workflow editing. |
 | Search | SearchField | Channels, pages, members, and GIFs retain their query, refs, and keyboard handlers. |
 | Navigation | NavigationItem | Settings, channel rows, shell destinations, Home, and community choices. Route destinations use button semantics; the wide shell topbar is the documented chrome-tab exception. |

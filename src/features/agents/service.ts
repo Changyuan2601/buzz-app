@@ -4,6 +4,12 @@
 // app owns and edits, and a config blob the type owns. The app delivers matching live events to
 // `run` from the stream the owner already receives in the agent's community,
 // selected or not, so no plugin opens a socket or a REQ.
+//
+// A hosted type's provider holds the key and runs the agent instead. The app
+// creates it through the type's `remote` steps and signs only the owner's
+// attestation. Every agent of either kind is listed in the owner's kind 30177
+// records with its type as the `runtime` tag, so every device of the owner's
+// can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
@@ -14,10 +20,21 @@ import {
 } from "../../plugins/contributions";
 import type { LocalAgentsSnapshot } from "./local";
 import { attestedOwner } from "./owner-attestation";
-import { removeAgentFromChannels } from "./relay-removal";
+import {
+  deleteAgentRecord,
+  publishAgentRecord,
+  type AgentRecordBody,
+  removeAgentFromChannels,
+  removeRelayAgent,
+} from "./relay-removal";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
-import type { RelayEvent } from "../relay/events";
+import {
+  prepareRemoteAgentAuthorization,
+  type NipOaAuthorization,
+} from "../host/service";
+import { avatarSource } from "../../shared/avatar-source";
+import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
@@ -52,18 +69,25 @@ import {
 import {
   readRecords,
   readTeams,
+  readUnfinished,
   setAttention,
   writeRecords,
   writeTeams,
+  writeUnfinished,
   type AgentRecord,
   type SkippedObject,
   type Team,
+  type Unfinished,
 } from "./store";
 // STOPGAP(agent-local-typing): delete with local-typing.ts.
 import { typeLocally } from "./local-typing";
 // STOPGAP(agent-working-reactions): delete with working-reactions.ts.
 import { reactWhileWorking } from "./working-reactions";
 
+/** Where an agent runs: `here`, with its key on this device; `hosted`, by its
+ * type's provider; or `elsewhere`, on another of the owner's devices. Only an
+ * agent here has attention, timers and config; the others never run here. */
+export type AgentPlace = "here" | "hosted" | "elsewhere";
 /** One of the viewer's agents, in the community at `relay`. */
 export type Agent<Config = unknown> = Readonly<{
   pubkey: string;
@@ -73,6 +97,10 @@ export type Agent<Config = unknown> = Readonly<{
   type: string;
   owner: string;
   relay: string;
+  place: AgentPlace;
+  /** A hosted agent its provider made whose setup has not finished; `finish`
+   * continues it. */
+  unfinished?: true;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -95,8 +123,17 @@ export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
   /** Replaces the type's whole config. Spread `agent.config` to change one
-   * field, or tabs that each save a part will erase each other's fields. */
+   * field, or tabs that each save a part will erase each other's fields. A
+   * hosted type's tabs save to its provider instead; for them this rejects. */
   save(config: Config): Promise<void>;
+};
+/** What a type's part of the New agent dialog receives: the new agent's
+ * starting config, from `defaults`, to fill in. The app owns its key, name and
+ * picture around it. */
+export type AgentCreateProps<Config = unknown> = {
+  config: Config;
+  onChange(config: Config): void;
+  disabled: boolean;
 };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
@@ -113,13 +150,15 @@ export type AgentHandle = Readonly<{
   query(filters: readonly object[]): Promise<RelayEvent[]>;
   /** Uploads base64 `data`, an image or MP4 video, as the agent. */
   upload(data: string, mime: string): Promise<AgentUpload>;
+  /** Downloads one of its community's media blobs, by URL or `sha256[.ext]`,
+   * as base64. */
+  media(url: string): Promise<string>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
 }>;
 export type Trigger =
-  /** Directly addressed: a chat message that mentions the agent or replies to
-   * something it wrote. */
+  /** Directly addressed: a chat message that mentions the agent. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
@@ -190,6 +229,9 @@ export type AgentType<Config = unknown> = {
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */
   Peek?: ComponentType<AgentPeekProps<Config>>;
+  /** The type's choices in the New agent dialog, such as model and
+   * instructions; the new agent starts with the config it settles on. */
+  Create?: ComponentType<AgentCreateProps<Config>>;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
   /** Models and effort levels the owner can pick for the next run while
@@ -199,7 +241,45 @@ export type AgentType<Config = unknown> = {
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
+  /** Makes the type hosted: its provider runs each agent, so it has no `run`,
+   * `models` or `timeoutMs`, and its agents have no attention. */
+  remote?: RemoteAgentType;
 };
+/** A hosted type's provider: it holds each agent's key and runs it. The app
+ * calls these in order to create one (`provision`, then `activate`) and owns
+ * the owner's agent list; every step is asked again after a failure, so each
+ * must be safe to repeat. `community` is the agent's `wss://` community. */
+export type RemoteAgentType = Readonly<{
+  /** Makes the agent and resolves with its pubkey. Not yet its owner's. */
+  provision(
+    input: Readonly<{ name: string; community: string; signal: AbortSignal }>,
+  ): Promise<Readonly<{ pubkey: string }>>;
+  /** Hands over the owner's attestation (NIP-OA), which the agent attaches to
+   * what it signs. The provider publishes its profile and starts it. */
+  activate(
+    input: Readonly<{
+      pubkey: string;
+      name: string;
+      community: string;
+      auth: NipOaAuthorization;
+      signal: AbortSignal;
+    }>,
+  ): Promise<void>;
+  /** Publishes its profile with this name and picture (an HTTPS image URL). */
+  profile(
+    input: Readonly<{
+      pubkey: string;
+      community: string;
+      name: string;
+      picture?: string;
+      signal: AbortSignal;
+    }>,
+  ): Promise<void>;
+  /** Stops it and deletes its key. An agent already gone counts as removed. */
+  remove(
+    input: Readonly<{ pubkey: string; community: string; signal: AbortSignal }>,
+  ): Promise<void>;
+}>;
 export type RegisteredAgentType = Contribution<AgentType>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
@@ -214,6 +294,28 @@ export type AgentsSnapshot = Readonly<{
 }>;
 export type { Carry, Team };
 export type TeamChange = Omit<Team, "id"> & Readonly<{ id?: string }>;
+/** What `port` imports: an identity an earlier agent system saved on this
+ * machine, or an agent a community member shared. */
+export type PortInput = Readonly<
+  | { source: PortSource; pubkey: string; type: string }
+  | {
+      source: "shared";
+      type: string;
+      name: string;
+      /** An HTTPS image URL. */
+      picture?: string;
+      instructions?: string;
+    }
+>;
+export type NewAgent = Readonly<{
+  type: string;
+  name: string;
+  /** An HTTPS image URL. */
+  picture?: string;
+  /** Its starting config, from the type's `Create`; else the type's defaults.
+   * A hosted type's settings are its provider's, so it has none here. */
+  config?: unknown;
+}>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
@@ -224,19 +326,25 @@ export type Agents = {
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
-  create(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
+  /** Makes an agent of `type` in the selected community: here, or with a
+   * hosted type at its provider. A hosted one whose setup then fails is kept
+   * as `unfinished`. */
+  create(input: NewAgent): Promise<Agent>;
+  /** Continues an unfinished hosted agent's setup. */
+  finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
    * Agents yet. */
   portable(): Promise<PortableAgents>;
-  /** Takes one over as an agent of `type` in the selected community, keeping its
-   * key, name and picture, and whatever of its instructions and workspace the
-   * type adopts. Its other settings stay behind. */
-  port(
-    input: Readonly<{ source: PortSource; pubkey: string; type: string }>,
-  ): Promise<Agent>;
+  /** Imports one as an agent of `type` in the selected community: an identity
+   * from `portable` keeps its key, name and picture, and a shared agent gets a
+   * new key with its name and picture. Either keeps whatever of its
+   * instructions and workspace the type adopts; its other settings stay behind. */
+  port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
   /** Deletes its key at once. Leaving its channels and archiving it follow in
-   * the background whenever its community is open. */
+   * the background whenever its community is open. A hosted agent is archived,
+   * leaves its channels and is removed from its provider before this resolves.
+   * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
   /** Creates a team, or replaces the one with `id`. Members must be agents on
    * this device. */
@@ -392,6 +500,59 @@ const originOf = (value: string) => {
     return undefined;
   }
 };
+/** One of the viewer's kind 30177 agent records. Ones without a `runtime`
+ * are earlier agent systems', not shown; replacing one keeps its settings. */
+type Listing = Readonly<{
+  pubkey: string;
+  name: string;
+  picture?: string;
+  runtime?: string;
+  /** The record as read or written, kept by the next one written. */
+  prior?: AgentRecordBody | undefined;
+}>;
+const RUNTIME = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+/** The newest record of each agent, read as listings. */
+function listingsOf(events: readonly EventData[], viewer: string) {
+  const heads = new Map<string, EventData>();
+  for (const event of events) {
+    const d = event.tags.find((tag) => tag[0] === "d")?.[1] ?? "";
+    if (event.kind === 30177 && event.pubkey === viewer)
+      heads.set(d, newer(heads.get(d), event));
+  }
+  const listings: Listing[] = [];
+  for (const [pubkey, event] of heads) {
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) continue;
+    const runtime = event.tags.find((tag) => tag[0] === "runtime")?.[1] ?? "";
+    let body: unknown = null;
+    try {
+      body = JSON.parse(event.content);
+    } catch {}
+    const content =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
+    const name = typeof content.name === "string" ? content.name.trim() : "";
+    const picture = recordPicture(content.picture);
+    listings.push(
+      Object.freeze({
+        pubkey,
+        name,
+        ...(picture ? { picture } : {}),
+        ...(RUNTIME.test(runtime) ? { runtime } : {}),
+        prior: { content, tags: event.tags },
+      }),
+    );
+  }
+  return Object.freeze(listings);
+}
+/** A picture as a record carries it: an HTTPS image URL, never inline data. */
+const recordPicture = (value: unknown) => {
+  const source = avatarSource(value);
+  return source?.startsWith("https:") ? source : undefined;
+};
+/** The `wss://` URL of a community, as agents and their providers know it. */
+const wssOf = (origin: string) =>
+  relayOrigin(origin).replace(/^https:/, "wss:");
 type Job = { trigger: Trigger; channelId?: string };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
@@ -410,7 +571,7 @@ type Runner = {
   running: boolean;
   windowStart: number;
   admitted: number;
-  /** Events seen, and events it wrote (so replies to it are addressed). */
+  /** Events seen, and events it wrote (so reactions to them reach no watch). */
   readonly seen: Set<string>;
   readonly wrote: Set<string>;
   /** Whether native may hold the agent for this copy; true at first, since
@@ -441,17 +602,38 @@ export class AgentsService extends Service implements Agents {
   /** Deleted agents whose community cleanup is running, and whether it was
    * asked for again meanwhile, as when the connection recovers mid-attempt. */
   private cleaning = new Map<string, boolean>();
+  private unfinished: readonly Unfinished[];
+  /** The viewer's agent records in each community, by origin, as last read
+   * from its live session and written since. */
+  private listings = new Map<string, readonly Listing[]>();
+  /** Agents whose record is being written, so a sync writes each once. */
+  private listing = new Set<string>();
+  /** By origin until its records are first read: the listings written or
+   * removed meanwhile, which the read must not undo. */
+  private edits = new Map<string, Map<string, Listing | null>>();
+  /** By origin, the binding whose read of its records is under way. */
+  private reading = new Map<string, Binding>();
+  /** Hosted agents whose setup, save or delete is running, so one waits for
+   * the others. */
+  private busy = new Set<string>();
+  /** Hosted and elsewhere agents as last shown, kept while unchanged. */
+  private shown = new Map<string, Agent>();
 
   constructor(
     ctx: Context,
     private readonly communities: AgentCommunities,
     private readonly native: AgentsNative | undefined = nativeAgents(),
     private readonly storage: Storage = globalThis.localStorage,
+    private readonly authorize: (
+      pubkey: string,
+      signal: AbortSignal,
+    ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     migrateAgentStorage(storage);
     this.records = readRecords(storage);
+    this.unfinished = Object.freeze(readUnfinished(storage));
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
@@ -514,6 +696,19 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         `Agent type timeoutMs must be a whole number from 1 to ${TIMEOUT_LIMIT_MS}`,
       );
+    const { remote } = type;
+    if (
+      remote &&
+      (type.run ||
+        type.models ||
+        type.timeoutMs !== undefined ||
+        (["provision", "activate", "profile", "remove"] as const).some(
+          (step) => typeof remote[step] !== "function",
+        ))
+    )
+      throw new Error(
+        "A hosted agent type has provision, activate, profile and remove, and no run, models or timeoutMs",
+      );
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
   types = () => this.contributions.snapshot();
@@ -563,11 +758,86 @@ export class AgentsService extends Service implements Agents {
     return value;
   };
 
-  async create({ type, name }: Readonly<{ type: string; name: string }>) {
+  async create({ type, name, picture, config }: NewAgent) {
     if (!name.trim()) throw new Error("Name the agent");
-    return this.add(type, async (native, destination, owner) => ({
-      agent: await native.create(destination, owner, type, name.trim()),
-    }));
+    const remote = this.types().find((entry) => entry.key === type)?.remote;
+    if (remote) {
+      const agent = await this.provision(type, remote, name.trim());
+      if (!picture) return agent;
+      // It exists now, so a picture that fails to save does not fail it.
+      await this.save(agent.pubkey, { picture }).catch((error: unknown) =>
+        console.warn(`Agent ${agent.name} picture was not saved`, error),
+      );
+      return this.find(agent.pubkey) ?? agent;
+    }
+    return this.add(
+      type,
+      async (native, destination, owner) => ({
+        agent: await native.create(destination, owner, type, name.trim()),
+      }),
+      { config, picture },
+    );
+  }
+
+  /** Has the provider make the agent, then sets it up. From here on it is
+   * kept, unfinished until set up, so a failure never makes a second one. */
+  private async provision(type: string, remote: RemoteAgentType, name: string) {
+    const binding = this.selectedBinding();
+    const community = wssOf(binding.origin);
+    const { pubkey } = await remote.provision({
+      name,
+      community,
+      signal: binding.controller.signal,
+    });
+    if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
+      throw new Error("The provider did not return the agent's key");
+    if (
+      pubkey === binding.viewer ||
+      this.identities.some((identity) => identity.pubkey === pubkey) ||
+      [...this.bound.keys()].some((origin) => this.rowOf(origin, pubkey))
+    )
+      throw new Error("The provider returned a key that is already in use");
+    this.writeUnfinished([
+      ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
+      { pubkey, type, name, relay: community, owner: binding.viewer },
+    ]);
+    return this.finish(pubkey);
+  }
+
+  finish(pubkey: string) {
+    return this.exclusive(pubkey, () => this.setUp(pubkey));
+  }
+  private async setUp(pubkey: string) {
+    const setup = this.unfinished.find((entry) => entry.pubkey === pubkey);
+    if (!setup) throw new Error("That agent has no setup to finish");
+    const remote = this.types().find(
+      (entry) => entry.key === setup.type,
+    )?.remote;
+    if (!remote) throw new Error("That agent type is not available");
+    const origin = originOf(setup.relay);
+    const binding = this.bindingOf(setup);
+    if (!origin || !binding) throw new Error("Connect to its community first");
+    const { signal } = binding.controller;
+    const auth = await this.authorize(pubkey, signal);
+    if (auth[1] !== setup.owner)
+      throw new Error("Sign in as the agent's owner to finish its setup");
+    await remote.activate({
+      pubkey,
+      name: setup.name,
+      community: setup.relay,
+      auth,
+      signal,
+    });
+    await this.writeListing(origin, binding, {
+      pubkey,
+      name: setup.name,
+      runtime: setup.type,
+      prior: this.rowOf(origin, pubkey)?.prior,
+    });
+    this.writeUnfinished(this.unfinished.filter((entry) => entry !== setup));
+    const agent = this.find(pubkey);
+    if (!agent) throw new Error("The agent was set up in another community");
+    return agent;
   }
 
   async portable() {
@@ -585,18 +855,32 @@ export class AgentsService extends Service implements Agents {
     };
   }
 
-  async port({
-    source,
-    pubkey,
-    type,
-  }: Readonly<{ source: PortSource; pubkey: string; type: string }>) {
-    return this.add(type, (native, destination, owner) =>
-      native.port(source, pubkey, destination, owner, type),
+  async port(input: PortInput) {
+    const { type } = input;
+    if (input.source !== "shared") {
+      const { source, pubkey } = input;
+      return this.add(type, (native, destination, owner) =>
+        native.port(source, pubkey, destination, owner, type),
+      );
+    }
+    const name = input.name.trim();
+    if (!name) throw new Error("Name the agent");
+    const { picture, instructions } = input;
+    // A shared agent has no key to keep; it is a new identity that carries
+    // what was shared, as a brought-over one does.
+    return this.add(
+      type,
+      async (native, destination, owner) => ({
+        agent: await native.create(destination, owner, type, name),
+        ...(instructions?.trim() ? { carry: { instructions } } : {}),
+      }),
+      { picture },
     );
   }
 
   /** Saves a new identity of `type` in the selected community with the type's
-   * default settings, adopting what a brought-over one carried. */
+   * default settings, or the `config` it was made with, adopting what a
+   * brought-over one carried. */
   private async add(
     type: string,
     save: (
@@ -604,16 +888,15 @@ export class AgentsService extends Service implements Agents {
       destination: string,
       owner: string,
     ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
+    made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
   ) {
     const native = this.native;
-    const selected = this.communities.snapshot().selected;
-    const binding = selected
-      ? this.bound.get(originOf(selected) ?? "")?.binding
-      : undefined;
-    const kind = this.types().find((entry) => entry.key === type);
     if (!native) throw new Error("Agents run only in the desktop app");
-    if (!binding) throw new Error("Connect to a community first");
+    const binding = this.selectedBinding();
+    const kind = this.types().find((entry) => entry.key === type);
     if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted agent's key stays with its provider");
     const settings = defaults("", kind);
     const { agent: identity, carry } = await save(
       native,
@@ -622,6 +905,8 @@ export class AgentsService extends Service implements Agents {
     );
     let record = { ...settings, pubkey: identity.pubkey };
     try {
+      if (made.config !== undefined)
+        record = { ...record, config: made.config };
       if (carry && kind.adopt)
         record = { ...record, config: kind.adopt(carry, record.config) };
       this.write(record);
@@ -629,14 +914,37 @@ export class AgentsService extends Service implements Agents {
       // The agent exists either way; unsaved settings start from the defaults.
       console.warn(`Agent ${identity.name} settings were not saved`, error);
     }
+    // Before the refresh, which publishes its profile with the picture. The
+    // agent exists either way; its picture can be set again later.
+    let shown = identity;
+    const { picture } = made;
+    if (picture)
+      await native.setPicture(identity.pubkey, picture).then(
+        () => {
+          shown = { ...identity, picture };
+        },
+        (error: unknown) =>
+          console.warn(`Agent ${identity.name} picture was not saved`, error),
+      );
     await this.refresh();
-    return this.view(identity, record);
+    return this.view(shown, record);
+  }
+
+  /** The selected community's live binding, where agents are made. */
+  private selectedBinding() {
+    const selected = this.communities.snapshot().selected;
+    const binding = selected
+      ? this.bound.get(originOf(selected) ?? "")?.binding
+      : undefined;
+    if (!binding) throw new Error("Connect to a community first");
+    return binding;
   }
 
   async save(pubkey: string, change: AgentChange) {
     const identity = this.live(pubkey);
-    if (!this.native || !identity)
-      throw new Error("No such agent on this device");
+    if (!identity)
+      return this.exclusive(pubkey, () => this.saveHosted(pubkey, change));
+    if (!this.native) throw new Error("No such agent on this device");
     const name = change.name?.trim();
     if (name === "") throw new Error("Name the agent");
     let record = this.recordOf(identity);
@@ -670,11 +978,92 @@ export class AgentsService extends Service implements Agents {
     if (renamed || repictured) await this.refresh();
   }
 
+  /** A hosted agent's name and picture are its provider's to publish; the app
+   * then lists it under them. Its settings are the provider's, not saved here. */
+  private async saveHosted(pubkey: string, change: AgentChange) {
+    const { agent, remote, origin, binding } = this.hosted(pubkey);
+    if (change.config !== undefined || change.attention)
+      throw new Error("A hosted agent's settings save through its provider");
+    const name = change.name === undefined ? agent.name : change.name.trim();
+    if (!name) throw new Error("Name the agent");
+    const picture =
+      change.picture === undefined
+        ? agent.picture
+        : recordPicture(change.picture ?? undefined);
+    if (change.picture && !picture)
+      throw new Error("A hosted agent's picture is an HTTPS image URL");
+    if (name === agent.name && picture === agent.picture) return;
+    await remote.profile({
+      pubkey,
+      community: agent.relay,
+      name,
+      ...(picture ? { picture } : {}),
+      signal: binding.controller.signal,
+    });
+    await this.writeListing(origin, binding, {
+      pubkey,
+      name,
+      ...(picture ? { picture } : {}),
+      runtime: agent.type,
+      prior: this.rowOf(origin, pubkey)?.prior,
+    });
+  }
+  /** A hosted agent shown now, its provider, and its community's live session. */
+  private hosted(pubkey: string, unfinished = false) {
+    const agent = this.state.agents.find(
+      (entry) => entry.pubkey === pubkey && entry.place === "hosted",
+    );
+    if (agent?.unfinished && !unfinished)
+      throw new Error("Finish the agent's setup first");
+    const remote =
+      agent && this.types().find((entry) => entry.key === agent.type)?.remote;
+    const origin = agent && originOf(agent.relay);
+    const binding = agent && this.bindingOf(agent);
+    if (!agent || !remote || !origin || !binding)
+      throw new Error("No such agent on this device");
+    return { agent, remote, origin, binding };
+  }
+
   async remove(pubkey: string) {
+    if (!this.identities.some((identity) => identity.pubkey === pubkey))
+      return this.removeHosted(pubkey);
     if (!this.native) throw new Error("Agents run only in the desktop app");
     await this.native.remove(pubkey);
     // Drops its settings, and starts its cleanup if its community is connected.
     await this.refresh();
+  }
+
+  /** Has a hosted agent's provider remove it, then takes it out of the
+   * community as Delete does for one here. Its record goes last, so a failure
+   * leaves it listed for Delete to be tried again. */
+  private removeHosted(pubkey: string) {
+    if (
+      this.state.agents.some(
+        (agent) => agent.pubkey === pubkey && agent.place === "elsewhere",
+      )
+    )
+      throw new Error("Delete it on the device that runs it");
+    return this.exclusive(pubkey, async () => {
+      const { agent, remote, origin, binding } = this.hosted(pubkey, true);
+      const { signal } = binding.controller;
+      await remote.remove({ pubkey, community: agent.relay, signal });
+      // An unfinished one may have published its profile before setup failed.
+      await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
+      this.unlist(origin, pubkey);
+      this.writeUnfinished(
+        this.unfinished.filter((setup) => setup.pubkey !== pubkey),
+      );
+    });
+  }
+  private async exclusive<T>(pubkey: string, step: () => Promise<T>) {
+    if (this.busy.has(pubkey))
+      throw new Error("Wait for the agent's last change to finish");
+    this.busy.add(pubkey);
+    try {
+      return await step();
+    } finally {
+      this.busy.delete(pubkey);
+    }
   }
 
   async saveTeam({ id, name, instructions, members }: TeamChange) {
@@ -710,6 +1099,210 @@ export class AgentsService extends Service implements Agents {
     this.notify();
   }
 
+  /** Saves the unfinished setups; memory changes only once storage has them. */
+  private writeUnfinished(unfinished: readonly Unfinished[]) {
+    writeUnfinished(this.storage, unfinished);
+    this.unfinished = Object.freeze(unfinished);
+    this.update();
+  }
+
+  /** Reads the viewer's agent records in the community, then lists each of
+   * its agents here that they lack. A sync asks again until one succeeds.
+   * Without the desktop app there are no agents to show. */
+  private async readListings(origin: string, binding: Binding) {
+    if (!this.native || this.reading.get(origin) === binding) return;
+    this.reading.set(origin, binding);
+    const { session, viewer, controller } = binding;
+    try {
+      const events = await session.read(
+        [{ kinds: [30177], authors: [viewer], limit: 500 }],
+        { signal: controller.signal, priority: "background", fresh: true },
+      );
+      if (this.bound.get(origin)?.binding !== binding) return;
+      const edits = this.edits.get(origin);
+      const read = listingsOf(events, viewer).filter(
+        (row) => !edits?.has(row.pubkey),
+      );
+      const written = [...(edits?.values() ?? [])].filter((row) => !!row);
+      this.listings.set(origin, Object.freeze([...read, ...written]));
+      this.edits.delete(origin);
+    } catch (error) {
+      // Its edits stay for the next read, which a sync asks for.
+      if (!controller.signal.aborted)
+        console.warn("The agent list could not be read", error);
+      return;
+    } finally {
+      if (this.reading.get(origin) === binding) this.reading.delete(origin);
+    }
+    this.update();
+    this.list(origin, binding);
+  }
+  /** The community's listings: as read, or until the first read finishes,
+   * those written since. */
+  private rowsOf(origin: string): readonly Listing[] {
+    return (
+      this.listings.get(origin) ??
+      [...(this.edits.get(origin)?.values() ?? [])].filter((row) => !!row)
+    );
+  }
+  private rowOf(origin: string, pubkey: string) {
+    return this.rowsOf(origin).find((row) => row.pubkey === pubkey);
+  }
+  /** Lists each agent here in the community whose record is missing or shows
+   * another name, picture or type. Waits for the first read, so it never
+   * replaces a record it has not seen. */
+  private list(origin: string, binding: Binding) {
+    if (!this.listings.has(origin)) return;
+    for (const identity of this.identities) {
+      if (
+        identity.deleted ||
+        identity.owner !== binding.viewer ||
+        originOf(identity.relay) !== origin ||
+        this.listing.has(identity.pubkey)
+      )
+        continue;
+      const picture = recordPicture(identity.picture);
+      const row = this.rowOf(origin, identity.pubkey);
+      if (
+        row?.name === identity.name &&
+        row.picture === picture &&
+        row.runtime === identity.type
+      )
+        continue;
+      const { pubkey } = identity;
+      this.listing.add(pubkey);
+      this.writeListing(origin, binding, {
+        pubkey,
+        name: identity.name,
+        ...(picture ? { picture } : {}),
+        runtime: identity.type,
+        prior: row?.prior,
+      }).then(
+        () => {
+          this.listing.delete(pubkey);
+          // Lists a rename or new picture made while this write was under way.
+          if (this.bound.get(origin)?.binding === binding)
+            this.list(origin, binding);
+        },
+        (error) => {
+          this.listing.delete(pubkey);
+          if (!binding.controller.signal.aborted)
+            console.warn(`Agent ${identity.name} was not listed`, error);
+        },
+      );
+    }
+  }
+  /** Writes the agent's record and lists it so, without reading it back. */
+  private async writeListing(
+    origin: string,
+    binding: Binding,
+    entry: Listing & { runtime: string },
+  ) {
+    const prior = await publishAgentRecord(
+      binding.session,
+      entry,
+      binding.controller.signal,
+    );
+    if (this.bound.get(origin)?.binding !== binding) return;
+    this.setRow(origin, entry.pubkey, Object.freeze({ ...entry, prior }));
+    this.update();
+  }
+  private unlist(origin: string, pubkey: string) {
+    this.setRow(origin, pubkey, null);
+  }
+  /** Replaces or removes the agent's listing, and keeps the change until the
+   * community's records are first read. */
+  private setRow(origin: string, pubkey: string, row: Listing | null) {
+    const listings = this.listings.get(origin);
+    if (!listings) {
+      const edits = this.edits.get(origin) ?? new Map<string, Listing | null>();
+      this.edits.set(origin, edits.set(pubkey, row));
+      return;
+    }
+    const rest = listings.filter((entry) => entry.pubkey !== pubkey);
+    if (row || rest.length !== listings.length)
+      this.listings.set(origin, Object.freeze(row ? [...rest, row] : rest));
+  }
+  /** The selected community's agents that are not here: hosted ones, set up
+   * or not, and ones on the viewer's other devices. */
+  private listedAgents(origin: string | undefined) {
+    const binding = origin ? this.bound.get(origin)?.binding : undefined;
+    if (!origin || !binding) return [];
+    const here = new Set(this.identities.map((identity) => identity.pubkey));
+    const listings = this.rowsOf(origin);
+    const types = new Map(this.types().map((type) => [type.key, type]));
+    const relay = wssOf(binding.origin);
+    const shown: Agent[] = [];
+    for (const row of listings)
+      if (row.runtime && row.name && !here.has(row.pubkey))
+        shown.push(
+          this.show({
+            pubkey: row.pubkey,
+            name: row.name,
+            ...(row.picture ? { picture: row.picture } : {}),
+            type: row.runtime,
+            owner: binding.viewer,
+            relay,
+            place: types.get(row.runtime)?.remote ? "hosted" : "elsewhere",
+          }),
+        );
+    for (const setup of this.unfinished)
+      if (
+        originOf(setup.relay) === origin &&
+        setup.owner === binding.viewer &&
+        !here.has(setup.pubkey) &&
+        !listings.some((row) => row.runtime && row.pubkey === setup.pubkey)
+      )
+        shown.push(
+          this.show({
+            pubkey: setup.pubkey,
+            name: setup.name,
+            type: setup.type,
+            owner: setup.owner,
+            relay: setup.relay,
+            place: "hosted",
+            unfinished: true,
+          }),
+        );
+    return shown;
+  }
+  /** The agent as shown, the same object while nothing about it changed. */
+  private show(
+    fields: Pick<
+      Agent,
+      | "pubkey"
+      | "name"
+      | "picture"
+      | "type"
+      | "owner"
+      | "relay"
+      | "place"
+      | "unfinished"
+    >,
+  ): Agent {
+    const prior = this.shown.get(fields.pubkey);
+    if (
+      prior &&
+      prior.name === fields.name &&
+      prior.picture === fields.picture &&
+      prior.type === fields.type &&
+      prior.owner === fields.owner &&
+      prior.relay === fields.relay &&
+      prior.place === fields.place &&
+      prior.unfinished === fields.unfinished
+    )
+      return prior;
+    const agent: Agent = Object.freeze({
+      ...fields,
+      attention: EMPTY,
+      skipped: EMPTY,
+      timers: EMPTY,
+      config: undefined,
+    });
+    this.shown.set(fields.pubkey, agent);
+    return agent;
+  }
+
   /** Saves one record; memory changes only once storage has taken it. */
   private write(record: AgentRecord) {
     const records = { ...this.records, [record.pubkey]: record };
@@ -742,6 +1335,7 @@ export class AgentsService extends Service implements Agents {
       type: identity.type,
       owner: identity.owner,
       relay: identity.relay,
+      place: "here",
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
@@ -830,6 +1424,11 @@ export class AgentsService extends Service implements Agents {
    * its community lacks, and finishes Delete where connected. Each step
    * is safe to repeat; what fails is tried again on the next refresh or connect. */
   private sync() {
+    for (const [origin, { binding }] of this.bound) {
+      if (!binding) continue;
+      if (this.listings.has(origin)) this.list(origin, binding);
+      else void this.readListings(origin, binding);
+    }
     const native = this.native;
     for (const identity of this.identities)
       if (!identity.deleted)
@@ -879,6 +1478,8 @@ export class AgentsService extends Service implements Agents {
         signal.throwIfAborted();
         if (consent) await archives.request("archive", pubkey, signal);
       }
+      await deleteAgentRecord(session, binding.viewer, pubkey, signal);
+      for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
       await this.native?.forget(pubkey);
       await this.refresh();
     } catch (error) {
@@ -936,6 +1537,8 @@ export class AgentsService extends Service implements Agents {
   private unbind(origin: string) {
     const entry = this.bound.get(origin);
     this.bound.delete(origin);
+    this.listings.delete(origin);
+    this.edits.delete(origin);
     entry?.stop();
     entry?.binding?.stopLive();
     entry?.binding?.controller.abort();
@@ -964,6 +1567,8 @@ export class AgentsService extends Service implements Agents {
     if (changed) {
       entry.binding?.stopLive();
       entry.binding?.controller.abort();
+      this.listings.delete(origin);
+      this.edits.delete(origin);
       entry.binding = live && {
         ...live,
         stopLive: this.listen(live.session, origin),
@@ -971,7 +1576,8 @@ export class AgentsService extends Service implements Agents {
     }
     // Disconnecting stops its agents even when no binding changed.
     this.update();
-    if (changed && live) this.sync();
+    // Its sync reads the community's agent records too.
+    if (changed && entry.binding) this.sync();
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -1018,9 +1624,12 @@ export class AgentsService extends Service implements Agents {
       );
     }
     const selected = originOf(this.communities.snapshot().selected ?? "");
-    const agents = running.filter(
-      (agent) => originOf(agent.relay) === selected && this.bindingOf(agent),
-    );
+    const agents = [
+      ...running.filter(
+        (agent) => originOf(agent.relay) === selected && this.bindingOf(agent),
+      ),
+      ...this.listedAgents(selected),
+    ];
     const types = new Map(this.types().map((type) => [type.key, type]));
     for (const [pubkey, runner] of this.runners)
       if (!identities.some((identity) => identity.pubkey === pubkey)) {
@@ -1123,7 +1732,8 @@ export class AgentsService extends Service implements Agents {
       for (const event of batch.events) {
         if (runner.seen.has(event.id)) continue;
         bounded(runner.seen, event.id);
-        // An agent never hears itself; its own events make replies addressed.
+        // An agent never hears itself; its own events keep reactions to them
+        // from its watches.
         if (event.pubkey === agent.pubkey) {
           bounded(runner.wrote, event.id);
           continue;
@@ -1139,7 +1749,7 @@ export class AgentsService extends Service implements Agents {
   private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
     // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // reply to it enough, two agents replying to each other would never stop. The
+    // watch enough, two agents replying to each other would never stop. The
     // claimed owner only narrows this; the type verifies it before answering.
     if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
       return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
@@ -1271,6 +1881,7 @@ export class AgentsService extends Service implements Agents {
           this.require().query(agent.pubkey, filters),
         upload: (data: string, mime: string) =>
           this.require().upload(agent.pubkey, data, mime),
+        media: (url: string) => this.require().media(agent.pubkey, url),
         remember: (slug: string, body: string, after: number) =>
           this.require().remember(agent.pubkey, slug, body, after),
       });
@@ -1316,7 +1927,7 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Counts a run as working until it and everything it handed to
-   * `workingUntil` have settled, or the longest run allowed has passed. A
+   * `workingUntil` have settled, however long that takes. A
    * mention run is reacted to, and shown typing here, meanwhile: both are
    * STOPGAPs, and `done` is empty without them. */
   private working(runner: Runner, { trigger, channelId }: Job) {
@@ -1349,10 +1960,8 @@ export class AgentsService extends Service implements Agents {
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
-      clearTimeout(timer);
       for (const end of done) end();
     };
-    const timer = setTimeout(stop, TIMEOUT_LIMIT_MS);
     const release = () => {
       if (holds > 0 && --holds === 0) stop();
     };

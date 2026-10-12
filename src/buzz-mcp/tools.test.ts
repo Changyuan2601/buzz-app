@@ -58,6 +58,9 @@ function fake(events: readonly BuzzEvent[] = []) {
       { slug: "mem/notes", body: "old", createdAt: 50 },
     ]),
     remember: vi.fn(async () => undefined),
+    media: vi.fn(async (url: string) =>
+      btoa(String.fromCharCode(...(url.endsWith(".png") ? PNG : [1, 2, 3]))),
+    ),
   };
   return { client, published };
 }
@@ -194,7 +197,12 @@ it("reads the current thread with each message's latest edit", async () => {
       ],
     }),
   ]);
-  const text = await callTool(client, { channel: "chan", root }, "read", {});
+  const text = (await callTool(
+    client,
+    { channel: "chan", root },
+    "read",
+    {},
+  )) as string;
   expect(text.split("\n")).toEqual([
     `${root} Alice Smith 1970-01-01T00:01Z: `,
     `${nested} Alice Smith 1970-01-01T00:01Z: edited`,
@@ -300,7 +308,7 @@ it("lists its tools before it can call them", async () => {
       method: "tools/list",
     },
   )) as { result: { tools: unknown[] } };
-  expect(list.result.tools).toHaveLength(11);
+  expect(list.result.tools).toHaveLength(12);
   await expect(
     respond(
       undefined,
@@ -313,4 +321,29 @@ it("lists its tools before it can call them", async () => {
       },
     ),
   ).resolves.toMatchObject({ result: { isError: true } });
+});
+
+it("shows a media image to the agent, and nothing else", async () => {
+  const { client } = fake();
+  const png = btoa(String.fromCharCode(...PNG));
+  await expect(
+    respond(
+      client,
+      {},
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "media_get", arguments: { url: "abc.png" } },
+      },
+    ),
+  ).resolves.toEqual({
+    jsonrpc: "2.0",
+    id: 3,
+    result: { content: [{ type: "image", data: png, mimeType: "image/png" }] },
+  });
+  expect(client.media).toHaveBeenCalledWith("abc.png");
+  await expect(
+    callTool(client, {}, "media_get", { url: "abc.txt" }),
+  ).rejects.toThrow("Only JPEG, PNG, GIF and WebP");
 });

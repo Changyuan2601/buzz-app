@@ -41,6 +41,10 @@ export function appClient(
       check();
       return agent.upload(toBase64(data), mime);
     },
+    media: (url) => {
+      check();
+      return agent.media(url);
+    },
     read: (path) => {
       check();
       return readFile(options.spawn, options.cwd, path, options.signal);

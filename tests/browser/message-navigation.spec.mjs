@@ -1091,7 +1091,9 @@ liveTest(
       region.getByText("Reply after selected deletion", { exact: true }),
     ).toBeVisible();
     await expect(region).toHaveAttribute("tabindex", "0");
-    await page.getByRole("button", { name: "Add tab", exact: true }).focus();
+    await page
+      .getByRole("button", { name: "Close Thread tab", exact: true })
+      .focus();
     await page.keyboard.press("Tab");
     await expect(region).toBeFocused();
     await expect(

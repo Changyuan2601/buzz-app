@@ -632,8 +632,12 @@ the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
-IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
-sm/md/lg sizes. Existing names
+Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
+(32px square with 16px artwork) and a 10px rounded rectangle
+(`--radius-icon-button`). Choose `md` or `lg` explicitly when an icon action needs
+a larger control; community rail identities and the avatar edit badge retain their
+existing larger treatment. These defaults do not depend on pointer type or viewport
+width. Both controls use the same sm/md/lg scale. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
@@ -1415,3 +1419,19 @@ recipe: toolbar destinations and More pages overflow retain button semantics.
 
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.
+
+### Artwork actions (proposed)
+
+`SurfaceButton` uses Base UI activation and the shared keyboard-only focus ring.
+Use it for artwork tiles whose content owns their geometry, such as new-agent
+and avatar choices. It adds no label wrapper, padding, or background; callers
+must supply an accessible name and keep state colors semantic. The Button
+viewer includes enabled and disabled examples.
+
+### Chip and title fields (proposed)
+
+`Combobox.Control appearance="chip"` drops the field's surface and browse
+button until the control is hovered or open, so a choice reads as a label, such
+as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+`Input appearance="title"` sets its value at title size with no field around it,
+for a name that is also the heading, such as the new agent's name.

@@ -216,3 +216,55 @@ export function readTeams(storage: Storage): readonly Team[] {
 export function writeTeams(storage: Storage, teams: readonly Team[]) {
   storage.setItem(TEAMS_KEY, JSON.stringify({ version: 1, teams }));
 }
+
+/** A hosted agent its provider made whose setup has not finished. Kept so
+ * Finish setup continues it instead of the provider making another. */
+export type Unfinished = Readonly<{
+  pubkey: string;
+  /** The agent type's key, `pluginId/typeId`. */
+  type: string;
+  name: string;
+  /** Its `wss://` community. */
+  relay: string;
+  owner: string;
+}>;
+export const UNFINISHED_KEY = "buzz.agents.unfinished.v1";
+
+/** Reads every unfinished setup, skipping any that is not one. */
+export function readUnfinished(storage: Storage): readonly Unfinished[] {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(storage.getItem(UNFINISHED_KEY) ?? "null");
+  } catch {
+    return [];
+  }
+  const agents =
+    (stored as { version?: unknown } | null)?.version === 1
+      ? (stored as { agents: unknown }).agents
+      : undefined;
+  if (!Array.isArray(agents)) return [];
+  return agents.flatMap((agent: Partial<Unfinished> | null) =>
+    PUBKEY.test(agent?.pubkey ?? "") &&
+    PUBKEY.test(agent?.owner ?? "") &&
+    typeof agent?.type === "string" &&
+    typeof agent.name === "string" &&
+    typeof agent.relay === "string"
+      ? [
+          {
+            pubkey: agent.pubkey as string,
+            type: agent.type,
+            name: agent.name,
+            relay: agent.relay,
+            owner: agent.owner as string,
+          },
+        ]
+      : [],
+  );
+}
+
+export function writeUnfinished(
+  storage: Storage,
+  agents: readonly Unfinished[],
+) {
+  storage.setItem(UNFINISHED_KEY, JSON.stringify({ version: 1, agents }));
+}

@@ -1097,6 +1097,19 @@ export const test = base.extend({
         });
         return [];
       }
+      // The Agents service's read of the owner's agent list.
+      if (
+        filter.kinds?.length === 1 &&
+        filter.kinds[0] === 30177 &&
+        !filter["#d"]
+      ) {
+        expect(filter).toEqual({
+          authors: [viewer],
+          kinds: [30177],
+          limit: 500,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
         expect(filter).toEqual({
           authors: [viewer],

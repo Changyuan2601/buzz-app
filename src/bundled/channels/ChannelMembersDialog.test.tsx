@@ -1195,9 +1195,10 @@ it("pages combined local and relay invitations without losing matches", async ({
 }) => {
   return ownedTask(signal, async (step) => {
     const { t, idle, more, rows, pages } = await pagedInvitations(step, 65);
-    expect(rows()).toHaveLength(30);
+    const firstPage = rows();
+    expect(firstPage).toHaveLength(30);
     expect(
-      rows().every((row) =>
+      firstPage.every((row) =>
         row.getAttribute("aria-label")?.startsWith("Add Helper remote"),
       ),
     ).toBe(true);
@@ -1209,7 +1210,9 @@ it("pages combined local and relay invitations without losing matches", async ({
     }
     await more();
     await idle();
-    screen.getByRole("button", { name: /^Add Helper final/ });
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
     expect(rows()).toHaveLength(96);
     expect(pages()).toEqual([1, 2]);
     expect(
@@ -1228,7 +1231,9 @@ it("resets combined invitation paging on refresh or query change", async ({
       await pagedInvitations(step, 31);
     for (let i = 0; i < 3; i++) await more();
     await idle();
-    screen.getByRole("button", { name: /^Add Helper final/ });
+    expect(
+      screen.getByRole("button", { name: /^Add Helper final/ }),
+    ).toBeVisible();
     expect(rows()).toHaveLength(62);
     expect(pages()).toEqual([1, 2]);
     await click(refresh);

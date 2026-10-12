@@ -58,6 +58,18 @@ it("builds the harness system prompt with instructions and core memory", () => {
   );
 });
 
+it("names the agent first when it is known", () => {
+  const prompt = systemPrompt({
+    scope: "thread",
+    cwd: "/w",
+    agent: { name: "Claude", pubkey: agent },
+  });
+  expect(prompt).toMatch(/^<identity>\n/);
+  expect(prompt).toContain(
+    `<identity>\nYou are Claude (pubkey ${agent}).\n</identity>\n\n<base>\n`,
+  );
+});
+
 it("frames a new top-level mention as the root of its thread", () => {
   const mention = event("1", "@Claude what's up?", {
     tags: [

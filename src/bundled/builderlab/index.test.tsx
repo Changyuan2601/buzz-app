@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
@@ -18,11 +25,13 @@ import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
 import { createOAuthSession } from "./oauth/session";
 import { enrollmentFixture } from "./agents/enrollment-testing";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { createNameProvider } from "../../features/identity-names/directory";
 import { resolveIdentityNames } from "../../features/identity-names/policy";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
+stubAvatarBrowserApis();
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   vi.stubGlobal("navigator", {
@@ -63,6 +72,7 @@ function provideAgents(root: Context, relay: RelayData) {
     publishProfile: vi.fn(),
     query: vi.fn(),
     upload: vi.fn(),
+    media: vi.fn(),
     remember: vi.fn(),
     claim: async () => true,
     release: vi.fn(),
@@ -196,10 +206,8 @@ it("binds login, list and creation to the plugin host and clears the session on 
     });
     if (!newAgent) throw new Error("Missing New agent button");
     await userEvent.setup().click(newAgent);
-    expect(
-      screen.getByRole("radio", { name: /Builderlab/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("TBD")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Create agent" });
+    expect(within(dialog).getByText("Builderlab")).toBeInTheDocument();
     picker.unmount();
     const card = cards.snapshot()[0];
     expect(card?.group).toBe("Integrations");

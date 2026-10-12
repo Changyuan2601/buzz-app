@@ -313,7 +313,7 @@ function ProfileDetails({
                   {profile?.about && (
                     <p className={styles.about}>{profile.about}</p>
                   )}
-                  {plugin && agents && (
+                  {plugin && agents && plugin.agent.place !== "elsewhere" && (
                     <div>
                       <AgentDelete
                         agents={agents}

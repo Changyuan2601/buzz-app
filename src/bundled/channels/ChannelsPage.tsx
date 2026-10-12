@@ -694,11 +694,9 @@ function ChannelWorkspace({
     panelTabs,
     drawer,
     drawerContext,
-    rootTabIds,
     selectedTab,
     selectPanelTab,
     afterClose,
-    addTab,
     panelTrigger,
     splitTrigger,
   } = secondary;
@@ -1381,11 +1379,11 @@ function ChannelWorkspace({
                               : "Open tab pane"
                           }
                           aria-expanded={!!showingChannelPanel}
-                          onClick={() => {
-                            tabState.setPaneOpen(!showingChannelPanel);
-                            if (!showingChannelPanel && !rootTabIds.length)
-                              addTab();
-                          }}
+                          disabled={!hasChannelPanel}
+                          focusableWhenDisabled
+                          onClick={() =>
+                            tabState.setPaneOpen(!showingChannelPanel)
+                          }
                           icon={
                             <SidebarRightIcon size="1rem" aria-hidden="true" />
                           }
@@ -1554,7 +1552,6 @@ function ChannelWorkspace({
                             thread?.messageId !== requestedMessage)))
                     }
                     select={selectPanelTab}
-                    add={addTab}
                     items={[
                       ...(settings
                         ? [

@@ -81,6 +81,7 @@
     "allow-app-agent-publish-profile",
     "allow-app-agent-query",
     "allow-app-agent-upload",
+    "allow-app-agent-media",
     "allow-app-agent-remember",
     "allow-app-agent-claim",
     "allow-app-agent-release",

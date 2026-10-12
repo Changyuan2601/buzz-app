@@ -1,4 +1,3 @@
-import { useMePlacement } from "../../features/sessions/personal";
 import { useRef, useState } from "react";
 import type {
   Attachment,
@@ -22,31 +21,10 @@ import {
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import styles from "./ChannelTabs.module.css";
 
-/** Each secondary conversation has its own editing, deletion and media-review scope. */
-export function ConversationTab(props: ConversationTabProps) {
-  return props.personalWorkspace ? (
-    <PersonalConversationTab {...props} />
-  ) : (
-    <ConversationTabContent {...props} />
-  );
-}
-function PersonalConversationTab(props: ConversationTabProps) {
-  const placement = useMePlacement(props.session);
-  return (
-    <ConversationTabContent
-      {...props}
-      personal={
-        placement.status !== "ready" || placement.ids.includes(props.channel.id)
-      }
-      placementReady={placement.status === "ready"}
-    />
-  );
-}
 type ConversationTabProps = {
-  tab: Exclude<Tab, { kind: "new" }>;
+  tab: Tab;
   active: boolean;
   focusOnMount?: boolean;
-  personalWorkspace?: boolean | undefined;
   channel: ChannelSummary;
   session: RelaySession;
   scope: string;
@@ -56,11 +34,9 @@ type ConversationTabProps = {
   openThread(messageId: string, rootId: string, intent?: "reply"): void;
   close(): void;
 };
-function ConversationTabContent({
+/** Each secondary conversation retains its own editing and media-review scope. */
+export function ConversationTab({
   tab,
-  personalWorkspace = false,
-  personal = false,
-  placementReady = true,
   active,
   focusOnMount = true,
   channel,
@@ -71,7 +47,7 @@ function ConversationTabContent({
   canOpenLink,
   openThread,
   close,
-}: ConversationTabProps & { personal?: boolean; placementReady?: boolean }) {
+}: ConversationTabProps) {
   // A saved reply intent belongs to the previous visit, not this restoration.
   const restoredTab = useRef(focusOnMount ? undefined : tab);
   const sessionConversation = channel.channelType === "session";
@@ -109,9 +85,6 @@ function ConversationTabContent({
         {tab.kind === "thread" ? (
           <ThreadPanel
             sessionConversation={sessionConversation}
-            personalConversation={personal}
-            activityClickOpensPanel={personalWorkspace}
-            disabled={!placementReady}
             active={active}
             session={session}
             scope={scope}
@@ -128,7 +101,7 @@ function ConversationTabContent({
             onOpenMediaReview={openMedia}
           />
         ) : (
-          <SessionColumn enabled={sessionConversation && !personalWorkspace}>
+          <SessionColumn enabled={sessionConversation}>
             <ChannelBody
               queries={session}
               scope={scope}
@@ -143,9 +116,6 @@ function ConversationTabContent({
               revealMessageId={sent}
             />
             <MessageComposer
-              personalConversation={personal}
-              activityClickOpensPanel={personalWorkspace}
-              disabled={!placementReady}
               sessionConversation={sessionConversation}
               label={sessionConversation ? "Message this session" : undefined}
               session={session}

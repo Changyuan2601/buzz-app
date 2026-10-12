@@ -63,6 +63,26 @@ export function ownsThread(records, id) {
     );
   });
 }
+// The agent a session belongs to, from the identity line its harness puts in
+// the system or developer prompt: the latest one, in case it was renamed.
+export function agentOf(records) {
+  let agent;
+  for (const r of records) {
+    const texts =
+      r.type === "response_item" && r.payload?.role === "developer"
+        ? (r.payload.content ?? []).map((b) => b.text)
+        : r.attachment?.type === "prompt_snapshot"
+          ? [r.attachment.systemPrompt].flat()
+          : [];
+    for (const text of texts) {
+      const m =
+        typeof text === "string" &&
+        /^(?:<[\w.-]+>)?You are (.+?) \(pubkey ([a-f0-9]{64})\)/m.exec(text);
+      if (m) agent = { name: m[1], pubkey: m[2] };
+    }
+  }
+  return agent ?? null;
+}
 export async function createInspector({
   target,
   file,
@@ -79,7 +99,7 @@ export async function createInspector({
   ];
   traceRoot ??= join(home, ".buzz", "session-debug");
   const known = new Map();
-  let candidates = file ? [resolve(file)] : [];
+  let candidates = file ? [{ path: resolve(file) }] : [];
   let scanned = 0;
   const token = randomBytes(24).toString("hex");
   const base = `/${token}`;
@@ -96,15 +116,34 @@ export async function createInspector({
           let match = known.get(path);
           if (match?.stamp !== stamp) {
             const source = await readFile(path, "utf8");
-            const matches =
-              source.includes(target) &&
-              ownsThread(parseLines(source, true), target);
-            match = { stamp, matches };
+            const records = source.includes(target)
+              ? parseLines(source, true)
+              : [];
+            const matches = ownsThread(records, target);
+            match = {
+              stamp,
+              matches,
+              path,
+              agent: matches ? agentOf(records) : null,
+              harness: records.some((r) => r.type === "session_meta")
+                ? "Codex"
+                : "Claude Code",
+              started: records.find((r) => r.timestamp)?.timestamp ?? null,
+              updated: info.mtimeMs,
+            };
             known.set(path, match);
           }
-          if (match.matches) found.push(path);
+          if (match.matches) found.push(match);
         }
-      candidates = found.sort();
+      // Oldest first, so the default, the latest, is the one last at work.
+      candidates = found
+        .sort((a, b) => a.updated - b.updated)
+        .map(({ path, agent, harness, started }) => ({
+          path,
+          agent,
+          harness,
+          started,
+        }));
       scanned = Date.now();
     }
     if (!candidates.length)
@@ -113,8 +152,9 @@ export async function createInspector({
         message: "Waiting for a local session for this thread…",
         candidates: [],
       };
-    const chosen =
-      selected && candidates.includes(selected) ? selected : candidates.at(-1);
+    const chosen = (
+      candidates.find((c) => c.path === selected) ?? candidates.at(-1)
+    ).path;
     const records = parseLines(await readFile(chosen, "utf8"), true);
     const id =
       records.find((r) => r.type === "session_meta")?.payload?.id ??
@@ -154,7 +194,7 @@ export async function createInspector({
       model.entries = snapshot.entries;
       model.snapshotAt = until;
     }
-    return { ...model, candidates };
+    return { ...model, agent: agentOf(records), candidates };
   }
   const server = createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
