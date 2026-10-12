@@ -438,8 +438,10 @@ test("joined surface, sidebar pages, real link panel and compact community navig
 
 // Chromium hit-tests a scroll start on the main thread when a rounded clip
 // encloses the scroller, so one busy task would hold every shell scroll start.
-// Both scrollers overflow so the compositor owns their scrolling.
-const scrollStart = scroll.extend({ largeSidebar: true });
+// Both scrollers overflow so the compositor owns their scrolling. At 2x
+// Chromium composites every scroller whatever the runner's LCD-text setting, so
+// only the shell can send a scroll start to the main thread.
+const scrollStart = scroll.extend({ largeSidebar: true, deviceScaleFactor: 2 });
 scrollStart(
   "Chromium starts shell scrolls without a main-thread hit test",
   async ({ page, app, browserName }) => {
@@ -450,27 +452,32 @@ scrollStart(
     await open(page, app);
     await settle(page);
     // The timeline opens at its newest row and the channel list at its top.
-    const scrollers = [
-      [page.getByRole("region", { name: "Channel message history" }), 200],
-      [
+    const scrollers = {
+      timeline: [
+        page.getByRole("region", { name: "Channel message history" }),
+        200,
+      ],
+      channels: [
         page.getByRole("navigation", {
           name: "Subscribed channels",
           exact: true,
         }),
         -200,
       ],
-    ];
+    };
     const cdp = await page.context().newCDPSession(page);
-    const events = [];
-    cdp.on("Tracing.dataCollected", ({ value }) => events.push(...value));
-    const traced = new Promise((resolve) =>
-      cdp.once("Tracing.tracingComplete", resolve),
-    );
-    await cdp.send("Tracing.start", {
-      categories: "-*,input",
-      transferMode: "ReportEvents",
-    });
-    for (const [scroller, yDistance] of scrollers) {
+    const mainThreadHitTests = {};
+    for (const [name, [scroller, yDistance]] of Object.entries(scrollers)) {
+      const events = [];
+      const collect = ({ value }) => events.push(...value);
+      cdp.on("Tracing.dataCollected", collect);
+      const traced = new Promise((resolve) =>
+        cdp.once("Tracing.tracingComplete", resolve),
+      );
+      await cdp.send("Tracing.start", {
+        categories: "-*,input",
+        transferMode: "ReportEvents",
+      });
       const { x, y, width, height } = await box(scroller);
       const offset = await scroller.evaluate((el) => el.scrollTop);
       // Resolves after the browser has delivered the whole gesture.
@@ -483,16 +490,17 @@ scrollStart(
       await expect
         .poll(() => scroller.evaluate((el) => el.scrollTop))
         .not.toBe(offset);
+      await cdp.send("Tracing.end");
+      await traced;
+      cdp.off("Tracing.dataCollected", collect);
+      const count = (event) => events.filter((e) => e.name === event).length;
+      expect(
+        count("InputHandlerProxy::HandleGestureScrollBegin"),
+        `the compositor traced the ${name} scroll start`,
+      ).toBeGreaterThan(0);
+      mainThreadHitTests[name] = count("PostingHitTestToMainThread");
     }
-    await cdp.send("Tracing.end");
-    await traced;
-    const count = (name) =>
-      events.filter((event) => event.name === name).length;
-    expect(
-      count("InputHandlerProxy::HandleGestureScrollBegin"),
-      "the compositor traced each scroll start",
-    ).toBeGreaterThanOrEqual(scrollers.length);
-    expect(count("PostingHitTestToMainThread")).toBe(0);
+    expect(mainThreadHitTests).toEqual({ timeline: 0, channels: 0 });
   },
 );
 
