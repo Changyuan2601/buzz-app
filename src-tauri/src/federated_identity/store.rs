@@ -180,8 +180,7 @@ pub(crate) fn root() -> Result<PathBuf, &'static str> {
 }
 
 /// Called before the existing boot owner deletes the human key or opens a WebView.
-pub(crate) fn remove_all() -> Result<(), String> {
-    let root = root()?;
+pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -193,22 +192,26 @@ pub(crate) fn remove_all() -> Result<(), String> {
         if path.extension().and_then(|value| value.to_str()) != Some("record") {
             continue;
         }
-        let account = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .ok_or("Federated session index was invalid")?;
+        let account = path.file_stem().and_then(|value| value.to_str());
+        let Some(account) = account else { continue };
         if account.len() != 64 || !account.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("Federated session index was invalid".into());
+            continue;
         }
         let store = SecureStore {
             account: account.to_owned(),
             root: root.clone(),
         };
-        if let Some(raw) = store.read()? {
-            let record: super::Record =
-                serde_json::from_slice(&raw).map_err(|_| "Federated session record was corrupt")?;
-            store.remove(&raw, &record.revision)?;
+        let _transaction = store.lock()?;
+        // The boot owner's durable pending sign-out fences all app activity.
+        // Wiping an indexed slot needs neither its schema nor read permission.
+        #[cfg(not(test))]
+        match buzz_credential_store::delete_session(SERVICE, account) {
+            Ok(()) | Err(buzz_credential_store::Error::Absent) => {}
+            Err(value) => return Err(error(value).into()),
         }
+        #[cfg(test)]
+        return Err("storage-unavailable".into());
+        #[cfg(not(test))]
         fs::remove_file(path).map_err(|_| "Federated session index removal failed")?;
     }
     Ok(())
@@ -217,6 +220,31 @@ pub(crate) fn remove_all() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_wipe_ignores_stray_indices_and_retains_failed_deletions() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("stray.record"), b"unrelated").unwrap();
+        assert!(remove_all(root.path().into()).is_ok());
+        let account = "ab".repeat(32);
+        let index = root.path().join(format!("{account}.record"));
+        fs::write(&index, b"1").unwrap();
+        let store = SecureStore {
+            account,
+            root: root.path().into(),
+        };
+        let held = store.lock().unwrap();
+        assert_eq!(remove_all(root.path().into()), Err("storage-busy".into()));
+        assert!(index.exists());
+        drop(held);
+        // This test build denies OS credential access. A failed delete must
+        // leave its index for the boot owner's pending sign-out retry.
+        assert_eq!(
+            remove_all(root.path().into()),
+            Err("storage-unavailable".into())
+        );
+        assert!(index.exists());
+    }
 
     #[test]
     fn failed_removal_still_refuses_only_the_known_revision() {

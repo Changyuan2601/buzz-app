@@ -238,6 +238,23 @@ pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
 mod tests;
 
 /// Session records have a distinct mutable owner. Human-key `add` remains create-only.
+/// Erase an indexed session without reading its contents or knowing its schema.
+#[cfg(not(test))]
+pub fn delete_session(service: &str, account: &str) -> Result<()> {
+    if !service.starts_with("dev.local.buzz.foundation.federated-session") {
+        return Err(Error::Denied);
+    }
+    let _lock = acquire(&lock_root()?, service, account)?;
+    #[cfg(target_os = "macos")]
+    return security_framework::passwords::delete_generic_password(service, account)
+        .map_err(mac_error);
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    return entry(service, account)?.delete();
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    Err(Error::Unavailable)
+}
+
+/// Session records have a distinct mutable owner. Human-key `add` remains create-only.
 /// Compare the entire previously read record under the same interprocess lock.
 #[cfg(not(test))]
 pub fn compare_session(
