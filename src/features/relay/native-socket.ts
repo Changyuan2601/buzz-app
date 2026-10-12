@@ -4,7 +4,9 @@ import type { LiveSocket } from "./live";
 /** No reconnect policy here. live.ts owns connection generations and NIP-42. */
 export class NativeSocket implements LiveSocket {
   readyState = 0;
-  readonly connectionTimeoutMs = 180000;
+  // Cold native admission can use three bounded 30s phases: discovery,
+  // assertion issuance and socket upgrade. NIP-42 gets 10s after native open.
+  readonly connectionTimeoutMs = 90000;
   onopen: LiveSocket["onopen"] = null;
   onmessage: LiveSocket["onmessage"] = null;
   onerror: LiveSocket["onerror"] = null;

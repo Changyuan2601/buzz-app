@@ -680,11 +680,13 @@ export function subscribeRelayTraffic(
     ws.onopen = () => {
       if (!valid()) return;
       log.info(`${peer} connected`);
-      clearTimeout(deadline);
-      deadline = setTimeout(
-        () => reconnect("Live authentication timed out"),
-        10000,
-      );
+      if (ws.connectionTimeoutMs !== undefined) {
+        clearTimeout(deadline);
+        deadline = setTimeout(
+          () => reconnect("Live authentication timed out"),
+          10000,
+        );
+      }
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;
