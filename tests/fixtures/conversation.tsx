@@ -287,6 +287,12 @@ conversation.tools.subscribe(() => {
   }
 });
 ctx.provide("relay", relay);
+// Channels needs Agents for its members/templates; this fixture has no agents.
+const noAgents = { status: "unavailable", agents: [], running: [], teams: [] };
+ctx.provide("agents2", {
+  snapshot: () => noAgents,
+  subscribe: () => () => {},
+});
 Object.assign(window, {
   conversationFixture: {
     report,
