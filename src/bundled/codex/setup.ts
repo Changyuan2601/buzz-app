@@ -22,7 +22,11 @@ export class CodexSetup {
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
 
-  constructor(private readonly spawn: Spawn) {}
+  constructor(
+    private readonly spawn: Spawn,
+    /** Runs after each step, whether or not a view is open. */
+    private readonly onFinish = () => {},
+  ) {}
 
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
@@ -59,6 +63,7 @@ export class CodexSetup {
     } finally {
       this.process = undefined;
       this.set({ running: undefined, finished: this.state.finished + 1 });
+      this.onFinish();
     }
   }
   cancel() {

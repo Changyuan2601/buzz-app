@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import * as React from "react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentType } from "../../features/agents2/service";
+import type { HostProcessOptions } from "../../features/host/service";
+import { defaults } from "./config";
 import { CodexRuntime } from "./runtime";
 import { apply } from "./index";
 
@@ -13,17 +23,18 @@ beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
 });
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
 });
 
 /** Applies the plugin to a stand-in context and returns the registered type. */
-function applied() {
+function applied(spawn = vi.fn()) {
   let type: AgentType | undefined;
   const subscribe = () => () => undefined;
   const ctx = {
     react: React,
     pluginOwner: { id: "buzz.codex", revision: "r1" },
-    host: { spawn: vi.fn(), request: vi.fn() },
+    host: { spawn, request: vi.fn() },
     agents2: {
       register: (registered: AgentType) => {
         type = registered;
@@ -74,4 +85,49 @@ it("stops agents that stop running even when the agent list could not be read", 
   state = { ...state, status: "error", agents: [], running: [] };
   notify();
   expect(sync).toHaveBeenLastCalledWith([]);
+});
+
+it("renews agents' server when sign-in finishes after its tab has closed", async () => {
+  const reauthorize = vi
+    .spyOn(CodexRuntime.prototype, "reauthorize")
+    .mockResolvedValue();
+  let finish!: (code: number) => void;
+  const login = new Promise<number>((done) => {
+    finish = done;
+  });
+  const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
+    let end!: (code: number) => void;
+    const ended = new Promise<number>((done) => {
+      end = done;
+    });
+    return {
+      // A signed-out Codex: every request succeeds, and there is no account.
+      write: async (text: string) => {
+        const { id: request, method } = JSON.parse(text);
+        if (request == null) return;
+        const result = method === "account/read" ? { account: null } : {};
+        options?.onStdout?.(`${JSON.stringify({ id: request, result })}\n`);
+      },
+      end: async () => end(0),
+      kill: async () => end(1),
+      exited: id === "login" ? login : ended,
+    };
+  });
+  const tab = applied(spawn)?.tabs?.find((tab) => tab.id === "codex");
+  if (!tab) throw new Error("Missing Codex tab");
+  const view = render(
+    React.createElement(tab.component, {
+      agent: { pubkey: "a".repeat(64), config: defaults },
+      save: vi.fn(),
+    } as never),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+  await waitFor(() =>
+    expect(spawn).toHaveBeenCalledWith("login", expect.anything()),
+  );
+  // Leaving the editor unmounts the tab while the browser sign-in continues.
+  view.unmount();
+  expect(reauthorize).not.toHaveBeenCalled();
+  finish(0);
+  await waitFor(() => expect(reauthorize).toHaveBeenCalledTimes(1));
 });

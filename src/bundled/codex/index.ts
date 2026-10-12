@@ -16,7 +16,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       throw new Error("Codex agents run only in the desktop app");
     });
   const runtime = new CodexRuntime(start, ctx.agents2.relay);
-  const setup = new CodexSetup(start);
+  // Agents' shared server reads credentials only at startup, so it is renewed
+  // after sign-in even if the tab that started it has closed.
+  const setup = new CodexSetup(start, () => void runtime.reauthorize());
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
   // Agents that stop running stop their turns, and the last one stops the
   // server; switching communities or a reconnect does not.
