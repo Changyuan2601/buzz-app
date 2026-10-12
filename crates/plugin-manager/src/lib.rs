@@ -371,8 +371,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
                 _ => continue,
             };
             let host = manifest.host.get_or_insert_with(HostGrants::default);
-            // Authenticated operations replace renderer network access while
-            // retaining unrelated command, process and MCP grants.
+            // FI API access replaces renderer network access while preserving
+            // unrelated host grants on the same manifest.
             host.network_origins.clear();
             host.federated_identity = Some(FederatedIdentityGrant {
                 authority: authority.into(),
