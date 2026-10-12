@@ -897,6 +897,10 @@ submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inheri
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
 SSH uses the existing agent/known hosts, not user SSH config; password entry, HTTPS
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
+Native community Git imports use host-issued, repository-scoped authorization.
+Caller-supplied authorization is rejected for other repositories and is replaced
+by native authorization for community repositories; plugins cannot forward a token
+to an arbitrary Git destination.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
 
