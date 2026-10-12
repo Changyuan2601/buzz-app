@@ -31,6 +31,7 @@ afterEach(() => {
   for (const runtime of runtimes) runtime.dispose();
   runtimes.length = 0;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 /** External app-server protocol fixture: turns complete only when released by
@@ -961,6 +962,20 @@ it("publishes unexpected exit and empty-completion failures instead of silently 
   expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
     content: expect.stringContaining("Codex exited"),
   });
+});
+it("sets no deadline of its own on a turn", async () => {
+  // Any deadline Buzz set would already have passed.
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() =>
+    AbortSignal.abort(
+      new DOMException("The operation timed out.", "TimeoutError"),
+    ),
+  );
+  const f = fixture();
+  await f.runtime.run(f.delivery("a long job"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
 });
 it("ends the server when its agent stops running and suppresses a late final answer", async () => {
   const f = fixture();

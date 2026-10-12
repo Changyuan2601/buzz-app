@@ -697,6 +697,38 @@ it("aborts the in-flight run, and drops what is queued, when the agent is remove
   expect(run).toHaveBeenCalledTimes(1);
 });
 
+// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
+it("keeps a mention's reactions however long its handed-off work runs", async () => {
+  vi.useFakeTimers();
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await published(native, 7)).toHaveLength(2);
+  // Buzz sets no deadline on an agent's work; the harness decides.
+  await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+  expect(await published(native, 5)).toEqual([]);
+  finish();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await published(native, 5)).toHaveLength(2);
+});
+
 it("drops its events while another copy of the app holds the agent, and runs once it holds it", async () => {
   const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

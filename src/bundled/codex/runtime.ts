@@ -602,11 +602,8 @@ export class CodexRuntime {
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
     const server = this.open();
-    const signal = AbortSignal.any([
-      entry.abort.signal,
-      turnAbort.signal,
-      AbortSignal.timeout(29 * 60_000),
-    ]);
+    // No deadline of our own: a turn runs until Codex ends it.
+    const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
     const active: Active = {
       rpc: server.rpc,
       ready: new Promise((resolve, reject) => {

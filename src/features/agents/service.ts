@@ -1309,7 +1309,7 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Counts a run as working until it and everything it handed to
-   * `workingUntil` have settled, or the longest run allowed has passed. A
+   * `workingUntil` have settled, however long that takes. A
    * mention run is reacted to, and shown typing here, meanwhile: both are
    * STOPGAPs, and `done` is empty without them. */
   private working(runner: Runner, { trigger, channelId }: Job) {
@@ -1342,10 +1342,8 @@ export class AgentsService extends Service implements Agents {
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
-      clearTimeout(timer);
       for (const end of done) end();
     };
-    const timer = setTimeout(stop, TIMEOUT_LIMIT_MS);
     const release = () => {
       if (holds > 0 && --holds === 0) stop();
     };
