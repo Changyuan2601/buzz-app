@@ -5,7 +5,7 @@ use tauri::Manager;
 
 #[cfg(any(feature = "mesh", test))]
 mod activity;
-mod agent;
+pub(crate) mod agent;
 #[cfg(feature = "mesh")]
 pub(crate) mod sharing;
 pub(crate) mod widget;

@@ -61,63 +61,132 @@ pub(crate) async fn prepare_agent(
     }
     #[cfg(feature = "mesh")]
     {
-        use buzz_mesh_compute::lifecycle::Phase;
-        let host = app.state::<super::MeshHost>();
-        let identity = app.state::<crate::identity::IdentityHost>();
-        let community = community_origin(&request.relay)?;
-        let lease = host.lease.for_community(&community)?;
-        if host.lifecycle.phase() == Phase::Stopped {
-            buzz_mesh_compute::startup_log::stage("entry", "from=agent");
-            super::start(app, &host, &identity, &lease).await?;
-        }
-        let port = super::mesh_port("BUZZ_MESH_API_PORT", 19337)?;
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| e.to_string())?;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
-        let mut last = "Shared compute is starting".to_owned();
-        let ready = async {
-            loop {
-                host.lease.community(&lease)?;
-                match host.lifecycle.phase() {
-                    Phase::Failed(reason) => return Err(reason),
-                    Phase::Stopped | Phase::Stopping => {
-                        return Err("Shared compute stopped before agent launch".into())
-                    }
-                    Phase::Starting => {}
-                    Phase::Ready => match probe(&client, port, &request.model).await {
-                        Ok(model) => {
-                            buzz_mesh_compute::startup_log::stage("first_probe_ok", "");
-                            return Ok(model);
-                        }
-                        Err(error) => last = error,
-                    },
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            }
-        };
-        let model = tokio::time::timeout_at(deadline, ready)
-            .await
-            .map_err(|_| {
-                buzz_mesh_compute::startup_log::stage("first_probe_ok", "ok=false timeout");
-                format!("Shared compute inference did not become ready: {last}")
-            })??;
-        host.lease.community(&lease)?;
+        let ready = ready_inference(app, &request.relay, &request.model).await?;
         let config = MeshLaunch::new(
             request.agent_id,
             request.revision,
             request.relay,
-            model,
-            port,
+            ready.model,
+            ready.port,
         )?;
         Ok(Prepared {
             app: app.clone(),
-            lease,
+            lease: ready.lease,
             config,
         })
     }
+}
+
+/// Shared readiness: the agent's community holds the current lease, compute is
+/// Ready, and a real chat probe on the loopback route succeeded.
+#[cfg(feature = "mesh")]
+struct Ready {
+    lease: String,
+    port: u16,
+    model: String,
+}
+
+#[cfg(feature = "mesh")]
+async fn ready_inference(
+    app: &tauri::AppHandle,
+    relay: &str,
+    model: &str,
+) -> Result<Ready, String> {
+    use buzz_mesh_compute::lifecycle::Phase;
+    let host = app.state::<super::MeshHost>();
+    let identity = app.state::<crate::identity::IdentityHost>();
+    let community = community_origin(relay)?;
+    let lease = host.lease.for_community(&community)?;
+    if host.lifecycle.phase() == Phase::Stopped {
+        buzz_mesh_compute::startup_log::stage("entry", "from=agent");
+        super::start(app, &host, &identity, &lease).await?;
+    }
+    let port = super::mesh_port("BUZZ_MESH_API_PORT", 19337)?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut last = "Shared compute is starting".to_owned();
+    let ready = async {
+        loop {
+            host.lease.community(&lease)?;
+            match host.lifecycle.phase() {
+                Phase::Failed(reason) => return Err(reason),
+                Phase::Stopped | Phase::Stopping => {
+                    return Err("Shared compute stopped before agent launch".into())
+                }
+                Phase::Starting => {}
+                Phase::Ready => match probe(&client, port, model).await {
+                    Ok(model) => {
+                        buzz_mesh_compute::startup_log::stage("first_probe_ok", "");
+                        return Ok(model);
+                    }
+                    Err(error) => last = error,
+                },
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    };
+    let model = tokio::time::timeout_at(deadline, ready)
+        .await
+        .map_err(|_| {
+            buzz_mesh_compute::startup_log::stage("first_probe_ok", "ok=false timeout");
+            format!("Shared compute inference did not become ready: {last}")
+        })??;
+    host.lease.community(&lease)?;
+    Ok(Ready { lease, port, model })
+}
+
+/// Loopback inference target for a plugin-owned helper (Agents2 Mesh type).
+/// `lease` is evidence only: pass it to `mesh_compute_inference_current` before
+/// publishing so a reply produced across a community switch is discarded.
+#[cfg(feature = "mesh")]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedInference {
+    pub base_url: String,
+    pub model: String,
+    pub lease: String,
+}
+
+#[cfg(feature = "mesh")]
+#[tauri::command]
+pub async fn mesh_compute_prepare_inference(
+    app: tauri::AppHandle,
+    relay: String,
+    model: String,
+) -> Result<PreparedInference, String> {
+    let ready = ready_inference(&app, &relay, &model).await?;
+    let host = app.state::<super::MeshHost>();
+    host.lease.with_current(&ready.lease, |_| {
+        if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
+            return Err("Shared compute stopped before agent launch".into());
+        }
+        Ok(PreparedInference {
+            base_url: format!("http://127.0.0.1:{}/v1", ready.port),
+            model: ready.model,
+            lease: ready.lease.clone(),
+        })
+    })
+}
+
+/// True only while the lease from `mesh_compute_prepare_inference` is still the
+/// current selection and compute is Ready. Check before publishing a reply.
+#[cfg(feature = "mesh")]
+#[tauri::command]
+pub async fn mesh_compute_inference_current(
+    app: tauri::AppHandle,
+    lease: String,
+) -> Result<bool, String> {
+    let host = app.state::<super::MeshHost>();
+    Ok(host
+        .lease
+        .with_current(&lease, |_| {
+            Ok(host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready)
+        })
+        .unwrap_or(false))
 }
 
 /// Baseline readiness (legacy `mesh_readiness::wait_for_mesh_inference`): a real
@@ -173,6 +242,20 @@ async fn probe(client: &reqwest::Client, port: u16, model: &str) -> Result<Strin
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn prepared_inference_wire_contract_is_camel_case() {
+        let wire = serde_json::to_value(PreparedInference {
+            base_url: "http://127.0.0.1:1/v1".into(),
+            model: "mesh".into(),
+            lease: "l".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"baseUrl":"http://127.0.0.1:1/v1","model":"mesh","lease":"l"})
+        );
+    }
 
     struct Fixture {
         port: u16,

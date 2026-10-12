@@ -140,6 +140,8 @@
     "allow-mesh-compute-select",
     "allow-mesh-compute-release",
     "allow-mesh-compute-disarm",
+    "allow-mesh-compute-prepare-inference",
+    "allow-mesh-compute-inference-current",
     "allow-browser-attach",
     "allow-browser-set-bounds",
     "allow-browser-detach",
