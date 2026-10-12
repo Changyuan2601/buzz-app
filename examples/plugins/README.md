@@ -6,6 +6,8 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+K /
   Control+Shift+K increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.
+- `remote-ackbot`: a hosted Agents agent type, with a provider server to run on this
+  computer. See its README.
 
 ## Try the offline playgrounds
 
