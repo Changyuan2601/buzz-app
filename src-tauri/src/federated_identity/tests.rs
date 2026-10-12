@@ -63,6 +63,44 @@ pub(super) fn record() -> Arc<Session> {
 }
 
 #[tokio::test]
+async fn restored_snapshots_do_not_wait_for_an_interactive_operation() {
+    use futures_util::FutureExt;
+    let owner = host(Arc::new(Memory::default()));
+    {
+        let mut state = owner.state();
+        state.restored = true;
+        state.snapshot.status = Status::SigningIn;
+    }
+    let operation = owner.0.operation.lock().await;
+    let snapshot = owner
+        .restore()
+        .now_or_never()
+        .expect("a restored snapshot must not wait for the browser operation");
+    assert!(snapshot.status == Status::SigningIn);
+    drop(operation);
+}
+
+#[tokio::test]
+async fn cancel_releases_the_native_callback_before_a_replacement_login() {
+    let owner = host(Arc::new(Memory::default()));
+    let callbacks = crate::oauth_callback::OAuthCallbackHost::default();
+    let url = "https://identity.example/v1/login/start";
+    let attempt = callbacks.begin_federated(url.into(), |_| Ok(())).unwrap();
+    let guard = CallbackGuard(callbacks.clone(), attempt.id);
+    {
+        let mut state = owner.state();
+        state.restored = true;
+        state.snapshot.status = Status::SigningIn;
+        state.callback = Some(guard.clone());
+    }
+    owner.cancel_sign_in();
+    let replacement = callbacks.begin_federated(url.into(), |_| Ok(())).unwrap();
+    drop(guard); // The old future's cleanup cannot cancel the replacement.
+    assert!(callbacks.begin_federated(url.into(), |_| Ok(())).is_err());
+    callbacks.cancel(&replacement.id).unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_absent_restore_reads_once_and_never_creates_an_account() {
     let store = Arc::new(Memory::default());
     let host = host(store.clone());

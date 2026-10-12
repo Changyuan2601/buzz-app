@@ -67,12 +67,20 @@ struct Session {
     record: Record,
     raw: Zeroizing<Vec<u8>>,
 }
+#[derive(Clone)]
+struct CallbackGuard(crate::oauth_callback::OAuthCallbackHost, String);
+impl Drop for CallbackGuard {
+    fn drop(&mut self) {
+        let _ = self.0.cancel(&self.1);
+    }
+}
 struct State {
     snapshot: Snapshot,
     session: Option<Arc<Session>>,
     restored: bool,
     closed: bool,
     cancellation: CancellationToken,
+    callback: Option<CallbackGuard>,
 }
 struct Inner {
     config: Option<Config>,
@@ -137,6 +145,7 @@ impl FederatedIdentity {
                 restored: false,
                 closed: false,
                 cancellation: CancellationToken::new(),
+                callback: None,
             }),
             operation: AsyncMutex::new(()),
             changes,
@@ -205,6 +214,8 @@ impl FederatedIdentity {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         state.cancellation.cancel();
+        // Synchronous cleanup lets a replacement login register immediately.
+        state.callback.take();
         state.cancellation = CancellationToken::new();
         state.snapshot.revision = uuid::Uuid::new_v4().to_string();
         state.snapshot.status = status;
@@ -270,6 +281,15 @@ impl FederatedIdentity {
         Ok(result.email)
     }
     pub(crate) async fn restore(&self) -> Snapshot {
+        {
+            let state = self.state();
+            let expired = state.session.as_ref().is_some_and(|session| {
+                matches!((expiry(&session.record.expires_at), now()), (Ok(expiry), Ok(now)) if expiry <= now)
+            });
+            if self.0.config.is_none() || state.closed || (state.restored && !expired) {
+                return state.snapshot.clone();
+            }
+        }
         let _operation = self.0.operation.lock().await;
         self.restore_locked().await;
         self.snapshot()
@@ -375,9 +395,11 @@ impl FederatedIdentity {
     }
     pub(crate) async fn sign_in<R: tauri::Runtime>(&self, app: &tauri::AppHandle<R>) -> Snapshot {
         let observed = self.snapshot();
-        let sharing_attempt = observed.status == Status::SigningIn;
-        let _operation = self.0.operation.lock().await;
-        if sharing_attempt || !self.current(&observed.revision) {
+        if observed.status == Status::SigningIn {
+            return observed;
+        }
+        let operation = self.0.operation.lock().await;
+        if !self.current(&observed.revision) {
             return self.snapshot();
         }
         let observed = self.restore_locked().await;
@@ -395,7 +417,7 @@ impl FederatedIdentity {
             self.retire_state(&mut state, Status::SigningIn, None);
             (state.snapshot.revision.clone(), state.cancellation.clone())
         };
-        let result = self.login(app, &revision, &cancel).await;
+        let result = self.login(app, &revision, &cancel, operation).await;
         if let Err(failure) = result {
             self.change_current(&revision, Status::SignedOut, Some(failure.code));
         }
@@ -406,6 +428,7 @@ impl FederatedIdentity {
         app: &tauri::AppHandle<R>,
         revision: &str,
         cancel: &CancellationToken,
+        operation: tokio::sync::MutexGuard<'_, ()>,
     ) -> Result<(), Failure> {
         if cancel.is_cancelled() {
             return Err("sign-in-canceled".into());
@@ -429,17 +452,31 @@ impl FederatedIdentity {
             })
             .map_err(|_| "browser-unavailable")?;
         // Drop guards cancel only this callback when the whole login future is canceled.
-        struct CallbackGuard<'a>(&'a crate::oauth_callback::OAuthCallbackHost, String);
-        impl Drop for CallbackGuard<'_> {
-            fn drop(&mut self) {
-                let _ = self.0.cancel(&self.1);
+        let _guard = CallbackGuard(callback.inner().clone(), attempt.id.clone());
+        {
+            let mut state = self.state();
+            if state.closed || state.snapshot.revision != revision || cancel.is_cancelled() {
+                return Err("sign-in-canceled".into());
+            }
+            state.callback = Some(_guard.clone());
+        }
+        // Serialize callback registration, not the user's browser interaction.
+        drop(operation);
+        let response = tokio::select! {
+            _ = cancel.cancelled() => Err(Failure::from("sign-in-canceled")),
+            result = callback.wait(&attempt.id) => result.map_err(|error| Failure::from(if error == "Sign-in canceled." { "sign-in-canceled" } else { "callback-refused" })),
+        };
+        {
+            let mut state = self.state();
+            if state
+                .callback
+                .as_ref()
+                .is_some_and(|guard| guard.1 == attempt.id)
+            {
+                state.callback.take();
             }
         }
-        let _guard = CallbackGuard(&callback, attempt.id.clone());
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Err("sign-in-canceled".into()),
-            result = callback.wait(&attempt.id) => result.map_err(|_| "callback-refused")?,
-        };
+        let response = response?;
         if response.parameters.iter().any(|(name, _)| name == "error") {
             return Err("login-refused".into());
         }
@@ -504,7 +541,9 @@ impl FederatedIdentity {
             _ = cancel.cancelled() => return Err("sign-in-canceled".into()),
             result = self.verify(&record) => result?,
         };
-        if !self.current(revision) {
+        // Persistence/install/late cleanup still serialize with sign-out.
+        let _operation = self.0.operation.lock().await;
+        if cancel.is_cancelled() || !self.current(revision) {
             return Err("session-changed".into());
         }
         let raw = Zeroizing::new(serde_json::to_vec(&record).map_err(|_| "storage-corrupt")?);

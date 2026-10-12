@@ -36,6 +36,7 @@ struct Attempt {
     id: String,
     result: Option<oneshot::Receiver<CallbackResult>>,
     task: JoinHandle<()>,
+    retain_result: bool,
 }
 impl Drop for Attempt {
     fn drop(&mut self) {
@@ -118,7 +119,10 @@ impl OAuthCallbackHost {
             return Err("Invalid callback path".into());
         }
         let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
-        if current.is_some() {
+        if current
+            .as_ref()
+            .is_some_and(|attempt| attempt.retain_result || !attempt.task.is_finished())
+        {
             return Err("An OAuth callback is already pending".into());
         }
         // Binding is synchronous so cancellation cannot overtake listener registration.
@@ -163,6 +167,9 @@ impl OAuthCallbackHost {
             id: id.clone(),
             result: Some(receive),
             task,
+            // A native FI login retains its completed handoff until wait/cancel.
+            // Generic OAuth keeps its existing finished-task replacement rule.
+            retain_result: callback_parameter == "return_to",
         });
         drop(current);
         if open(authorization.as_str()).is_err() {
