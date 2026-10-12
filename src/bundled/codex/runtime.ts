@@ -391,7 +391,7 @@ export class CodexRuntime {
       call.tool === "send" &&
         args.reply === undefined &&
         args.channel === undefined
-        ? { ...args, reply: request.event.id }
+        ? { ...args, reply: rootOf(request.event) }
         : args,
     );
     const final = call.tool === "send" && args.final === true;

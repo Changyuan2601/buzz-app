@@ -20,7 +20,7 @@ test("Me Activity opens locally, restores per conversation and retires on plugin
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Me conversations" });
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
   const composer = page.getByRole("textbox", {
     name: "Message your agents",
     exact: true,
@@ -63,7 +63,7 @@ test("Me Activity opens locally, restores per conversation and retires on plugin
   await expect(panel).toBeVisible();
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await expect(panel).toHaveCount(0);
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
   await expect(panel).toBeVisible();
   await expect(composer).toHaveText("Keep my Me draft");
   await page
@@ -91,7 +91,7 @@ test("Me Activity opens locally, restores per conversation and retires on plugin
     page.getByRole("heading", { name: "Alpha", exact: true }),
   ).toBeVisible();
   await openPage(page, "Me");
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
   await trigger.press("Enter");
   await expect(panel).toBeVisible();
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
@@ -106,6 +106,84 @@ test("Me Activity opens locally, restores per conversation and retires on plugin
     page.getByRole("tab", { name: "Agent Activity", exact: true }),
   ).toHaveCount(0);
 });
+// Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.
+test("Me sidebar shares working activity, keyboard preview and local panel navigation", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const key = generateSecretKey();
+  const event = (kind) => ({
+    kind,
+    seq: 1,
+    timestamp: new Date().toISOString(),
+    channelId: id,
+    sessionId: "S",
+    turnId: "sidebar-me",
+  });
+  app.observer(event("turn_liveness"), key);
+  const badge = alpha.getByRole("img", { name: /working in Alpha$/ });
+  await page.mouse.move(0, 0);
+  await expect(badge).toBeVisible();
+  await expect(alpha.locator("[data-me-working-indicator]")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await alpha.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Activity in Alpha",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  await expect(
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await popup.getByRole("button", { name: /Open conversation for/ }).hover();
+  await popup.getByRole("button", { name: /View .+ activity/ }).click();
+  const panel = page.getByRole("region", {
+    name: "Agent activity",
+    exact: true,
+  });
+  await expect(panel.locator("code").first()).toHaveText(getPublicKey(key));
+  await expect(sidebar).toBeVisible();
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  await page
+    .getByRole("button", { name: "Close Agent Activity tab", exact: true })
+    .click();
+  await expect(alpha).toBeFocused();
+  await page.mouse.move(0, 0);
+  await alpha.press("Enter");
+  await expect(popup).toBeVisible();
+  const activityAction = popup.getByRole("button", {
+    name: /View .+ activity/,
+  });
+  // Visibility precedes Base UI's initial-focus handoff. Wait for that boundary
+  // before tabbing, otherwise a fast keypress can leave the popup while it opens.
+  await expect(
+    popup.getByRole("button", { name: /Open conversation for/ }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(activityAction).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeVisible();
+  await page
+    .getByRole("button", { name: "Close Agent Activity tab", exact: true })
+    .click();
+  // Context actions must remain separate from the activity trigger.
+  await alpha.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Rename", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  app.observer(event("turn_completed"), key);
+  await expect(badge).toHaveCount(0);
+});
+
 // Two browser-mounted readers must keep native drafts and signed sends scoped.
 test("Me tabs retain drafts and send to their own conversation with the Messages tool picker", async ({
   page,
@@ -268,4 +346,95 @@ test.describe("personal secondary recipients", () => {
     expect(publications()).toHaveLength(1);
     await expect(composer).toContainText("Not mine");
   });
+});
+
+// Touch has no hover affordance: working must coexist with the permanent menu.
+test.describe("touch sidebar activity", () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test("working remains visible beside the row menu", async ({ page, app }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    app.observer(
+      {
+        kind: "turn_liveness",
+        seq: 1,
+        timestamp: new Date().toISOString(),
+        channelId: id,
+        sessionId: "S",
+        turnId: "touch",
+      },
+      generateSecretKey(),
+    );
+    const row = page.locator(`[data-me-channel-id="${id}"]`);
+    const indicator = row.locator("[data-me-working-indicator]");
+    await expect(
+      row.getByRole("img", { name: /working in Alpha$/ }),
+    ).toBeVisible();
+    await expect(indicator).toHaveCSS("opacity", "1");
+    await row.tap();
+    await expect(row).toHaveAttribute("aria-current", "page");
+    await expect(indicator).toHaveCSS("opacity", "1");
+    const menu = page.locator(
+      `[data-session-menu-id="${id}"] [data-session-row-action]`,
+    );
+    await expect(menu).toHaveCSS("opacity", "1");
+    const a = await indicator.boundingBox(),
+      b = await menu.boundingBox();
+    expect(a.x + a.width).toBeLessThanOrEqual(b.x + 1);
+    await menu.focus();
+    await expect(menu).toBeFocused();
+    await expect(indicator).toHaveCSS("opacity", "1");
+  });
+});
+
+// Captured-message navigation uses the exact-message reader, not a guessed thread.
+test("Me sidebar opens a captured trigger in the canonical message reader", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const key = generateSecretKey();
+  const target = app.histories.get(`primary/${id}`)[0];
+  app.observer(
+    {
+      kind: "turn_started",
+      seq: 1,
+      timestamp: new Date().toISOString(),
+      channelId: id,
+      sessionId: "S",
+      turnId: "captured-trigger",
+      payload: { triggeringEventIds: [target.id] },
+    },
+    key,
+  );
+  await expect(
+    alpha.getByRole("img", { name: /working in Alpha$/ }),
+  ).toBeVisible();
+  await alpha.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Activity in Alpha",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  await popup.getByRole("button", { name: /Open thread for/ }).click();
+  await expect(sidebar).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(decodeURIComponent(location.hash.slice("#buzz=".length))),
+      ),
+    )
+    .toMatchObject({
+      kind: "conversation",
+      channelId: id,
+      messageId: target.id,
+    });
+  await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeVisible();
 });

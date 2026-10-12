@@ -21,6 +21,7 @@ import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
+import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -58,7 +59,10 @@ export function AppShell({
   pages: readonly RegisteredPage[];
   selected: string;
   navigationAttempt: string;
-  onSelect: (key: string) => void;
+  onSelect: (
+    key: string,
+    options?: Pick<NavigationOpenOptions, "focus">,
+  ) => void;
   tone: string;
   workspace?: boolean;
   sidebar?: (pages: ReactNode) => ReactNode;
@@ -153,6 +157,7 @@ export function AppShell({
     [pages],
   );
   const topbarPages = headerPages.filter((page) => page.placement === "topbar");
+  const selectedTopbarPage = topbarPages.some((page) => page.key === selected);
   const toolbarPages = headerPages.filter(
     (page) => page.placement === "toolbar",
   );
@@ -281,7 +286,7 @@ export function AppShell({
           <nav
             ref={topbarRef}
             aria-label="Topbar pages"
-            className="shell-topbar-pages chrome-navigation"
+            className="shell-topbar-pages"
             aria-hidden={compactPages}
             inert={compactPages}
           >
@@ -425,10 +430,19 @@ export function AppShell({
               >
                 <PanelFrame companion={companion}>
                   <div
+                    id={`shell-page-${selected}`}
+                    {...(!compactPages && selectedTopbarPage
+                      ? {
+                          role: "tabpanel",
+                          "aria-labelledby": `shell-page-${selected}-tab`,
+                          tabIndex: 0,
+                          "data-focus-inset": "",
+                        }
+                      : {})}
                     className={
                       fillsWorkspace
-                        ? "h-full min-h-0"
-                        : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                        ? "buzz-tabs-panel h-full min-h-0"
+                        : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
                     }
                   >
                     <div

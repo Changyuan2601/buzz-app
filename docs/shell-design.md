@@ -67,9 +67,16 @@ semantic tokens, UI authoring rules and the local component reference.
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise
   those entries move into a labelled More pages popover (always at <=650px).
-  Native-button navigation uses `aria-current`, not tab/tabpanel semantics;
-  selecting a destination focuses main content. Header pages never become
-  companion launchers, and only the exact current page is selected.
+  Wide topbar pages use design-system chrome tabs with manual activation: arrow
+  keys move focus, and Enter or Space selects the page while focus stays on its
+  tab. Each opening carries focus intent: topbar activation suppresses destination
+  autofocus, while explicit New conversation, sidebar and deep-link openings keep
+  their content focus. This intent is not saved in addresses or history; retry
+  preserves it for the same opening. The selected page is a separately focusable,
+  labelled tabpanel. Toolbar
+  and overflow destinations remain native buttons using `aria-current` and
+  focus main content on selection. Header pages never become companion launchers,
+  and only the exact current page is selected.
   The shell owns one joined Panel around navigation and page content, with a
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout

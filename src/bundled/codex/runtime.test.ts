@@ -433,10 +433,7 @@ it("hands over promptly and runs conversations independently on one server", asy
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     kind: 9,
     content: "FIRST",
-    tags: expect.arrayContaining([
-      ["e", root, "", "root"],
-      ["e", "1".padStart(64, "0"), "", "reply"],
-    ]),
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
@@ -463,7 +460,7 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   expect(JSON.stringify(steering[0]?.params)).toContain("FIRST_STEER");
   expect(JSON.stringify(steering[1]?.params)).toContain("SECOND_STEER");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    tags: expect.arrayContaining([["e", "3".padStart(64, "0"), "", "reply"]]),
+    tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
 it("cuts delayed history off before the request, including same-second messages and edits", async () => {
@@ -1074,11 +1071,11 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish.mock.calls.map(([event]) => event)).toMatchObject([
     {
       content: "OTHER",
-      tags: expect.arrayContaining([["e", "e".repeat(64), "", "root"]]),
+      tags: expect.arrayContaining([["e", "e".repeat(64), "", "reply"]]),
     },
     {
       content: "FIRST",
-      tags: expect.arrayContaining([["e", root, "", "root"]]),
+      tags: expect.arrayContaining([["e", root, "", "reply"]]),
     },
   ]);
   const count = f.publish.mock.calls.length;
@@ -1134,7 +1131,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("FILE CONTENT"),
-    tags: expect.arrayContaining([["e", "2".padStart(64, "0"), "", "reply"]]),
+    tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
 

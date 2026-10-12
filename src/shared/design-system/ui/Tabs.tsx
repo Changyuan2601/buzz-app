@@ -8,6 +8,7 @@ export type TabItem<Value extends string> = {
   value: Value;
   label: string;
   icon?: ReactNode;
+  trailing?: ReactNode;
   /** Link a retained, externally owned tab panel. */
   panelId?: string;
   onClose?: (() => void) | undefined;
@@ -42,7 +43,7 @@ export function Tabs<Value extends string>({
 }: {
   /** Omit only when composing an existing externally owned view. */
   renderPanel?: (value: Value) => ReactNode;
-  value: Value;
+  value: Value | null;
   items: readonly TabItem<Value>[];
   label: string;
   onValueChange: (value: Value) => void;
@@ -81,6 +82,7 @@ export function Tabs<Value extends string>({
                         </span>
                       )
                     }
+                    trailing={item.trailing}
                     selected={showSelection && item.value === value}
                     aria-current={false}
                   />
@@ -116,6 +118,7 @@ export function Tabs<Value extends string>({
                 <>
                   {item.icon}
                   <span>{item.label}</span>
+                  {item.trailing}
                 </>
               )}
             </BaseTabs.Tab>

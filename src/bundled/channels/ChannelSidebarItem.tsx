@@ -3,7 +3,6 @@ import {
   memo,
   useLayoutEffect,
   useRef,
-  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
@@ -22,14 +21,11 @@ import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge } from "./UnreadBadge";
-import { workingAgents } from "./working-agents";
-import { publicKeyLabels } from "../../shared/identity/public-key";
+import { useWorkingAgents } from "./useWorkingAgents";
+import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
 
 const noSessions: readonly ChannelSummary[] = [];
-const noSubscribe = () => () => {};
-const noAgents: readonly string[] = [];
-const noProfiles = new Map<string, Profile>();
 
 type ItemProps = {
   channel: ChannelSummary;
@@ -81,41 +77,10 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
   props: ItemProps,
 ) {
   const { channel, session, working } = props;
-  const agentKeys = useSyncExternalStore(
-    working ? session.agentActivity.subscribe : noSubscribe,
-    () =>
-      working
-        ? workingAgents(session.agentActivity.snapshot(), channel.id).join(",")
-        : "",
-  );
-  // App-managed agents publish no observer telemetry, so typing in this channel
-  // or any of its threads is their working signal. Only the viewer's own agents
-  // count: the library, not other people's self-declared profile hints.
-  const typingKeys = useSyncExternalStore(session.typing.subscribe, () =>
-    [
-      ...new Set(
-        session.typing
-          .snapshot()
-          .filter((entry) => entry.channelId === channel.id)
-          .map((entry) => entry.pubkey),
-      ),
-    ].join(","),
-  );
-  const observed = agentKeys ? agentKeys.split(",") : noAgents;
-  const typers = typingKeys ? typingKeys.split(",") : noAgents;
-  const library = useSyncExternalStore(
-    typers.length ? session.agentChoices.subscribe : noSubscribe,
-    typers.length ? session.agentChoices.snapshot : () => undefined,
-  );
-  const typingAgents = typers.filter((key) =>
-    library?.identities.some((identity) => identity.pubkey === key),
-  );
-  const agents = typingAgents.length
-    ? [...new Set([...observed, ...typingAgents])].sort()
-    : observed;
-  const agentProfiles = useSyncExternalStore(
-    agents.length ? session.profiles.subscribe : noSubscribe,
-    agents.length ? session.profiles.snapshot : () => noProfiles,
+  const { agents, agentProfiles } = useWorkingAgents(
+    session,
+    channel.id,
+    working,
   );
   return (
     <ChannelSidebarItemCore
@@ -163,9 +128,6 @@ function ChannelSidebarItemCore({
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
-  const keyLabels = publicKeyLabels(agents);
-  const agentName = (agent: string) =>
-    agentProfiles.get(agent)?.name ?? keyLabels.get(agent) ?? "Agent";
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
@@ -237,19 +199,11 @@ function ChannelSidebarItemCore({
               dm={channel.channelType === "dm"}
             />
           </span>
-          {agents.length > 0 && (
-            <span
-              className={styles.thinkingBadge}
-              data-channel-working=""
-              data-indicator-layer="working"
-              role="img"
-              aria-label={`${agents.map(agentName).join(", ")} working in ${channel.name}`}
-            >
-              <i aria-hidden="true" />
-              <i aria-hidden="true" />
-              <i aria-hidden="true" />
-            </span>
-          )}
+          <WorkingAgentsBadge
+            agents={agents}
+            profiles={agentProfiles}
+            channelName={channel.name}
+          />
         </span>
       }
       wrapSelect={(trigger) => {
