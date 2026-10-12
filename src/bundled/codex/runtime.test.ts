@@ -1,10 +1,14 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import * as React from "react";
 import { apply } from "./index";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents2/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 
@@ -77,8 +81,21 @@ function fixture(
           data: [
             {
               model: "test-model",
+              displayName: "Test Model",
               isDefault: true,
               defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["low", "medium", "high"].map(
+                (reasoningEffort) => ({ reasoningEffort, description: "" }),
+              ),
+            },
+            {
+              model: "deep-model",
+              displayName: "",
+              isDefault: false,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["high", "xhigh"].map(
+                (reasoningEffort) => ({ reasoningEffort, description: "" }),
+              ),
             },
           ],
           nextCursor: null,
@@ -219,6 +236,7 @@ function fixture(
     size: 12,
     type: mime,
   }));
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
   const agent = {
     pubkey,
     owner,
@@ -255,12 +273,13 @@ function fixture(
         instructions: "TEST_INSTRUCTIONS",
       },
       signal: new AbortController().signal,
+      workingUntil,
     };
     if (result.trigger.type !== "timer")
       events.push(result.trigger.event as EventData);
     return result;
   };
-  /** Agents2's running agents, whichever community is selected. */
+  /** Agents' running agents, whichever community is selected. */
   const running = [{ ...agent, type: "buzz.codex/codex" }];
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
@@ -272,7 +291,7 @@ function fixture(
     apply({
       react: React,
       host: { spawn },
-      agents2: {
+      agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
         subscribe: (listener: () => void) => {
@@ -331,7 +350,8 @@ function fixture(
     return sent.find((wire) => wire.id === id && !wire.method);
   };
   const complete = async (index = starts().length - 1, text = "DONE") => {
-    if (!closed && text) await tool("send", { text, final: true }, index);
+    if (!closed && text)
+      await tool("send", { audience: "everyone", text, final: true }, index);
     const params = starts()[index]?.params as { threadId: string };
     emit({
       method: "item/completed",
@@ -372,6 +392,7 @@ function fixture(
     read,
     storage,
     delivery,
+    workingUntil,
     starts,
     complete,
     interrupt,
@@ -385,7 +406,10 @@ function fixture(
 }
 it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
-  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run({
+    ...f.delivery("@Codex first"),
+    team: "<team>\nCrew\n</team>",
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(f.publish).not.toHaveBeenCalled();
   await f.runtime.run(f.delivery("@Codex independent", "e".repeat(64)));
@@ -403,11 +427,28 @@ it("hands over promptly and runs conversations independently on one server", asy
   });
   expect(started.baseInstructions).toBeUndefined();
   expect(started.developerInstructions).toContain("coding agent in Buzz");
+  expect(started.developerInstructions).toContain(BUZZ_PROMPT);
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
         kind: "application",
         value: expect.stringContaining("TEST_INSTRUCTIONS"),
+      },
+    },
+  });
+  expect(f.starts()[0]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringContaining(
+          "</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.\n<team>\nCrew\n</team>",
+        ),
+      },
+    },
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.not.stringContaining("<team>"),
       },
     },
   });
@@ -579,6 +620,126 @@ it("reopens the shared server after it exits", async () => {
   await f.runtime.run(f.delivery("again"));
   await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
 });
+it("discovers models and efforts before any turn, sharing one read-only lookup", async () => {
+  const f = fixture();
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  const one = f.runtime.preview(agent);
+  const two = f.runtime.preview(agent);
+  f.runtime.sync([agent]);
+  expect(one).toBe(two);
+  await expect(one).resolves.toEqual({
+    current: "test-model",
+    models: [
+      {
+        id: "test-model",
+        label: "Test Model",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+        effort: "medium",
+      },
+      {
+        id: "deep-model",
+        label: "deep-model",
+        efforts: [
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra high" },
+        ],
+        effort: "high",
+      },
+    ],
+  });
+  expect(f.spawn).toHaveBeenCalledTimes(1);
+  expect(f.spawn.mock.calls[0]?.[1]?.cwd).toBe("~/.buzz");
+  expect(f.starts()).toEqual([]);
+  expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.runtime.preview(agent)).toBe(one);
+  f.runtime.sync([]);
+  f.spawn.mockRejectedValueOnce(new Error("offline"));
+  await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
+});
+it("shares model discovery with active turns and another agent", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const b = second(f);
+  await Promise.all([
+    f.runtime.preview(f.delivery("unused").agent as unknown as Agent),
+    f.runtime.preview(b.agent as unknown as Agent),
+  ]);
+  expect(servers(f)).toHaveLength(1);
+  expect(f.process.end).not.toHaveBeenCalled();
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("still offers the listed models when the configured one is not listed", async () => {
+  const f = fixture();
+  const agent = {
+    pubkey,
+    config: { workspace: "/tmp/codex-test", model: "newer-model" },
+  } as Agent;
+  const { current, models } = await f.runtime.preview(agent);
+  expect(current).toBe("newer-model");
+  expect(models.map((model) => [model.id, model.efforts.length])).toEqual([
+    ["newer-model", 0],
+    ["test-model", 3],
+    ["deep-model", 2],
+  ]);
+});
+it("previews each model at the configured effort when it has it", async () => {
+  const f = fixture();
+  const agent = {
+    pubkey,
+    config: { workspace: "/tmp/codex-test", effort: "low" },
+  } as Agent;
+  const { models } = await f.runtime.preview(agent);
+  expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
+});
+it("starts a turn at the effort its owner picked when the model supports it", async () => {
+  const f = fixture();
+  await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("@Codex other", "e".repeat(64)),
+    effort: "max",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.starts().map((wire) => (wire.params as { effort?: string }).effort),
+  ).toEqual(["high", "low"]);
+});
+it("starts a turn on the model its owner picked, at an effort that model supports", async () => {
+  const f = fixture();
+  const run = async (
+    thread: string,
+    pick: { model?: string; effort?: string },
+  ) => {
+    const before = f.starts().length;
+    await f.runtime.run({ ...f.delivery("@Codex", thread), ...pick });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(before + 1));
+  };
+  await run("a".repeat(64), { model: "deep-model", effort: "xhigh" });
+  // The configured `low` is not one of its levels, so it runs at its default.
+  await run("b".repeat(64), { model: "deep-model" });
+  // A model Codex no longer lists falls back to the agent's own.
+  await run("c".repeat(64), { model: "gone-model" });
+  expect(
+    f.starts().map((wire) => {
+      const { model, effort } = wire.params as {
+        model: string;
+        effort: string;
+      };
+      return { model, effort };
+    }),
+  ).toEqual([
+    { model: "deep-model", effort: "xhigh" },
+    { model: "deep-model", effort: "high" },
+    { model: "test-model", effort: "low" },
+  ]);
+});
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("first"));
@@ -597,8 +758,17 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   await vi.waitFor(() =>
     expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(2),
   );
+  // Each mention counts as working until the turn it was steered into answers.
+  let settled = 0;
+  for (const [done] of f.workingUntil.mock.calls)
+    void Promise.resolve(done).then(() => settled++);
+  expect(f.workingUntil).toHaveBeenCalledTimes(3);
+  // A macrotask lets every pending promise chain finish first.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(settled).toBe(0);
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(settled).toBe(3));
   const steering = f.sent.filter((wire) => wire.method === "turn/steer");
   expect(JSON.stringify(steering[0]?.params)).toContain("FIRST_STEER");
   expect(JSON.stringify(steering[1]?.params)).toContain("SECOND_STEER");
@@ -780,6 +950,35 @@ it("ignores non-owner messages without spawning", async () => {
   await f.runtime.run(other);
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
+});
+it("answers another agent its owner attested, telling the owner of failures", async () => {
+  const f = fixture();
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const sibling = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${sibling}:`)
+    .digest();
+  const ask = f.delivery("work");
+  if (ask.trigger.type !== "timer") {
+    ask.trigger.event.pubkey = sibling;
+    ask.trigger.event.tags.push([
+      "auth",
+      owner,
+      "",
+      bytesToHex(schnorr.sign(digest, secret)),
+    ]);
+  }
+  await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A failure tells the owner: tagging the sibling would wake it to fail too.
+  f.complete(0, "");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
+  expect(failure.tags).toContainEqual(["p", owner]);
+  expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
 it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
   const f = fixture();
@@ -977,8 +1176,8 @@ it("posts tool-sent parts and never duplicates native assistant text", async () 
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.tool("send", { text: "PART ONE" });
-  await f.tool("send", { text: "PART TWO" });
+  await f.tool("send", { audience: "everyone", text: "PART ONE" });
+  await f.tool("send", { audience: "everyone", text: "PART TWO" });
   await f.complete(0, "FINAL");
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -1195,7 +1394,14 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
     { arguments: [] },
   ]) {
     expect(
-      (await f.tool("send", { text: "must not send" }, 0, overrides))?.result,
+      (
+        await f.tool(
+          "send",
+          { audience: "everyone", text: "must not send" },
+          0,
+          overrides,
+        )
+      )?.result,
     ).toMatchObject({
       success: false,
       contentItems: [{ type: "inputText", text: expect.any(String) }],
@@ -1220,7 +1426,9 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
     },
   ]);
   const count = f.publish.mock.calls.length;
-  expect((await f.tool("send", { text: "late" }, 0))?.result).toMatchObject({
+  expect(
+    (await f.tool("send", { audience: "everyone", text: "late" }, 0))?.result,
+  ).toMatchObject({
     success: false,
   });
   expect(f.publish).toHaveBeenCalledTimes(count);
@@ -1249,6 +1457,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(
     (
       await f.tool("send", {
+        audience: "everyone",
         path: "answer.txt",
         files: ["attachment.jpg"],
         final: true,
@@ -1282,7 +1491,13 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.publish.mockRejectedValueOnce(new Error("Signing rejected"));
   expect(
-    (await f.tool("send", { text: "answer", final: true }))?.result,
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "answer",
+        final: true,
+      })
+    )?.result,
   ).toMatchObject({
     success: false,
     contentItems: [{ type: "inputText", text: "Signing rejected" }],
@@ -1304,7 +1519,11 @@ it("delivers pending owner steering after a final send and posts its own answer"
   await f.runtime.run(f.delivery("new request"));
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
-    await f.tool("send", { text: "prior answer", final: true });
+    await f.tool("send", {
+      audience: "everyone",
+      text: "prior answer",
+      final: true,
+    });
     expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
   } finally {
     gate.resolve([]);
@@ -1312,6 +1531,14 @@ it("delivers pending owner steering after a final send and posts its own answer"
   await vi.waitFor(() =>
     expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
   );
+  // The prior answer settles only the first request.
+  let steered = false;
+  void Promise.resolve(f.workingUntil.mock.calls[1]?.[0]).then(() => {
+    steered = true;
+  });
+  await f.workingUntil.mock.calls[0]?.[0];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(steered).toBe(false);
   await f.complete(0, "NEW ANSWER");
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -1328,6 +1555,7 @@ it("finishes final sends normally and preserves the agent's background terminals
   await f.runtime.run(f.delivery("start server"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   const reply = await f.tool("send", {
+    audience: "everyone",
     text: "http://localhost:3000",
     final: true,
   });
@@ -1335,6 +1563,9 @@ it("finishes final sends normally and preserves the agent's background terminals
   expect(f.publish).toHaveBeenCalledTimes(1);
   expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
   expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
+  // The request is answered, so it stops counting as working before Codex's
+  // closing model call ends the turn.
+  await f.workingUntil.mock.calls[0]?.[0];
   const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
     ?.threadId;
   f.emit({
@@ -1373,7 +1604,11 @@ it.each([false, true])(
       started.resolve();
       return late ? gate.promise : child;
     });
-    const reading = f.tool("send", { path: "answer.txt", final: true });
+    const reading = f.tool("send", {
+      audience: "everyone",
+      path: "answer.txt",
+      final: true,
+    });
     await started.promise;
     f.interrupt();
     try {

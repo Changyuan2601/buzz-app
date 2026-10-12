@@ -2057,3 +2057,85 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
     cleanup();
   }
 });
+
+it("shows a message for agents as one line from its author to whom it addresses", () => {
+  const agent = keypair();
+  const rivet = "b".repeat(64);
+  const tagged = (audience: string, content: string) =>
+    foldMessages("channel", keypair().pubkey, [
+      signed(agent, {
+        kind: 9,
+        content,
+        created_at: 5,
+        tags: [
+          ["h", "channel"],
+          ["p", rivet],
+          ["audience", audience],
+        ],
+      }),
+    ])[0] as ChannelMessage;
+  expect(tagged("everyone", "hi").audience).toBeUndefined();
+  expect(tagged("unknown", "hi").audience).toBeUndefined();
+  const quiet = tagged(
+    "agents",
+    "@Rivet, **run** the suite\n\nThen report back to @Rivet.",
+  );
+  expect(quiet.audience).toBe("agents");
+  try {
+    renderDom(
+      <MessageRow
+        row={quiet}
+        profile={{ name: "Morgarita" }}
+        participantProfiles={new Map([[rivet, { name: "Rivet" }]])}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: "Morgarita to Rivet: **run** the suite…",
+    });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    // Reveal focuses the scroll anchor with tabIndex -1; on the button, that
+    // would take the only toggle out of the Tab order.
+    expect(line).not.toHaveAttribute("data-message-id");
+    expect(line.parentElement).toHaveAttribute("data-message-id");
+    expect(screen.queryByText(/Then report back/)).toBeNull();
+    fireEvent.click(line);
+    expect(line).toHaveAttribute("aria-expanded", "true");
+    // The body keeps later mentions but drops the one the line shows.
+    expect(screen.getByText(/Then report back/)).toBeInTheDocument();
+    expect(screen.queryByText("@Rivet,")).toBeNull();
+    expect(screen.getByText("run").tagName).toBe("STRONG");
+    // Anywhere in the open box folds it back.
+    fireEvent.click(screen.getByText(/Then report back/));
+    expect(line).toHaveAttribute("aria-expanded", "false");
+  } finally {
+    cleanup();
+  }
+});
+
+it("keeps an agents message that opens with prose, or is only a mention, as written", () => {
+  const rivet = "b".repeat(64);
+  const line = (content: string) => {
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, content, mentions: [rivet], audience: "agents" }}
+          profile={{ name: "Morgarita" }}
+          participantProfiles={new Map([[rivet, { name: "Rivet" }]])}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      return screen.getByRole("button").getAttribute("aria-label");
+    } finally {
+      cleanup();
+    }
+  };
+  expect(line("thanks @Rivet")).toBe("Morgarita: thanks @Rivet");
+  expect(line("@Rivet")).toBe("Morgarita: @Rivet");
+});

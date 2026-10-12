@@ -299,17 +299,6 @@ async fn run(
     status.success().then_some(output)
 }
 
-/// Bounded stdout and exit status; callers must project away private command output.
-pub(crate) async fn run_output(
-    executable: &Path,
-    args: &[String],
-    deadline: Duration,
-    path: &OsStr,
-    max_output_bytes: u64,
-) -> Option<(String, std::process::ExitStatus)> {
-    run_output_with_input(executable, args, deadline, path, max_output_bytes, None).await
-}
-
 async fn run_output_with_input(
     executable: &Path,
     args: &[String],

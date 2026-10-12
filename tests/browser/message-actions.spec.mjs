@@ -468,6 +468,24 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
   await settle(page);
+  const expectClockAligned = async () => {
+    // The caption-sized clock is centered beside the first prose line, including
+    // when interface scaling changes their independently owned type roles.
+    await expect
+      .poll(() =>
+        row.evaluate((element) => {
+          const clock = element
+            .querySelector('time > span[aria-hidden="true"]')
+            .getBoundingClientRect();
+          const prose = element.querySelector("p");
+          const firstLineCenter =
+            prose.getBoundingClientRect().top +
+            Number.parseFloat(getComputedStyle(prose).lineHeight) / 2;
+          return Math.abs(clock.top + clock.height / 2 - firstLineCenter);
+        }),
+      )
+      .toBeLessThan(0.5);
+  };
   const baseline = await following.boundingBox();
   for (const mode of ["hover", "focus"]) {
     if (mode === "hover") await row.hover();
@@ -481,6 +499,7 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(prose.y);
     await expect(actions).toHaveCSS("position", "fixed");
     expect((await following.boundingBox()).y).toBe(baseline.y);
+    await expectClockAligned();
     await expect
       .poll(() =>
         link.evaluate((node) => {
@@ -495,6 +514,12 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
       )
       .toBe(true);
   }
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  await row.scrollIntoViewIfNeeded();
+  await settle(page);
+  await expectClockAligned();
 });
 
 test("historical single-day DMs and their threads expose dates without hover", async ({

@@ -627,7 +627,10 @@ use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
-extra-small capsule uses `text-caption`.
+extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
+the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
+horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
+for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
 IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
 sm/md/lg sizes. Existing names
@@ -1124,6 +1127,10 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
+- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
+  default), matching Berd’s relaxed reply rhythm for both sent and received
+  messages. The message renderer uses `space-4` between prose blocks; labels,
+  controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 

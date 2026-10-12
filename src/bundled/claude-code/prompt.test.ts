@@ -1,6 +1,7 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { steerPrompt, systemPrompt, timerPrompt, turnPrompt } from "./prompt";
 
 const alice = "a".repeat(64);
@@ -32,9 +33,11 @@ it("builds the harness system prompt with instructions and core memory", () => {
     scope: "thread",
     cwd: "~/.buzz",
     instructions: "Be terse.",
+    team: "<team>\nCrew\n</team>",
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
+  expect(prompt).toContain(BUZZ_PROMPT);
   expect(prompt).toContain("## Session Model");
   expect(prompt).toContain(
     "<workspace>\nCurrent working directory: ~/.buzz\n</workspace>",
@@ -43,6 +46,10 @@ it("builds the harness system prompt with instructions and core memory", () => {
     "<agent-instructions>\nBe terse.\n</agent-instructions>",
   );
   expect(prompt).toContain("<core-memory>\nI am Claude.\n</core-memory>");
+  // A team follows the agent's own instructions.
+  expect(prompt).toContain(
+    "</agent-instructions>\n\n<team>\nCrew\n</team>\n\n<core-memory>",
+  );
   expect(systemPrompt({ scope: "thread", cwd: "/w", memory: null })).toContain(
     "No core memory found.",
   );

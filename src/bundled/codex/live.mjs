@@ -8,7 +8,7 @@ import { build } from "rolldown";
 import { JSDOM } from "jsdom";
 globalThis.document = new JSDOM("").window.document;
 
-const workspace = await mkdtemp(join(tmpdir(), "buzz-codex-agents2-"));
+const workspace = await mkdtemp(join(tmpdir(), "buzz-codex-agents-"));
 await build({
   input: {
     runtime: new URL("./runtime.ts", import.meta.url).pathname,

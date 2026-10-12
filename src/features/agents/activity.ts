@@ -1,8 +1,4 @@
 import type { EventData } from "../relay/events";
-import {
-  parseAgentManagementRequest,
-  type AgentManagementRequest,
-} from "./management-request";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
 import {
@@ -15,7 +11,6 @@ import type { ArchiveHost, ArchivePage } from "../archive/types";
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 export const ACTIVITY_TURN_LIMIT = 512;
-export const MANAGEMENT_REQUEST_LIMIT = 200;
 export const ACTIVITY_FRESH_MS = 30_000;
 type RawRecord = ObserverFrame &
   Readonly<{
@@ -83,7 +78,6 @@ export function createAgentActivity(
   observe: (generation: number | null) => void,
   canAccess: (channel: string) => boolean,
   notify = (listener: () => void) => listener(),
-  resolveAccess?: (channel: string) => Promise<void>,
   history?: {
     host: ArchiveHost;
     canRestore: (channel: string) => boolean;
@@ -91,7 +85,6 @@ export function createAgentActivity(
 ) {
   let closed = false,
     leases = 0,
-    managementLeases = 0,
     generation = 0,
     epoch = 0;
   let historyStatus: Snapshot["history"] = history?.host
@@ -118,11 +111,6 @@ export function createAgentActivity(
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
   const workingListeners = new Set<() => void>();
-  const managementListeners = new Set<
-    (agent: string, request: AgentManagementRequest) => void
-  >();
-  const managementIds = new Set<string>();
-  const resolvingManagement = new Set<string>();
   let workingChannels = "[]";
   let snapshot: Snapshot = Object.freeze({
     status,
@@ -253,7 +241,7 @@ export function createAgentActivity(
     historyAgents = [];
     generation++;
     reset();
-    if (available && !closed && leases + managementLeases > 0) {
+    if (available && !closed && leases > 0) {
       status = "connecting";
       void restore();
       observe(generation);
@@ -438,7 +426,7 @@ export function createAgentActivity(
     historyAbort = new AbortController();
     reset();
     generation++;
-    if (available && leases + managementLeases > 0) observe(generation);
+    if (available && leases > 0) observe(generation);
     historyPage = undefined;
     historyBefore = undefined;
     hasOlder = false;
@@ -449,28 +437,6 @@ export function createAgentActivity(
     publish();
   }
   return {
-    management: Object.freeze({
-      activate() {
-        if (closed || !available) return () => {};
-        if (++managementLeases === 1 && leases === 0) restart();
-        let released = false;
-        return () => {
-          if (released || closed) return;
-          released = true;
-          if (--managementLeases === 0 && leases === 0) {
-            observe(null);
-            restart();
-          }
-        };
-      },
-      subscribe(
-        listener: (agent: string, request: AgentManagementRequest) => void,
-      ) {
-        if (closed) return () => {};
-        managementListeners.add(listener);
-        return () => managementListeners.delete(listener);
-      },
-    }),
     queries: Object.freeze({
       snapshot: () => snapshot,
       clearHistory,
@@ -536,12 +502,7 @@ export function createAgentActivity(
       publish();
     },
     receive(input: ObserverFrame, current: number) {
-      if (
-        closed ||
-        !available ||
-        leases + managementLeases === 0 ||
-        current !== generation
-      )
+      if (closed || !available || leases === 0 || current !== generation)
         return;
       let frame: ObserverFrame, raw: unknown;
       try {
@@ -556,44 +517,6 @@ export function createAgentActivity(
           ? object(envelope.payload)?.events
           : undefined;
       const items = Array.isArray(children) ? children : [raw];
-      const management =
-        envelope?.kind === "agent_management_request"
-          ? parseAgentManagementRequest(envelope.payload)
-          : null;
-      const managementChannel = management?.request.channelId;
-      if (
-        management &&
-        managementChannel &&
-        !canAccess(managementChannel) &&
-        resolveAccess &&
-        !resolvingManagement.has(frame.id)
-      ) {
-        resolvingManagement.add(frame.id);
-        void resolveAccess(managementChannel)
-          .then(() => {
-            resolvingManagement.delete(frame.id);
-            if (
-              closed ||
-              current !== generation ||
-              !canAccess(managementChannel) ||
-              [raw, ...items].some((value) => {
-                const item = object(value);
-                return text(item?.channelId) && !canAccess(item.channelId);
-              }) ||
-              managementIds.has(management.requestId)
-            )
-              return;
-            managementIds.add(management.requestId);
-            if (managementIds.size > MANAGEMENT_REQUEST_LIMIT) {
-              const oldest = managementIds.values().next().value;
-              if (oldest) managementIds.delete(oldest);
-            }
-            for (const listener of managementListeners)
-              notify(() => listener(frame.agent, management));
-          })
-          .catch(() => resolvingManagement.delete(frame.id));
-        return;
-      }
       // A denied child cannot leak through an otherwise visible raw batch.
       if (
         [raw, ...items].some((value) => {
@@ -602,18 +525,6 @@ export function createAgentActivity(
         })
       )
         return;
-      if (management) {
-        if (!managementIds.has(management.requestId)) {
-          managementIds.add(management.requestId);
-          if (managementIds.size > MANAGEMENT_REQUEST_LIMIT) {
-            const oldest = managementIds.values().next().value;
-            if (oldest) managementIds.delete(oldest);
-          }
-          for (const listener of managementListeners)
-            notify(() => listener(frame.agent, management));
-        }
-        return;
-      }
       if (leases > 0) admit(frame, Date.now(), false);
     },
     /** Public typing is scope/freshness evidence only, never ownership evidence. */
@@ -709,13 +620,11 @@ export function createAgentActivity(
       if (closed) return;
       closed = true;
       leases = 0;
-      managementLeases = 0;
       observe(null);
       clearInterval(timer);
       restart();
       listeners.clear();
       workingListeners.clear();
-      managementListeners.clear();
     },
   };
 }

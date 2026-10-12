@@ -1,7 +1,7 @@
 // The type's tabs: Claude Code's setup on this computer, and the agent's
 // settings.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { AgentViewProps } from "../../features/agents2/service";
+import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -30,10 +30,6 @@ const MODELS = options(MODEL_CHOICES);
 const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
-]);
-const RESPOND_TO = options([
-  ["owner", "Only you"],
-  ["anyone", "Anyone who mentions it"],
 ]);
 
 export function createTabs({
@@ -213,23 +209,6 @@ export function createTabs({
             setDraft({
               ...draft,
               scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <Select
-          label="Answers"
-          variant="field"
-          value={draft.respondTo}
-          groups={RESPOND_TO}
-          description={
-            draft.respondTo === "anyone"
-              ? "Claude runs commands on this computer as you, with no approval step. Anyone who can mention it can ask it to."
-              : "Messages from anyone else are ignored."
-          }
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              respondTo: value === "anyone" ? "anyone" : "owner",
             })
           }
         />

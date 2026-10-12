@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AgentType } from "../../features/agents2/service";
+import type { AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { defaults } from "./config";
 import { CodexRuntime } from "./runtime";
@@ -35,7 +35,7 @@ function applied(spawn = vi.fn()) {
     react: React,
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn, request: vi.fn() },
-    agents2: {
+    agents: {
       register: (registered: AgentType) => {
         type = registered;
       },
@@ -60,6 +60,20 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
+it("adopts a brought-over agent's instructions and workspace, nothing else", () => {
+  const type = applied();
+  const saved = type?.defaults().config;
+  expect(
+    type?.adopt?.({ instructions: "Triage.", model: "gpt" } as never, saved),
+  ).toEqual({ ...(saved as object), instructions: "Triage." });
+  expect(type?.adopt?.({ workspace: "/work/code" }, saved)).toEqual({
+    ...(saved as object),
+    workspace: "/work/code",
+  });
+  // A workspace Codex cannot run in stays the default.
+  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual(saved);
+});
+
 it("stops agents that stop running even when the agent list could not be read", () => {
   const sync = vi.spyOn(CodexRuntime.prototype, "sync");
   const agent = { pubkey: "agent", type: "buzz.codex/codex" };
@@ -69,7 +83,7 @@ it("stops agents that stop running even when the agent list could not be read", 
     react: React,
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
-    agents2: {
+    agents: {
       register: () => undefined,
       snapshot: () => state,
       relay: () => undefined,

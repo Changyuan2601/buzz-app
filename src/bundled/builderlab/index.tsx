@@ -16,7 +16,7 @@ export const inject = [
   "settingsCards",
   "relay",
   "communityReader",
-  "agents2",
+  "agents",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -29,7 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : "Builderlab sign-in is unavailable.";
   }
   if (!unavailable)
-    ctx.agents2.register({
+    ctx.agents.register({
       id: "builderlab",
       title: "Builderlab",
       description: "TBD",

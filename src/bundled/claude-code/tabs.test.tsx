@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Agent, AgentType } from "../../features/agents2/service";
+import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
@@ -61,7 +61,7 @@ function applied({ loggedIn = true } = {}) {
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { spawn, request: vi.fn() },
-    agents2: {
+    agents: {
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
@@ -91,10 +91,21 @@ async function choose(label: string, option: string) {
 }
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents2", "host"]);
+  expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
   expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
+  expect(
+    type.adopt?.(
+      { instructions: "Triage.", workspace: "~/code" },
+      DEFAULT_CONFIG,
+    ),
+  ).toEqual({
+    ...DEFAULT_CONFIG,
+    instructions: "Triage.",
+    workspace: "~/code",
+  });
+  expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );
@@ -143,7 +154,7 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
   expect(cancel).not.toHaveAttribute("disabled");
 });
 
-it("saves settings as one config and warns before answering anyone", async () => {
+it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 1);
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
@@ -153,8 +164,6 @@ it("saves settings as one config and warns before answering anyone", async () =>
     "true",
   );
   await choose("Model", "Sonnet");
-  await choose("Answers", "Anyone who mentions it");
-  expect(screen.getByText(/with no approval step/)).toBeVisible();
   expect(screen.getByLabelText("Workspace")).toHaveAccessibleDescription(
     "The folder Claude Code works in. Use ~/ for your home folder.",
   );
@@ -163,7 +172,6 @@ it("saves settings as one config and warns before answering anyone", async () =>
   expect(save).toHaveBeenCalledWith({
     ...DEFAULT_CONFIG,
     model: "sonnet",
-    respondTo: "anyone",
     workspace: "~/.buzz",
   });
 });

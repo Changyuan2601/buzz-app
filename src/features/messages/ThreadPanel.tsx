@@ -718,6 +718,20 @@ function ThreadMessages({
     tree,
     expanded,
   ]);
+  // The effect above re-pins only when thread data changes. A growing composer
+  // shrinks this viewport and late media grows rows; keep a bottom reader there.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const content = element?.querySelector("[data-thread-rows]");
+    if (!element || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (positioned.current && follow.current && !jumpingToLatest.current)
+        element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(element);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
   // Main's retained presentation can be usable before the initial history walk
   // finishes. That is not yet automatic reading intent. Exact revealed targets
   // remain individually readable; later background refreshes keep earned readiness.

@@ -1,6 +1,7 @@
 // Prompts in the harness's format (buzz-acp), so a Claude agent here reads the
 // same sections and follows the same base prompt as a harness agent.
 import { npubEncode } from "nostr-tools/nip19";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import basePrompt from "./base_prompt.md?raw";
 import channelModel from "./session_model_channel.md?raw";
@@ -18,17 +19,23 @@ export function systemPrompt(
     scope: Scope;
     cwd: string;
     instructions?: string;
+    /** A section for each team the agent is on, from the host. */
+    team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
     memory?: string | null;
   }>,
 ) {
   const model = input.scope === "thread" ? threadModel : channelModel;
   return [
-    section("base", `${basePrompt.trim()}\n\n${model.trim()}`),
+    section(
+      "base",
+      `${basePrompt.trim()}\n\n${BUZZ_PROMPT}\n\n${model.trim()}`,
+    ),
     section("workspace", `Current working directory: ${input.cwd}`),
     input.instructions?.trim()
       ? section("agent-instructions", input.instructions)
       : "",
+    input.team?.trim() ?? "",
     input.memory === null
       ? section(
           "core-memory",

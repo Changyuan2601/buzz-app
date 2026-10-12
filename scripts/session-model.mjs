@@ -376,7 +376,6 @@ export function sessionModel(
     },
     turns,
     timing: wallTiming(records, turns, provider),
-    raw: records.map(publicRecord),
     limitations:
       provider === "codex"
         ? "Recorded base instructions, dynamic tools, run settings, messages and usage. Native tool schemas and exact post-compaction inference requests are not recorded. Encrypted reasoning is omitted."

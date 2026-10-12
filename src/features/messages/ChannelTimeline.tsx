@@ -411,6 +411,15 @@ function Timeline({
         next.edgeHeight === measuredSize.edgeHeight
       )
         return;
+      // A growing composer shrinks the viewport. Pin a reader who was at the
+      // bottom before paint so history rises with it; the restore lands later.
+      if (
+        follow.current &&
+        settled.current &&
+        next.height < measuredSize.height &&
+        element.scrollHeight - measuredSize.height - element.scrollTop < 2
+      )
+        element.scrollTop = element.scrollHeight;
       measuredSize = next;
       settled.current = false;
       setSize(next);

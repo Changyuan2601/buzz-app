@@ -280,6 +280,55 @@ test("Claude deduplicates streamed blocks and ignores tool-result turns", () => 
   assert.equal(result.turns[0].durationMs, null);
   assert.equal(result.turns[0].requests.length, 1);
 });
+test("Claude shows a send as posted only once its result confirms it", () => {
+  const send = (id, text) => ({
+    type: "tool_use",
+    id,
+    name: "mcp__buzz__send",
+    input: { audience: "everyone", text },
+  });
+  const records = [
+    { type: "user", timestamp: stamp(0), message: { content: "hi" } },
+    {
+      type: "assistant",
+      timestamp: stamp(1),
+      message: {
+        id: "m",
+        content: [
+          send("ok", "posted"),
+          send("bad", "rejected"),
+          send("wait", "pending"),
+        ],
+      },
+    },
+    {
+      type: "user",
+      timestamp: stamp(2),
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "ok", content: "sent 1" },
+          {
+            type: "tool_result",
+            tool_use_id: "bad",
+            content: "No single channel member is @Nobody",
+            is_error: true,
+          },
+        ],
+      },
+    },
+  ];
+  const entries = sessionModel(records).entries;
+  assert.deepEqual(
+    entries.filter((e) => e.kind === "sent").map((e) => e.preview),
+    ["posted"],
+  );
+  const tools = entries.filter((e) => e.kind === "tool");
+  assert.equal(tools.length, 2);
+  assert.match(tools[0].html, /class="card tool error"/);
+  assert.match(tools[0].html, /No single channel member is @Nobody/);
+  assert.match(tools[1].html, /class="card tool pending"/);
+});
+
 test("captured costs are differenced within a launch and reset on restart", () => {
   const records = [0, 10, 20].map((n) => ({
     type: "user",

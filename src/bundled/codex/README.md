@@ -1,7 +1,7 @@
-# Codex for Agents2
+# Codex for Agents
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
-Agents2 owns the identity, admission, configuration, and signed Buzz actions. This plugin
+Agents owns the identity, admission, configuration, and signed Buzz actions. This plugin
 owns Codex work after delivery handover. It starts one `codex app-server` for all
 agents and uses an independent Codex thread for each agent's Buzz conversation.
 Each thread carries its agent's workspace, instructions and tools, so one crash
@@ -13,13 +13,13 @@ From the feature worktree:
 
 ```sh
 source bin/activate-hermit
-BUZZODZ_PROFILE=codex-agents2 BUZZ_DEV_VIEWER= bin/just desktop
+BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 ```
 
 1. Codex is on by default; **Settings → Plugins** turns it off or on. An older
    profile that installed Codex from a folder gets the bundled copy instead, and
    keeps it off if the installed copy was off.
-2. Open **Agents2 → New agent**, choose **Codex**, and create an agent. The Codex
+2. Open **Agents → New agent**, choose **Codex**, and create an agent. The Codex
    tab checks the installed CLI and existing account. If Codex is missing,
    **Install Codex** runs the official installer into `~/.local/bin`; if it is
    signed out, **Sign in** runs `codex login`. Each checks again when it ends.
@@ -45,6 +45,9 @@ While work is active, new mentions steer it, incorporating the follow-up into th
 ongoing task. Messages arriving during startup wait for the turn to start and
 then steer it; idle conversations continue the saved session. If a turn finishes
 while a follow-up is being delivered, the follow-up starts another turn.
+A successful final send stops the request counting as working at once; Codex
+still ends its turn with one more model call. Interrupting the turn instead would
+leave a `<turn_aborted>` note in the session after every reply.
 By default, Buzz tools reply to the latest accepted steering message. The agent can also choose another thread or channel with tool arguments.
 
 There are no special chat commands. Asking the agent to stop is a steering request
@@ -104,14 +107,14 @@ and cleanup.
 
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
-- Replies use Agents2's host signer. Codex receives no Buzz agent key and does not
+- Replies use Agents' host signer. Codex receives no Buzz agent key and does not
   publish through the Buzz CLI. Short Buzz guidance and custom instructions are
   supplied as developer instructions, preserving Codex’s native coding prompt.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
   Claude Code's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
   are disabled.
-- Shared Agent Activity integration is deferred because this Agents2 delivery
+- Shared Agent Activity integration is deferred because this Agents delivery
   contract has no live-activity API. The Codex tab shows conversation status and
   the latest command/output. Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;

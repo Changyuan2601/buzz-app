@@ -1,0 +1,1476 @@
+import { createHash } from "node:crypto";
+import { Context } from "@deepseek-ai/cordis";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { npubEncode } from "nostr-tools/nip19";
+import { bytesToHex } from "nostr-tools/utils";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { RelayEvent } from "../relay/events";
+import type { LiveBatch, LiveListener } from "../relay/incoming";
+import type { RelayData, RelaySnapshot } from "../relay/service";
+import type { RelaySession } from "../relay/session";
+import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
+import {
+  AgentsService,
+  type AgentCommunities,
+  type AgentType,
+  type Delivery,
+  fromOwner,
+  teamPrompt,
+} from "./service";
+import { memoryStorage } from "./test-fakes";
+
+// Cleanup's channel step has its own coverage (relay-removal); here only its
+// place in the order matters.
+const steps: string[] = [];
+const leaveChannels = vi.hoisted(() => vi.fn());
+vi.mock("./relay-removal", () => ({
+  removeAgentFromChannels: leaveChannels,
+}));
+
+const viewer = "a".repeat(64);
+const other = "b".repeat(64);
+const bot = "c".repeat(64);
+const sibling = "d".repeat(64);
+const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
+const event = (id: string, patch: Partial<RelayEvent> = {}) =>
+  ({
+    id: id.padEnd(64, "0"),
+    pubkey: other,
+    kind: 9,
+    created_at: 100,
+    content: `hello ${id}`,
+    tags: [["h", channel]],
+    sig: "",
+    ...patch,
+  }) as unknown as RelayEvent;
+
+function fakeRelay(origin = "https://relay.example.test") {
+  const live = new Set<LiveListener>();
+  const changes = new Set<() => void>();
+  const archived = new Set<string>();
+  const archives = {
+    archived,
+    /** The last read did not finish, as when its session closed. */
+    unknown: false,
+    consent: vi.fn(
+      async () => ({ auth: ["auth"] }) as { auth: string[] } | null,
+    ),
+    ensure: vi.fn(async () => {}),
+    refresh: vi.fn(async () => {}),
+    state(pubkey: string) {
+      if (this.unknown) return "unknown";
+      return archived.has(pubkey) ? "archived" : "not-archived";
+    },
+    writable: true,
+    request: vi.fn(async (_: string, pubkey: string) => {
+      steps.push("archive");
+      archived.add(pubkey);
+    }),
+  };
+  let status = "connected";
+  const statuses = new Set<() => void>();
+  const session = {
+    archives,
+    // STOPGAP(agent-local-typing): delete with local-typing.ts.
+    typing: { local: vi.fn() },
+    live: {
+      snapshot: () => ({ status }),
+      subscribe(listener: () => void) {
+        statuses.add(listener);
+        return () => statuses.delete(listener);
+      },
+    },
+    subscribeLive(listener: LiveListener) {
+      live.add(listener);
+      return () => live.delete(listener);
+    },
+  } as unknown as RelaySession;
+  let snapshot: RelaySnapshot = {
+    status: "ready",
+    generation: 1,
+    viewer,
+    origin,
+    scope: `${origin}:${viewer}`,
+    session,
+  };
+  const connected_ = snapshot;
+  return {
+    relay: {
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        changes.add(listener);
+        return () => changes.delete(listener);
+      },
+      retry: vi.fn(),
+    } as unknown as RelayData,
+    /** Drops the connection, or restores it with a new session. */
+    connect(connected: boolean) {
+      snapshot = connected
+        ? { ...connected_, session: { ...session } as RelaySession }
+        : { status: "disconnected", generation: 2, session };
+      for (const listener of changes) listener();
+    },
+    /** Fails the connection, as a first connect that timed out does. */
+    fail() {
+      snapshot = { status: "error", generation: 4, session, error: "down" };
+      for (const listener of changes) listener();
+    },
+    /** Replaces the session, as after the transport was lost. */
+    reconnecting() {
+      snapshot = { status: "connecting", generation: 3, session };
+      for (const listener of changes) listener();
+    },
+    /** Drops and restores the socket inside the same session, as live.ts does. */
+    recover() {
+      for (const next of ["retrying", "connected"]) {
+        status = next;
+        for (const listener of statuses) listener();
+      }
+    },
+    emit: (batch: LiveBatch) => {
+      for (const listener of live) listener(batch);
+    },
+    archives,
+    origin,
+  };
+}
+
+/** The viewer's joined communities, one selected; `open` connects any of them. */
+function fakeCommunities(...joined: ReturnType<typeof fakeRelay>[]) {
+  let relays = joined;
+  const changes = new Set<() => void>();
+  let selected: string | null = relays[0]?.origin ?? null;
+  return {
+    communities: {
+      snapshot: () => ({
+        viewer,
+        selected,
+        memberships: relays.map(({ origin }) => ({ id: origin, name: origin })),
+      }),
+      subscribe: (listener: () => void) => {
+        changes.add(listener);
+        return () => changes.delete(listener);
+      },
+      open: vi.fn(
+        (id: string) => relays.find((fake) => fake.origin === id)?.relay,
+      ),
+    } as unknown as AgentCommunities,
+    select(next: string | null) {
+      selected = next;
+      for (const listener of changes) listener();
+    },
+    leave(origin: string) {
+      relays = relays.filter((fake) => fake.origin !== origin);
+      if (selected === origin) selected = null;
+      for (const listener of changes) listener();
+    },
+  };
+}
+
+function fakeNative(identities: AgentIdentity[] = []) {
+  let published = 0;
+  const keys = [bot, sibling];
+  const at = (pubkey: string) =>
+    identities.findIndex((identity) => identity.pubkey === pubkey);
+  const change = (pubkey: string, patch: Partial<AgentIdentity>) => {
+    const index = at(pubkey);
+    const identity = identities[index];
+    if (identity) identities[index] = { ...identity, ...patch };
+  };
+  const native = {
+    list: vi.fn(async () => [...identities]),
+    create: vi.fn(async (_: string, __: string, type: string, name: string) => {
+      const identity = {
+        pubkey: keys.shift() as string,
+        relay: "wss://relay.example.test",
+        owner: viewer,
+        type,
+        name,
+        deleted: false,
+      };
+      identities.push(identity);
+      return identity;
+    }),
+    portable: vi.fn(async () => ({
+      agents: [
+        { source: "harness" as const, pubkey: bot, name: "Old", relay: "" },
+        {
+          source: "installed" as const,
+          pubkey: sibling,
+          name: "Older",
+          relay: "",
+        },
+      ],
+      warnings: ["Could not read one store"],
+    })),
+    port: vi.fn(
+      async (
+        _: string,
+        pubkey: string,
+        __: string,
+        ___: string,
+        type: string,
+      ) => {
+        const identity = {
+          pubkey,
+          relay: "wss://relay.example.test",
+          owner: viewer,
+          type,
+          name: "Older",
+          deleted: false,
+        };
+        identities.push(identity);
+        return { agent: identity, carry: { instructions: "Triage." } };
+      },
+    ),
+    rename: vi.fn(async (pubkey: string, name: string) => {
+      change(pubkey, { name });
+    }),
+    setPicture: vi.fn(async (pubkey: string, picture: string | null) => {
+      const index = at(pubkey);
+      const { picture: _, ...identity } = identities[index] as AgentIdentity;
+      identities[index] = picture ? { ...identity, picture } : identity;
+    }),
+    remove: vi.fn(async (pubkey: string) => {
+      steps.push("key");
+      change(pubkey, { deleted: true });
+    }),
+    forget: vi.fn(async (pubkey: string) => {
+      steps.push("forget");
+      identities.splice(at(pubkey), 1);
+    }),
+    publish: vi.fn(async (pubkey: string, template: AgentEventTemplate) =>
+      event(`p${++published}`, {
+        pubkey,
+        kind: template.kind,
+        content: template.content,
+        tags: (template.tags ?? []).map((tag) => [...tag]),
+      }),
+    ),
+    publishProfile: vi.fn(async (_: string) => {}),
+    query: vi.fn(async () => []),
+    upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
+    remember: vi.fn(async (pubkey: string) =>
+      event(`m${++published}`, { pubkey }),
+    ),
+    claim: vi.fn(async (_: string) => true),
+    release: vi.fn(async (_: string) => {}),
+  } satisfies AgentsNative;
+  return native;
+}
+
+type Config = { reply: string };
+async function setup({
+  storage = memoryStorage(),
+  identities = [] as AgentIdentity[],
+} = {}) {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const fake = fakeRelay();
+  const second = fakeRelay("https://other.example.test");
+  const client = fakeCommunities(fake, second);
+  const native = fakeNative(identities);
+  const service = new AgentsService(ctx, client.communities, native, storage);
+  const plugin = ctx.extend({
+    pluginOwner: Object.freeze({ id: "example", revision: "one" }),
+  });
+  const run = vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>();
+  const type: AgentType<Config> = {
+    id: "echo",
+    title: "Echo",
+    adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
+    defaults: () => ({
+      config: { reply: "ok" },
+      attention: {
+        "interest/default": { type: "interest", instructions: "Be brief." },
+        "watch/channel": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [9],
+          filter: 'content == "deploy"',
+        },
+      },
+    }),
+    models: async () => ({
+      current: "fast",
+      models: [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+        { id: "deep", label: "Deep", efforts: [{ id: "max", label: "Max" }] },
+      ],
+    }),
+    run,
+  };
+  plugin.agents.register(type);
+  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  return {
+    service,
+    native,
+    storage,
+    run,
+    emit: fake.emit,
+    connect: fake.connect,
+    fail: fake.fail,
+    relay: fake.relay,
+    reconnecting: fake.reconnecting,
+    recover: fake.recover,
+    archives: fake.archives,
+    second,
+    select: client.select,
+    leave: client.leave,
+    communities: client.communities,
+    ctx,
+  };
+}
+
+/** Lets every pending promise chain finish: a macrotask runs only after the
+ * microtask queue is empty, so this does not depend on how fast runners are. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** The events native published as an agent, of `kind`, in order. */
+async function published(native: ReturnType<typeof fakeNative>, kind: number) {
+  const events = await Promise.all(
+    native.publish.mock.results.map(({ value }) => value),
+  );
+  return events.filter((event) => event.kind === kind);
+}
+
+beforeEach(() => {
+  vi.useRealTimers();
+  steps.length = 0;
+  leaveChannels.mockReset();
+  leaveChannels.mockImplementation(async () => void steps.push("channels"));
+});
+afterEach(() => vi.useRealTimers());
+
+it("creates an agent in the community shown, with its type's defaults, and publishes its profile", async () => {
+  const { service, native } = await setup();
+  const agent = await service.create({ type: "example/echo", name: " Echo " });
+  expect(native.create).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Echo",
+  );
+  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  expect(agent).toMatchObject({
+    pubkey: bot,
+    name: "Echo",
+    type: "example/echo",
+    config: { reply: "ok" },
+  });
+  expect(Object.keys(agent.attention)).toEqual([
+    "interest/default",
+    "watch/channel",
+  ]);
+  expect(service.find(bot)).toEqual(agent);
+});
+
+it("brings over an identity not already an agent, with its type's defaults and what it adopts, and publishes its profile", async () => {
+  const { service, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const found = await service.portable();
+  // `bot` is already an agent here; the warning still shows.
+  expect(found.agents.map((agent) => agent.pubkey)).toEqual([sibling]);
+  expect(found.warnings).toEqual(["Could not read one store"]);
+  const agent = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(native.port).toHaveBeenCalledWith(
+    "installed",
+    sibling,
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+  );
+  expect(native.publishProfile).toHaveBeenCalledWith(sibling);
+  expect(agent).toMatchObject({
+    pubkey: sibling,
+    name: "Older",
+    config: { reply: "Triage." },
+  });
+  expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
+  expect(Object.keys(agent.attention)).toEqual([
+    "interest/default",
+    "watch/channel",
+  ]);
+  await expect(
+    service.port({ source: "harness", pubkey: bot, type: "nope/none" }),
+  ).rejects.toThrow("That agent type is not available");
+});
+
+it("delivers mentions and matching watches once, and never the agent's own events", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const mention = event("m", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  const watched = event("w", { content: "deploy" });
+  emit({ events: [mention, mention, event("x"), watched], channelId: channel });
+  emit({ events: [event("own", { pubkey: bot, content: "deploy" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  const [first, second] = run.mock.calls.map(([delivery]) => delivery);
+  expect(first?.trigger).toEqual({ type: "mention", event: mention });
+  expect(second?.trigger).toMatchObject({
+    type: "watch",
+    event: watched,
+    slug: "watch/channel",
+    interest: { instructions: "Be brief." },
+  });
+  expect(first?.channelId).toBe(channel);
+  expect(first?.config).toEqual({ reply: "ok" });
+});
+
+it("gives each member its teams' roster and instructions, and drops a deleted agent from its teams", async () => {
+  const { service, run, emit, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  await expect(
+    service.saveTeam({ name: "Crew", instructions: "", members: [other] }),
+  ).rejects.toThrow("not an agent");
+  const team = await service.saveTeam({
+    name: " Crew ",
+    instructions: "Echo leads.",
+    members: [bot, sibling, bot],
+  });
+  expect(team).toMatchObject({ name: "Crew", members: [bot, sibling] });
+  await service.saveTeam({
+    name: "Solo",
+    instructions: "",
+    members: [sibling],
+  });
+  expect(service.snapshot().teams.map((saved) => saved.name)).toEqual([
+    "Crew",
+    "Solo",
+  ]);
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const prompt = run.mock.calls[0]?.[0].team ?? "";
+  expect(prompt).toContain('"Crew"');
+  expect(prompt).toContain(`- Echo (${npubEncode(bot)}), you`);
+  expect(prompt).toContain(`- Sib (${npubEncode(sibling)})\n`);
+  expect(prompt).toContain("Echo leads.");
+  expect(prompt).not.toContain("Solo");
+
+  await service.remove(sibling);
+  await vi.waitFor(() =>
+    expect(service.snapshot().teams.map((saved) => saved.members)).toEqual([
+      [bot],
+      [],
+    ]),
+  );
+  expect(storage.getItem("buzz.agents.teams.v1")).not.toContain(sibling);
+  await service.removeTeam(team.id);
+  expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
+});
+
+it("leaves the team section out for an agent on no team", () => {
+  const agents = [{ pubkey: bot, name: "Echo" }];
+  expect(teamPrompt([], agents, bot)).toBe("");
+  expect(
+    teamPrompt(
+      [{ id: "t", name: "Crew", instructions: " ", members: [sibling] }],
+      agents,
+      bot,
+    ),
+  ).toBe("");
+});
+
+// STOPGAP(agent-working-reactions): delete with working-reactions.ts.
+it("reacts 👀 and 💬 to a mention until the work its run handed off settles", async () => {
+  const { service, run, emit, native, relay } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+  const mention = event("m", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  emit({ events: [mention], channelId: channel });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await settle();
+  const reactions = await published(native, 7);
+  expect(reactions.map(({ content, tags }) => [content, tags])).toEqual(
+    ["👀", "💬"].map((emoji) => [
+      emoji,
+      [
+        ["h", channel],
+        ["e", mention.id],
+      ],
+    ]),
+  );
+  // STOPGAP(agent-local-typing): this device shows the agent typing in the
+  // mention's thread meanwhile.
+  expect(relay.snapshot().session.typing.local).toHaveBeenCalledWith(
+    expect.objectContaining({
+      pubkey: bot,
+      kind: 20002,
+      tags: [
+        ["h", channel],
+        ["e", mention.id, "", "reply"],
+      ],
+    }),
+  );
+  // `run` has returned, but the turn it handed off is still going.
+  expect(await published(native, 5)).toEqual([]);
+  finish();
+  await vi.waitFor(async () =>
+    expect(await published(native, 5)).toHaveLength(2),
+  );
+  // The relay takes one target per deletion.
+  expect((await published(native, 5)).map(({ tags }) => tags)).toEqual(
+    reactions.map(({ id }) => [
+      ["h", channel],
+      ["e", id],
+      ["k", "7"],
+    ]),
+  );
+  // Only mentions are reacted to, and a failed run takes its reactions back.
+  run.mockRejectedValueOnce(new Error("boom"));
+  emit({ events: [event("m2", { tags: mention.tags })], channelId: channel });
+  emit({ events: [event("w", { content: "deploy" })], channelId: channel });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  await vi.waitFor(async () =>
+    expect(await published(native, 5)).toHaveLength(4),
+  );
+  expect(await published(native, 7)).toHaveLength(4);
+});
+
+it("treats a reply to something the agent published as addressed", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  });
+  emit({ events: [event("m", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  // The publish above returned event p1.
+  emit({ events: [event("r", { tags: [["e", "p1".padEnd(64, "0")]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger.type).toBe("mention");
+});
+
+it("passes the model and effort its owner asked for, and no other", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const asked = (id: string, pubkey: string, ...tags: string[][]) =>
+    event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
+  emit({
+    events: [
+      asked("owner", viewer, ["effort", bot, "high"]),
+      asked("stranger", other, ["effort", bot, "high"], ["model", bot, "deep"]),
+      asked("unlisted", viewer, ["effort", bot, "max"]),
+      asked("elsewhere", viewer, ["effort", sibling, "high"]),
+      asked("model", viewer, ["model", bot, "deep"], ["effort", bot, "max"]),
+      asked("mismatch", viewer, ["model", bot, "deep"], ["effort", bot, "low"]),
+      asked("unknown", viewer, ["model", bot, "gone"], ["effort", bot, "low"]),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(7));
+  expect(
+    run.mock.calls.map(([{ model, effort }]) => ({ model, effort })),
+  ).toEqual([
+    { model: undefined, effort: "high" },
+    { model: undefined, effort: undefined },
+    { model: undefined, effort: undefined },
+    { model: undefined, effort: undefined },
+    // An effort counts only for the model the run uses.
+    { model: "deep", effort: "max" },
+    { model: "deep", effort: undefined },
+    { model: undefined, effort: "low" },
+  ]);
+});
+
+it("keeps the in-flight run and the queue across edits; each job reads the agent as it starts", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let release: () => void = () => {};
+  let held: Delivery<Config> | undefined;
+  run.mockImplementationOnce(
+    (delivery) =>
+      new Promise<void>((resolve) => {
+        held = delivery;
+        release = resolve;
+      }),
+  );
+  emit({
+    events: [
+      event("1", { tags: [["p", bot]] }),
+      event("2", { tags: [["p", bot]] }),
+    ],
+  });
+  await vi.waitFor(() => expect(held).toBeDefined());
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, { name: "Echo two", config: { reply: "new" } });
+  await service.save(bot, {
+    attention: { "watch/channel": null },
+  });
+  expect(held?.signal.aborted).toBe(false);
+  await held?.agent.publish({ kind: 7, content: "+" });
+  expect(native.publish).toHaveBeenLastCalledWith(bot, {
+    kind: 7,
+    content: "+",
+  });
+  release();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  const queued = run.mock.calls[1]?.[0];
+  expect(queued?.config).toEqual({ reply: "new" });
+  expect(queued?.agent.name).toBe("Echo two");
+});
+
+it("keeps queued work across a disconnect and runs it once on reconnect", async () => {
+  const { service, run, emit, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let release: () => void = () => {};
+  run.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  emit({
+    events: [
+      event("1", { tags: [["p", bot]] }),
+      event("2", { tags: [["p", bot]] }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  connect(false);
+  expect(service.find(bot)).toBeUndefined();
+  release();
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, { config: { reply: "new" } });
+  connect(true);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].config).toEqual({ reply: "new" });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("aborts the in-flight run, and drops what is queued, when the agent is removed", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let held: Delivery<Config> | undefined;
+  run.mockImplementationOnce(
+    (delivery) =>
+      new Promise(() => {
+        held = delivery;
+      }),
+  );
+  emit({
+    events: [
+      event("1", { tags: [["p", bot]] }),
+      event("2", { tags: [["p", bot]] }),
+    ],
+  });
+  await vi.waitFor(() => expect(held).toBeDefined());
+  await service.remove(bot);
+  expect(held?.signal.aborted).toBe(true);
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("drops its events while another copy of the app holds the agent, and runs once it holds it", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  native.claim.mockResolvedValue(false);
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  native.claim.mockResolvedValue(true);
+  const second = event("2", { tags: [["p", bot]] });
+  emit({ events: [second] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toEqual({
+    type: "mention",
+    event: second,
+  });
+  // When the claim itself fails, it answers rather than stay silent.
+  native.claim.mockRejectedValue(new Error("unreadable"));
+  emit({ events: [event("3", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});
+
+it("lets another copy of the app run an agent it cannot run", async () => {
+  vi.useFakeTimers();
+  const { service, run, emit, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(native.release).not.toHaveBeenCalled();
+  connect(false);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(native.release).toHaveBeenCalledTimes(1);
+  expect(native.release).toHaveBeenCalledWith(bot);
+  connect(true);
+  native.claim.mockClear();
+  emit({ events: [event("2", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(native.claim).toHaveBeenCalledWith(bot);
+});
+
+it("claims an agent as it comes into view, and releases it as it leaves, without waiting for a tick", async () => {
+  const { service, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  connect(false);
+  await vi.waitFor(() => expect(native.release).toHaveBeenCalledWith(bot));
+  native.claim.mockClear();
+  connect(true);
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+});
+
+it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
+  const { service, run, emit, second, select } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  select(second.origin);
+  expect(service.find(bot)).toBeUndefined();
+  expect(service.snapshot().running.map((agent) => agent.pubkey)).toEqual([
+    bot,
+  ]);
+  expect(service.relay(bot)?.snapshot().origin).toBe(
+    "https://relay.example.test",
+  );
+  second.emit({ events: [event("2", { tags: [["p", bot]] })] });
+  const mention = event("1", { tags: [["p", bot]] });
+  emit({ events: [mention] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toEqual({
+    type: "mention",
+    event: mention,
+  });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("connects an agent's community at start without selecting it", async () => {
+  const { service, run, second, communities } = await setup({
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://other.example.test",
+        owner: viewer,
+        type: "example/echo",
+        name: "Echo",
+        deleted: false,
+      },
+    ],
+  });
+  expect(communities.open).toHaveBeenCalledWith("https://other.example.test");
+  expect(service.find(bot)).toBeUndefined();
+  second.emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+});
+
+it("opens no community for an agent list that arrives after it stopped", async () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const client = fakeCommunities(
+    fakeRelay(),
+    fakeRelay("https://other.example.test"),
+  );
+  client.select(null);
+  const native = fakeNative();
+  let list!: (identities: AgentIdentity[]) => void;
+  native.list.mockReturnValueOnce(
+    new Promise((resolve) => {
+      list = resolve;
+    }),
+  );
+  const service = new AgentsService(
+    ctx,
+    client.communities,
+    native,
+    memoryStorage(),
+  );
+  await vi.waitFor(() => expect(list).toBeDefined());
+  await ctx.fiber.dispose();
+  list([
+    {
+      pubkey: bot,
+      relay: "wss://other.example.test",
+      owner: viewer,
+      type: "example/echo",
+      name: "Echo",
+      deleted: false,
+    },
+  ]);
+  await settle();
+  expect(client.communities.open).not.toHaveBeenCalled();
+  expect(service.snapshot().running).toEqual([]);
+});
+
+it("keeps an agent running while its community reconnects, and stops it on disconnect or leave", async () => {
+  const { service, connect, reconnecting, leave } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const running = () => service.snapshot().running.map((agent) => agent.pubkey);
+  reconnecting();
+  expect(service.find(bot)).toBeUndefined();
+  expect(running()).toEqual([bot]);
+  connect(false);
+  expect(running()).toEqual([]);
+  connect(true);
+  expect(running()).toEqual([bot]);
+  leave("https://relay.example.test");
+  expect(running()).toEqual([]);
+  expect(service.relay(bot)).toBeUndefined();
+});
+
+it("tries a failed unselected community again every so often, and leaves the selected one's Retry to the viewer", async () => {
+  vi.useFakeTimers();
+  const { service, relay, fail, second, select } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  fail();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(relay.retry).not.toHaveBeenCalled();
+  select(second.origin);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(relay.retry).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(relay.retry).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(relay.retry).toHaveBeenCalledTimes(2);
+});
+
+it("is not woken by reactions, deletions or DMs", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const ownMessage = "p1".padEnd(64, "0");
+  emit({
+    events: [
+      event("react", {
+        kind: 7,
+        tags: [
+          ["e", ownMessage],
+          ["p", bot],
+        ],
+      }),
+      event("delete", { kind: 5, tags: [["e", ownMessage]] }),
+      event("dm", { kind: 4, tags: [["p", bot]] }),
+    ],
+  });
+  emit({ events: [event("m", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({ type: "mention" });
+});
+
+it("wakes on another of the owner's agents only when it names the agent", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sibling" });
+  run.mockImplementation(async ({ agent, trigger }) => {
+    if (trigger.type === "timer") return;
+    await agent.publish({ kind: 9, content: "hi" });
+  });
+  emit({
+    events: [
+      event("start", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const echoMessage = (await published(native, 9))[0]?.id;
+  const auth = ["auth", viewer, "", "f".repeat(128)];
+  // The sibling replies to Echo's message without naming it, and says "deploy",
+  // which Echo's watch matches. Neither wakes Echo: two agents replying to each
+  // other would otherwise never stop.
+  emit({
+    events: [
+      event("reply", {
+        pubkey: sibling,
+        content: "deploy",
+        tags: [["h", channel], ["e", echoMessage], auth],
+      }),
+    ],
+  });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  // Naming Echo wakes it, even in reply to Echo's own message.
+  emit({
+    events: [
+      event("callback", {
+        pubkey: sibling,
+        tags: [["h", channel], ["e", echoMessage], ["p", bot], auth],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "mention",
+    event: { pubkey: sibling },
+  });
+});
+
+it("answers the owner and agents the owner attested, nobody else", async () => {
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const agent = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${agent}:`)
+    .digest();
+  const auth = ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))];
+  const from = (pubkey: string, tags: string[][] = []) => ({
+    pubkey,
+    kind: 9,
+    created_at: 100,
+    tags,
+  });
+  expect(await fromOwner(from(owner), owner)).toBe(true);
+  expect(await fromOwner(from(agent, [auth]), owner)).toBe(true);
+  expect(await fromOwner(from(agent), owner)).toBe(false);
+  // Another key cannot borrow the agent's attestation, nor claim an owner.
+  expect(await fromOwner(from(other, [auth]), owner)).toBe(false);
+  expect(
+    await fromOwner(from(agent, [["auth", owner, "", "0".repeat(128)]]), owner),
+  ).toBe(false);
+});
+
+it("sets and clears a picture through native, and publishes it", async () => {
+  const { service, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  native.publishProfile.mockClear();
+  const url = "https://relay.example/media/abc";
+  await service.save(bot, { picture: url });
+  expect(native.setPicture).toHaveBeenCalledWith(bot, url);
+  expect(service.find(bot)?.picture).toBe(url);
+  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  // An unchanged picture is not saved again; an empty one clears it.
+  await service.save(bot, { picture: url });
+  expect(native.setPicture).toHaveBeenCalledOnce();
+  await service.save(bot, { picture: "" });
+  expect(native.setPicture).toHaveBeenLastCalledWith(bot, null);
+  expect(service.find(bot)?.picture).toBeUndefined();
+});
+
+it("renames through native, and publishes profiles again on rename and reconnect", async () => {
+  const { service, native, connect } = await setup();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  native.publishProfile.mockRejectedValueOnce(new Error("offline"));
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  // An unpublished profile only warns; the agent exists either way.
+  await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+  expect(service.find(bot)).toEqual(agent);
+  warn.mockRestore();
+  native.publishProfile.mockClear();
+  await service.save(bot, { name: " Echo Two " });
+  expect(native.rename).toHaveBeenCalledWith(bot, "Echo Two");
+  expect(service.find(bot)?.name).toBe("Echo Two");
+  expect(native.publishProfile).toHaveBeenCalledWith(bot);
+  // An unchanged name is not saved again.
+  await service.save(bot, { name: "Echo Two", config: { reply: "new" } });
+  expect(native.rename).toHaveBeenCalledOnce();
+  connect(false);
+  connect(true);
+  expect(native.publishProfile).toHaveBeenCalledTimes(2);
+});
+
+it("retries a failed profile and cleanup when the live connection recovers in the same session", async () => {
+  const { service, native, recover } = await setup();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  native.publishProfile.mockRejectedValueOnce(new Error("offline"));
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+  expect(native.publishProfile).toHaveBeenCalledTimes(1);
+  recover();
+  expect(native.publishProfile).toHaveBeenCalledTimes(2);
+  leaveChannels.mockRejectedValueOnce(new Error("offline"));
+  await service.remove(bot);
+  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
+  warn.mockRestore();
+  expect(native.forget).not.toHaveBeenCalled();
+  recover();
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+});
+
+it("retries a cleanup that fails after the connection recovered while it ran", async () => {
+  const { service, native, recover } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  let fail: (error: Error) => void = () => {};
+  leaveChannels.mockImplementationOnce(
+    () => new Promise((_, reject) => (fail = reject)),
+  );
+  await service.remove(bot);
+  await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledTimes(1));
+  recover();
+  fail(new Error("Read started before the drop"));
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(leaveChannels).toHaveBeenCalledTimes(2);
+  warn.mockRestore();
+});
+
+it("shows an agent whose settings could not be saved with its type's defaults", async () => {
+  const storage = memoryStorage();
+  const { service } = await setup({ storage });
+  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
+    throw new Error("QuotaExceededError");
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await service.create({ type: "example/echo", name: "Echo" });
+  warn.mockRestore();
+  expect(storage.getItem("buzz.agents.v1") ?? "").not.toContain(bot);
+  expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
+  expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
+    "interest/default",
+    "watch/channel",
+  ]);
+  // The next save stores them.
+  await service.save(bot, { config: { reply: "saved" } });
+  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+});
+
+it("saves nothing when native create fails", async () => {
+  const storage = memoryStorage();
+  const { service, native } = await setup({ storage });
+  native.create.mockRejectedValueOnce(new Error("Credential store refused"));
+  await expect(
+    service.create({ type: "example/echo", name: "Echo" }),
+  ).rejects.toThrow("Credential store refused");
+  expect(service.snapshot().agents).toEqual([]);
+  expect(storage.getItem("buzz.agents.v1")).toBeNull();
+});
+
+it("returns the created agent after the community changes mid-create", async () => {
+  const { service, native, connect } = await setup();
+  const create = native.create.getMockImplementation();
+  if (!create) throw new Error("The fake creates agents");
+  native.create.mockImplementationOnce(async (...input) => {
+    connect(false);
+    return create(...input);
+  });
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  expect(agent).toMatchObject({ pubkey: bot, name: "Echo" });
+  expect(service.find(bot)).toBeUndefined();
+});
+
+it("forgets records whose key is gone when identities load", async () => {
+  const storage = memoryStorage();
+  storage.setItem(
+    "buzz.agents.v1",
+    JSON.stringify({
+      version: 1,
+      agents: {
+        [bot]: { pubkey: bot, attention: {}, config: {} },
+        [sibling]: { pubkey: sibling, attention: {}, config: {} },
+      },
+    }),
+  );
+  const { service } = await setup({
+    storage,
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://relay.example.test",
+        owner: viewer,
+        type: "example/echo",
+        name: "Echo",
+        deleted: false,
+      },
+    ],
+  });
+  expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
+    "Echo",
+  ]);
+  expect(storage.getItem("buzz.agents.v1")).not.toContain(sibling);
+});
+
+it("keeps an agent created while identities are still loading", async () => {
+  const storage = memoryStorage();
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const native = fakeNative();
+  let release: (value: AgentIdentity[]) => void = () => {};
+  native.list.mockImplementationOnce(
+    () => new Promise<AgentIdentity[]>((resolve) => (release = resolve)),
+  );
+  const service = new AgentsService(
+    ctx,
+    fakeCommunities(fakeRelay()).communities,
+    native,
+    storage,
+  );
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "example", revision: "one" }) })
+    .agents.register<Config>({
+      id: "echo",
+      title: "Echo",
+      defaults: () => ({ config: { reply: "ok" } }),
+    });
+  await vi.waitFor(() => expect(native.list).toHaveBeenCalled());
+  await service.create({ type: "example/echo", name: "Echo" });
+  release([]);
+  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  expect(service.find(bot)?.name).toBe("Echo");
+  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+});
+
+it("fires a due timer once, then again an interval after it ran", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attention: {
+      "watch/tick": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "check in",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 1_000,
+        max_occurrences: 2,
+        expires_at: null,
+      },
+      // Armed long ago with no run state: what was due counts as used, so it
+      // neither fires at once nor ever (both of its runs are spent).
+      "watch/stale": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "stale",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 0,
+        max_occurrences: 2,
+        expires_at: null,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(55_000);
+  expect(run).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    type: "timer",
+    slug: "watch/tick",
+    interest: { instructions: "Be brief." },
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  // Its run state lives in the agent's record and goes when the timer does.
+  const stored = () =>
+    JSON.parse(storage.getItem("buzz.agents.v1") ?? "{}").agents[bot];
+  expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
+  expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
+  await service.save(bot, { attention: { "watch/tick": null } });
+  expect(Object.keys(stored().timers)).toEqual(["watch/stale"]);
+});
+
+it("keeps at most one occurrence of a timer waiting, and never runs one removed meanwhile", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const timer = (prompt: string) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt,
+      enabled: true,
+      interval_secs: 1,
+      armed_at: 1_000,
+      max_occurrences: null,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, {
+    attention: { "watch/kept": timer("kept"), "watch/removed": timer("gone") },
+  });
+  let release: () => void = () => {};
+  run.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  // The first run holds the runner across many intervals of both timers.
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(30_000);
+  await service.save(bot, { attention: { "watch/removed": null } });
+  release();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await vi.advanceTimersByTimeAsync(0);
+  const slugs = run.mock.calls.map(([{ trigger }]) =>
+    trigger.type === "timer" ? trigger.slug : trigger.type,
+  );
+  expect(slugs).toEqual(["watch/kept", "watch/kept"]);
+});
+
+it("gives each due timer a turn when one's runs outlast its interval", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const timer = (prompt: string) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt,
+      enabled: true,
+      interval_secs: 1,
+      armed_at: 1_000,
+      max_occurrences: null,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, {
+    attention: { "watch/slow": timer("slow"), "watch/other": timer("other") },
+  });
+  // Every run takes three intervals, so the first timer is always due again.
+  run.mockImplementation(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+  );
+  await vi.advanceTimersByTimeAsync(20_000);
+  const slugs = run.mock.calls.map(([{ trigger }]) =>
+    trigger.type === "timer" ? trigger.slug : trigger.type,
+  );
+  expect(slugs.slice(0, 4)).toEqual([
+    "watch/slow",
+    "watch/other",
+    "watch/slow",
+    "watch/other",
+  ]);
+});
+
+it("runs waiting events before a due timer, so a busy timer cannot starve them", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attention: {
+      "watch/tick": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "tick",
+        enabled: true,
+        interval_secs: 1,
+        armed_at: 1_000,
+        max_occurrences: null,
+        expires_at: null,
+      },
+    },
+  });
+  let release: () => void = () => {};
+  run.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  await vi.advanceTimersByTimeAsync(5_000);
+  emit({ events: [event("m", { tags: [["p", bot]] })] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  release();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "timer",
+    "mention",
+    "timer",
+  ]);
+});
+
+it("deletes the key at once, then leaves its channels and archives it before forgetting it", async () => {
+  const { service, native, storage, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.remove(bot);
+  expect(service.snapshot().agents).toEqual([]);
+  expect(storage.getItem("buzz.agents.v1")).not.toContain(bot);
+  await vi.waitFor(() =>
+    expect(steps).toEqual(["key", "channels", "archive", "forget"]),
+  );
+  expect(leaveChannels).toHaveBeenCalledWith(
+    expect.objectContaining({ archives }),
+    bot,
+    expect.any(AbortSignal),
+  );
+  expect(archives.request).toHaveBeenCalledWith(
+    "archive",
+    bot,
+    expect.any(AbortSignal),
+  );
+  expect(await native.list()).toEqual([]);
+});
+
+it("retries a failed cleanup on the next connect, without archiving twice", async () => {
+  const { service, native, archives, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  leaveChannels.mockRejectedValueOnce(new Error("Channel removal refused"));
+  await service.remove(bot);
+  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+  archives.request.mockRejectedValueOnce(new Error("Archive refused"));
+  connect(true);
+  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
+  warn.mockRestore();
+  expect(native.forget).not.toHaveBeenCalled();
+  archives.request.mockClear();
+  archives.archived.add(bot);
+  connect(true);
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(archives.request).not.toHaveBeenCalled();
+});
+
+it("forgets an agent with no owner-attested profile without archiving it", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  archives.consent.mockResolvedValueOnce(null);
+  await service.remove(bot);
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(archives.request).not.toHaveBeenCalled();
+});
+
+it("deletes outside the agent's community, and cleans up once it is open", async () => {
+  const { service, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  connect(false);
+  await service.remove(bot);
+  expect(native.remove).toHaveBeenCalledWith(bot);
+  await settle();
+  expect(leaveChannels).not.toHaveBeenCalled();
+  connect(true);
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+});
+
+it("keeps the cleanup for later when the session closes while archive state is read", async () => {
+  const { service, native, archives, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  archives.refresh.mockImplementationOnce(async () => {
+    // A closed session's read ends without an answer.
+    archives.unknown = true;
+    connect(false);
+  });
+  await service.remove(bot);
+  await vi.waitFor(() => expect(archives.refresh).toHaveBeenCalled());
+  await settle();
+  expect(native.forget).not.toHaveBeenCalled();
+  expect(await native.list()).toMatchObject([{ pubkey: bot, deleted: true }]);
+  archives.unknown = false;
+  connect(true);
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(archives.request).toHaveBeenCalledOnce();
+});
+
+it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attention: {
+      "watch/classified": {
+        type: "event",
+        interest_id: "missing",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [],
+        classifier: {
+          questions: {
+            deploy: {
+              question: "Is it about a deploy?",
+              true: "It is",
+              false: "It is not",
+              threshold: 0.5,
+            },
+          },
+        },
+      },
+    },
+  });
+  emit({ events: [event("w", { content: "deploy" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  const triggers = run.mock.calls.map(([delivery]) => delivery.trigger);
+  expect(triggers).toEqual([
+    expect.objectContaining({ slug: "watch/channel" }),
+    expect.objectContaining({
+      slug: "watch/classified",
+      classifier: "not run",
+    }),
+  ]);
+  // Its Interest does not exist, so it arrives without instructions.
+  expect(triggers[1]).not.toHaveProperty("interest");
+});
+
+it("keeps DMs and reactions to its own messages away from watches", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attention: {
+      "watch/everything": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [],
+      },
+    },
+  });
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  });
+  emit({ events: [event("m", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  emit({
+    events: [
+      event("dm", { kind: 4, tags: [["p", bot]] }),
+      // p1 is what the run above published.
+      event("like", { kind: 7, tags: [["e", "p1".padEnd(64, "0")]] }),
+      event("note", { kind: 1 }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/everything",
+    event: { id: "note".padEnd(64, "0") },
+  });
+});
+
+it("keeps an Interest while a watch still uses it", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await expect(
+    service.save(bot, { attention: { "interest/default": null } }),
+  ).rejects.toThrow(/use this Interest/);
+  expect(service.find(bot)?.attention).toHaveProperty("interest/default");
+  await service.save(bot, {
+    attention: { "watch/channel": null, "interest/default": null },
+  });
+  expect(service.find(bot)?.attention).toEqual({});
+});

@@ -1,8 +1,10 @@
-import type {
-  Agent,
-  AgentHandle,
-  Delivery,
-} from "../../features/agents2/service";
+import {
+  fromOwner,
+  type Agent,
+  type AgentHandle,
+  type Delivery,
+  type Models,
+} from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
@@ -11,6 +13,7 @@ import {
   config,
   defaults,
   absoluteWorkspace,
+  effortName,
   validWorkspace,
   type Config,
 } from "./config";
@@ -40,6 +43,13 @@ type Request = {
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   interest: string;
+  /** The agent's team sections, if it is on a team. */
+  team: string;
+  /** The model and effort the owner picked for this turn. */
+  model?: string;
+  effort?: string;
+  /** Called once a final send answers this request, or one steered after it. */
+  answered: () => void;
 };
 type Saved = { threadId: string; workspace: string };
 type Active = {
@@ -55,6 +65,8 @@ type Active = {
   signal: AbortSignal;
   version: number;
   sentVersion?: number;
+  /** Every request this turn has taken in, the first and each steered one. */
+  requests: Request[];
 };
 type Lane = {
   tail: Promise<void>;
@@ -86,7 +98,7 @@ function textOf(event: EventData, name: string) {
   return text;
 }
 
-/** Agents2 owns admission/identity. This plugin owns work after hand-over, and
+/** Agents owns admission/identity. This plugin owns work after hand-over, and
  * uses one app-server for every agent. Each conversation is its own Codex
  * thread carrying its agent's workspace, instructions and tools, and tool
  * calls find their agent by thread and turn. */
@@ -96,6 +108,8 @@ export class CodexRuntime {
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
+  /** Read-only model discovery, kept per agent until its settings change. */
+  private previews = new Map<string, { key: string; ready: Promise<Models> }>();
   constructor(
     private readonly spawn: Spawn,
     /** The owner's connection to each agent's own community. */
@@ -110,6 +124,76 @@ export class CodexRuntime {
   };
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
+  preview(agent: Agent) {
+    const settings = config(agent.config);
+    const key = JSON.stringify([
+      settings.workspace,
+      settings.model,
+      settings.effort,
+    ]);
+    const existing = this.previews.get(agent.pubkey);
+    if (existing?.key === key) return existing.ready;
+    const server = this.open();
+    const rpc = server.rpc;
+    const ready = (async () => {
+      const workspace = await this.workspace(settings.workspace);
+      await server.opening;
+      const normalized = await rpc.request<{
+        config: { model?: string | null };
+      }>("config/read", { cwd: workspace });
+      const models = await listModels(rpc);
+      const model =
+        settings.model ||
+        normalized.config.model ||
+        models.find((row) => row.isDefault)?.model;
+      const offered = models.map((row) => {
+        const efforts = row.supportedReasoningEfforts.map(
+          ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
+        );
+        // As a run picks it: the configured effort if the model has it.
+        const effort = efforts.some((level) => level.id === settings.effort)
+          ? settings.effort
+          : row.defaultReasoningEffort;
+        return {
+          id: row.model,
+          label: row.displayName || row.model,
+          efforts,
+          ...(effort ? { effort } : {}),
+        };
+      });
+      // A configured model this Codex does not list still leaves the
+      // listed ones to pick, so the picker stays.
+      return !model || models.some((row) => row.model === model)
+        ? { current: model ?? "", models: offered }
+        : {
+            current: model,
+            models: [{ id: model, label: model, efforts: [] }, ...offered],
+          };
+    })();
+    const entry = { key, ready };
+    this.previews.set(agent.pubkey, entry);
+    void ready.catch(() => {
+      if (this.previews.get(agent.pubkey) === entry)
+        this.previews.delete(agent.pubkey);
+    });
+    return ready;
+  }
+
+  private async workspace(path: string) {
+    if (absoluteWorkspace(path)) return path;
+    let directory = "";
+    const process = await this.spawn("workspace", {
+      cwd: path,
+      onStdout: (data) => {
+        directory += data;
+      },
+    });
+    const code = await process.exited;
+    const workspace = directory.trim();
+    if (code !== 0 || !absoluteWorkspace(workspace))
+      throw new Error("Could not resolve the default Codex workspace.");
+    return workspace;
+  }
   private status(pubkey: string, key: string, status: string, detail = "") {
     // A stopped agent's draining turns don't bring its sessions back.
     if (!this.entries.has(pubkey)) return;
@@ -122,6 +206,10 @@ export class CodexRuntime {
   }
   sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.pubkey));
+    for (const pubkey of this.previews.keys())
+      if (!present.has(pubkey)) {
+        this.previews.delete(pubkey);
+      }
     for (const [pubkey, entry] of this.entries)
       if (!present.has(pubkey)) {
         entry.abort.abort();
@@ -129,7 +217,7 @@ export class CodexRuntime {
         this.views.delete(pubkey);
         if (this.server) this.stop(this.server, pubkey, entry);
       }
-    if (!this.entries.size) this.close();
+    if (!present.size) this.close();
     for (const listener of this.listeners) listener();
   }
   /** Other agents share the server, so a stopped agent's turns interrupt
@@ -157,6 +245,7 @@ export class CodexRuntime {
     });
   }
   dispose() {
+    this.previews.clear();
     for (const entry of this.entries.values()) entry.abort.abort();
     this.entries.clear();
     this.views.clear();
@@ -259,7 +348,7 @@ export class CodexRuntime {
       throw new Error(
         "Codex timers are not supported yet; use mentions or event watches.",
       );
-    if (trigger.event.pubkey !== agent.owner) return;
+    if (!(await fromOwner(trigger.event, agent.owner))) return;
     const snapshot = this.relay(agent.pubkey)?.snapshot();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
@@ -272,12 +361,20 @@ export class CodexRuntime {
     const toolRoot =
       channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
+    let answered!: () => void;
+    // Codex makes one more model call after a final send before its turn
+    // ends; the agent is done working on this request once it has replied.
+    const replied = new Promise<void>((resolve) => {
+      answered = resolve;
+    });
     const request: Request = {
       scope: snapshot.scope ?? "",
       event: trigger.event,
       agent,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
+      ...(delivery.model ? { model: delivery.model } : {}),
+      ...(delivery.effort ? { effort: delivery.effort } : {}),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -285,6 +382,8 @@ export class CodexRuntime {
       },
       interest:
         trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
+      team: delivery.team ?? "",
+      answered,
     };
     if (!validWorkspace(settings.workspace)) {
       await this.publish(
@@ -303,7 +402,7 @@ export class CodexRuntime {
     }
     if (lane.active) {
       const active = lane.active;
-      // Startup and history reads stay ordered without holding Agents2 delivery.
+      // Startup and history reads stay ordered without holding Agents delivery.
       const accepted = active.steering.then(async () => {
         try {
           await active.ready;
@@ -326,6 +425,7 @@ export class CodexRuntime {
             ),
           });
           active.reply = request;
+          active.requests.push(request);
           active.version++;
         } catch (error) {
           if (entry.abort.signal.aborted) return;
@@ -343,9 +443,16 @@ export class CodexRuntime {
       active.steering = accepted.catch((error) =>
         console.error("Codex steering failed", error),
       );
+      // The steered turn, or one started in its place, answers this mention.
+      const steered = lane;
+      delivery.workingUntil(
+        Promise.race([replied, accepted.then(() => steered.tail)]),
+      );
       return;
     }
-    this.start(request, text, key, lane, entry);
+    delivery.workingUntil(
+      Promise.race([replied, this.start(request, text, key, lane, entry)]),
+    );
   }
   private start(
     request: Request,
@@ -363,12 +470,13 @@ export class CodexRuntime {
       });
     lane.tail = job;
     this.status(request.agent.pubkey, key, "Starting");
-    // Agents2 can deliver follow-ups and other conversations immediately.
+    // Agents can deliver follow-ups and other conversations immediately.
     void job
       .catch((error) => console.error("Codex turn failed", error))
       .finally(() => {
         if (current.tail === job && !current.active) entry.lanes.delete(key);
       });
+    return job;
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -379,16 +487,16 @@ export class CodexRuntime {
       snapshot.session.read(filters, { signal }),
     );
   }
+  // Tags the owner even when a sibling asked: tagging the sibling would wake
+  // it, and two agents failing alike would wake each other without end.
   private publish(request: Request, content: string) {
-    const root = rootOf(request.event);
     return request.agent.publish({
       kind: 9,
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ...(root === request.event.id ? [] : [["e", root, "", "root"]]),
-        ["e", request.event.id, "", "reply"],
-        ["p", request.event.pubkey],
+        ["e", rootOf(request.event), "", "reply"],
+        ["p", request.agent.owner],
       ],
     });
   }
@@ -421,6 +529,7 @@ export class CodexRuntime {
     const args = call.arguments as Record<string, unknown>;
     const version = active.version;
     const request = active.reply;
+    const answering = [...active.requests];
     const client = appClient(request.agent, {
       spawn: this.spawn,
       cwd: active.workspace,
@@ -453,15 +562,12 @@ export class CodexRuntime {
         ...(request.toolRoot ? { root: request.toolRoot } : {}),
       },
       call.tool,
-      call.tool === "send" &&
-        args.reply === undefined &&
-        args.channel === undefined
-        ? { ...args, reply: rootOf(request.event) }
-        : args,
+      args,
     );
     const final = call.tool === "send" && args.final === true;
     if (final) {
       active.sentVersion = Math.max(active.sentVersion ?? -1, version);
+      for (const taken of answering) taken.answered();
     }
     return { success: true, contentItems: [{ type: "inputText", text }] };
   }
@@ -531,6 +637,7 @@ export class CodexRuntime {
       workspace: request.settings.workspace,
       signal,
       version: 0,
+      requests: [request],
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
@@ -590,21 +697,8 @@ export class CodexRuntime {
       signal.throwIfAborted();
       // The process host expands ~/.buzz and creates it; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
-      let workspace = settings.workspace;
-      if (!absoluteWorkspace(workspace)) {
-        let directory = "";
-        const process = await this.spawn("workspace", {
-          cwd: workspace,
-          onStdout: (data) => {
-            directory += data;
-          },
-        });
-        const code = await process.exited;
-        workspace = directory.trim();
-        if (code !== 0 || !absoluteWorkspace(workspace))
-          throw new Error("Could not resolve the default Codex workspace.");
-        signal.throwIfAborted();
-      }
+      const workspace = await this.workspace(settings.workspace);
+      signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
       const normalized = await rpc.request<{
@@ -614,16 +708,26 @@ export class CodexRuntime {
         };
       }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
-      const model =
+      const own =
         settings.model ||
         normalized.config.model ||
         models.find((row) => row.isDefault)?.model;
-      const selected = models.find((row) => row.model === model);
+      // Model and effort are per turn, so a pick changes nothing after it.
+      const picked = models.find((row) => row.model === request.model);
+      const selected = picked ?? models.find((row) => row.model === own);
       if (!selected)
         throw new Error(
           "The selected Codex model is unavailable. Choose an available model in Settings.",
         );
-      const effort = settings.effort || selected.defaultReasoningEffort;
+      const model = selected.model;
+      const supported = selected.supportedReasoningEfforts.map(
+        (level) => level.reasoningEffort,
+      );
+      // A picked model may not support the configured effort.
+      const effort =
+        [request.effort, settings.effort].find(
+          (level) => level && supported.includes(level),
+        ) ?? selected.defaultReasoningEffort;
       const mcp = Object.fromEntries(
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [
@@ -698,7 +802,7 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings),
+            value: developerInstructions(agent, settings, request.team),
           },
         },
       });

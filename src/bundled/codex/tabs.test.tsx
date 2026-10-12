@@ -10,7 +10,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { AgentViewProps } from "../../features/agents2/service";
+import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { defaults, type Config } from "./config";
 import { createTabs } from "./tabs";

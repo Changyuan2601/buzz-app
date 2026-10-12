@@ -27,7 +27,7 @@ export type Tool = ReturnType<typeof tool>;
 export const TOOLS: readonly Tool[] = [
   tool(
     "send",
-    "Post a message. Without channel, replies in the current thread.",
+    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
       text: str,
       path: str,
@@ -35,11 +35,18 @@ export const TOOLS: readonly Tool[] = [
       reply: str,
       files: strs,
       mentions: strs,
+      audience: {
+        type: "string",
+        enum: ["everyone", "agents"],
+        description:
+          "agents: only other agents need this (delegating, asking or answering an agent)",
+      },
       final: {
         type: "boolean",
         description: "Your last message this turn; ends the turn.",
       },
     },
+    ["audience"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
@@ -104,6 +111,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         : undefined) ??
       context.channel;
     if (!channel) throw new Error("channel is required here.");
+    if (args.audience !== "everyone" && args.audience !== "agents")
+      throw new Error("audience must be everyone or agents.");
     const files = await tools.attach(list(args.files));
     const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
     const thread = reply ? await tools.threadTags(reply) : [];
@@ -120,6 +129,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...thread,
         ...mentions.map((pubkey) => ["p", pubkey]),
         ...files.tags,
+        ...(args.audience === "agents" ? [["audience", "agents"]] : []),
       ],
     });
     return `sent ${event.id}`;
@@ -412,17 +422,12 @@ class Tools {
     return event;
   }
 
-  /** The e-tags of a reply to `parent`: one `reply` tag for a reply to a
-   * thread's root, `root` and `reply` for one nested deeper. */
+  /** The e-tag of a reply to `parent`. Agents never nest: a reply to any
+   * message in a thread is a reply to the thread's root. */
   async threadTags(parent: string) {
     const root =
       parent === this.context.root ? parent : rootOf(await this.event(parent));
-    return root === parent
-      ? [["e", root, "", "reply"]]
-      : [
-          ["e", root, "", "root"],
-          ["e", parent, "", "reply"],
-        ];
+    return [["e", root, "", "reply"]];
   }
 
   members(channel: string) {

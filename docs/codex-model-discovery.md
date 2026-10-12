@@ -1,5 +1,10 @@
 # Codex model and effort discovery
 
+> **Status: superseded by Agents.** This describes the v1 native Codex binding
+> (Settings rows, Create/Edit form, native model discovery and harness install),
+> which was removed with the v1 Agents system. Codex now reaches the app as an
+> The agent type registered by the bundled Codex plugin.
+
 Create and Edit use headless model and effort discovery for the native Codex
 binding described in [Codex binding readiness](codex-binding-readiness.md).
 Discovery itself does not persist a selection, create an identity, send a prompt,

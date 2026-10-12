@@ -1,10 +1,10 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
-import { defaults, config } from "./config";
+import { config, defaults, validWorkspace } from "./config";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup } from "./setup";
 import { createTabs } from "./tabs";
-export const inject = ["react", "agents2", "host"];
+export const inject = ["react", "agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `codex`, and file uploads run `base64`,
   // which stock Windows lacks; no unusable type elsewhere.
@@ -15,7 +15,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const runtime = new CodexRuntime(start, ctx.agents2.relay);
+  const runtime = new CodexRuntime(start, ctx.agents.relay);
   // Agents' shared server reads credentials only at startup, so it is renewed
   // after sign-in even if the tab that started it has closed.
   const setup = new CodexSetup(start, () => void runtime.reauthorize());
@@ -23,11 +23,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // Agents that stop running stop their turns, and the last one stops the
   // server; switching communities or a reconnect does not.
   const sync = () => {
-    const snapshot = ctx.agents2.snapshot();
+    const snapshot = ctx.agents.snapshot();
     if (snapshot.status === "loading") return;
     runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
-  const offAgents = ctx.agents2.subscribe(sync);
+  const offAgents = ctx.agents.subscribe(sync);
   sync();
   ctx.effect(() => () => {
     offAgents();
@@ -40,17 +40,27 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime,
     setup,
   );
-  ctx.agents2.register({
+  ctx.agents.register({
     id: "codex",
     title: "Codex",
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
+    adopt: (carry, saved) => ({
+      ...saved,
+      instructions: carry.instructions ?? saved.instructions,
+      // Codex runs only in an absolute workspace or the default.
+      workspace:
+        carry.workspace && validWorkspace(carry.workspace)
+          ? carry.workspace
+          : saved.workspace,
+    }),
     summary: (agent) => config(agent.config).model || "Codex",
     tabs: [
       { id: "codex", title: "Codex", component: CodexTab },
       { id: "settings", title: "Settings", component: SettingsTab },
     ],
+    models: (agent) => runtime.preview(agent),
     run: (delivery) => runtime.run(delivery),
     timeoutMs: 2 * 60_000,
   });
