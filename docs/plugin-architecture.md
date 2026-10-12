@@ -121,8 +121,10 @@ ctx.pages.register({
 ```
 
 Header entries move into the labelled More pages popover when they cannot fit,
-including at narrow widths. They use native-button navigation and `aria-current`,
-not tab/tabpanel semantics or companion-panel toggles. Every active page remains
+including at narrow widths. Toolbar and overflow entries use native-button
+navigation and `aria-current`, not companion-panel toggles. The wide topbar uses
+shared chrome tabs linked to retained page panels; manual selection leaves focus
+on the tab and suppresses destination autofocus. Every active page remains
 searchable, regardless of its placement.
 
 A primary page may also supply `badge`, a component the shell renders at the end
@@ -753,8 +755,16 @@ An explicit `scope: null` restores Personal space; omitted page scope leaves the
 current community alone. Unknown providers/routes fail with the target retained
 for retry, rather than silently opening another page.
 
-Pages receive optional `navigation` in `PageProps`. Ordinary pages acknowledge a
-successful mount inside the render boundary. Pages declaring `handlesNavigation`
+Pages receive optional `navigation` in `PageProps`. Its optional `focus` is
+`"content"` by default or `"preserve"` when the opening control keeps focus; page
+autofocus must honor it. This is per-opening presentation intent, never route data
+or a saved history value. Session binding and default resolution carry it forward;
+retry preserves it, while explicit openings and history traversal default to
+content focus. The shell topbar passes `open(target, { focus: "preserve" })`
+through its page-selection handoff.
+
+Ordinary pages acknowledge a successful mount inside the render boundary.
+Pages declaring `handlesNavigation`
 acknowledge their domain presentation with `navigation.complete(...)`; Channels
 waits for its requested channel window or exact-message reveal/focus. `navigation.resolve(target)` normalizes a
 pending default destination within the same visit, caller and original deadline;

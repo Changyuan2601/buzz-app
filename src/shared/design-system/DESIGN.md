@@ -79,7 +79,8 @@ Master/detail layouts preserve list selection, scroll, and drafts while inspecti
 an item. Follow the existing host's narrow overlay/navigation behavior rather than
 squeezing two unusable columns into a small viewport. Selection, hover, and focus
 remain distinct. Shared tabs connect related views of one object; route destinations
-retain navigation semantics. When replacing a focused page heading with shared
+retain navigation semantics except for the wide shell topbar described in
+[Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
@@ -1011,7 +1012,8 @@ not add feature-specific top offsets. F6 enters notifications, Tab reaches actio
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
-Route navigation uses NavigationItem with aria-current instead. Tabs can also
+Route navigation uses NavigationItem with aria-current instead, except for the
+wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
 semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
@@ -1396,5 +1398,13 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The wide shell topbar is the deliberate exception: Me and Messages use
+`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+move focus without selecting; Enter, Space or pointer selection changes the page
+while focus stays on its tab. The host passes per-opening focus intent so page
+autofocus does not override that handoff. Explicit content openings, including
+New conversation, retain their destination focus. This is not a general route-tab
+recipe: toolbar destinations and More pages overflow retain button semantics.
+
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.

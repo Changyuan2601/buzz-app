@@ -186,7 +186,7 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, relay, store);
+  const runtime = new CodexRuntime(spawn, () => relay, store);
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
@@ -226,7 +226,7 @@ function fixture(
     upload,
     remember,
   };
-  runtime.sync([{ pubkey } as Agent], scope);
+  runtime.sync([{ pubkey } as Agent]);
   let id = 0;
   const delivery = (content: string, threadRoot = root): Delivery => {
     const result: Delivery = {
@@ -258,7 +258,8 @@ function fixture(
       events.push(result.trigger.event as EventData);
     return result;
   };
-  const selection = { selected: "community", viewer: owner };
+  /** Agents2's running agents, whichever community is selected. */
+  const running = [{ ...agent, type: "buzz.codex/codex" }];
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
     runtime.run(delivery);
@@ -269,25 +270,9 @@ function fixture(
     apply({
       react: React,
       host: { spawn },
-      communityReader: {
-        snapshot: () => selection,
-        subscribe: (listener: () => void) => {
-          listeners.push(listener);
-          return () => {};
-        },
-      },
-      relay: {
-        ...relay,
-        subscribe: (listener: () => void) => {
-          listeners.push(listener);
-          return () => {};
-        },
-      },
       agents2: {
-        snapshot: () => ({
-          status: snapshot.status === "ready" ? "ready" : "loading",
-          agents: [{ ...agent, type: "buzz.codex/codex" }],
-        }),
+        snapshot: () => ({ status: "ready", agents: [], running }),
+        relay: () => relay,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -370,7 +355,7 @@ function fixture(
     memoryView,
     remember,
     upload,
-    selection,
+    running,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
       listeners.forEach((listener) => {
@@ -433,11 +418,137 @@ it("hands over promptly and runs conversations independently on one server", asy
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     kind: 9,
     content: "FIRST",
-    tags: expect.arrayContaining([
-      ["e", root, "", "root"],
-      ["e", "1".padStart(64, "0"), "", "reply"],
-    ]),
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
+});
+/** A second agent on the same runtime, with its own identity and publisher. */
+function second(f: ReturnType<typeof fixture>) {
+  const other = "9".repeat(64);
+  const base = f.delivery("unused").agent;
+  const agent = {
+    ...base,
+    pubkey: other,
+    name: "Other",
+    publish: vi.fn(async (event: unknown) => ({
+      ...(event as object),
+      id: "8".repeat(64),
+    })),
+  } as unknown as Delivery["agent"];
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: other } as Agent]);
+  return {
+    agent,
+    delivery: (content: string) => ({
+      ...f.delivery(content, "7".repeat(64)),
+      agent,
+    }),
+  };
+}
+const contents = (publish: { mock: { calls: unknown[][] } }) =>
+  publish.mock.calls.map(([event]) => (event as { content: string }).content);
+const servers = (f: ReturnType<typeof fixture>) =>
+  f.spawn.mock.calls.filter(([id]) => id === "codex-app-server");
+it("serves every agent from one server and routes each tool call to its own agent", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run(b.delivery("@Other second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(servers(f)).toHaveLength(1);
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": { value: expect.stringContaining("Other") },
+    },
+  });
+  await f.complete(1, "FROM OTHER");
+  await f.complete(0, "FROM CODEX");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["FROM CODEX"]);
+  expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
+  expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
+});
+it("stops a removed agent's turn without ending the server the others share", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("other work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const removed = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  f.runtime.sync([{ pubkey } as Agent]);
+  await vi.waitFor(() =>
+    expect(
+      f.sent.some(
+        (wire) =>
+          wire.method === "thread/unsubscribe" &&
+          (wire.params as { threadId: string }).threadId === removed,
+      ),
+    ).toBe(true),
+  );
+  for (const method of ["turn/interrupt", "thread/backgroundTerminals/clean"])
+    expect(f.sent.find((wire) => wire.method === method)?.params).toMatchObject(
+      { threadId: removed },
+    );
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.runtime.sessions("9".repeat(64))).toHaveLength(0);
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["STILL HERE"]);
+  expect(b.agent.publish).not.toHaveBeenCalled();
+  f.runtime.sync([]);
+  await f.exits.promise;
+  expect(f.process.end).toHaveBeenCalled();
+});
+it("ends a stopped agent's leftover shells and lets it start again only after letting go", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(b.delivery("busy again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  const index = (method: string) =>
+    f.sent
+      .map(
+        (wire) =>
+          wire.method === method &&
+          (wire.params as { threadId: string }).threadId === thread,
+      )
+      .lastIndexOf(true);
+  const before = index("thread/unsubscribe");
+  f.runtime.sync([{ pubkey } as Agent]);
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: "9".repeat(64) } as Agent]);
+  await f.runtime.run(b.delivery("back"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
+  expect(index("thread/unsubscribe")).toBeGreaterThan(before);
+  expect(index("thread/backgroundTerminals/clean")).toBeGreaterThan(
+    index("thread/unsubscribe"),
+  );
+  expect(index("thread/resume")).toBeGreaterThan(
+    index("thread/backgroundTerminals/clean"),
+  );
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(3, "BACK");
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(b.agent.publish as never)).toEqual([
+    "SERVER RUNNING",
+    "BACK",
+  ]);
+});
+it("reopens the shared server after it exits", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("again"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
 });
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
@@ -463,7 +574,7 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   expect(JSON.stringify(steering[0]?.params)).toContain("FIRST_STEER");
   expect(JSON.stringify(steering[1]?.params)).toContain("SECOND_STEER");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    tags: expect.arrayContaining([["e", "3".padStart(64, "0"), "", "reply"]]),
+    tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
 it("cuts delayed history off before the request, including same-second messages and edits", async () => {
@@ -658,11 +769,11 @@ it("publishes unexpected exit and empty-completion failures instead of silently 
     content: expect.stringContaining("Codex exited"),
   });
 });
-it("ends the server on community change and suppresses a late final answer", async () => {
+it("ends the server when its agent stops running and suppresses a late final answer", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  f.runtime.sync([], "other-community");
+  f.runtime.sync([]);
   f.complete();
   await f.exits.promise;
   expect(f.process.end).toHaveBeenCalled();
@@ -883,7 +994,7 @@ it("delivers a plain follow-up after startup without waiting for the running tur
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });
 
-it("keeps plugin work alive through relay reconnect and disposes on real community change", async () => {
+it("keeps plugin work alive through relay reconnect and ends it when its agent stops running", async () => {
   const f = fixture([], undefined, true);
   try {
     await f.runPlugin(f.delivery("work"));
@@ -899,9 +1010,7 @@ it("keeps plugin work alive through relay reconnect and disposes on real communi
     expect(f.process.end).not.toHaveBeenCalled();
     await f.runPlugin(f.delivery("more work"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    f.selection.selected = "other-community";
-    f.snapshot.status = "connecting";
-    f.snapshot.scope = undefined;
+    f.running.length = 0;
     f.notify();
     f.complete();
     await f.exits.promise;
@@ -1074,11 +1183,11 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish.mock.calls.map(([event]) => event)).toMatchObject([
     {
       content: "OTHER",
-      tags: expect.arrayContaining([["e", "e".repeat(64), "", "root"]]),
+      tags: expect.arrayContaining([["e", "e".repeat(64), "", "reply"]]),
     },
     {
       content: "FIRST",
-      tags: expect.arrayContaining([["e", root, "", "root"]]),
+      tags: expect.arrayContaining([["e", root, "", "reply"]]),
     },
   ]);
   const count = f.publish.mock.calls.length;
@@ -1134,7 +1243,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("FILE CONTENT"),
-    tags: expect.arrayContaining([["e", "2".padStart(64, "0"), "", "reply"]]),
+    tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
 

@@ -9,6 +9,7 @@ import { appClient } from "../../buzz-mcp/app-client";
 import { TOOLS, callTool } from "../../buzz-mcp/tools";
 import {
   config,
+  defaults,
   absoluteWorkspace,
   validWorkspace,
   type Config,
@@ -30,6 +31,8 @@ import {
 } from "./rpc";
 
 type Request = {
+  /** The agent's community and owner, as `origin:viewer`. */
+  scope: string;
   event: EventData;
   agent: AgentHandle;
   settings: Config;
@@ -40,6 +43,8 @@ type Request = {
 };
 type Saved = { threadId: string; workspace: string };
 type Active = {
+  /** The server this turn runs on; steering must reach the same process. */
+  rpc: AppServer;
   threadId?: string;
   turnId?: string;
   ready: Promise<void>;
@@ -58,10 +63,16 @@ type Lane = {
 type Entry = {
   storageKey: string;
   abort: AbortController;
-  rpc: AppServer;
-  opening: Promise<AppServer>;
+  /** Settles once the same agent's previous run has let go of its threads. */
+  after: Promise<void>;
   lanes: Map<string, Lane>;
   saved: Record<string, Saved>;
+};
+type Server = {
+  rpc: AppServer;
+  opening: Promise<AppServer>;
+  /** Threads this process has loaded, and the agent each belongs to. */
+  threads: Map<string, string>;
 };
 export type SessionView = { key: string; status: string; detail: string };
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
@@ -74,15 +85,19 @@ function textOf(event: EventData, name: string) {
 }
 
 /** Agents2 owns admission/identity. This plugin owns work after hand-over, and
- * uses one app-server per agent with independent Codex threads per conversation. */
+ * uses one app-server for every agent. Each conversation is its own Codex
+ * thread carrying its agent's workspace, instructions and tools, and tool
+ * calls find their agent by thread and turn. */
 export class CodexRuntime {
   private entries = new Map<string, Entry>();
+  private server: Server | undefined;
+  private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
-  private scope = "";
   constructor(
     private readonly spawn: Spawn,
-    private readonly relay: RelayData,
+    /** The owner's connection to each agent's own community. */
+    private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
   ) {}
   subscribe = (listener: () => void) => {
@@ -94,6 +109,8 @@ export class CodexRuntime {
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
   private status(pubkey: string, key: string, status: string, detail = "") {
+    // A stopped agent's draining turns don't bring its sessions back.
+    if (!this.entries.has(pubkey)) return;
     const others = this.sessions(pubkey).filter((view) => view.key !== key);
     this.views.set(pubkey, [
       ...others.slice(-31),
@@ -101,28 +118,73 @@ export class CodexRuntime {
     ]);
     for (const listener of this.listeners) listener();
   }
-  sync(agents: readonly Agent[], scope: string) {
-    if (scope !== this.scope) {
-      this.dispose();
-      this.scope = scope;
-    }
+  sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.entries)
       if (!present.has(pubkey)) {
         entry.abort.abort();
-        void entry.rpc.close();
         this.entries.delete(pubkey);
         this.views.delete(pubkey);
+        if (this.server) this.stop(this.server, pubkey, entry);
       }
+    if (!this.entries.size) this.close();
     for (const listener of this.listeners) listener();
   }
+  /** Other agents share the server, so a stopped agent's turns interrupt
+   * themselves. Then the shells its finished turns left are ended, which its
+   * own process used to do by exiting. Until then, the same agent starting
+   * again waits rather than resuming a thread that is still letting go. */
+  private stop(server: Server, pubkey: string, entry: Entry) {
+    const stopped = (async () => {
+      await Promise.all(
+        [...entry.lanes.values()].map((lane) =>
+          lane.tail.catch(() => undefined),
+        ),
+      );
+      for (const [threadId, owner] of server.threads)
+        if (owner === pubkey) {
+          server.threads.delete(threadId);
+          await server.rpc
+            .request("thread/backgroundTerminals/clean", { threadId })
+            .catch(() => undefined);
+        }
+    })();
+    this.stopping.set(pubkey, stopped);
+    void stopped.finally(() => {
+      if (this.stopping.get(pubkey) === stopped) this.stopping.delete(pubkey);
+    });
+  }
   dispose() {
-    for (const entry of this.entries.values()) {
-      entry.abort.abort();
-      void entry.rpc.close();
-    }
+    for (const entry of this.entries.values()) entry.abort.abort();
     this.entries.clear();
     this.views.clear();
+    this.stopping.clear();
+    this.close();
+  }
+  private close() {
+    void this.server?.rpc.close();
+    this.server = undefined;
+  }
+  private open() {
+    if (this.server) return this.server;
+    const rpc = new AppServer((call) => this.tool(call));
+    // Threads set their own cwd; the process just needs a directory that exists.
+    const server: Server = {
+      rpc,
+      opening: rpc.open(this.spawn, defaults.workspace),
+      threads: new Map(),
+    };
+    // An exit fails current work and permits the next ordinary mention to reopen.
+    rpc.onMessage((wire) => {
+      if (wire.method === "connection/closed" && this.server === server)
+        this.server = undefined;
+    });
+    void server.opening.catch(() => {
+      if (this.server === server) this.server = undefined;
+      void rpc.close();
+    });
+    this.server = server;
+    return server;
   }
   private entry(request: Request) {
     const pubkey = request.agent.pubkey;
@@ -131,7 +193,7 @@ export class CodexRuntime {
     let saved: Record<string, Saved> = {};
     try {
       const stored: unknown = JSON.parse(
-        this.storage.getItem(this.storageKey(pubkey)) ?? "{}",
+        this.storage.getItem(this.storageKey(request)) ?? "{}",
       );
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         saved = Object.fromEntries(
@@ -145,34 +207,19 @@ export class CodexRuntime {
     } catch {
       /* Start fresh after malformed local data. */
     }
-    const rpc = new AppServer((call) => this.tool(entry, call));
     const entry: Entry = {
-      storageKey: this.storageKey(pubkey),
+      storageKey: this.storageKey(request),
       abort: new AbortController(),
-      rpc,
+      after: this.stopping.get(pubkey) ?? Promise.resolve(),
       saved,
       lanes: new Map(),
-      opening: rpc.open(this.spawn, request.settings.workspace),
     };
-    // An exit fails current work and permits the next ordinary mention to reopen.
-    rpc.onMessage((wire) => {
-      if (
-        wire.method === "connection/closed" &&
-        this.entries.get(pubkey) === entry
-      ) {
-        this.entries.delete(pubkey);
-      }
-    });
-    void entry.opening.catch(() => {
-      if (this.entries.get(pubkey) === entry) this.entries.delete(pubkey);
-      void rpc.close();
-    });
     this.entries.set(pubkey, entry);
     return entry;
   }
-  private storageKey(pubkey: string) {
+  private storageKey(request: Request) {
     // Resume restores the persisted tool schema; pre-tools bindings start fresh.
-    return `buzz.codex.sessions.v3:${this.scope}:${pubkey}`;
+    return `buzz.codex.sessions.v3:${request.scope}:${request.agent.pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     entry.saved[key] = saved;
@@ -197,8 +244,8 @@ export class CodexRuntime {
         "Codex timers are not supported yet; use mentions or event watches.",
       );
     if (trigger.event.pubkey !== agent.owner) return;
-    const snapshot = this.relay.snapshot();
-    if (snapshot.status !== "ready")
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
@@ -210,6 +257,7 @@ export class CodexRuntime {
       channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     const request: Request = {
+      scope: snapshot.scope ?? "",
       event: trigger.event,
       agent,
       settings,
@@ -234,7 +282,7 @@ export class CodexRuntime {
     const entry = this.entry(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
-      lane = { tail: Promise.resolve() };
+      lane = { tail: entry.after };
       entry.lanes.set(key, lane);
     }
     if (lane.active) {
@@ -254,7 +302,7 @@ export class CodexRuntime {
             this.start(request, text, key, lane, entry);
             return;
           }
-          await entry.rpc.request("turn/steer", {
+          await active.rpc.request("turn/steer", {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
@@ -308,8 +356,8 @@ export class CodexRuntime {
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
-    const snapshot = this.relay.snapshot();
-    if (snapshot.status !== "ready" || snapshot.scope !== this.scope)
+    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
       throw new Error("The community changed");
     return conversationHistory(request.event, request.conversation, (filters) =>
       snapshot.session.read(filters, { signal }),
@@ -328,8 +376,9 @@ export class CodexRuntime {
       ],
     });
   }
-  private async tool(entry: Entry, call: ToolCall): Promise<ToolReply> {
-    const active = [...entry.lanes.values()]
+  private async tool(call: ToolCall): Promise<ToolReply> {
+    const active = [...this.entries.values()]
+      .flatMap((entry) => [...entry.lanes.values()])
       .map((lane) => lane.active)
       .find(
         (active) =>
@@ -362,8 +411,8 @@ export class CodexRuntime {
       check,
       signal: active.signal,
       memories: async () => {
-        const snapshot = this.relay.snapshot();
-        if (snapshot.status !== "ready" || snapshot.scope !== this.scope)
+        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
+        if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
           throw new Error("Buzz is not connected to this community");
         const view = snapshot.session.agentMemories.open(request.agent.pubkey);
         const abort = () => view.dispose();
@@ -391,7 +440,7 @@ export class CodexRuntime {
       call.tool === "send" &&
         args.reply === undefined &&
         args.channel === undefined
-        ? { ...args, reply: request.event.id }
+        ? { ...args, reply: rootOf(request.event) }
         : args,
     );
     const final = call.tool === "send" && args.final === true;
@@ -448,12 +497,14 @@ export class CodexRuntime {
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
+    const server = this.open();
     const signal = AbortSignal.any([
       entry.abort.signal,
       turnAbort.signal,
       AbortSignal.timeout(29 * 60_000),
     ]);
     const active: Active = {
+      rpc: server.rpc,
       ready: new Promise((resolve, reject) => {
         ready = resolve;
         notReady = reject;
@@ -477,7 +528,7 @@ export class CodexRuntime {
     void completed.catch(() => undefined);
     const abort = () => fail(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
-    const off = entry.rpc.onMessage((wire) => {
+    const off = server.rpc.onMessage((wire) => {
       const p = wire.params as
         | {
             threadId?: string;
@@ -518,7 +569,7 @@ export class CodexRuntime {
       }
     });
     try {
-      const rpc = await entry.opening;
+      const rpc = await server.opening;
       signal.throwIfAborted();
       // The process host expands ~/.buzz and creates it; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
@@ -611,6 +662,7 @@ export class CodexRuntime {
         });
       }
       active.threadId = started.thread.id;
+      server.threads.set(active.threadId, agent.pubkey);
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
@@ -660,23 +712,21 @@ export class CodexRuntime {
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
+      const ended = active.finished;
       active.finished = true;
       notReady(error);
       await active.steering;
-      if (
-        signal.aborted &&
-        active.threadId &&
-        active.turnId &&
-        !entry.abort.signal.aborted
-      ) {
+      // Other agents share the server, so even a stopped agent interrupts
+      // its turn rather than ending the process.
+      if (signal.aborted && !ended && active.threadId && active.turnId) {
         try {
-          await entry.rpc.request("turn/interrupt", {
+          await server.rpc.request("turn/interrupt", {
             threadId: active.threadId,
             turnId: active.turnId,
           });
-          await this.terminals(entry.rpc, active.threadId);
+          await this.terminals(server.rpc, active.threadId);
         } catch {
-          await entry.rpc.close();
+          await server.rpc.close();
         }
       }
       if (!entry.abort.signal.aborted) {
@@ -692,10 +742,10 @@ export class CodexRuntime {
       off();
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.
-      if (active.threadId && !entry.abort.signal.aborted)
-        await entry.rpc
+      if (active.threadId)
+        await server.rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
-          .catch(() => entry.rpc.close());
+          .catch(() => server.rpc.close());
       if (lane.active === active) delete lane.active;
     }
   }

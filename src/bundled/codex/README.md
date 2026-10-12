@@ -2,8 +2,10 @@
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
 Agents2 owns the identity, admission, configuration, and signed Buzz actions. This plugin
-owns Codex work after delivery handover. It starts one `codex app-server` per agent
-and uses independent Codex threads for Buzz conversations.
+owns Codex work after delivery handover. It starts one `codex app-server` for all
+agents and uses an independent Codex thread for each agent's Buzz conversation.
+Each thread carries its agent's workspace, instructions and tools, so one crash
+fails every agent's current turn; the next mention reopens the server.
 
 ## Try it
 
@@ -53,7 +55,10 @@ current turn finishes. Expect the marker.
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
-communities, removing an agent, or disabling the plugin ends its server.
+communities does not end an agent's work. Removing the agent, leaving or
+disconnecting from its community interrupts its turns and ends shells they left
+running; the server ends when no
+Codex agent that has worked is still running, or when the plugin is disabled.
 If a saved Codex thread no longer exists, the next mention starts a fresh one.
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
@@ -82,8 +87,9 @@ workspace and a simulated relay. It sends no Buzz messages. It checks native she
 and file tools, the native coding prompt, conversation context, default steering,
 idle follow-ups, process shutdown, saved-thread reuse, changed and cleared
 instructions, missing-thread recovery, and disabled inherited MCP tools. It also
-checks real dynamic Buzz callbacks, memory, workspace file uploads, and normal
-final sends without aborted-turn markers. Set
+checks real dynamic Buzz callbacks, memory, workspace file uploads, normal
+final sends without aborted-turn markers, and two agents sharing one server with
+their own workspace, instructions and replies. Set
 `BUZZ_CODEX_TEST_MODEL` to another available model if needed. It prints only
 sanitized outcomes; it does not save raw protocol or session logs.
 

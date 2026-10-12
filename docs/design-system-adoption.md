@@ -14,8 +14,8 @@ Use this map to find the shared owner before changing a product surface.
 | Actions | Button and IconButton | Retry, refresh, delete, recovery, composer send, and picker triggers. Standard sizes are 32/40/52px minimums. Labels stay on one line; surrounding layouts reflow whole controls or scroll. |
 | Forms and choices | Field, Input, Textarea, RadioGroup, Checkbox | Profile, community setup, appearance, plugin import, and workflow editing. |
 | Search | SearchField | Channels, pages, members, and GIFs retain their query, refs, and keyboard handlers. |
-| Navigation | NavigationItem | Settings, channel rows, shell destinations, Home, and community choices. Route destinations use button semantics, not tab semantics. |
-| Tabs | Tabs | Emoji/GIF connects tabs to panels with Base UI keyboard activation. Workflow mode keeps its feature-owned editor view. |
+| Navigation | NavigationItem | Settings, channel rows, shell destinations, Home, and community choices. Route destinations use button semantics; the wide shell topbar is the documented chrome-tab exception. |
+| Tabs | Tabs | The wide shell Me/Messages topbar links retained page panels and preserves tab focus on selection. Emoji/GIF connects tabs to panels with Base UI keyboard activation. Workflow mode keeps its feature-owned editor view. |
 | Modals | Dialog and AlertDialog | Page search, community setup, and workflow confirmations. Pending work prevents dismissal; focus restoration follows the shared contract. |
 | Panels and headers | Panel and PanelHeader | Settings, channels, and companion cards share appearance. Features own grids, scrolling, docks, and subscriptions. |
 | Feedback | Toast (Sonner) | Agent-start, sidebar preferences, and Settings recovery use the shared bottom-right Sonner stack with source-owned recovery. Completed-action feedback can outlive its row. Channel live-update recovery stays inline above the composer; form errors, blocked pages, and lasting paused-state context stay inline. |

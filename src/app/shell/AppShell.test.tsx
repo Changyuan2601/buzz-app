@@ -24,6 +24,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -243,11 +244,13 @@ it("partitions primary pages without duplicate links and preserves exact selecti
   ] as const) {
     expect(
       within(screen.getByRole("navigation", { name: landmark })).getByRole(
-        "button",
+        name === "Topbar" ? "tab" : "button",
         { name },
       ),
     ).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name })).toHaveLength(1);
+    expect(
+      screen.getAllByRole(name === "Topbar" ? "tab" : "button", { name }),
+    ).toHaveLength(1);
   }
   expect(
     screen.queryByRole("button", { name: "Search only" }),
@@ -357,6 +360,88 @@ it("falls back from a failed toolbar image and isolates toolbar badge errors", (
     expect(button.querySelector("img")).toBeNull();
     expect(button.querySelector("svg")).toBeInTheDocument();
     expect(button).toBeEnabled();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+it("uses chrome tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
+  const current = createServices();
+  services = current;
+  const onSelect = vi.fn();
+  const pages: RegisteredPage[] = ["Me", "Messages"].map((title) => ({
+    id: title,
+    key: `example/${title}`,
+    pluginId: "example",
+    revision: "one",
+    title,
+    primary: true,
+    placement: "topbar",
+    component: () => null,
+    badge: () => <span>3 unread</span>,
+  }));
+  const shell = (selected: string, entries = pages) => (
+    <ToastProvider>
+      <AppShell
+        pages={entries}
+        selected={selected}
+        navigationAttempt=""
+        onSelect={onSelect}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+      >
+        Page content
+      </AppShell>
+    </ToastProvider>
+  );
+  const { rerender } = render(shell("example/Messages"));
+  const tabs = screen.getByRole("tablist", { name: "Topbar pages" });
+  expect(tabs.parentElement).toHaveAttribute("data-variant", "chrome");
+  const messages = within(tabs).getByRole("tab", {
+    name: /Messages\s*3 unread/,
+  });
+  const me = within(tabs).getByRole("tab", { name: /Me\s*3 unread/ });
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  expect(
+    screen.getByRole("tabpanel", { name: /Messages\s*3 unread/ }),
+  ).toHaveAttribute("id", messages.getAttribute("aria-controls"));
+  messages.focus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(me).toHaveFocus();
+  expect(onSelect).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Enter}");
+  expect(onSelect).toHaveBeenCalledWith("example/Me", { focus: "preserve" });
+  rerender(shell("example/Me"));
+  expect(me).toHaveFocus();
+  expect(me).toHaveAttribute("aria-selected", "true");
+  expect(
+    screen.getByRole("tabpanel", { name: /Me\s*3 unread/ }),
+  ).toHaveAttribute("id", me.getAttribute("aria-controls"));
+  rerender(shell("settings"));
+  expect(within(tabs).getAllByRole("tab", { selected: false })).toHaveLength(2);
+  expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+  rerender(
+    shell(
+      "example/Me",
+      pages.filter((page) => page.id !== "Me"),
+    ),
+  );
+  expect(within(tabs).getAllByRole("tab", { selected: false })).toHaveLength(1);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    rerender(
+      shell(
+        "example/Me",
+        pages.map((page) => ({
+          ...page,
+          badge: () => {
+            throw new Error("bad badge");
+          },
+        })),
+      ),
+    );
+    expect(within(tabs).getByRole("tab", { name: "Me" })).toBeEnabled();
   } finally {
     error.mockRestore();
   }

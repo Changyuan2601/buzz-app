@@ -4,7 +4,7 @@ import { defaults, config } from "./config";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup } from "./setup";
 import { createTabs } from "./tabs";
-export const inject = ["react", "agents2", "host", "relay", "communityReader"];
+export const inject = ["react", "agents2", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `codex`, and file uploads run `base64`,
   // which stock Windows lacks; no unusable type elsewhere.
@@ -15,37 +15,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (async () => {
       throw new Error("Codex agents run only in the desktop app");
     });
-  const runtime = new CodexRuntime(start, ctx.relay);
+  const runtime = new CodexRuntime(start, ctx.agents2.relay);
   const setup = new CodexSetup(start);
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
-  let selection = "";
+  // Agents that stop running stop their turns, and the last one stops the
+  // server; switching communities or a reconnect does not.
   const sync = () => {
-    const community = ctx.communityReader.snapshot();
-    const selected = JSON.stringify([community.selected, community.viewer]);
-    if (selected !== selection) {
-      runtime.dispose();
-      selection = selected;
-    }
     const snapshot = ctx.agents2.snapshot();
-    const relay = ctx.relay.snapshot();
-    if (relay.status === "disconnected") {
-      runtime.sync([], "");
-      return;
-    }
-    if (snapshot.status !== "ready" || relay.status !== "ready") return;
-    runtime.sync(
-      snapshot.agents.filter((agent) => agent.type === typeKey),
-      relay.scope ?? "",
-    );
+    if (snapshot.status === "loading") return;
+    runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
   const offAgents = ctx.agents2.subscribe(sync);
-  const offRelay = ctx.relay.subscribe(sync);
-  const offCommunity = ctx.communityReader.subscribe(sync);
   sync();
   ctx.effect(() => () => {
     offAgents();
-    offRelay();
-    offCommunity();
     runtime.dispose();
     void setup.cancel();
   });

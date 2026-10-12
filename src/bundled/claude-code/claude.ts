@@ -89,7 +89,7 @@ export class ClaudeProcess {
   private constructor(
     private readonly process: HostProcess,
     resume: string | undefined,
-    private readonly tools: ToolServer | undefined,
+    private tools: ToolServer | undefined,
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
@@ -104,6 +104,14 @@ export class ClaudeProcess {
   }
 
   static async start(spawn: Spawn, launch: ClaudeLaunch) {
+    const claude = await ClaudeProcess.spawn(spawn, launch);
+    await claude.initialize(launch);
+    return claude;
+  }
+
+  /** Starts `claude` without its prompt. This is most of what a start costs,
+   * and fixes nothing about the agent it serves but its folder and model. */
+  static async spawn(spawn: Spawn, launch: Omit<ClaudeLaunch, "systemPrompt">) {
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
@@ -150,8 +158,14 @@ export class ClaudeProcess {
     );
     for (const data of earlyErrors) claude.readError(data);
     for (const data of early) claude.read(data);
-    // Loads settings, tools and MCP servers now rather than on the first message.
-    await claude.request({
+    return claude;
+  }
+
+  /** Gives a started process its prompt, and its tools to whoever it now
+   * works for. Loads settings and tools now rather than on the first message. */
+  async initialize(launch: Pick<ClaudeLaunch, "systemPrompt" | "tools">) {
+    if (launch.tools) this.tools = launch.tools;
+    await this.request({
       subtype: "initialize",
       appendSystemPrompt: launch.systemPrompt,
       ...(launch.tools
@@ -165,7 +179,6 @@ export class ClaudeProcess {
           }
         : {}),
     });
-    return claude;
   }
 
   get running() {

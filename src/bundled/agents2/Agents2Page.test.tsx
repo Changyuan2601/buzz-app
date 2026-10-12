@@ -49,7 +49,7 @@ const agent = (name: string, n: number): Agent => ({
 });
 
 function setup(agents: Agent[], { shown = true } = {}) {
-  let snapshot: AgentsSnapshot = { status: "ready", agents };
+  let snapshot: AgentsSnapshot = { status: "ready", agents, running: agents };
   const listeners = new Set<() => void>();
   const type = {
     key: "test/echo",
@@ -73,6 +73,7 @@ function setup(agents: Agent[], { shown = true } = {}) {
       return () => listeners.delete(listener);
     },
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
+    relay: () => undefined,
     register: vi.fn(),
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.

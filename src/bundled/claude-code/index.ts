@@ -11,23 +11,24 @@ export const TYPE_ID = "claude-code";
 /** A turn's run returns once Claude has it, so this bounds only the hand-over. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["agents2", "host", "relay"];
+export const inject = ["agents2", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
-  const { agents2, host, relay } = ctx;
+  const { agents2, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn?.bind(host);
   const setup = new ClaudeSetup(spawn);
-  const runtime = new ClaudeRuntime(host, relay);
+  const runtime = new ClaudeRuntime(host, agents2.relay);
   const sync = () => {
     const snapshot = agents2.snapshot();
-    // Agents leaving view, the app signing out included, stop their processes.
+    // Agents that stop running, the app signing out included, stop their
+    // processes; switching communities does not.
     if (snapshot.status === "loading") return;
-    runtime.sync(snapshot.agents.filter((agent) => agent.type === typeKey));
+    runtime.sync(snapshot.running.filter((agent) => agent.type === typeKey));
   };
-  // Agents come and go with the community; a spare session is warmed for each.
+  // One spare session waits for whichever running agent needs it next.
   if (spawn) {
     const unsubscribe = agents2.subscribe(sync);
     sync();
