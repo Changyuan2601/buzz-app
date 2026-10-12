@@ -967,6 +967,9 @@ function AgentsMessageRow(props: MessageRowProps) {
       {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: folding by click is a pointer shortcut; the line's button folds it from the keyboard. */}
       <div
         className={styles.audienceEntry}
+        // Collapsed, the entry stands in for the message as a scroll anchor.
+        // Not the button: revealing an anchor takes it out of the Tab order.
+        data-message-id={open ? undefined : row.id}
         // Open, a click anywhere in the box folds it, except on its own
         // controls and links or at the end of a text selection.
         onClick={(event) => {
@@ -987,8 +990,6 @@ function AgentsMessageRow(props: MessageRowProps) {
           type="button"
           data-buzz-ui=""
           className={styles.audienceLine}
-          // Collapsed, the line stands in for the message as a scroll anchor.
-          data-message-id={open ? undefined : row.id}
           aria-expanded={open}
           aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
           onClick={() => setOpen(!open)}

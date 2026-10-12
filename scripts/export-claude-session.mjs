@@ -136,7 +136,11 @@ export function buildClaude(records) {
       } else if (
         block?.type === "tool_use" &&
         /(^|__)buzz__send$/.test(block.name) &&
-        typeof block.input?.text === "string"
+        typeof block.input?.text === "string" &&
+        // A failed or unanswered send stays a tool row with its result: it is
+        // what someone looking for a missing reply needs to see.
+        results.has(block.id) &&
+        results.get(block.id).is_error !== true
       ) {
         entries.push(entry.sent(timestamp, block.input.text));
       } else if (block?.type === "tool_use") {

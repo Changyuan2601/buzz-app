@@ -403,7 +403,11 @@ $("timeline").addEventListener("focusin", (event) => {
 });
 $("timeline").addEventListener("focusout", hideTip);
 $("timeline").addEventListener("click", (event) => {
-  const target = targetAt(event);
+  // A keyboard click has no pointer position: use the button it activated.
+  const target =
+    event.detail === 0
+      ? event.target.closest("[data-seg],[data-mark],.idle-break")
+      : targetAt(event);
   if (target) jumpTo(target);
 });
 // Minimap viewport: the conversation's on-screen time range as a band on the

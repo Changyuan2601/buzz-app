@@ -152,7 +152,6 @@ export async function createInspector({
         },
       );
       model.entries = snapshot.entries;
-      model.raw = snapshot.raw;
       model.snapshotAt = until;
     }
     return { ...model, candidates };

@@ -305,7 +305,9 @@ export class ClaudeRuntime {
       .finally(() => this.notify());
   }
 
-  /** Says in the thread that a turn failed, so nobody waits on it. */
+  /** Says in the thread that a turn failed, so nobody waits on it. Tells the
+   * owner even when a sibling asked: tagging the sibling would wake it, and two
+   * agents failing alike would wake each other without end. */
   private report(
     agent: AgentHandle,
     channel: string,
@@ -319,7 +321,7 @@ export class ClaudeRuntime {
         tags: [
           ["h", channel],
           ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
-          ["p", event.pubkey],
+          ["p", agent.owner],
         ],
       })
       .catch((failure) =>

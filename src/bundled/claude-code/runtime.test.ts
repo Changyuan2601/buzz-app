@@ -559,3 +559,48 @@ it("replaces the spare when no agent runs where it was started", async () => {
   );
   expect(claudes()).toHaveLength(2);
 });
+
+it("tells the owner, not the asking sibling, when a sibling's turn fails", async () => {
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const sibling = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${sibling}:`)
+    .digest();
+  const mention = message("2", "@Claude hi", {
+    pubkey: sibling,
+    tags: [
+      ["h", channel],
+      ["p", self],
+      ["auth", owner, "", bytesToHex(schnorr.sign(digest, secret))],
+    ],
+  });
+  const { runtime, published, claudes, agent } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [spare] = claudes();
+  if (!spare) throw new Error("no spare");
+  spare.hold = true;
+  await runtime.run({
+    trigger: { type: "mention", event: mention },
+    channelId: channel,
+    agent: { ...agent, owner },
+    config: DEFAULT_CONFIG,
+    signal: new AbortController().signal,
+    workingUntil: () => undefined,
+  } as unknown as Delivery);
+  await flush(10);
+  expect(spare.prompts).toHaveLength(1);
+  // Both share one login, so both hit the same limit: tagging the sibling
+  // would wake it to fail and tag this agent back.
+  spare.exit(1, "Error: usage limit\n");
+  await flush(10);
+  const report = published.find((event) => event.kind === 9);
+  expect(report?.tags).toEqual([
+    ["h", channel],
+    ["e", mention.id, "", "reply"],
+    ["p", owner],
+  ]);
+});

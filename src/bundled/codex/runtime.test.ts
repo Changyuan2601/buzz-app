@@ -922,7 +922,7 @@ it("ignores non-owner messages without spawning", async () => {
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });
-it("answers another agent its owner attested", async () => {
+it("answers another agent its owner attested, telling the owner of failures", async () => {
   const f = fixture();
   const secret = schnorr.utils.randomSecretKey();
   const owner = bytesToHex(schnorr.getPublicKey(secret));
@@ -944,6 +944,12 @@ it("answers another agent its owner attested", async () => {
   }
   await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A failure tells the owner: tagging the sibling would wake it to fail too.
+  f.complete(0, "");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
+  expect(failure.tags).toContainEqual(["p", owner]);
+  expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
 it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
   const f = fixture();

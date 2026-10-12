@@ -471,6 +471,8 @@ export class CodexRuntime {
       snapshot.session.read(filters, { signal }),
     );
   }
+  // Tags the owner even when a sibling asked: tagging the sibling would wake
+  // it, and two agents failing alike would wake each other without end.
   private publish(request: Request, content: string) {
     return request.agent.publish({
       kind: 9,
@@ -478,7 +480,7 @@ export class CodexRuntime {
       tags: [
         ["h", request.conversation.channelId],
         ["e", rootOf(request.event), "", "reply"],
-        ["p", request.event.pubkey],
+        ["p", request.agent.owner],
       ],
     });
   }

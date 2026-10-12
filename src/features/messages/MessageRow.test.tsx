@@ -2097,6 +2097,10 @@ it("shows a message for agents as one line from its author to whom it addresses"
       name: "Morgarita to Rivet: **run** the suite…",
     });
     expect(line).toHaveAttribute("aria-expanded", "false");
+    // Reveal focuses the scroll anchor with tabIndex -1; on the button, that
+    // would take the only toggle out of the Tab order.
+    expect(line).not.toHaveAttribute("data-message-id");
+    expect(line.parentElement).toHaveAttribute("data-message-id");
     expect(screen.queryByText(/Then report back/)).toBeNull();
     fireEvent.click(line);
     expect(line).toHaveAttribute("aria-expanded", "true");
