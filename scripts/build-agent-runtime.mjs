@@ -17,10 +17,12 @@ import { rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeBuildPlatform } from "./runtime-build-platform.mjs";
+import { verifiedRuntimePatch } from "./runtime-patch.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
+const patchBytes = await verifiedRuntimePatch(root, spec.patch);
 // `just desktop` skips the pin's size optimizations; packaged builds keep them.
 const goose = process.argv.includes("--dev")
   ? { ...spec.goose, profile: spec.gooseDevProfile }
@@ -112,10 +114,11 @@ async function verifiedBundle(directory) {
     if (!meta.isFile() || meta.size > 16384) return false;
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     if (
-      Object.keys(manifest).length !== 5 ||
+      Object.keys(manifest).length !== (spec.patch ? 6 : 5) ||
       manifest.version !== 2 ||
       JSON.stringify(manifest.goose) !== JSON.stringify(goose) ||
       manifest.revision !== spec.revision ||
+      (manifest.patch ?? null) !== (spec.patch?.sha256 ?? null) ||
       manifest.target !== target ||
       Object.keys(manifest.files).length !== filenames.length
     )
@@ -158,6 +161,7 @@ async function publish(source, directory) {
     goose,
     target,
     files,
+    ...(spec.patch ? { patch: spec.patch.sha256 } : {}),
   };
   await writeFile(
     join(directory, "manifest.json.new"),
@@ -227,6 +231,12 @@ async function prepare() {
   }
   const source = join(sources, "buzz");
   await checkout(source, spec.repository, spec.revision);
+  if (patchBytes) {
+    const patchPath = join(sources, "verified.patch");
+    await writeFile(patchPath, patchBytes, { mode: 0o600 });
+    await run("git", ["apply", "--check", patchPath], false, source);
+    await run("git", ["apply", patchPath], false, source);
+  }
   await run(cargo, buildArgs, false, source);
   // Goose is an independent upstream pin, built with the same locked toolchain.
   const gooseSource = join(sources, "goose");

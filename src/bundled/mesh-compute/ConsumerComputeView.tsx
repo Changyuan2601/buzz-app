@@ -2,54 +2,54 @@
 // Host lifecycle/leases remain owned by this plugin, not the donor's sharing service.
 import type { ReactNode } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { Header } from "../../shared/design-system/ui/Header";
 import styles from "./Compute.module.css";
 
 export function ConsumerComputeView({
-  communityName,
+  headerControl,
   children,
   status,
+  attention = false,
   error,
   refreshDisabled,
   refresh,
 }: {
-  communityName: string | undefined;
+  headerControl?: ReactNode;
   children?: ReactNode;
   status?: string | undefined;
+  attention?: boolean;
   error: string | undefined | null;
   refreshDisabled: boolean;
   refresh: () => void;
 }) {
   return (
-    <FullPageSurface aria-label="Compute consumer">
-      <div className="h-full overflow-auto p-panel-inset text-body">
-        <div className={styles.content}>
-          <h1 className="m-0 text-title text-primary">Shared compute</h1>
-          {communityName && (
-            <p className="text-body text-secondary">
-              Shared compute for <strong>{communityName}</strong>
-            </p>
-          )}
-          <p className="text-body-sm text-secondary">
-            Use compute from your community, and optionally share this machine.
+    <section
+      aria-label="Compute consumer"
+      className={`${styles.content} text-body`}
+    >
+      <Header title="Shared compute" actions={headerControl} />
+      {children}
+      <p
+        role="status"
+        className={attention ? "m-0 text-body-sm text-warning" : "sr-only"}
+      >
+        {status}
+      </p>
+      {error && (
+        <div>
+          <p role="alert" className="text-body-sm text-danger">
+            {error}
           </p>
-          {status && <p role="status">{status}</p>}
-          {children}
           <Button
-            variant="ghost"
+            variant="subtle"
             size="sm"
             onClick={refresh}
             disabled={refreshDisabled}
           >
-            Refresh
+            Retry
           </Button>
-          {error && (
-            <p role="alert" className="text-body-sm text-danger">
-              {error}
-            </p>
-          )}
         </div>
-      </div>
-    </FullPageSurface>
+      )}
+    </section>
   );
 }

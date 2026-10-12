@@ -18,6 +18,32 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
+import { verifiedRuntimePatch } from "../../scripts/runtime-patch.mjs";
+
+test("runtime patch checksum is checked before cached resources can be reused", async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-runtime-patch-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const spec = JSON.parse(
+    readFileSync(path.join(directory, "runtime/agent-runtime.json"), "utf8"),
+  );
+  const patch = await verifiedRuntimePatch(directory, spec.patch);
+  const original = readFileSync(path.join(directory, spec.patch.path));
+  assert.deepEqual(patch, original);
+  writeFileSync(path.join(directory, spec.patch.path), "changed after review");
+  // Builds apply these retained bytes, even if the original changes during fetch.
+  const staged = path.join(directory, "verified.patch");
+  writeFileSync(staged, patch);
+  assert.deepEqual(readFileSync(staged), original);
+  await assert.rejects(
+    verifiedRuntimePatch(directory, spec.patch),
+    /checksum mismatch/,
+  );
+  await assert.rejects(
+    verifiedRuntimePatch(directory, { path: "../outside.patch", sha256: "" }),
+    /inside the repository/,
+  );
+});
 
 test("native library and bundled tools pin the same immutable source", () => {
   const spec = JSON.parse(

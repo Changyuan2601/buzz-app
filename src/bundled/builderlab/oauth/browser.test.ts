@@ -28,6 +28,7 @@ function fixture() {
     cancel: vi.fn(async () => {}),
   };
   const host: Host = {
+    fetch: vi.fn(),
     runCommand: vi.fn(),
     request: vi.fn(async ({ url }) => ({
       status: 200,

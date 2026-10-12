@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 // Real preparation script and manifest; only the compiler toolchain is synthetic.
@@ -8,12 +8,25 @@ export function runtimeFixture(directory) {
   for (const name of [
     "scripts/build-agent-runtime.mjs",
     "scripts/runtime-build-platform.mjs",
+    "scripts/runtime-patch.mjs",
     "runtime/agent-runtime.json",
   ])
     copyFileSync(
       new URL(`../../${name}`, import.meta.url),
       path.join(directory, name),
     );
+  const spec = JSON.parse(
+    readFileSync(path.join(directory, "runtime/agent-runtime.json"), "utf8"),
+  );
+  if (spec.patch) {
+    mkdirSync(path.dirname(path.join(directory, spec.patch.path)), {
+      recursive: true,
+    });
+    copyFileSync(
+      new URL(`../../${spec.patch.path}`, import.meta.url),
+      path.join(directory, spec.patch.path),
+    );
+  }
   const tool = (name, body) =>
     writeFileSync(
       path.join(directory, "bin", name),

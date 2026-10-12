@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use buzzodz_plugins::HostGrants;
@@ -12,6 +13,10 @@ const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 8192;
 const MAX_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
 const DEADLINE: Duration = Duration::from_secs(30);
+/// A streamed body may pause this long between chunks, and run this long in total.
+const STREAM_IDLE: Duration = Duration::from_secs(60);
+const STREAM_DEADLINE: Duration = Duration::from_secs(600);
+const MAX_STREAMS: usize = 16;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,6 +60,162 @@ pub(crate) async fn plugin_host_request(
     tokio::time::timeout(DEADLINE, operation)
         .await
         .map_err(|_| "Host request timed out")?
+}
+
+/// Status and headers of a streamed response. The body follows as `FetchEvent`s.
+#[derive(Debug, Serialize)]
+pub(crate) struct FetchHead {
+    status: u16,
+    headers: BTreeMap<String, String>,
+}
+/// Decoded UTF-8 body text in arrival order, then exactly one `End` or `Error`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub(crate) enum FetchEvent {
+    Chunk { text: String },
+    End,
+    Error { message: String },
+}
+/// Streams a plugin may still cancel, keyed by the caller's stream id.
+#[derive(Clone, Default)]
+pub(crate) struct HostStreams(Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>);
+impl HostStreams {
+    fn open(&self, id: &str) -> Result<tokio::sync::oneshot::Receiver<()>, String> {
+        let mut streams = self.0.lock().map_err(|_| "Host request is unavailable")?;
+        if id.is_empty() || id.len() > 64 || streams.contains_key(id) {
+            return Err("Invalid host stream".into());
+        }
+        if streams.len() >= MAX_STREAMS {
+            return Err("Too many open host streams".into());
+        }
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        streams.insert(id.into(), cancel);
+        Ok(cancelled)
+    }
+    fn close(&self, id: &str) -> Option<tokio::sync::oneshot::Sender<()>> {
+        self.0.lock().ok()?.remove(id)
+    }
+}
+
+/// `plugin_host_request` with a streamed body: resolves once the response headers
+/// arrive, then delivers the body over `on_event` until it ends, fails, exceeds the
+/// same size bound, or the plugin cancels `stream_id`.
+#[tauri::command]
+pub(crate) async fn plugin_host_fetch(
+    manager: tauri::State<'_, PluginManager>,
+    streams: tauri::State<'_, HostStreams>,
+    id: String,
+    revision: String,
+    stream_id: String,
+    request: HostRequest,
+    on_event: tauri::ipc::Channel<FetchEvent>,
+) -> Result<FetchHead, String> {
+    let (url, method, headers) = validate_request(&request)?;
+    let streams = streams.inner().clone();
+    let mut cancelled = streams.open(&stream_id)?;
+    let operation = async {
+        let grants = with_manager(manager, move |manager| manager.host_grants(&id, &revision))
+            .await
+            .map_err(|_| "Host request is unavailable")?;
+        if !allows_origin(&grants, &url) {
+            return Err("Host request origin is not declared".into());
+        }
+        let mut outgoing = client(None)?.request(method, url).headers(headers);
+        if let Some(body) = request.body {
+            outgoing = outgoing.body(body);
+        }
+        let response = outgoing.send().await.map_err(|_| "Host request failed")?;
+        let head = FetchHead {
+            status: response.status().as_u16(),
+            headers: response_headers(&response)?,
+        };
+        Ok::<_, String>((head, response))
+    };
+    let opened = tokio::select! {
+        opened = tokio::time::timeout(DEADLINE, operation) => {
+            opened.unwrap_or_else(|_| Err("Host request timed out".into()))
+        }
+        _ = &mut cancelled => Err("Host request was cancelled".into()),
+    };
+    let (head, response) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            streams.close(&stream_id);
+            return Err(error);
+        }
+    };
+    tauri::async_runtime::spawn(async move {
+        pump(response, cancelled, |event| on_event.send(event).is_ok()).await;
+        streams.close(&stream_id);
+    });
+    Ok(head)
+}
+
+/// Stops a stream opened by `plugin_host_fetch`. Unknown and finished ids are ignored.
+#[tauri::command]
+pub(crate) fn plugin_host_fetch_cancel(streams: tauri::State<'_, HostStreams>, stream_id: String) {
+    if let Some(cancel) = streams.close(&stream_id) {
+        let _ = cancel.send(());
+    }
+}
+
+/// Forwards the body as text. Stops silently on cancel or when nothing is listening.
+async fn pump(
+    mut response: reqwest::Response,
+    mut cancelled: tokio::sync::oneshot::Receiver<()>,
+    emit: impl Fn(FetchEvent) -> bool,
+) {
+    let body = async {
+        let mut pending = Vec::new();
+        let mut total = 0;
+        loop {
+            let chunk = tokio::time::timeout(STREAM_IDLE, response.chunk())
+                .await
+                .map_err(|_| "Host response stalled")?
+                .map_err(|_| "Host response failed")?;
+            let Some(chunk) = chunk else {
+                return if pending.is_empty() {
+                    Ok(true)
+                } else {
+                    Err("Host response is not UTF-8")
+                };
+            };
+            total += chunk.len();
+            if total > MAX_RESPONSE_BYTES {
+                return Err("Host response is too large");
+            }
+            let text = decode(&mut pending, &chunk)?;
+            if !text.is_empty() && !emit(FetchEvent::Chunk { text }) {
+                return Ok(false);
+            }
+        }
+    };
+    let finished = tokio::select! {
+        finished = tokio::time::timeout(STREAM_DEADLINE, body) => {
+            finished.unwrap_or(Err("Host response timed out"))
+        }
+        _ = &mut cancelled => return,
+    };
+    match finished {
+        Ok(true) => emit(FetchEvent::End),
+        Ok(false) => false,
+        Err(message) => emit(FetchEvent::Error {
+            message: message.into(),
+        }),
+    };
+}
+
+/// Appends `chunk` and takes the longest valid UTF-8 prefix, keeping a character
+/// split across chunks for the next call.
+fn decode(pending: &mut Vec<u8>, chunk: &[u8]) -> Result<String, &'static str> {
+    pending.extend_from_slice(chunk);
+    let valid = match std::str::from_utf8(pending) {
+        Ok(_) => pending.len(),
+        Err(error) if error.error_len().is_none() => error.valid_up_to(),
+        Err(_) => return Err("Host response is not UTF-8"),
+    };
+    let rest = pending.split_off(valid);
+    Ok(String::from_utf8(std::mem::replace(pending, rest)).unwrap_or_default())
 }
 
 fn allows_origin(grants: &HostGrants, url: &reqwest::Url) -> bool {
@@ -126,23 +287,19 @@ fn validate_request(
     Ok((url, method, headers))
 }
 
-async fn send_request(
-    url: reqwest::Url,
-    method: reqwest::Method,
-    headers: HeaderMap,
-    body: Option<String>,
-) -> Result<HostResponse, String> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(DEADLINE)
-        .build()
-        .map_err(|_| "Host request client is unavailable")?;
-    let mut request = client.request(method, url).headers(headers);
-    if let Some(body) = body {
-        request = request.body(body);
+/// No redirects. A buffered request bounds the whole exchange; a stream bounds its
+/// own phases instead.
+fn client(deadline: Option<Duration>) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    match deadline {
+        Some(deadline) => builder.timeout(deadline),
+        None => builder.connect_timeout(DEADLINE),
     }
-    let mut response = request.send().await.map_err(|_| "Host request failed")?;
-    let status = response.status().as_u16();
+    .build()
+    .map_err(|_| "Host request client is unavailable".into())
+}
+
+fn response_headers(response: &reqwest::Response) -> Result<BTreeMap<String, String>, String> {
     let mut headers = BTreeMap::new();
     let mut header_bytes = 0;
     let mut header_count = 0;
@@ -160,6 +317,24 @@ async fn send_request(
         }
         headers.insert(name.to_string(), value.to_owned());
     }
+    Ok(headers)
+}
+
+async fn send_request(
+    url: reqwest::Url,
+    method: reqwest::Method,
+    headers: HeaderMap,
+    body: Option<String>,
+) -> Result<HostResponse, String> {
+    let mut request = client(Some(DEADLINE))?
+        .request(method, url)
+        .headers(headers);
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+    let mut response = request.send().await.map_err(|_| "Host request failed")?;
+    let status = response.status().as_u16();
+    let headers = response_headers(&response)?;
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| "Host response failed")? {
         if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
@@ -308,6 +483,132 @@ mod tests {
             let (url, _, _) = validate_request(&request(url)).unwrap();
             assert_eq!(allows_origin(&grants, &url), allowed, "{url}");
         }
+    }
+
+    #[test]
+    fn stream_text_keeps_a_character_split_across_chunks() {
+        let mut pending = Vec::new();
+        let bytes = "aé".as_bytes();
+        assert_eq!(decode(&mut pending, &bytes[..2]).unwrap(), "a");
+        assert_eq!(decode(&mut pending, &bytes[2..]).unwrap(), "é");
+        assert!(pending.is_empty());
+        assert!(decode(&mut pending, &[0xff]).is_err());
+    }
+
+    #[test]
+    fn stream_ids_are_unique_bounded_and_released() {
+        let streams = HostStreams::default();
+        let _first = streams.open("a").unwrap();
+        assert!(streams.open("a").is_err());
+        assert!(streams.open("").is_err());
+        for index in 1..MAX_STREAMS {
+            std::mem::forget(streams.open(&index.to_string()).unwrap());
+        }
+        assert_eq!(
+            streams.open("extra").err().as_deref(),
+            Some("Too many open host streams")
+        );
+        assert!(streams.close("a").is_some());
+        assert!(streams.close("a").is_none());
+        assert!(streams.open("extra").is_ok());
+    }
+
+    async fn pumped(
+        response: Vec<u8>,
+        cancelled: tokio::sync::oneshot::Receiver<()>,
+    ) -> Vec<FetchEvent> {
+        let (url, server) = local_response(response);
+        let response = client(None)
+            .unwrap()
+            .post(url)
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        let events = std::sync::Mutex::new(Vec::new());
+        pump(response, cancelled, |event| {
+            events.lock().unwrap().push(event);
+            true
+        })
+        .await;
+        server.join().unwrap();
+        events.into_inner().unwrap()
+    }
+
+    #[tokio::test]
+    async fn stream_delivers_the_body_in_order_then_ends() {
+        let (_cancel, cancelled) = tokio::sync::oneshot::channel();
+        let events = pumped(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n8\r\ndata: a\n\r\n8\r\ndata: b\n\r\n0\r\n\r\n".to_vec(),
+            cancelled,
+        )
+        .await;
+        assert_eq!(events.last(), Some(&FetchEvent::End));
+        let text: String = events
+            .iter()
+            .filter_map(|event| match event {
+                FetchEvent::Chunk { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "data: a\ndata: b\n");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| !matches!(event, FetchEvent::Chunk { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_reports_a_truncated_or_non_text_body_as_an_error() {
+        let (_cancel, cancelled) = tokio::sync::oneshot::channel();
+        let events = pumped(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\na\xc3".to_vec(),
+            cancelled,
+        )
+        .await;
+        assert_eq!(
+            events,
+            [
+                FetchEvent::Chunk { text: "a".into() },
+                FetchEvent::Error {
+                    message: "Host response is not UTF-8".into()
+                }
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_stream_stops_without_a_terminal_event() {
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        cancel.send(()).unwrap();
+        // The body is never finished: only cancellation lets the pump return.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n")
+                .unwrap();
+            // Hold the connection open until the client goes away.
+            let _ = socket.read(&mut request);
+        });
+        let response = client(None).unwrap().get(url).send().await.unwrap();
+        let events = std::sync::Mutex::new(Vec::new());
+        pump(response, cancelled, |event| {
+            events.lock().unwrap().push(event);
+            true
+        })
+        .await;
+        // Joining inline would block the runtime that has to close the connection.
+        tokio::task::spawn_blocking(move || server.join().unwrap())
+            .await
+            .unwrap();
+        assert!(events.into_inner().unwrap().is_empty());
     }
 
     #[tokio::test]

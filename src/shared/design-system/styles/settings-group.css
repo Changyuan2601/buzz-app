@@ -22,12 +22,6 @@
   .buzz-settings-page .buzz-content-header:not([data-inline]) {
     margin-block-end: var(--space-8);
   }
-  .buzz-settings-page
-    .buzz-content-header:not([data-inline])
-    > .buzz-content-header-copy
-    > .buzz-content-header-title {
-    @apply text-heading;
-  }
   .buzz-settings-page .buzz-content-header-subtitle,
   .buzz-settings-group .buzz-field-description,
   .buzz-settings-group .buzz-preference-row-description {

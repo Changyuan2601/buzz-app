@@ -38,6 +38,7 @@ export function createMessages(
   publishReport?: (template: EventTemplate) => Promise<void>,
   /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
   signingAuthority?: string,
+  directRecipients: (channelId: string) => readonly string[] = () => [],
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -59,7 +60,9 @@ export function createMessages(
       pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key))
     )
       throw new Error("Choose at most 32 valid mention recipients");
-    const unique = [...new Set(pubkeys)];
+    const unique = [...new Set([...pubkeys, ...directRecipients(channelId)])];
+    if (unique.length > 32)
+      throw new Error("Choose at most 32 valid message recipients");
     validateMentions(channelId, unique);
     return unique.map((key) => ["p", key]);
   };

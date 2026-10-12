@@ -74,6 +74,11 @@ export default defineConfig(async ({ command, mode }) => {
         openRelay ? defaultOrigin : "",
       ),
     },
+    build: {
+      rollupOptions: {
+        input: { main: "index.html", compute: "compute-widget.html" },
+      },
+    },
     clearScreen: false,
     // Runtime preparation checks out the Buzz and Goose web UIs under target/.
     optimizeDeps: {

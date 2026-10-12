@@ -921,7 +921,7 @@ it("retries thread history failure without another composer and never rebinds a 
 });
 
 it("sends a DM draft only to its restored destination through the session outbox", async () => {
-  const h = fixture({ withDm: true, withWriter: true });
+  const h = fixture({ withDm: true, withWriter: true, connected: true });
   writeView(h.owner.session.scope, "draft:dm-room", "Only this DM");
   render(h.view);
   await screen.findByText("A direct reply");
@@ -1349,7 +1349,7 @@ it.each(["channel", "thread", "unavailable"])(
 it.each(["delete", "send", "empty-close"])(
   "restores focus to a remaining row then Inbox filters on %s",
   async (exit) => {
-    const h = fixture({ withWriter: true, withDm: true });
+    const h = fixture({ withWriter: true, withDm: true, connected: true });
     writeView(h.owner.session.scope, "draft:room", "First draft");
     writeView(h.owner.session.scope, "draft:dm-room", "Second draft");
     render(h.view);

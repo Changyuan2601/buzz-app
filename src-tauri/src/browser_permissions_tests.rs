@@ -117,6 +117,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "oauth_callback_begin",
         "oauth_callback_wait",
         "oauth_callback_cancel",
+        "plugin_host_fetch",
+        "plugin_host_fetch_cancel",
         "agent_control_create_prepare",
         "app_agent_list",
         "app_agent_create",

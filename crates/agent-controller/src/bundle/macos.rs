@@ -70,6 +70,7 @@ mod tests {
                 directory.join("manifest.json"),
                 serde_json::to_vec(&json!({
                     "version": 2, "revision": source.revision, "goose": source.goose,
+                    "patch": source.patch.map(|patch| patch.sha256),
                     "target": env!("BUZZ_RUNTIME_TARGET"), "files": files,
                 }))
                 .unwrap(),
@@ -134,7 +135,7 @@ mod tests {
         let manifest_path = fixture.directory.join("manifest.json");
         let original: serde_json::Value =
             serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-        for field in ["revision", "target", "files"] {
+        for field in ["revision", "target", "files", "patch"] {
             let mut manifest = original.clone();
             manifest[field] = if field == "files" {
                 let mut files = original["files"].clone();

@@ -1,0 +1,528 @@
+--- a/crates/buzz-agent/src/wire.rs
++++ b/crates/buzz-agent/src/wire.rs
+@@ -68,6 +68,8 @@
+ #[derive(Debug, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct SessionPromptParams {
++    #[serde(default, rename = "_meta")]
++    pub meta: Value,
+     pub session_id: String,
+     pub prompt: Vec<ContentBlock>,
+ }
+--- a/crates/buzz-agent/src/agent.rs
++++ b/crates/buzz-agent/src/agent.rs
+@@ -141,6 +141,9 @@
+ }
+ 
+ pub struct RunCtx<'a> {
++    /// Opt-in host delivery of the accepted final answer, never thought chunks.
++    pub reply_as_text: bool,
++    pub final_reply: Option<String>,
+     pub cfg: &'a Config,
+     /// Effective model for this session. Usually equals `cfg.model`; overridden
+     /// per-session by `session/set_model`. All LLM calls use this value.
+@@ -360,6 +363,7 @@
+         // ran read-only tools and then died at 3 tokens IS a silent death;
+         // only a genuine publish should suppress the WARN.
+         let mut buzz_reply_call_seen = false;
++        let mut buzz_send_call_seen = false;
+         let mut reply_nags = 0u32;
+         // Per-`run()` reactive context-recovery budget. Per-turn, not
+         // per-session: a fresh prompt deserves a fresh chance to recover, and
+@@ -737,6 +741,13 @@
+                 // Only gate genuine end_turn — don't override max_tokens/refusal.
+                 if stop == StopReason::EndTurn {
+                     if stop_rejections >= self.cfg.stop_max_rejections {
++                        if self.reply_as_text && !buzz_send_call_seen && stop_rejections > 0 {
++                            return Err(AgentError::Llm(
++                                "DM answer rejected by stop hooks; acceptance budget exhausted"
++                                    .into(),
++                            ));
++                        }
++                        self.capture_final_reply(response.stop, buzz_send_call_seen)?;
+                         return Ok(stop);
+                     }
+                     let mut objections = self
+@@ -752,6 +763,7 @@
+                     // carrying both a hook objection and a reply reminder costs
+                     // one rejection and delivers both texts.
+                     if self.cfg.require_reply
++                        && !self.reply_as_text
+                         && !buzz_reply_call_seen
+                         && reply_nags < MAX_REPLY_NAGS
+                     {
+@@ -765,6 +777,7 @@
+                         continue;
+                     }
+                 }
++                self.capture_final_reply(response.stop, buzz_send_call_seen)?;
+                 return Ok(stop);
+             }
+ 
+@@ -784,6 +797,14 @@
+             if !buzz_reply_call_seen {
+                 buzz_reply_call_seen = calls.iter().any(|c| is_buzz_reply_call(c, self.mcp));
+             }
++            buzz_send_call_seen |= calls.iter().any(|call| {
++                is_buzz_reply_call(call, self.mcp)
++                    && call
++                        .arguments
++                        .get("command")
++                        .and_then(serde_json::Value::as_str)
++                        .is_some_and(|command| command.contains("messages send"))
++            });
+             self.history.push(HistoryItem::Assistant {
+                 text: response.text,
+                 tool_calls: calls.clone(),
+@@ -794,6 +815,36 @@
+                 return Ok(stop);
+             }
+         }
++    }
++
++    fn capture_final_reply(
++        &mut self,
++        stop: ProviderStop,
++        send_attempted: bool,
++    ) -> Result<(), AgentError> {
++        if !self.reply_as_text || send_attempted {
++            return Ok(());
++        }
++        if stop != ProviderStop::EndTurn {
++            if matches!(stop, ProviderStop::Other) {
++                return Err(AgentError::Llm(
++                    "DM provider did not report completed output".into(),
++                ));
++            }
++            return Ok(());
++        }
++        if let Some(HistoryItem::Assistant {
++            text, tool_calls, ..
++        }) = self.history.last()
++        {
++            if tool_calls.is_empty() && !text.trim().is_empty() {
++                self.final_reply = Some(text.clone());
++                return Ok(());
++            }
++        }
++        Err(AgentError::Llm(
++            "DM turn completed without an answer".into(),
++        ))
+     }
+ 
+     /// Non-blocking drain of the steer queue. Each queued steer is appended to
+--- a/crates/buzz-agent/src/lib.rs
++++ b/crates/buzz-agent/src/lib.rs
+@@ -377,6 +377,7 @@
+                     "loadSession": false,
+                     "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
+                     "mcpCapabilities": { "http": false, "sse": false },
++                    "_meta": { "buzz": { "finalReply": true } },
+                 },
+                 "agentInfo": { "name": "buzz-agent", "version": env!("CARGO_PKG_VERSION") },
+             }),
+@@ -807,7 +808,15 @@
+     // Not stored in Session (not session-cumulative); used only for the final
+     // end-of-turn wire emission.
+     let mut turn_pricing_identity: Option<Option<crate::types::PricingIdentity>> = None;
++    let reply_as_text = p.meta.pointer("/buzz/replyAsText").and_then(Value::as_bool) == Some(true);
++    let effective_system_prompt = if reply_as_text {
++        format!("{effective_system_prompt}\nFor this direct-message turn, the host publishes your final assistant answer automatically. Answer the current user directly in final text. Do not call buzz messages send merely to deliver that answer.")
++    } else {
++        effective_system_prompt.to_string()
++    };
+     let mut ctx = RunCtx {
++        reply_as_text,
++        final_reply: None,
+         cfg: &app.cfg,
+         effective_model: effective_model_str,
+         session_id: &sid,
+@@ -835,6 +844,7 @@
+         usage_baseline,
+     };
+     let result = ctx.run(p.prompt).await;
++    let final_reply = ctx.final_reply.take();
+     if let Some(s) = app.sessions.lock().await.get_mut(&sid) {
+         s.busy = false;
+         // Clear run state so a late steer can't queue into a finished turn.
+@@ -928,7 +938,10 @@
+         Ok(stop) => {
+             wire::send(
+                 &wire_tx,
+-                wire::ok(id, json!({ "stopReason": stop.as_wire() })),
++                wire::ok(id, match final_reply {
++                    Some(text) => json!({ "stopReason": stop.as_wire(), "_meta": { "buzz": { "finalReply": text } } }),
++                    None => json!({ "stopReason": stop.as_wire() }),
++                }),
+             )
+             .await
+         }
+--- a/crates/buzz-agent/tests/regressions.rs
++++ b/crates/buzz-agent/tests/regressions.rs
+@@ -3619,3 +3619,159 @@
+ 
+     h.shutdown().await;
+ }
++
++// Host-delivered native DM replies: exercise the real ACP worker and fake LLM.
++async fn dm_prompt_to_completion(h: &mut Harness, sid: &str) -> Value {
++    let id = h.send("session/prompt", json!({"sessionId":sid,"prompt":[{"type":"text","text":"What command finds the word space in a Unix document?"}],"_meta":{"buzz":{"replyAsText":true}}})).await;
++    loop {
++        let response = h.recv().await;
++        if response["method"] == "session/request_permission" {
++            h.write(approve_permission(&response)).await;
++        }
++        if response["id"] == id {
++            return response;
++        }
++    }
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_delivers_answer_without_regeneration() {
++    let llm = spawn_capturing_llm(vec![openai_text("Use grep -n -w space document.txt")]).await;
++    let mut h = Harness::spawn_with_env(&llm.url, &[("BUZZ_AGENT_REQUIRE_REPLY", "1")]).await;
++    let sid = init_session(&mut h, json!([])).await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert_eq!(
++        response["result"]["_meta"]["buzz"]["finalReply"],
++        "Use grep -n -w space document.txt"
++    );
++    assert_eq!(llm.captured.lock().await.len(), 1);
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_waits_for_stop_hook_acceptance() {
++    let llm = spawn_capturing_llm(vec![
++        openai_text("unfinished"),
++        openai_text("accepted answer"),
++    ])
++    .await;
++    let mut h = Harness::spawn_with_env(&llm.url, &[("MCP_HOOK_SERVERS", "fake")]).await;
++    let sid = init_session_with_fake_mcp(
++        &mut h,
++        &[("FAKE_MCP_STOP_HOOK", "1"), ("FAKE_MCP_STOP_COUNT", "1")],
++    )
++    .await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert_eq!(
++        response["result"]["_meta"]["buzz"]["finalReply"],
++        "accepted answer"
++    );
++    assert_eq!(llm.captured.lock().await.len(), 2);
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_suppresses_explicit_send_attempt() {
++    let llm = spawn_capturing_llm(vec![openai_shell_send("sent"), openai_text("posted")]).await;
++    let mut h = Harness::spawn(&llm.url).await;
++    let sid = init_session_with_fake_mcp(
++        &mut h,
++        &[("FAKE_MCP_TOOL_COUNT", "1"), ("FAKE_MCP_SHELL_TOOL", "1")],
++    )
++    .await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert_eq!(response["result"]["stopReason"], "end_turn");
++    assert!(response["result"]["_meta"].is_null());
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_empty_completion_is_a_visible_error() {
++    let llm = spawn_capturing_llm(vec![openai_text(" ")]).await;
++    let mut h = Harness::spawn(&llm.url).await;
++    let sid = init_session(&mut h, json!([])).await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert!(response["error"]["message"]
++        .as_str()
++        .unwrap()
++        .contains("without an answer"));
++    assert!(response["result"].is_null());
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_excludes_truncated_output() {
++    let llm = spawn_capturing_llm(vec![
++        openai_max_tokens("unfinished", json!([])),
++        openai_text("complete"),
++    ])
++    .await;
++    let mut h = Harness::spawn(&llm.url).await;
++    let sid = init_session(&mut h, json!([])).await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert_eq!(
++        response["result"]["_meta"]["buzz"]["finalReply"],
++        "complete"
++    );
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_hook_budget_exhaustion_never_publishes() {
++    let llm =
++        spawn_capturing_llm(vec![openai_text("rejected"), openai_text("still rejected")]).await;
++    let mut h = Harness::spawn_with_env(
++        &llm.url,
++        &[
++            ("MCP_HOOK_SERVERS", "fake"),
++            ("BUZZ_AGENT_STOP_MAX_REJECTIONS", "1"),
++        ],
++    )
++    .await;
++    let sid = init_session_with_fake_mcp(&mut h, &[("FAKE_MCP_STOP_HOOK", "1")]).await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert!(response["error"]["message"]
++        .as_str()
++        .unwrap()
++        .contains("acceptance budget exhausted"));
++    assert!(response["result"].is_null());
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_reaction_does_not_suppress_answer() {
++    let reaction = openai_tool_call(
++        "react",
++        "fake__shell",
++        json!({"command":"buzz reactions add --event id --emoji eyes"}),
++    );
++    let llm = spawn_capturing_llm(vec![reaction, openai_text("the answer")]).await;
++    let mut h = Harness::spawn(&llm.url).await;
++    let sid = init_session_with_fake_mcp(
++        &mut h,
++        &[("FAKE_MCP_TOOL_COUNT", "1"), ("FAKE_MCP_SHELL_TOOL", "1")],
++    )
++    .await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert_eq!(
++        response["result"]["_meta"]["buzz"]["finalReply"],
++        "the answer"
++    );
++    h.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn dm_final_reply_unknown_finish_reason_never_publishes() {
++    let mut output = openai_text("unfinished");
++    output["choices"][0]["finish_reason"] = json!("unexpected");
++    let llm = spawn_capturing_llm(vec![output]).await;
++    let mut h = Harness::spawn(&llm.url).await;
++    let sid = init_session(&mut h, json!([])).await;
++    let response = dm_prompt_to_completion(&mut h, &sid).await;
++    assert!(response["error"]["message"]
++        .as_str()
++        .unwrap()
++        .contains("did not report completed"));
++    assert!(response["result"].is_null());
++    h.shutdown().await;
++}
+--- a/crates/buzz-acp/src/acp.rs
++++ b/crates/buzz-acp/src/acp.rs
+@@ -146,6 +146,10 @@
+ /// One `AcpClient` per agent process. Multiple sessions can be created on the
+ /// same client via repeated calls to [`session_new`](AcpClient::session_new).
+ pub struct AcpClient {
++    native_agent: bool,
++    final_reply_supported: bool,
++    reply_as_text: bool,
++    final_reply: Option<String>,
+     /// The agent child process (kept alive to prevent zombie).
+     child: Child,
+     /// Sole stdin writer; None after an interrupted/failed frame closes it.
+@@ -606,6 +610,10 @@
+             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
+ 
+         Ok(Self {
++            native_agent: crate::config::normalize_agent_command_identity(command) == "buzz-agent",
++            final_reply_supported: false,
++            reply_as_text: false,
++            final_reply: None,
+             child,
+             stdin: Some(stdin),
+             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
+@@ -626,6 +634,15 @@
+         })
+     }
+ 
++    pub fn set_dm_final_reply(&mut self, enabled: bool) {
++        self.reply_as_text = enabled && self.native_agent && self.final_reply_supported;
++        self.final_reply = None;
++    }
++
++    pub fn take_final_reply(&mut self) -> Option<String> {
++        self.final_reply.take()
++    }
++
+     /// Attach a local observer feed to this ACP client.
+     pub fn set_observer(&mut self, observer: Option<ObserverHandle>, agent_index: usize) {
+         self.observer = observer;
+@@ -673,6 +690,10 @@
+         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
+         let params = build_initialize_params();
+         let result = self.send_request("initialize", params).await?;
++        self.final_reply_supported = result
++            .pointer("/agentCapabilities/_meta/buzz/finalReply")
++            .and_then(serde_json::Value::as_bool)
++            == Some(true);
+         self.steering_supported = result
+             .pointer("/_meta/steering/supported")
+             .and_then(|v| v.as_bool())
+@@ -846,7 +867,11 @@
+         idle_timeout: std::time::Duration,
+         max_duration: std::time::Duration,
+     ) -> Result<StopReason, AcpError> {
+-        let params = build_prompt_params(session_id, prompt_blocks);
++        self.final_reply = None;
++        let mut params = build_prompt_params(session_id, prompt_blocks);
++        if self.reply_as_text {
++            params["_meta"] = serde_json::json!({"buzz": {"replyAsText": true}});
++        }
+         let hard_deadline = tokio::time::Instant::now() + max_duration;
+         self.current_hard_deadline = Some(hard_deadline);
+ 
+@@ -2077,7 +2102,15 @@
+         session_id: &str,
+         result: &serde_json::Value,
+     ) -> Result<StopReason, AcpError> {
++        self.final_reply = None;
+         let stop_reason = self.parse_stop_reason(result)?;
++        if self.reply_as_text && stop_reason == StopReason::EndTurn {
++            self.final_reply = result
++                .pointer("/_meta/buzz/finalReply")
++                .and_then(serde_json::Value::as_str)
++                .filter(|s| !s.trim().is_empty())
++                .map(str::to_owned);
++        }
+         if let Some(adapter) = self.standard_adapter {
+             match serde_json::from_value::<PromptResponseUsage>(result["usage"].clone()) {
+                 Ok(usage) => self
+@@ -2417,6 +2450,34 @@
+ mod tests {
+     use super::*;
+ 
++    #[tokio::test]
++    async fn dm_final_reply_is_opted_in_terminal_and_consumed_once() {
++        let mut client = spawn_script("exit 0").await;
++        let answer =
++            serde_json::json!({"stopReason":"end_turn","_meta":{"buzz":{"finalReply":"answer"}}});
++        client.parse_prompt_response("s", &answer).unwrap();
++        assert!(client.take_final_reply().is_none());
++        client.final_reply_supported = true;
++        client.set_dm_final_reply(true);
++        client.parse_prompt_response("s", &answer).unwrap();
++        assert!(
++            client.take_final_reply().is_none(),
++            "non-native adapters must not opt in"
++        );
++        client.native_agent = true;
++        client.set_dm_final_reply(true);
++        client.parse_prompt_response("s", &answer).unwrap();
++        assert_eq!(client.take_final_reply().as_deref(), Some("answer"));
++        assert!(client.take_final_reply().is_none());
++        for stop in ["cancelled", "max_tokens", "refusal"] {
++            client.parse_prompt_response("s",&serde_json::json!({"stopReason":stop,"_meta":{"buzz":{"finalReply":"private"}}})).unwrap();
++            assert!(client.take_final_reply().is_none());
++        }
++        client.parse_prompt_response("s", &answer).unwrap();
++        client.set_dm_final_reply(false);
++        assert!(client.take_final_reply().is_none());
++    }
++
+     #[test]
+     fn stop_reason_parses_all_known_values() {
+         assert_eq!(StopReason::from_str("end_turn"), Some(StopReason::EndTurn));
+--- a/crates/buzz-acp/src/pool.rs
++++ b/crates/buzz-acp/src/pool.rs
+@@ -2420,6 +2420,7 @@
+     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
+     turn_id: String,
+ ) {
++    agent.acp.set_dm_final_reply(false);
+     // Is this a channel prompt or a heartbeat?
+     let source = match &batch {
+         Some(b) => PromptSource::Channel(b.scope.clone()),
+@@ -3148,6 +3149,34 @@
+         });
+     }
+ 
++    // Only a resolved incoming DM opts into native final-answer delivery.
++    // Heartbeats, unknown channel types, slash commands and other adapters retain
++    // explicit tool-driven publication. Routing never comes from model text.
++    let dm_reply_target = batch
++        .as_ref()
++        .filter(|_| {
++            slash_command.is_none()
++                && resolved_channel_info
++                    .as_ref()
++                    .is_some_and(|info| info.channel_type == "dm")
++        })
++        .map(|b| {
++            (
++                b.channel_id,
++                b.events
++                    .last()
++                    .map(|e| {
++                        let mut tags = e.routing_thread_tags();
++                        if tags.root_event_id.is_some() {
++                            tags.parent_event_id = Some(e.routing_event_id().to_owned());
++                        }
++                        tags
++                    })
++                    .unwrap_or_default(),
++            )
++        });
++    agent.acp.set_dm_final_reply(dm_reply_target.is_some());
++
+     // Slash-command pass-through sends the bare command as the first text
+     // block (so connector detection fires), then each prompt section as its
+     // own block. Per-section blocks let the observer size trimmer elide a
+@@ -3337,6 +3366,7 @@
+                                 "control signal arrived but turn already completed — treating as success"
+                             );
+                         }
++                        publish_dm_final_reply(&mut agent.acp, &ctx.rest_client, dm_reply_target.as_ref()).await;
+                         log_stop_reason(&source, &StopReason::EndTurn);
+                         if let PromptSource::Channel(scope) = &source {
+                             let standing_sent = !agent.has_system_prompt_support();
+@@ -3380,6 +3410,8 @@
+ 
+     match prompt_result {
+         Ok(stop_reason) => {
++            publish_dm_final_reply(&mut agent.acp, &ctx.rest_client, dm_reply_target.as_ref())
++                .await;
+             log_stop_reason(&source, &stop_reason);
+ 
+             if let PromptSource::Channel(scope) = &source {
+@@ -5477,6 +5509,29 @@
+         Ok(Ok(_)) => {}
+         Ok(Err(e)) => tracing::debug!(event_id, emoji, "reaction add failed: {e}"),
+         Err(_) => tracing::debug!(event_id, emoji, "reaction add timed out"),
++    }
++}
++
++async fn publish_dm_final_reply(
++    acp: &mut crate::acp::AcpClient,
++    rest: &crate::relay::RestClient,
++    target: Option<&(Uuid, ThreadTags)>,
++) {
++    let Some(text) = acp.take_final_reply() else {
++        return;
++    };
++    let Some((channel, thread)) = target else {
++        return;
++    };
++    let Some(event) = build_failure_notice_event(&rest.keys, *channel, thread, &text) else {
++        return;
++    };
++    // submit_event retries the same signed event; never regenerate inference on
++    // an uncertain publish. A delivery error must be visible in retained logs.
++    let delivery = tokio::time::timeout(Duration::from_secs(15), rest.submit_event(&event)).await;
++    if !matches!(delivery, Ok(Ok(_))) {
++        acp.observe("reply_delivery", serde_json::json!({"status":"failed","eventId":event.id.to_hex(),"message":"Final answer could not be delivered"}));
++        tracing::error!(channel = %channel, event_id = %event.id, "DM final answer delivery failed or timed out");
+     }
+ }
+ 

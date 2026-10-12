@@ -47,12 +47,7 @@ export function CommunityAgent({
   };
   return (
     <section aria-labelledby={titleId} className={styles.sharing}>
-      <InlineHeader
-        id={titleId}
-        level={2}
-        title="Put the community mesh to work"
-        subtitle="Anyone can use compute shared by the community, even if this machine can’t contribute. Pick an example or start from scratch; Buzz handles the compute setup."
-      />
+      <InlineHeader id={titleId} level={2} title="Tools" />
       <ul aria-label="Community agent examples" className={styles.presets}>
         {COMMUNITY_AGENT_PRESETS.map((preset) => (
           <PresetRow

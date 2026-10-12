@@ -32,6 +32,9 @@ mod host_command;
 mod host_process;
 mod host_request;
 mod mesh_compute;
+use mesh_compute::widget::{
+    mesh_compute_widget_close, mesh_compute_widget_open, mesh_compute_widget_status,
+};
 use mesh_compute::{mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, MeshHost};
 mod identity;
 mod image_clipboard;
@@ -89,7 +92,8 @@ use host_command::plugin_host_run_command;
 use host_process::{
     plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
 };
-use host_request::plugin_host_request;
+use host_request::{plugin_host_fetch, plugin_host_fetch_cancel, plugin_host_request, HostStreams};
+
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -441,6 +445,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         mesh_compute_inventory,
         mesh_compute_status,
         mesh_compute_stop,
+        mesh_compute_widget_open,
+        mesh_compute_widget_close,
+        mesh_compute_widget_status,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
@@ -506,6 +513,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        plugin_host_fetch,
+        plugin_host_fetch_cancel,
         agent_control_create_prepare,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
@@ -755,6 +764,7 @@ pub fn run() {
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
+        .manage(HostStreams::default())
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

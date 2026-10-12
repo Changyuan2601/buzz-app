@@ -42,7 +42,11 @@ function setup(
     return options.lagging &&
       !filters.every((filter) => filter.consistency === "strong")
       ? []
-      : discovery;
+      : discovery.filter((event) =>
+          filters.some(
+            (filter) => !filter.kinds || filter.kinds.includes(event.kind),
+          ),
+        );
   });
   const publish = vi.fn<RelayWriter["publish"]>(async () => {});
   const openDirectMessage = vi.fn(async () => id);
@@ -64,6 +68,7 @@ function setup(
   return {
     owner,
     viewer,
+    relay,
     other,
     query,
     publish,
@@ -175,6 +180,31 @@ it("retries a rejected first message with the same signed event", async () => {
     t.owner.dispose();
   }
 });
+it.each(["removed participant", "unavailable discovery"])(
+  "does not republish a restored DM retry with %s",
+  async (failure) => {
+    const t = setup();
+    try {
+      await t.dm.open([t.other.pubkey], new AbortController().signal);
+      t.publish.mockRejectedValueOnce(new PublishRejected("Retry later"));
+      const message = t.owner.session.messages.send(id, "Keep me");
+      await expect(
+        t.dm.delivered(message, id, new AbortController().signal),
+      ).rejects.toThrow("Retry later");
+      if (failure === "removed participant")
+        t.query.mockResolvedValueOnce([
+          roster(t.relay, id, [t.viewer.pubkey], 1800000000),
+        ]);
+      else t.query.mockRejectedValueOnce(new Error("Discovery offline"));
+      await expect(
+        t.dm.delivered(message, id, new AbortController().signal),
+      ).rejects.toThrow(/member|offline/);
+      expect(t.publish).toHaveBeenCalledOnce();
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 it("reads paginated verified profiles, excludes the viewer, and cancels with the caller", async () => {
   const t = setup();
   try {
@@ -308,4 +338,46 @@ describe("directory browsing beyond the shared profile budget", () => {
       t.owner.dispose();
     }
   });
+});
+
+it.each([false, true])(
+  "addresses plain DM messages and replies to the other participant (reply=%s)",
+  async (reply) => {
+    const t = setup();
+    try {
+      await t.dm.open([t.other.pubkey], new AbortController().signal);
+      if (reply)
+        t.owner.session.messages.reply(id, "a".repeat(64), "Hello", [
+          t.other.pubkey,
+        ]);
+      else t.owner.session.messages.send(id, "Hello");
+      await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+      const call = t.publish.mock.calls[0];
+      if (!call) throw new Error("Expected a published direct message");
+      const event = call[0];
+      expect(event.tags.filter(([name]) => name === "p")).toEqual([
+        ["p", t.other.pubkey],
+      ]);
+      expect(event.content).toBe("Hello");
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
+
+it("does not publish a DM to a participant removed before dispatch", async () => {
+  const t = setup();
+  try {
+    await t.dm.open([t.other.pubkey], new AbortController().signal);
+    t.query.mockResolvedValueOnce([
+      roster(t.relay, id, [t.viewer.pubkey], 1800000000),
+    ]);
+    const message = t.owner.session.messages.send(id, "Hello");
+    await expect(
+      t.dm.delivered(message, id, new AbortController().signal),
+    ).rejects.toThrow(/member/);
+    expect(t.publish).not.toHaveBeenCalled();
+  } finally {
+    t.owner.dispose();
+  }
 });

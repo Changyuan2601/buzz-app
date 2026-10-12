@@ -1775,6 +1775,15 @@ export function createRelaySession(
           }
         : undefined,
       transport?.archiveAuthority,
+      (channelId) => {
+        const channel = channels.queries
+          .list()
+          .channels.find((item) => item.id === channelId);
+        if (channel?.channelType !== "dm") return [];
+        if (!transport?.viewer || !channel.members?.includes(transport.viewer))
+          throw new Error("Refresh conversation membership before sending");
+        return channel.members.filter((key) => key !== transport.viewer);
+      },
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(

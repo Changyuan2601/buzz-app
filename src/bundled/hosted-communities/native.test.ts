@@ -13,6 +13,7 @@ function setup(
 ) {
   const requests: HostRequest[] = [];
   const host: Host = {
+    fetch: vi.fn(),
     runCommand: async () => null,
     request: vi.fn(async (input: HostRequest) => {
       requests.push(input);

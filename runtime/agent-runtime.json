@@ -15,5 +15,9 @@
     "profile": "lean",
     "features": "native-tls,system-keyring,online-model-meta,openssl/vendored"
   },
-  "gooseDevProfile": "dev"
+  "gooseDevProfile": "dev",
+  "patch": {
+    "path": "runtime/patches/moonpal-dm-final-reply.patch",
+    "sha256": "76af71f24749da0825a8ddcc508d2a885daa670b24f1e9249a5b8ee5313632a2"
+  }
 }

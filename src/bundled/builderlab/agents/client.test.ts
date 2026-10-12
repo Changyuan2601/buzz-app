@@ -35,6 +35,7 @@ async function fixture(subject = "user") {
   }));
   await session.signIn();
   const host: Host = {
+    fetch: vi.fn(),
     runCommand: vi.fn(),
     request: vi.fn(async () =>
       response({ status: "LIST_AGENTS_STATUS_SUCCESS", agents: [row] }),

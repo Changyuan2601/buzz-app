@@ -373,7 +373,7 @@ while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 
         .collect();
     let source: serde_json::Value =
         serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
-    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":2,"goose":source["goose"],"revision":source["revision"],"target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
+    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":2,"patch":source["patch"]["sha256"],"goose":source["goose"],"revision":source["revision"],"target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
     RuntimeBundle::new(directory.into()).unwrap()
 }
 fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {

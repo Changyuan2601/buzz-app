@@ -148,8 +148,24 @@ export function createDirectMessages(
         throw new Error(
           "The saved message does not belong to this conversation.",
         );
-      if (previous.delivery === "failed" || previous.delivery === "unknown")
+      if (previous.delivery === "failed" || previous.delivery === "unknown") {
+        // A restored outbox does not imply restored channel discovery. Admit
+        // the signed conversation before the outbox rechecks its recipients.
+        await reader.read(
+          [
+            {
+              kinds: [39000, 39002],
+              consistency: "strong",
+              authors: [transport.relayAuthor],
+              "#d": [channelId],
+              limit: 2,
+            },
+          ],
+          { signal: active, fresh: true },
+        );
+        active.throwIfAborted();
         outbox.retry(id);
+      }
       // The outbox owns delivery deadlines. This waiter only follows its state.
       await new Promise<void>((resolve, reject) => {
         let stop = () => {};

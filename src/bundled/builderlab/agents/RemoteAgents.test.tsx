@@ -70,6 +70,7 @@ async function fixture(
   const client = createAgentClient(
     {
       request,
+      fetch: vi.fn(),
       runCommand: vi.fn(),
       prepareRemoteAgentAuthorization: authorize,
     },

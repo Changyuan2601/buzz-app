@@ -924,6 +924,10 @@ download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.
 
+The optional `patch` in the runtime spec pins a repository patch by SHA256.
+The builder applies verified bytes to the frozen Buzz source; cache identity and
+startup verification include that SHA. The current patch delivers final native
+agent answers to DMs. Remove it when the upstream runtime includes this behavior.
 ### Bundled CLI skill
 
 Before restoring local agents, the native host installs the embedded `buzz-cli`
@@ -1235,3 +1239,12 @@ native artifact bytes. Stronger artifact policy (pinned hashes, bundling or
 upstream signatures) is a separate follow-up, not part of this port. Optional failed
 old-community retirement is best-effort; routing advertisements expire after
 120 seconds. No live packaged acceptance is claimed by fixture tests.
+
+Shared-compute activity displays the owned Mesh runtime's session counters,
+refreshing every five seconds while running. Output tokens are observed completion
+tokens from successful attempts, including requests routed elsewhere; requests
+include the viewer's own usage. Finished requests include unsuccessful outcomes.
+These counters reset with the runtime and are not lifetime contribution or member
+impact accounting. Other nodes are unique peers visible to this runtime; only
+peers reported as serving count as sharing compute. This is a local view of the
+mesh, not a network-wide census. Unavailable metrics are not presented as zero.
