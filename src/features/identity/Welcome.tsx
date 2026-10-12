@@ -4,6 +4,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { npubEncode } from "nostr-tools/nip19";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import { firstRunCredential } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
@@ -12,7 +13,10 @@ import { FindCommunity } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
 import type { Communities } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
-import { CircleNotchIcon } from "../../shared/design-system/icons/index";
+import {
+  CircleNotchIcon,
+  CopyIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -50,7 +54,10 @@ export function Welcome({
   const [joinError, setJoinError] = useState<{
     title: string;
     error: string;
+    /** Set when the relay refused the key: the page offers Try again for it. */
+    denied?: FoundCommunity;
   }>();
+  const [retrying, setRetrying] = useState(false);
   useEffect(
     () => () => {
       if (login.snapshot().status === "pending") login.cancel();
@@ -79,10 +86,11 @@ export function Welcome({
       read = await inspectProfile(found.url);
     } catch (error) {
       return readErrorKind(error) === "denied"
-        ? fail(
-            `${found.host} admits members by invite, and this key has none yet.`,
-            "This community needs an invite",
-          )
+        ? setJoinError({
+            title: "This community needs an invite",
+            error: `${found.host} admits members by invite, and this key has none yet. Send your public key to a community administrator so they can add you, then try again.`,
+            denied: found,
+          })
         : fail(
             "Could not reach the relay. Check your connection and try again.",
           );
@@ -103,6 +111,15 @@ export function Welcome({
     // gate lifts; today the new key enters the app with no published profile.
     setup.reset();
   };
+  const retry = async (found: FoundCommunity) => {
+    setRetrying(true);
+    try {
+      await join(found);
+    } finally {
+      setRetrying(false);
+    }
+  };
+  const denied = joinError?.denied;
   return (
     <main className="p-8" aria-labelledby="welcome-title">
       <SetupWindowHeader />
@@ -131,6 +148,9 @@ export function Welcome({
               title={joinError.title}
               error={joinError.error}
               onBack={() => setJoinError(undefined)}
+              publicKey={denied ? npubOf(state) : undefined}
+              onRetry={denied && (() => void retry(denied))}
+              busy={retrying}
             />
           ) : finding ? (
             <FindCommunity
@@ -220,15 +240,39 @@ export function Welcome({
   );
 }
 
+/**
+ * Admins admit people by npub, so the denied page shows the key to send them.
+ * Full npub only: the service validates the viewer as 64-hex, so encoding fails
+ * only on a snapshot that is not ready, and no key block is shown then.
+ */
+function npubOf(state: ReturnType<Identity["snapshot"]>) {
+  if (state.status !== "ready") return undefined;
+  try {
+    return npubEncode(state.viewer);
+  } catch {
+    return undefined;
+  }
+}
+
 function Failure({
   title,
   error,
   onBack,
+  publicKey,
+  onRetry,
+  busy = false,
 }: {
   title: string;
   error: string;
   onBack: () => void;
+  /** Shown as the user's shareable identity, with Copy, when set. */
+  publicKey?: string | undefined;
+  /** Offers Try again, disabled while `busy`. */
+  onRetry?: (() => void) | undefined;
+  busy?: boolean;
 }) {
+  // Copy feedback is inline: this page renders outside ToastProvider.
+  const [copyStatus, setCopyStatus] = useState("");
   return (
     <>
       <h1 id="welcome-title" className="text-title text-primary">
@@ -237,8 +281,55 @@ function Failure({
       <p role="alert" className="text-body text-danger">
         {error}
       </p>
-      <div>
-        <Button onClick={onBack}>Back</Button>
+      {publicKey && (
+        // Unstyled wireframe: a plain border until the key panel gets a design.
+        <div className="flex flex-col gap-2 rounded-lg border border-standard p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="m-0 text-body text-secondary">
+              Your public key (npub)
+            </h2>
+            <Button
+              size="compact"
+              variant="ghost"
+              aria-label="Copy npub"
+              onClick={() => {
+                setCopyStatus("");
+                void Promise.resolve()
+                  .then(() => navigator.clipboard.writeText(publicKey))
+                  .then(
+                    () => setCopyStatus("Public key copied."),
+                    () =>
+                      setCopyStatus(
+                        "Could not copy. Select the key above to copy it.",
+                      ),
+                  );
+              }}
+            >
+              <CopyIcon size={16} aria-hidden="true" />
+              Copy
+            </Button>
+          </div>
+          <code className="block select-text break-all font-mono text-mono">
+            {publicKey}
+          </code>
+          <p className="m-0 text-body-sm text-secondary">
+            This is your public identity — it’s safe to share.
+          </p>
+          <span role="status" className="text-body-sm text-secondary">
+            {copyStatus}
+          </span>
+        </div>
+      )}
+      {/* Footer order: secondary first, primary last. */}
+      <div className="flex gap-3">
+        <Button onClick={onBack} disabled={busy}>
+          Back
+        </Button>
+        {onRetry && (
+          <Button variant="primary" onClick={onRetry} disabled={busy}>
+            {busy ? "Trying again…" : "Try again"}
+          </Button>
+        )}
       </div>
     </>
   );

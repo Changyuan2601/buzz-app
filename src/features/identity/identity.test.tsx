@@ -16,6 +16,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { EventTemplate } from "nostr-tools";
+import { npubEncode } from "nostr-tools/nip19";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   createIdentity,
@@ -1127,7 +1128,7 @@ it("Join proves admission with the signed profile read, saves the membership, an
   identity.dispose();
 });
 
-it("a relay that refuses the read says the community needs an invite and keeps the typed URL", async () => {
+it("a relay that refuses the read says the community needs an invite, shows the npub to send, and keeps the typed URL", async () => {
   const member = keypair();
   const relay = nativeRelay(member);
   relay.admitted = false;
@@ -1140,7 +1141,20 @@ it("a relay that refuses the read says the community needs an invite and keeps t
     }),
   ).toBeVisible();
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "relay.example.com:8443 admits members by invite, and this key has none yet.",
+    "relay.example.com:8443 admits members by invite, and this key has none yet. Send your public key to a community administrator so they can add you, then try again.",
+  );
+  // The created key, as the full npub an admin pastes; never hex.
+  const npub = npubEncode(member.pubkey);
+  expect(
+    screen.getByRole("heading", { name: "Your public key (npub)" }),
+  ).toBeVisible();
+  expect(screen.getByText(npub)).toBeVisible();
+  expect(screen.queryByText(member.pubkey)).toBeNull();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  await user.click(screen.getByRole("button", { name: "Copy npub" }));
+  expect(write).toHaveBeenCalledWith(npub);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Public key copied."),
   );
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(communities.snapshot().memberships).toEqual([]);
@@ -1157,6 +1171,52 @@ it("a relay that refuses the read says the community needs an invite and keeps t
   expect(screen.getByRole("textbox", { name: "Community URL" })).toHaveValue(
     "relay.example.com:8443",
   );
+  identity.dispose();
+});
+
+it("Try again on the invite page repeats the signed read and enters the app once the relay admits the key", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  await screen.findByRole("heading", {
+    name: "This community needs an invite",
+  });
+  expect(relay.calls).toHaveLength(4);
+  // The admin has added the key in the meantime; the read is held to show the
+  // page waiting on it.
+  relay.admitted = true;
+  const gate = deferred<void>();
+  relay.query = gate.promise;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(screen.getByRole("button", { name: "Trying again…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+  await waitFor(() => expect(relay.calls).toHaveLength(6));
+  expect(relay.calls.slice(4)).toEqual([
+    { community: relay.origin, path: "/", method: "GET", body: null },
+    {
+      community: relay.origin,
+      path: "/query",
+      method: "POST",
+      body: [
+        {
+          kinds: [0],
+          authors: [member.pubkey],
+          limit: 5,
+          consistency: "strong",
+        },
+      ],
+    },
+  ]);
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await act(async () => gate.resolve());
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: relay.origin, name: "relay.example.com:8443" }],
+    selected: relay.origin,
+  });
   identity.dispose();
 });
 

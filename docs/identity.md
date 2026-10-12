@@ -60,11 +60,16 @@ community. While the read is in flight the page shows *Joining…* with Join and
 Cancel disabled. Nothing is published: no kind 0, no policy receipt or invite
 claim. The ticked boxes are the client's record of consent, as on the dialog's
 code-less path; a relay that requires an invite answers the read with 401/403,
-shown as **This community needs an invite** with **Back** to the find page (the
-typed address stays in the URL field behind it), since this page has no invite
-code field. A relay that cannot be reached shows the lookup's unreachable copy;
-a device record that will not save shows the service's storage message. Both
-offer **Back**. An existing relay profile seeds the empty local default; a new
+shown as **This community needs an invite**. Admins admit people by npub, so
+that page tells the user to send their public key to a community administrator
+and shows it as the full npub (never hex or an abbreviation) under *Your public
+key (npub)* with **Copy** and an inline copied/could-not-copy status, plus the
+note that it is their public identity and safe to share. **Try again** repeats
+the same join for that community, so an admin's add takes effect without
+retyping the address; **Back** returns to the find page (the typed address stays
+in the URL field behind it). There is no invite code field. A relay that cannot
+be reached shows the lookup's unreachable copy; a device record that will not
+save shows the service's storage message. Both offer **Back**. An existing relay profile seeds the empty local default; a new
 key enters the app with no published profile until Settings → Profile (a profile
 step is planned between the save and app entry). Denied/unavailable/corrupt
 storage is not first run and keeps the **Retry secure storage access** path.
