@@ -142,6 +142,12 @@ async fn ready_inference(
 /// Loopback inference target for a plugin-owned helper (Agents2 Mesh type).
 /// `lease` is evidence only: pass it to `mesh_compute_inference_current` before
 /// publishing so a reply produced across a community switch is discarded.
+///
+/// LIMITATION: this is stale-result mitigation, NOT in-flight isolation. The
+/// lease is a UI-intent token, not a hold on the port. A community switch can
+/// restart compute on the same port mid-request, so a prompt may reach the newly
+/// selected community; and check→publish is not atomic. Real isolation needs the
+/// request bound to its lease at the native request boundary or a lifecycle hold.
 #[cfg(feature = "mesh")]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +180,8 @@ pub async fn mesh_compute_prepare_inference(
 
 /// True only while the lease from `mesh_compute_prepare_inference` is still the
 /// current selection and compute is Ready. Check before publishing a reply.
+/// Stale-result mitigation only (see `PreparedInference`); does not isolate an
+/// in-flight request, and a same-community lease rotation also returns false.
 #[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_inference_current(
