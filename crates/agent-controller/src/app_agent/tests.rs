@@ -56,7 +56,7 @@ fn owner() -> String {
     auth[1].clone()
 }
 fn created(dir: &std::path::Path, credentials: &Memory) -> (AppAgents, AppAgent) {
-    let agents = AppAgents::open(dir.join("agents2/identities.json"));
+    let agents = AppAgents::open(dir.join("agents/identities.json"));
     let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Ada").unwrap();
     let auth: Vec<String> =
         serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
@@ -319,7 +319,7 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
 #[test]
 fn concurrent_writers_on_one_file_keep_every_identity() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("agents2/identities.json");
+    let path = dir.path().join("agents/identities.json");
     let credentials = std::sync::Arc::new(Memory::default());
     let threads: Vec<_> = (0..8)
         .map(|_| {
@@ -365,7 +365,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
     credentials.add(&id, &key).unwrap();
     set(&credentials.1.add, true);
     let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
-    let store = |n: usize| AppAgents::open(dirs[n].path().join("agents2/identities.json"));
+    let store = |n: usize| AppAgents::open(dirs[n].path().join("agents/identities.json"));
     let adopt = |picture: &str| {
         AppAgents::adopt(
             "https://relay.example/",
@@ -430,7 +430,7 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
 fn an_adopted_key_that_cannot_be_saved_withdraws_only_its_row() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
-    let agents = AppAgents::open(dir.path().join("agents2/identities.json"));
+    let agents = AppAgents::open(dir.path().join("agents/identities.json"));
     let key = Secret::generate().unwrap();
     let pubkey = key.pubkey().to_owned();
     let auth: Vec<String> =

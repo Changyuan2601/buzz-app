@@ -10,11 +10,26 @@ Channel templates plugin, agent snapshots, team bundles, community catalog and
 agent-management request popups are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
 
-Agents was called Agents2 while v1 still shipped. Its saved data keeps that name,
-so existing agents carry over and earlier builds still find them: the
-`agents2/identities.json` app data folder, the `buzz.agents2.v1` and
-`buzz.agents2.teams.v1` local storage keys, and the plugin's on/off switch, which
-stays under `buzz.agents2` so v1's leftover `buzz.agents` switch is ignored.
+Agents was called Agents2 while v1 still shipped. Startup now moves its identity
+folder to `agents/identities.json` and its browser settings to `buzz.agents.v1`
+and `buzz.agents.teams.v1`. Identity bytes and keychain entries are unchanged.
+The Agents2 plugin switch moves to `buzz.agents`; the retired v1 switch is
+removed. Plugin registry versions distinguish these preferences (native v2,
+browser v3), so a later restart preserves changes to the new switch.
+
+The temporary migrators are `src/features/agents/migrate-storage.ts`,
+`src/plugins/migrate-agent-flag.ts`,
+`crates/plugin-manager/src/migrate_agent_flag.rs`, and
+`src-tauri/src/sign_out/migrate_agents.rs`. Remove them and their call sites after
+2026-10-18 once development users have upgraded; remove the old registry-version
+readers and the legacy sign-out keep/key-deletion entries at the same time.
+This is a one-way development migration: close older Buzz copies before the
+first upgraded launch and use the upgraded build afterward. Native migration
+requires the existing exclusive instance lock; conflicts stop startup without
+replacing either folder. A pending erase handles both folder names before the
+migration runs. Browser moves write the destination before removing the source
+and resume identical interrupted copies; differing destinations are left intact
+and reported as migration errors.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.

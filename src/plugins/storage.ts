@@ -1,3 +1,4 @@
+import { migrateAgentFlag } from "./migrate-agent-flag";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Catalog,
@@ -8,10 +9,6 @@ import type {
 
 export const desktop = isTauri();
 const storageKey = "buzzodz.plugins.v1";
-/** The key a plugin's saved switch is kept under. Agents shipped as
- * `buzz.agents2` while v1 Agents held `buzz.agents`, so its switch keeps the
- * old key, as on desktop. */
-const flagKey = (id: string) => (id === "buzz.agents" ? "buzz.agents2" : id);
 
 export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
   function webCatalog(): StorageResult {
@@ -33,7 +30,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         ) {
           // This retired format controlled only the removed Welcome demo.
         } else if (
-          value.version === 2 &&
+          (value.version === 2 || value.version === 3) &&
           "enabled" in value &&
           value.enabled &&
           typeof value.enabled === "object" &&
@@ -43,9 +40,15 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
           )
         ) {
           const flags = value.enabled as Record<string, boolean>;
+          if (value.version === 2) {
+            migrateAgentFlag(flags);
+            localStorage.setItem(
+              storageKey,
+              JSON.stringify({ version: 3, enabled: flags }),
+            );
+          }
           for (const plugin of catalog.plugins)
-            plugin.enabled =
-              flags[flagKey(plugin.manifest.id)] ?? plugin.enabled;
+            plugin.enabled = flags[plugin.manifest.id] ?? plugin.enabled;
         } else throw new Error("Invalid browser plugin settings");
       }
     } catch (error) {
@@ -78,10 +81,10 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     localStorage.setItem(
       storageKey,
       JSON.stringify({
-        version: 2,
+        version: 3,
         enabled: Object.fromEntries(
           catalog.plugins.map((plugin) => [
-            flagKey(plugin.manifest.id),
+            plugin.manifest.id,
             plugin.manifest.id === id ? action === "enable" : plugin.enabled,
           ]),
         ),

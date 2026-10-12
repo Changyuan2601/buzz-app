@@ -521,10 +521,14 @@ pub fn run() {
                 {
                     buzz_agent_controller::delete_local_agent_keys(old, &credentials)?;
                 }
-                buzz_agent_controller::AppAgents::open(
-                    app_data.join(sign_out::AGENTS).join("identities.json"),
-                )
-                .delete_keys(&credentials)
+                // The pending erase runs before the temporary startup migration.
+                for folder in [sign_out::AGENTS, sign_out::migrate_agents::LEGACY] {
+                    buzz_agent_controller::AppAgents::open(
+                        app_data.join(folder).join("identities.json"),
+                    )
+                    .delete_keys(&credentials)?;
+                }
+                Ok(())
             },
             identity::remove_saved_key,
         )
@@ -600,8 +604,10 @@ pub fn run() {
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()
-                    // Keeps its Agents2 name; see `sign_out::AGENTS`.
-                    .map(|(root, _)| root.with_file_name("agents2").join("identities.json"))
+                    .map(|(root, _)| {
+                        root.with_file_name(sign_out::AGENTS)
+                            .join("identities.json")
+                    })
                     .map_err(Clone::clone),
                 paths
                     .as_ref()

@@ -32,10 +32,10 @@ const AGENT_STOPPING: &str =
 const ALREADY: &str = "Buzz is already signing out.";
 const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
 const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
-/// App data folders of the Agents list and of the earlier agent system,
-/// whose agents can still be ported. The Agents folder keeps its Agents2 name,
-/// so its saved agents stay and earlier builds still find them.
-pub(crate) const AGENTS: &str = "agents2";
+// TEMPORARY agents rename: remove after 2026-10-18; see the migration module.
+pub(crate) mod migrate_agents;
+/// App data folder holding the current Agents identities.
+pub(crate) const AGENTS: &str = "agents";
 pub(crate) const OLD_AGENTS: &str = "agent-controller";
 /// One lock per running agent, held by its supervisor until the agent has
 /// stopped, even after Buzz exits. Shared by every Buzz, under the user data folder.
@@ -46,6 +46,7 @@ pub(crate) const AGENT_OWNERSHIP: &str = "dev.local.buzz.agent-ownership";
 /// locks, saved logins, logs, run folders, and whatever is added later) is wiped.
 const KEPT: Kept = &[
     (AGENTS, &["identities.json"]),
+    (migrate_agents::LEGACY, &["identities.json"]),
     (OLD_AGENTS, &["agents.json", "defaults.json"]),
 ];
 /// The children a wiped folder keeps, each with the files it keeps.
@@ -381,6 +382,7 @@ pub(crate) fn boot(
         locks.key.unlock().map_err(failed)?;
         handoff();
     }
+    migrate_agents::migrate(paths, &locks)?;
     Ok(Instance {
         locks: Mutex::new(locks),
         marker: paths.marker.clone(),

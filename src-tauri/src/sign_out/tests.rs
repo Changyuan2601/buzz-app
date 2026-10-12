@@ -137,8 +137,8 @@ fn wipe_keeps_agents_unless_they_are_removed_too() {
                 "app/",
                 "app/agent-controller/",
                 "app/agent-controller/agents.json",
-                "app/agents2/",
-                "app/agents2/identities.json",
+                "app/agents/",
+                "app/agents/identities.json",
             ]
         };
         assert_eq!(listing(dir.path()), expected);
@@ -179,8 +179,8 @@ fn a_wipe_interrupted_part_way_resumes_on_the_next_launch() {
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json",
-            "app/agents2/",
-            "app/agents2/identities.json"
+            "app/agents/",
+            "app/agents/identities.json"
         ]
     );
 }
@@ -245,8 +245,8 @@ fn a_retry_clears_storage_recreated_after_the_key_was_removed() {
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json",
-            "app/agents2/",
-            "app/agents2/identities.json"
+            "app/agents/",
+            "app/agents/identities.json"
         ]
     );
 }
@@ -471,8 +471,8 @@ fn across_processes_a_running_instance_blocks_sign_out_and_a_later_launch_finish
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json",
-            "app/agents2/",
-            "app/agents2/identities.json"
+            "app/agents/",
+            "app/agents/identities.json"
         ]
     );
 }
@@ -563,8 +563,8 @@ fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json",
-            "app/agents2/",
-            "app/agents2/identities.json"
+            "app/agents/",
+            "app/agents/identities.json"
         ]
     );
 }
@@ -677,8 +677,8 @@ fn a_sign_out_escalated_to_a_wipe_during_recovery_waits_for_every_copy() {
             "app/",
             "app/agent-controller/",
             "app/agent-controller/agents.json",
-            "app/agents2/",
-            "app/agents2/identities.json"
+            "app/agents/",
+            "app/agents/identities.json"
         ]
     );
 }
@@ -781,8 +781,8 @@ fn kept_agents_keep_only_their_list_settings_and_keys() {
             "app/agent-controller/",
             "app/agent-controller/agents.json",
             "app/agent-controller/defaults.json",
-            "app/agents2/",
-            "app/agents2/identities.json"
+            "app/agents/",
+            "app/agents/identities.json"
         ]
     );
     assert_eq!(fs::read(controller.join("agents.json")).unwrap(), b"agents");
@@ -1254,4 +1254,79 @@ fn a_sign_out_finished_before_launch_does_not_fence_a_later_refusal() {
     let running = Child::running(dir.path(), "identity");
     assert_eq!(instance.begin(PLAIN), Err(refuse(OTHERS)));
     running.finish();
+}
+
+#[test]
+fn agents_rename_moves_once_and_retains_exact_identity_bytes() {
+    let (_dir, paths) = fixture();
+    let old = paths.app_data.join(migrate_agents::LEGACY);
+    let new = paths.app_data.join(AGENTS);
+    fs::rename(&new, &old).unwrap();
+    let instance = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert!(!old.exists());
+    assert_eq!(
+        fs::read(new.join("identities.json")).unwrap(),
+        b"identities"
+    );
+    drop(instance);
+    fs::write(new.join("identities.json"), "updated").unwrap();
+    let _reopened = boot(&paths, no_agents, || panic!("no sign-out")).unwrap();
+    assert_eq!(fs::read(new.join("identities.json")).unwrap(), b"updated");
+}
+
+#[test]
+fn agents_rename_refuses_conflicts_and_a_running_old_copy() {
+    let (_dir, paths) = fixture();
+    let old = paths.app_data.join(migrate_agents::LEGACY);
+    let new = paths.app_data.join(AGENTS);
+    fs::create_dir(&old).unwrap();
+    fs::write(old.join("identities.json"), "old").unwrap();
+    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert_eq!(
+        fs::read(new.join("identities.json")).unwrap(),
+        b"identities"
+    );
+    assert_eq!(fs::read(old.join("identities.json")).unwrap(), b"old");
+    fs::remove_dir_all(&old).unwrap();
+    let running = boot(&paths, no_agents, || Ok(())).unwrap();
+    fs::rename(&new, &old).unwrap();
+    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert!(!new.exists());
+    assert_eq!(
+        fs::read(old.join("identities.json")).unwrap(),
+        b"identities"
+    );
+    drop(running);
+    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn agents_rename_rejects_symlinks_without_touching_the_target() {
+    let (dir, paths) = fixture();
+    let outside = dir.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("identities.json"), "outside").unwrap();
+    std::os::unix::fs::symlink(&outside, paths.app_data.join(migrate_agents::LEGACY)).unwrap();
+    assert!(boot(&paths, no_agents, || Ok(())).is_err());
+    assert_eq!(
+        fs::read(outside.join("identities.json")).unwrap(),
+        b"outside"
+    );
+}
+
+#[test]
+fn agents_rename_runs_after_pending_erase_keeps_legacy_identities() {
+    let (_dir, paths) = fixture();
+    let old = paths.app_data.join(migrate_agents::LEGACY);
+    let new = paths.app_data.join(AGENTS);
+    fs::rename(&new, &old).unwrap();
+    mark(&paths, true, false);
+    let _instance = boot(&paths, no_agents, || Ok(())).unwrap();
+    assert!(!old.exists());
+    assert_eq!(
+        fs::read(new.join("identities.json")).unwrap(),
+        b"identities"
+    );
+    assert!(!paths.app_data.join("archive.sqlite3").exists());
 }

@@ -4,6 +4,7 @@
 // app owns and edits, and a config blob the type owns. The app delivers matching live events to
 // `run` from the stream the owner already receives in the agent's community,
 // selected or not, so no plugin opens a socket or a REQ.
+import { migrateAgentStorage } from "./migrate-storage";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import type { ComponentType } from "react";
@@ -444,6 +445,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    migrateAgentStorage(storage);
     this.records = readRecords(storage);
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({

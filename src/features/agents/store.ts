@@ -35,8 +35,7 @@ export type AgentRecord = Readonly<{
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
-// Saved names keep the Agents2 spelling, so existing agents and teams stay.
-export const STORAGE_KEY = "buzz.agents2.v1";
+export const STORAGE_KEY = "buzz.agents.v1";
 const PUBKEY = /^[0-9a-f]{64}$/;
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches and timers";
@@ -182,7 +181,7 @@ export type Team = Readonly<{
   /** Agent pubkeys, in the order shown. */
   members: readonly string[];
 }>;
-export const TEAMS_KEY = "buzz.agents2.teams.v1";
+export const TEAMS_KEY = "buzz.agents.teams.v1";
 
 /** Reads every team, skipping any that is not one. */
 export function readTeams(storage: Storage): readonly Team[] {

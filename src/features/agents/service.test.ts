@@ -483,7 +483,7 @@ it("gives each member its teams' roster and instructions, and drops a deleted ag
       [],
     ]),
   );
-  expect(storage.getItem("buzz.agents2.teams.v1")).not.toContain(sibling);
+  expect(storage.getItem("buzz.agents.teams.v1")).not.toContain(sibling);
   await service.removeTeam(team.id);
   expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
 });
@@ -1045,7 +1045,7 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   await service.create({ type: "example/echo", name: "Echo" });
   warn.mockRestore();
-  expect(storage.getItem("buzz.agents2.v1") ?? "").not.toContain(bot);
+  expect(storage.getItem("buzz.agents.v1") ?? "").not.toContain(bot);
   expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
   expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
@@ -1053,7 +1053,7 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   ]);
   // The next save stores them.
   await service.save(bot, { config: { reply: "saved" } });
-  expect(storage.getItem("buzz.agents2.v1")).toContain(bot);
+  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
 });
 
 it("saves nothing when native create fails", async () => {
@@ -1064,7 +1064,7 @@ it("saves nothing when native create fails", async () => {
     service.create({ type: "example/echo", name: "Echo" }),
   ).rejects.toThrow("Credential store refused");
   expect(service.snapshot().agents).toEqual([]);
-  expect(storage.getItem("buzz.agents2.v1")).toBeNull();
+  expect(storage.getItem("buzz.agents.v1")).toBeNull();
 });
 
 it("returns the created agent after the community changes mid-create", async () => {
@@ -1083,7 +1083,7 @@ it("returns the created agent after the community changes mid-create", async () 
 it("forgets records whose key is gone when identities load", async () => {
   const storage = memoryStorage();
   storage.setItem(
-    "buzz.agents2.v1",
+    "buzz.agents.v1",
     JSON.stringify({
       version: 1,
       agents: {
@@ -1108,7 +1108,7 @@ it("forgets records whose key is gone when identities load", async () => {
   expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
     "Echo",
   ]);
-  expect(storage.getItem("buzz.agents2.v1")).not.toContain(sibling);
+  expect(storage.getItem("buzz.agents.v1")).not.toContain(sibling);
 });
 
 it("keeps an agent created while identities are still loading", async () => {
@@ -1141,7 +1141,7 @@ it("keeps an agent created while identities are still loading", async () => {
   release([]);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   expect(service.find(bot)?.name).toBe("Echo");
-  expect(storage.getItem("buzz.agents2.v1")).toContain(bot);
+  expect(storage.getItem("buzz.agents.v1")).toContain(bot);
 });
 
 it("fires a due timer once, then again an interval after it ran", async () => {
@@ -1191,7 +1191,7 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   expect(run).toHaveBeenCalledTimes(2);
   // Its run state lives in the agent's record and goes when the timer does.
   const stored = () =>
-    JSON.parse(storage.getItem("buzz.agents2.v1") ?? "{}").agents[bot];
+    JSON.parse(storage.getItem("buzz.agents.v1") ?? "{}").agents[bot];
   expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
@@ -1307,7 +1307,7 @@ it("deletes the key at once, then leaves its channels and archives it before for
   await service.create({ type: "example/echo", name: "Echo" });
   await service.remove(bot);
   expect(service.snapshot().agents).toEqual([]);
-  expect(storage.getItem("buzz.agents2.v1")).not.toContain(bot);
+  expect(storage.getItem("buzz.agents.v1")).not.toContain(bot);
   await vi.waitFor(() =>
     expect(steps).toEqual(["key", "channels", "archive", "forget"]),
   );
