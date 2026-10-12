@@ -293,12 +293,80 @@
     display: flex;
     min-width: 0;
   }
+  /* Corner caps. Chromium hit-tests the start of a scroll on the main thread
+     whenever a rounded clip encloses the scroller, so one busy task would hold
+     every shell scroll until it ends. The joined Panel therefore clips its
+     content to a rectangle and redraws its rounded corner on top: ::before
+     repaints the backdrop outside the arc and ::after the Panel's edge. Both
+     ignore pointers and keep their own compositor layers; merged into a
+     content layer they would fail the hit test again. */
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1;
+    --shell-gutter: var(--space-2);
+    padding: 0 var(--shell-gutter) var(--shell-gutter) 0;
+    isolation: isolate;
+  }
+  @media (min-width: 40rem) {
+    .shell-body {
+      --shell-gutter: var(--space-4);
+    }
+  }
+  .shell-body > .panel {
+    overflow: visible;
+    border-color: transparent;
+    box-shadow: none;
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0;
     container-type: inline-size;
+    /* Not `clip`, which stops lazy images loading ahead of the viewport. */
+    overflow: hidden;
+    /* container-type alone leaves the narrow navigation above the caps. */
+    isolation: isolate;
+  }
+  .shell-body > .panel::before,
+  .shell-body > .panel::after {
+    content: "";
+    position: absolute;
+    /* The Panel's border box within .shell-body. */
+    inset: 0 var(--shell-gutter) var(--shell-gutter) 0;
+    z-index: 1;
+    pointer-events: none;
+    will-change: transform;
+  }
+  .shell-body > .panel::before {
+    --r: var(--radius-panel);
+    --far: calc(100% - var(--r));
+    --outside: transparent calc(var(--r) - 0.5px), black 0;
+    --tile: calc(var(--r) + 2px);
+    /* The viewport-sized .shell-background, aligned at its bottom-right. */
+    background-color: var(--color-shell);
+    background-image: var(--bg-app);
+    background-position: right calc(-1 * var(--shell-gutter)) bottom
+      calc(-1 * var(--shell-gutter));
+    background-size: 100vw 100dvh;
+    background-repeat: no-repeat;
+    /* Each corner square minus its arc. Full-box circles, rather than circles
+       in corner tiles, keep fractional sizes from leaking the fill. */
+    mask:
+      radial-gradient(circle var(--r) at var(--r) var(--r), var(--outside))
+      intersect,
+      radial-gradient(circle var(--r) at var(--far) var(--r), var(--outside))
+      intersect,
+      radial-gradient(circle var(--r) at var(--r) var(--far), var(--outside))
+      intersect,
+      radial-gradient(circle var(--r) at var(--far) var(--far), var(--outside))
+      intersect,
+      linear-gradient(black 0 0) left top / var(--tile) var(--tile) no-repeat,
+      linear-gradient(black 0 0) right top / var(--tile) var(--tile) no-repeat,
+      linear-gradient(black 0 0) left bottom / var(--tile) var(--tile) no-repeat,
+      linear-gradient(black 0 0) right bottom / var(--tile) var(--tile)
+      no-repeat;
+  }
+  .shell-body > .panel::after {
+    border: var(--panel-border);
+    border-radius: inherit;
+    box-shadow: var(--panel-shadow);
   }
   .shell-sidebar,
   .shell-sidebar-default {

@@ -436,6 +436,66 @@ test("joined surface, sidebar pages, real link panel and compact community navig
   await expectProjectsChoice(1);
 });
 
+// Chromium hit-tests a scroll start on the main thread when a rounded clip
+// encloses the scroller, so one busy task would hold every shell scroll start.
+// Both scrollers overflow so the compositor owns their scrolling.
+const scrollStart = scroll.extend({ largeSidebar: true });
+scrollStart(
+  "Chromium starts shell scrolls without a main-thread hit test",
+  async ({ page, app, browserName }) => {
+    test.skip(
+      browserName !== "chromium",
+      "WebKit hit-tests scroll starts off the main thread under rounded clips",
+    );
+    await open(page, app);
+    await settle(page);
+    // The timeline opens at its newest row and the channel list at its top.
+    const scrollers = [
+      [page.getByRole("region", { name: "Channel message history" }), 200],
+      [
+        page.getByRole("navigation", {
+          name: "Subscribed channels",
+          exact: true,
+        }),
+        -200,
+      ],
+    ];
+    const cdp = await page.context().newCDPSession(page);
+    const events = [];
+    cdp.on("Tracing.dataCollected", ({ value }) => events.push(...value));
+    const traced = new Promise((resolve) =>
+      cdp.once("Tracing.tracingComplete", resolve),
+    );
+    await cdp.send("Tracing.start", {
+      categories: "-*,input",
+      transferMode: "ReportEvents",
+    });
+    for (const [scroller, yDistance] of scrollers) {
+      const { x, y, width, height } = await box(scroller);
+      const offset = await scroller.evaluate((el) => el.scrollTop);
+      // Resolves after the browser has delivered the whole gesture.
+      await cdp.send("Input.synthesizeScrollGesture", {
+        x: x + width / 2,
+        y: y + height / 2,
+        yDistance,
+        gestureSourceType: "mouse",
+      });
+      await expect
+        .poll(() => scroller.evaluate((el) => el.scrollTop))
+        .not.toBe(offset);
+    }
+    await cdp.send("Tracing.end");
+    await traced;
+    const count = (name) =>
+      events.filter((event) => event.name === name).length;
+    expect(
+      count("InputHandlerProxy::HandleGestureScrollBegin"),
+      "the compositor traced each scroll start",
+    ).toBeGreaterThanOrEqual(scrollers.length);
+    expect(count("PostingHitTestToMainThread")).toBe(0);
+  },
+);
+
 test("narrow link panels begin after the rendered sidebar", async ({
   page,
   app,
