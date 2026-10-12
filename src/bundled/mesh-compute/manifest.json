@@ -1,1 +1,8 @@
-{ "id": "buzz.mesh-compute", "name": "Shared compute", "apiVersion": 1 }
+{
+  "id": "buzz.mesh-compute",
+  "name": "Shared compute",
+  "apiVersion": 1,
+  "host": {
+    "processes": [{ "id": "agent", "program": "buzz-mesh-agent" }]
+  }
+}

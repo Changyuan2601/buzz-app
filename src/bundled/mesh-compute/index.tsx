@@ -15,6 +15,13 @@ import { ConsumerComputeView } from "./ConsumerComputeView";
 import styles from "./Compute.module.css";
 
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
+import { MeshAgentTab } from "./MeshAgentTab";
+import {
+  DEFAULT_MESH_AGENT_CONFIG,
+  type MeshAgentConfig,
+  type PreparedInference,
+  runMeshAgent,
+} from "./meshAgent";
 
 type MeshStatus = {
   activity?: ComputeActivityData | null;
@@ -44,6 +51,8 @@ export const inject = [
   "settingsCards",
   "agentControl",
   "communityReader",
+  "agents2",
+  "host",
 ];
 
 // Settles when the most recent Share action has fully finished, so tests can
@@ -148,6 +157,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
     release(lease);
     lease = undefined;
   });
+
+  // Agents2 "Mesh" type: prompt-only, inference through shared compute only.
+  const spawn = ctx.host?.spawn?.bind(ctx.host);
+  if (isTauri() && spawn && ctx.agents2)
+    ctx.agents2.register<MeshAgentConfig>({
+      id: "mesh",
+      title: "Mesh",
+      description:
+        "Answers you from this community's shared compute. Inference only: no tools.",
+      defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
+      summary: () => "Shared compute",
+      tabs: [{ id: "prompt", title: "Prompt", component: MeshAgentTab }],
+      // Covers compute startup (native waits up to 120s) plus one reply.
+      timeoutMs: 5 * 60_000,
+      run: (delivery) =>
+        runMeshAgent(
+          {
+            spawn,
+            origin: () => ctx.relay.snapshot().origin,
+            prepare: (relay) =>
+              invoke<PreparedInference>("mesh_compute_prepare_inference", {
+                relay,
+                model: "auto",
+              }),
+            current: (lease) =>
+              invoke<boolean>("mesh_compute_inference_current", { lease }),
+          },
+          delivery,
+        ),
+    });
 
   function CommunityComputePage({
     community,
