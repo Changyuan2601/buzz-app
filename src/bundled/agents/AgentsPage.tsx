@@ -582,9 +582,10 @@ function BringOver({
         onClose={onClose}
       />
       <p className="m-0 text-body-sm text-secondary">
-        Keeps each agent's key, name and picture in this community. Its
-        instructions and settings stay behind. Stop it where it runs now first,
-        or both will answer.
+        {chosen?.adopt
+          ? "Keeps each agent's key, name, picture and instructions in this community. Its other settings stay behind."
+          : "Keeps each agent's key, name and picture in this community. Its instructions and settings stay behind."}{" "}
+        Stop it where it runs now first, or both will answer.
       </p>
       <Field label="As">
         <RadioGroup

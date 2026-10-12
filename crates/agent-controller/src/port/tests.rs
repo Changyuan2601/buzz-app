@@ -94,6 +94,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 picture: None,
                 about: None,
                 relay: "wss://relay.example".into(),
+                carry: Carry::default(),
             },
             Portable {
                 source: PortSource::Installed,
@@ -102,6 +103,7 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 picture: Some("https://old.example/media/b.png".into()),
                 about: None,
                 relay: "wss://old.example".into(),
+                carry: Carry::default(),
             },
             Portable {
                 source: PortSource::Development,
@@ -110,9 +112,67 @@ fn lists_each_identity_once_preferring_the_harness_copy() {
                 picture: None,
                 about: None,
                 relay: String::new(),
+                carry: Carry::default(),
             },
         ]
     );
+}
+
+#[test]
+fn carries_each_stores_own_instructions_and_the_harness_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let (harness, old, linked, blank) = (key(), key(), key(), key());
+    write(
+        stores(dir.path()).harness,
+        json!({"agents": [{
+            "pubkey": harness.pubkey(), "relayUrl": "wss://relay.example", "name": "Ada",
+            "systemPrompt": " Review PRs.\n", "workspace": "~/code",
+        }, {
+            "pubkey": blank.pubkey(), "relayUrl": "wss://relay.example", "name": "Dee",
+            "systemPrompt": "  ", "workspace": "",
+        }]}),
+    );
+    legacy(
+        dir.path(),
+        LegacySource::Installed,
+        json!([
+            {"pubkey": old.pubkey(), "name": "Bea", "system_prompt": "Triage.", "workspace": "~/x"},
+            // Old Buzz ran the instance's prompt; its definition's is not used.
+            {"pubkey": "", "slug": "reviewer", "name": "Reviewer", "system_prompt": "Persona."},
+            {"pubkey": linked.pubkey(), "name": "Cy", "persona_id": "reviewer", "system_prompt": null},
+        ]),
+    );
+    let carried: BTreeMap<_, _> = stores(dir.path())
+        .list()
+        .agents
+        .into_iter()
+        .map(|agent| (agent.name, agent.carry))
+        .collect();
+    assert_eq!(
+        carried,
+        BTreeMap::from([
+            (
+                "Ada".into(),
+                Carry {
+                    instructions: Some("Review PRs.".into()),
+                    workspace: Some("~/code".into()),
+                }
+            ),
+            (
+                "Bea".into(),
+                Carry {
+                    instructions: Some("Triage.".into()),
+                    workspace: None,
+                }
+            ),
+            ("Cy".into(), Carry::default()),
+            ("Dee".into(), Carry::default()),
+        ])
+    );
+    // Listing never shows them; only taking the agent over does.
+    assert!(!serde_json::to_string(&stores(dir.path()).list())
+        .unwrap()
+        .contains("Review PRs"));
 }
 
 #[test]

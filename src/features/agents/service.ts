@@ -43,6 +43,7 @@ import {
   nativeAgents,
   type AgentEventTemplate,
   type AgentIdentity,
+  type Carry,
   type AgentsNative,
   type AgentUpload,
   type PortableAgents,
@@ -182,6 +183,9 @@ export type AgentType<Config = unknown> = {
     config: Config;
     attention?: Readonly<Record<string, AttentionValue>>;
   }>;
+  /** A brought-over agent's config: `config` from `defaults` with whatever of
+   * `carry` the type has a place for. Without it, all of `carry` stays behind. */
+  adopt?(carry: Carry, config: Config): Config;
   /** One short line under the agent's name, e.g. its model; defaults to the title. */
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */
@@ -208,7 +212,7 @@ export type AgentsSnapshot = Readonly<{
   teams: readonly Team[];
   error?: string;
 }>;
-export type { Team };
+export type { Carry, Team };
 export type TeamChange = Omit<Team, "id"> & Readonly<{ id?: string }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -225,7 +229,8 @@ export type Agents = {
    * Agents yet. */
   portable(): Promise<PortableAgents>;
   /** Takes one over as an agent of `type` in the selected community, keeping its
-   * key, name and picture. Its instructions and settings stay behind. */
+   * key, name and picture, and whatever of its instructions and workspace the
+   * type adopts. Its other settings stay behind. */
   port(
     input: Readonly<{ source: PortSource; pubkey: string; type: string }>,
   ): Promise<Agent>;
@@ -560,9 +565,9 @@ export class AgentsService extends Service implements Agents {
 
   async create({ type, name }: Readonly<{ type: string; name: string }>) {
     if (!name.trim()) throw new Error("Name the agent");
-    return this.add(type, (native, destination, owner) =>
-      native.create(destination, owner, type, name.trim()),
-    );
+    return this.add(type, async (native, destination, owner) => ({
+      agent: await native.create(destination, owner, type, name.trim()),
+    }));
   }
 
   async portable() {
@@ -591,14 +596,14 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Saves a new identity of `type` in the selected community with the type's
-   * default settings. */
+   * default settings, adopting what a brought-over one carried. */
   private async add(
     type: string,
     save: (
       native: AgentsNative,
       destination: string,
       owner: string,
-    ) => Promise<AgentIdentity>,
+    ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
   ) {
     const native = this.native;
     const selected = this.communities.snapshot().selected;
@@ -610,13 +615,15 @@ export class AgentsService extends Service implements Agents {
     if (!binding) throw new Error("Connect to a community first");
     if (!kind) throw new Error("That agent type is not available");
     const settings = defaults("", kind);
-    const identity = await save(
+    const { agent: identity, carry } = await save(
       native,
       relayOrigin(binding.origin),
       binding.viewer,
     );
-    const record = { ...settings, pubkey: identity.pubkey };
+    let record = { ...settings, pubkey: identity.pubkey };
     try {
+      if (carry && kind.adopt)
+        record = { ...record, config: kind.adopt(carry, record.config) };
       this.write(record);
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.

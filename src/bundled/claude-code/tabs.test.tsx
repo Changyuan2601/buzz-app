@@ -95,6 +95,17 @@ it("is an agent type on the desktop app", () => {
   const { type } = installed();
   expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
+  expect(
+    type.adopt?.(
+      { instructions: "Triage.", workspace: "~/code" },
+      DEFAULT_CONFIG,
+    ),
+  ).toEqual({
+    ...DEFAULT_CONFIG,
+    instructions: "Triage.",
+    workspace: "~/code",
+  });
+  expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );

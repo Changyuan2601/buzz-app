@@ -46,6 +46,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Claude Code on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    adopt: (carry, saved) => ({
+      ...saved,
+      instructions: carry.instructions ?? saved.instructions,
+      workspace: carry.workspace ?? saved.workspace,
+    }),
     summary: (agent) => config(agent.config).model || "Claude Code",
     tabs: [
       { id: "claude", title: "Claude", component: ClaudeTab },

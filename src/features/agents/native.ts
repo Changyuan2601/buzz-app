@@ -29,6 +29,12 @@ export type PortableAgent = Readonly<{
   /** The community it was saved for there, if valid. */
   relay: string;
 }>;
+/** What an agent kept in an earlier system that its new type may adopt. */
+export type Carry = Readonly<{
+  instructions?: string;
+  /** Its working directory, absolute or `~/…`. */
+  workspace?: string;
+}>;
 export type PortableAgents = Readonly<{
   agents: readonly PortableAgent[];
   /** A store that could not be read; the others are still listed. */
@@ -61,14 +67,15 @@ export type AgentsNative = {
   ): Promise<AgentIdentity>;
   /** Earlier agent systems' identities on this machine. */
   portable(): Promise<PortableAgents>;
-  /** Takes one over with its key, name and picture, as `create` does. */
+  /** Takes one over with its key, name and picture, as `create` does, with
+   * what it kept there for its new type. */
   port(
     source: PortSource,
     pubkey: string,
     destination: string,
     owner: string,
     type: string,
-  ): Promise<AgentIdentity>;
+  ): Promise<Readonly<{ agent: AgentIdentity; carry: Carry }>>;
   rename(pubkey: string, name: string): Promise<void>;
   /** Sets its profile picture, an HTTPS image URL, or with `null` clears it. */
   setPicture(pubkey: string, picture: string | null): Promise<void>;

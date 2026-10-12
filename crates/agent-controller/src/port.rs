@@ -1,7 +1,8 @@
 //! Agent identities an earlier agent system saved on this machine, which Agents
-//! can take over: the harness controller's library and old Buzz's. Only the
-//! identity and its public name, picture and description move; instructions,
-//! harness settings and memberships stay behind. Neither store is ever written.
+//! can take over: the harness controller's library and old Buzz's. The identity
+//! and its public name, picture and description move, with its instructions
+//! and workspace as a `Carry` for the new type to adopt; other harness settings
+//! and memberships stay behind. Neither store is ever written.
 use crate::config::{agent_id, canonical_key, canonical_relay, MAX_AGENTS};
 use crate::import::read_json;
 use crate::{Credentials, LegacySource, Result, Secret};
@@ -41,6 +42,20 @@ pub struct Portable {
     pub about: Option<String>,
     /// The community it was saved for there; the new identity uses the open one.
     pub relay: String,
+    /// Settings any type may adopt. Only taking the agent over reports them.
+    #[serde(skip)]
+    pub carry: Carry,
+}
+
+/// What an agent kept in an earlier system that a new type may give it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Carry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    /// Its working directory, absolute or `~/…`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -180,6 +195,16 @@ fn portable(source: PortSource, record: &Value, records: &[Value]) -> Option<(Po
             picture,
             about: description(source, record, records),
             relay,
+            carry: Carry {
+                // Old Buzz ran an instance's own prompt, never its definition's.
+                instructions: present(text(if harness {
+                    "systemPrompt"
+                } else {
+                    "system_prompt"
+                })),
+                // Old Buzz saved no workspace.
+                workspace: harness.then(|| present(text("workspace"))).flatten(),
+            },
         },
         credential,
     ))
@@ -207,9 +232,11 @@ fn description(source: PortSource, record: &Value, records: &[Value]) -> Option<
     } else {
         &record["description"]
     };
-    value
-        .as_str()
-        .map(str::trim)
+    present(value.as_str()?)
+}
+
+fn present(text: &str) -> Option<String> {
+    Some(text.trim())
         .filter(|text| !text.is_empty())
         .map(str::to_owned)
 }

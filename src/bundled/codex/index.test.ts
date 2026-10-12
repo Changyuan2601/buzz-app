@@ -49,6 +49,18 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
+it("adopts a brought-over agent's instructions and workspace, nothing else", () => {
+  const type = applied();
+  const saved = type?.defaults().config;
+  expect(
+    type?.adopt?.({ instructions: "Triage.", model: "gpt" } as never, saved),
+  ).toEqual({ ...(saved as object), instructions: "Triage." });
+  expect(type?.adopt?.({ workspace: "~/code" }, saved)).toEqual({
+    ...(saved as object),
+    workspace: "~/code",
+  });
+});
+
 it("stops agents that stop running even when the agent list could not be read", () => {
   const sync = vi.spyOn(CodexRuntime.prototype, "sync");
   const agent = { pubkey: "agent", type: "buzz.codex/codex" };

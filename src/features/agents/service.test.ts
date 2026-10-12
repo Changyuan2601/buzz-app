@@ -220,7 +220,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
           deleted: false,
         };
         identities.push(identity);
-        return identity;
+        return { agent: identity, carry: { instructions: "Triage." } };
       },
     ),
     rename: vi.fn(async (pubkey: string, name: string) => {
@@ -281,6 +281,7 @@ async function setup({
   const type: AgentType<Config> = {
     id: "echo",
     title: "Echo",
+    adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
     defaults: () => ({
       config: { reply: "ok" },
       attention: {
@@ -377,7 +378,7 @@ it("creates an agent in the community shown, with its type's defaults, and publi
   expect(service.find(bot)).toEqual(agent);
 });
 
-it("brings over an identity not already an agent, with its type's defaults, and publishes its profile", async () => {
+it("brings over an identity not already an agent, with its type's defaults and what it adopts, and publishes its profile", async () => {
   const { service, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const found = await service.portable();
@@ -400,8 +401,9 @@ it("brings over an identity not already an agent, with its type's defaults, and 
   expect(agent).toMatchObject({
     pubkey: sibling,
     name: "Older",
-    config: { reply: "ok" },
+    config: { reply: "Triage." },
   });
+  expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
   expect(Object.keys(agent.attention)).toEqual([
     "interest/default",
     "watch/channel",
