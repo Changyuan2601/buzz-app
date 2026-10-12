@@ -1,12 +1,17 @@
 // The type's tabs: Claude Code's setup on this computer, and the agent's
-// settings.
+// settings; and its part of the New agent dialog.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { AgentViewProps } from "../../features/agents2/service";
+import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { CreateCorner } from "../../features/agents/create-card";
+import { ModelPicker } from "../../features/agents/ModelPicker";
+import type {
+  AgentCreateProps,
+  AgentViewProps,
+} from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 import {
   type ClaudeRuntime,
   type Config,
@@ -20,21 +25,45 @@ const message = (error: unknown) =>
 const options = (choices: readonly (readonly [string, string])[]) => [
   { label: "", options: choices.map(([value, label]) => ({ value, label })) },
 ];
-const MODEL_CHOICES = [
-  ["", "Claude Code default"],
-  ["opus", "Opus"],
-  ["sonnet", "Sonnet"],
-  ["haiku", "Haiku"],
-] as const;
-const MODELS = options(MODEL_CHOICES);
+// ModelPicker adds Claude Code's own default to these.
+const MODELS = [
+  { id: "opus", label: "Opus" },
+  { id: "sonnet", label: "Sonnet" },
+  { id: "haiku", label: "Haiku" },
+];
+const DEFAULT_MODEL = "Claude Code default";
 const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
 ]);
-const RESPOND_TO = options([
-  ["owner", "Only you"],
-  ["anyone", "Anyone who mentions it"],
-]);
+
+/** The model and instructions a new agent starts with. */
+export function Create({
+  config,
+  onChange,
+  disabled,
+}: AgentCreateProps<Config>) {
+  const current = readConfig(config);
+  return (
+    <>
+      <CreateCorner>
+        <ModelPicker
+          compact
+          models={MODELS}
+          value={current.model}
+          defaultLabel={DEFAULT_MODEL}
+          disabled={disabled}
+          onChange={(model) => onChange({ ...current, model })}
+        />
+      </CreateCorner>
+      <AgentInstructions
+        value={current.instructions}
+        disabled={disabled}
+        onChange={(instructions) => onChange({ ...current, instructions })}
+      />
+    </>
+  );
+}
 
 export function createTabs({
   setup,
@@ -177,9 +206,6 @@ export function createTabs({
         setSaving(false);
       }
     };
-    const model = MODEL_CHOICES.some(([value]) => value === draft.model)
-      ? draft.model
-      : "";
     return (
       <form
         className="grid gap-4"
@@ -188,12 +214,11 @@ export function createTabs({
           void submit();
         }}
       >
-        <Select
-          label="Model"
-          variant="field"
-          value={model}
-          groups={MODELS}
-          onValueChange={(value) => setDraft({ ...draft, model: value })}
+        <ModelPicker
+          models={MODELS}
+          value={draft.model}
+          defaultLabel={DEFAULT_MODEL}
+          onChange={(model) => setDraft({ ...draft, model })}
         />
         <Field
           label="Workspace"
@@ -216,35 +241,12 @@ export function createTabs({
             })
           }
         />
-        <Select
-          label="Answers"
-          variant="field"
-          value={draft.respondTo}
-          groups={RESPOND_TO}
-          description={
-            draft.respondTo === "anyone"
-              ? "Claude runs commands on this computer as you, with no approval step. Anyone who can mention it can ask it to."
-              : "Messages from anyone else are ignored."
-          }
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              respondTo: value === "anyone" ? "anyone" : "owner",
-            })
-          }
-        />
-        <Field
-          label="Instructions"
+        <AgentInstructions
+          value={draft.instructions}
+          disabled={false}
           description="Added to every session's system prompt, after Buzz's own."
-        >
-          <Textarea
-            rows={6}
-            value={draft.instructions}
-            onChange={(event) =>
-              setDraft({ ...draft, instructions: event.target.value })
-            }
-          />
-        </Field>
+          onChange={(instructions) => setDraft({ ...draft, instructions })}
+        />
         {error && (
           <p role="alert" className="buzz-field-error">
             {error}

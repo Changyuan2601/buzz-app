@@ -67,9 +67,16 @@ semantic tokens, UI authoring rules and the local component reference.
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise
   those entries move into a labelled More pages popover (always at <=650px).
-  Native-button navigation uses `aria-current`, not tab/tabpanel semantics;
-  selecting a destination focuses main content. Header pages never become
-  companion launchers, and only the exact current page is selected.
+  Wide topbar pages use design-system chrome tabs with manual activation: arrow
+  keys move focus, and Enter or Space selects the page while focus stays on its
+  tab. Each opening carries focus intent: topbar activation suppresses destination
+  autofocus, while explicit New conversation, sidebar and deep-link openings keep
+  their content focus. This intent is not saved in addresses or history; retry
+  preserves it for the same opening. The selected page is a separately focusable,
+  labelled tabpanel. Toolbar
+  and overflow destinations remain native buttons using `aria-current` and
+  focus main content on selection. Header pages never become companion launchers,
+  and only the exact current page is selected.
   The shell owns one joined Panel around navigation and page content, with a
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout
@@ -315,15 +322,13 @@ terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
 shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
-The main-header split control toggles the tab pane without closing its tabs or
-resetting their contents. Opening an empty pane creates one new tab.
-The plus control appears on header hover or keyboard focus (always on touch) and
-opens a picker with Channels, Direct messages, and Channel tools categories,
-each with searchable choices. Enabled Todos and native-desktop Terminal reuse
-their registered components and channel context. Opening a tool in a tab replaces
-its drawer; its launcher then toggles that tab's pane without a second mount.
-Terminal sessions remain plugin-owned when their tabs close, and Escape in the
-terminal input remains a shell key.
+The main-header split control toggles existing pane content without closing its
+tabs or resetting their contents. With no content it is disabled but remains
+focusable, so closing the last tab has a stable focus-return target. There is no
+blank-tab creation action or channel/DM/tool picker. Tabs open from content such
+as threads, profiles, channel settings and linked sessions. Todos and native
+desktop Terminal remain available through their existing channel launchers;
+closing a terminal presentation does not stop its plugin-owned shell.
 Conversation tabs reuse the timeline, composer, draft and message-management owners;
 selecting an already-open conversation selects its existing tab. Each main channel
 keeps its own tab descriptors, selected tab, and pane visibility in memory for the

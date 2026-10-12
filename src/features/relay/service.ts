@@ -1,5 +1,5 @@
 import { readView } from "../../shared/view-state";
-import type { AgentControl } from "../agents/control";
+import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
@@ -48,7 +48,7 @@ export function provideRelay(
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
   presenceActivity?: PresenceActivity,
   identityNames?: IdentityNames,
-  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
+  agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
 ) {
   let disposed = false;

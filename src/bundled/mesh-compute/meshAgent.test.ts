@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Delivery } from "../../features/agents2/service";
+import type { Delivery } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import {
   helperEnv,

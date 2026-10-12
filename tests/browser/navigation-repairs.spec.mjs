@@ -140,7 +140,7 @@ launchTest(
     await expect(failed).toBeVisible();
     await button(page, "Go back").click();
     await expect(
-      page.getByRole("heading", { name: "Agents", exact: true }),
+      page.getByRole("region", { name: "Agents", exact: true }),
     ).toBeVisible();
     await button(page, "Go forward").click();
     await expect(failed).toBeVisible();

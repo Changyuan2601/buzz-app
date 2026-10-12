@@ -337,10 +337,8 @@ impl OffEffects for ProdOff<'_> {
         self.host.lease.community(self.lease).ok()
     }
     async fn has_consumers(&self) -> bool {
-        self.app
-            .state::<crate::agents::AgentHost>()
-            .has_mesh_consumers()
-            .await
+        // Agents prepare inference per turn, which restarts the client on demand.
+        false
     }
     async fn withdraw(&self, community: &str) {
         super::publisher::publish_stopped(self.identity, community, self.member).await;

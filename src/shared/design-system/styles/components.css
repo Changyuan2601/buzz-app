@@ -62,6 +62,20 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  /* Inline caption choices, such as the composer's model label. */
+  .buzz-button[data-size="inline"] {
+    @apply text-caption;
+    min-height: var(--space-6);
+    padding: 0 var(--space-1);
+  }
+  .buzz-button[data-size="inline"] .buzz-button-label {
+    gap: var(--space-1);
+  }
+  .buzz-button[data-size="inline"] .buzz-button-label > svg,
+  .buzz-button[data-size="inline"] .buzz-button-spinner {
+    width: var(--space-3);
+    height: var(--space-3);
+  }
   .buzz-button[data-size="sm"] {
     @apply text-label-sm;
     min-height: var(--size-control-sm);
@@ -1057,6 +1071,7 @@
     justify-content: center;
   }
 
+  html[data-keyboard-navigation] .buzz-surface-button:focus-visible,
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {

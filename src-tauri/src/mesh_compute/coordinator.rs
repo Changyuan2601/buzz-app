@@ -155,8 +155,7 @@ async fn reconcile(
         // Stop is requested even if lease revocation or agent cleanup fails.
         host.lifecycle.stop();
         host.lease.revoke(&lease)?;
-        let consumers = app.state::<crate::agents::AgentHost>();
-        finish_revocation(consumers.stop_mesh_consumers(), async {
+        finish_revocation(async { Ok(()) }, async {
             host.lifecycle
                 .stop_and_wait()
                 .await

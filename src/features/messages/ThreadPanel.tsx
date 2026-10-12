@@ -52,6 +52,10 @@ export type ThreadPanelProps = {
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
+  /** Channel workspaces retain the editor across same-thread link navigation. */
+  retainThread?: boolean | undefined;
+  /** Retry a failed routed opening with fresh navigation authority. */
+  onRetryNavigation?: (() => void) | undefined;
   replyRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
@@ -82,7 +86,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
     props.session,
     props.scope,
     props.channelId,
-    props.messageId,
+    props.retainThread ? undefined : props.messageId,
   );
   return (
     <aside
@@ -114,7 +118,11 @@ export function ThreadPanel(props: ThreadPanelProps) {
           actions={props.headerActions}
         />
       )}
-      <OwnedThreadPanel key={viewKey} {...props} />
+      {props.retainThread ? (
+        <RetainedThreadPanel key={viewKey} {...props} />
+      ) : (
+        <OwnedThreadPanel key={viewKey} {...props} />
+      )}
     </aside>
   );
 }
@@ -145,6 +153,153 @@ function ThreadHeader({
         </>
       }
     />
+  );
+}
+type SelectionFailure = {
+  unavailable: boolean;
+  pending: boolean;
+  retry(): void;
+};
+/** Reader lifetime follows the open thread; navigation owns only a reveal request. */
+function RetainedThreadPanel(props: ThreadPanelProps) {
+  type Opening = {
+    view: ThreadView;
+    messageId: string;
+    navigation: PageNavigation | undefined;
+    revision: number;
+  };
+  const current = useRef<Opening | undefined>(undefined);
+  const [opening, setOpening] = useState<Opening>();
+  const [error, setError] = useState<string>();
+  const [failure, setFailure] = useState<{ unavailable: boolean }>();
+  // Retry keeps its control mounted and focused until the new attempt settles.
+  const [pending, setPending] = useState(false);
+  const retrying = useRef(false);
+  const [attempt, retry] = useState(0);
+  useEffect(
+    () => () => {
+      current.current?.view.dispose();
+      current.current = undefined;
+    },
+    [],
+  );
+  const { session, channelId, messageId, navigation, onRetryNavigation } =
+    props;
+  const retryNavigation = useCallback(() => {
+    retrying.current = true;
+    setPending(true);
+    if (navigation && onRetryNavigation) onRetryNavigation();
+    else retry((value) => value + 1);
+  }, [navigation, onRetryNavigation]);
+  // A new request never clears a previously opened editor while evidence loads.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries the selected request; outer identity owns session/channel lifetime.
+  useEffect(() => {
+    if (navigation?.signal.aborted) return;
+    const request = new AbortController();
+    const signal = navigation
+      ? AbortSignal.any([request.signal, navigation.signal])
+      : request.signal;
+    if (!retrying.current) {
+      setError(undefined);
+      setFailure(undefined);
+    }
+    const settle = (next?: { unavailable: boolean }, message?: string) => {
+      retrying.current = false;
+      setPending(false);
+      setFailure(next);
+      setError(message);
+    };
+    async function select() {
+      const prior = current.current;
+      if (
+        prior &&
+        !navigation &&
+        prior.messageId === messageId &&
+        !retrying.current
+      ) {
+        const next = { ...prior, navigation: undefined };
+        current.current = next;
+        setOpening(next);
+        return;
+      }
+      if (prior?.view.snapshot().root) {
+        const result = await prior.view.retarget(messageId, signal);
+        if (signal.aborted || current.current !== prior) return;
+        if (result === "selected") {
+          const next = { ...prior, messageId, navigation };
+          current.current = next;
+          setOpening(next);
+          settle();
+          return;
+        }
+        if (result !== "different") {
+          settle({ unavailable: result === "unavailable" });
+          navigation?.complete({
+            status: "failed",
+            reason: result === "unavailable" ? "not-found" : "unavailable",
+          });
+          return;
+        }
+      }
+      try {
+        const exact =
+          navigation?.target.kind === "conversation" &&
+          navigation.target.threadRootId !== messageId;
+        const view = session.thread(
+          channelId,
+          messageId,
+          exact ? { exact: true } : undefined,
+        );
+        prior?.view.dispose();
+        const next = {
+          view,
+          messageId,
+          navigation,
+          revision: (prior?.revision ?? 0) + 1,
+        };
+        current.current = next;
+        setOpening(next);
+        settle();
+        void view.refresh();
+      } catch (error) {
+        // An existing thread stays usable; its notice owns the retry.
+        if (prior) settle({ unavailable: false });
+        else settle(undefined, String(error));
+        navigation?.complete({ status: "failed", reason: "unavailable" });
+      }
+    }
+    void select();
+    return () => request.abort();
+  }, [session, channelId, messageId, navigation, attempt]);
+  return (
+    <>
+      {error && !opening && (
+        <div role="alert" className={styles.empty}>
+          <p>{error}</p>
+          <Button loading={pending} onClick={retryNavigation}>
+            Try again
+          </Button>
+        </div>
+      )}
+      {opening ? (
+        <ThreadMessages
+          {...props}
+          key={opening.revision}
+          view={opening.view}
+          messageId={opening.messageId}
+          navigation={opening.navigation}
+          selectionFailure={
+            failure && { ...failure, pending, retry: retryNavigation }
+          }
+        />
+      ) : (
+        !error && (
+          <p className={styles.empty} role="status">
+            Loading thread…
+          </p>
+        )
+      )}
+    </>
   );
 }
 function OwnedThreadPanel({
@@ -266,7 +421,10 @@ function ThreadMessages({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
+  selectionFailure,
 }: {
+  /** A same-thread link that couldn't open; the current thread stays usable. */
+  selectionFailure?: SelectionFailure | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
@@ -386,6 +544,10 @@ function ThreadMessages({
   >(undefined);
   const olderDemand = useRef(false);
   const targetAnchor = useRef<number | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
+  useLayoutEffect(() => {
+    targetAnchor.current = undefined;
+  }, [messageId, navigation?.signal]);
   const selectedRow = useCallback(
     () =>
       [
@@ -718,6 +880,20 @@ function ThreadMessages({
     tree,
     expanded,
   ]);
+  // The effect above re-pins only when thread data changes. A growing composer
+  // shrinks this viewport and late media grows rows; keep a bottom reader there.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const content = element?.querySelector("[data-thread-rows]");
+    if (!element || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (positioned.current && follow.current && !jumpingToLatest.current)
+        element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(element);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
   // Main's retained presentation can be usable before the initial history walk
   // finishes. That is not yet automatic reading intent. Exact revealed targets
   // remain individually readable; later background refreshes keep earned readiness.
@@ -911,6 +1087,8 @@ function ThreadMessages({
     captureOlderAnchor(element);
     void view.loadMore();
   };
+  const selectionNotice =
+    selectionFailure && !snapshot.error ? selectionFailure : undefined;
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -1057,20 +1235,38 @@ function ThreadMessages({
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <p role="status">Loading thread…</p>
         ) : null}
-        {snapshot.targetStatus === "unavailable" && (
+        {snapshot.targetStatus === "unavailable" && !selectionNotice && (
           <p role="status">Selected message unavailable.</p>
         )}
         {snapshot.error && !showOlderPageStatus && (
           <p role="alert">{snapshot.error}</p>
         )}
+        {selectionNotice && (
+          <p role="alert">
+            {selectionNotice.unavailable
+              ? "That message is no longer available."
+              : "Couldn’t open that message."}
+          </p>
+        )}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
         {((snapshot.error && !showOlderPageStatus) ||
-          snapshot.targetStatus === "unavailable") && (
+          (snapshot.targetStatus === "unavailable" && !selectionNotice)) && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>
               Retry thread
+            </Button>
+          </div>
+        )}
+        {selectionNotice && !selectionNotice.unavailable && (
+          <div className={styles.threadHistoryControls}>
+            <Button
+              type="button"
+              loading={selectionNotice.pending}
+              onClick={selectionNotice.retry}
+            >
+              Try again
             </Button>
           </div>
         )}

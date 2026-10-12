@@ -288,6 +288,25 @@
     outline: 2px solid var(--border-focus);
     outline-offset: 2px;
   }
+  /* An inset ring must paint above opaque children, not reserve layout space. */
+  .buzz-tabs-panel[data-focus-inset] {
+    position: relative;
+    isolation: isolate;
+  }
+  html[data-keyboard-navigation]
+    .buzz-tabs-panel[data-focus-inset]:focus-visible {
+    outline-offset: -2px;
+  }
+  html[data-keyboard-navigation]
+    .buzz-tabs-panel[data-focus-inset]:focus-visible::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    outline: inherit;
+    outline-offset: inherit;
+    z-index: var(--layer-popover);
+    pointer-events: none;
+  }
   .navigation-item[data-variant="pill"] {
     width: auto;
     flex-shrink: 0;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AgentViewProps } from "../../features/agents2/service";
+import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Textarea } from "../../shared/design-system/ui/Textarea";

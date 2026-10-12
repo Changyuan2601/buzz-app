@@ -1,10 +1,13 @@
-import * as React from "react";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Delivery } from "../../features/agents2/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import type { HostProcessOptions } from "../../features/host/service";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 
@@ -27,6 +30,7 @@ afterEach(() => {
   for (const runtime of runtimes) runtime.dispose();
   runtimes.length = 0;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 /** External app-server protocol fixture: turns complete only when released by
@@ -76,8 +80,21 @@ function fixture(
           data: [
             {
               model: "test-model",
+              displayName: "Test Model",
               isDefault: true,
               defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["low", "medium", "high"].map(
+                (reasoningEffort) => ({ reasoningEffort, description: "" }),
+              ),
+            },
+            {
+              model: "deep-model",
+              displayName: "",
+              isDefault: false,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["high", "xhigh"].map(
+                (reasoningEffort) => ({ reasoningEffort, description: "" }),
+              ),
             },
           ],
           nextCursor: null,
@@ -186,7 +203,7 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, relay, store);
+  const runtime = new CodexRuntime(spawn, () => relay, store);
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
@@ -217,6 +234,8 @@ function fixture(
     size: 12,
     type: mime,
   }));
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const media = vi.fn(async () => btoa("\x89PNG\r\n"));
   const agent = {
     pubkey,
     owner,
@@ -224,9 +243,10 @@ function fixture(
     publish,
     query,
     upload,
+    media,
     remember,
   };
-  runtime.sync([{ pubkey } as Agent], scope);
+  runtime.sync([{ pubkey } as Agent]);
   let id = 0;
   const delivery = (content: string, threadRoot = root): Delivery => {
     const result: Delivery = {
@@ -253,12 +273,14 @@ function fixture(
         instructions: "TEST_INSTRUCTIONS",
       },
       signal: new AbortController().signal,
+      workingUntil,
     };
     if (result.trigger.type !== "timer")
       events.push(result.trigger.event as EventData);
     return result;
   };
-  const selection = { selected: "community", viewer: owner };
+  /** Agents' running agents, whichever community is selected. */
+  const running = [{ ...agent, type: "buzz.codex/codex" }];
   const listeners: (() => void)[] = [];
   let runPlugin: (delivery: Delivery) => Promise<void> = (delivery) =>
     runtime.run(delivery);
@@ -267,27 +289,10 @@ function fixture(
     vi.stubGlobal("localStorage", store);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
-      react: React,
       host: { spawn },
-      communityReader: {
-        snapshot: () => selection,
-        subscribe: (listener: () => void) => {
-          listeners.push(listener);
-          return () => {};
-        },
-      },
-      relay: {
-        ...relay,
-        subscribe: (listener: () => void) => {
-          listeners.push(listener);
-          return () => {};
-        },
-      },
-      agents2: {
-        snapshot: () => ({
-          status: snapshot.status === "ready" ? "ready" : "loading",
-          agents: [{ ...agent, type: "buzz.codex/codex" }],
-        }),
+      agents: {
+        snapshot: () => ({ status: "ready", agents: [], running }),
+        relay: () => relay,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -344,7 +349,8 @@ function fixture(
     return sent.find((wire) => wire.id === id && !wire.method);
   };
   const complete = async (index = starts().length - 1, text = "DONE") => {
-    if (!closed && text) await tool("send", { text, final: true }, index);
+    if (!closed && text)
+      await tool("send", { audience: "everyone", text, final: true }, index);
     const params = starts()[index]?.params as { threadId: string };
     emit({
       method: "item/completed",
@@ -370,7 +376,8 @@ function fixture(
     memoryView,
     remember,
     upload,
-    selection,
+    running,
+    media,
     runPlugin: (delivery: Delivery) => runPlugin(delivery),
     notify: () =>
       listeners.forEach((listener) => {
@@ -385,6 +392,7 @@ function fixture(
     read,
     storage,
     delivery,
+    workingUntil,
     starts,
     complete,
     interrupt,
@@ -394,7 +402,10 @@ function fixture(
 }
 it("hands over promptly and runs conversations independently on one server", async () => {
   const f = fixture();
-  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run({
+    ...f.delivery("@Codex first"),
+    team: "<team>\nCrew\n</team>",
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(f.publish).not.toHaveBeenCalled();
   await f.runtime.run(f.delivery("@Codex independent", "e".repeat(64)));
@@ -412,11 +423,28 @@ it("hands over promptly and runs conversations independently on one server", asy
   });
   expect(started.baseInstructions).toBeUndefined();
   expect(started.developerInstructions).toContain("coding agent in Buzz");
+  expect(started.developerInstructions).toContain(BUZZ_PROMPT);
   expect(f.starts()[0]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
         kind: "application",
         value: expect.stringContaining("TEST_INSTRUCTIONS"),
+      },
+    },
+  });
+  expect(f.starts()[0]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringContaining(
+          "</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.\n<team>\nCrew\n</team>",
+        ),
+      },
+    },
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.not.stringContaining("<team>"),
       },
     },
   });
@@ -433,11 +461,257 @@ it("hands over promptly and runs conversations independently on one server", asy
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     kind: 9,
     content: "FIRST",
-    tags: expect.arrayContaining([
-      ["e", root, "", "root"],
-      ["e", "1".padStart(64, "0"), "", "reply"],
-    ]),
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
+});
+/** A second agent on the same runtime, with its own identity and publisher. */
+function second(f: ReturnType<typeof fixture>) {
+  const other = "9".repeat(64);
+  const base = f.delivery("unused").agent;
+  const agent = {
+    ...base,
+    pubkey: other,
+    name: "Other",
+    publish: vi.fn(async (event: unknown) => ({
+      ...(event as object),
+      id: "8".repeat(64),
+    })),
+  } as unknown as Delivery["agent"];
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: other } as Agent]);
+  return {
+    agent,
+    delivery: (content: string) => ({
+      ...f.delivery(content, "7".repeat(64)),
+      agent,
+    }),
+  };
+}
+const contents = (publish: { mock: { calls: unknown[][] } }) =>
+  publish.mock.calls.map(([event]) => (event as { content: string }).content);
+const servers = (f: ReturnType<typeof fixture>) =>
+  f.spawn.mock.calls.filter(([id]) => id === "app-server");
+it("serves every agent from one server and routes each tool call to its own agent", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("@Codex first"));
+  await f.runtime.run(b.delivery("@Other second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(servers(f)).toHaveLength(1);
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": { value: expect.stringContaining("Other") },
+    },
+  });
+  await f.complete(1, "FROM OTHER");
+  await f.complete(0, "FROM CODEX");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["FROM CODEX"]);
+  expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
+  expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
+});
+it("stops a removed agent's turn without ending the server the others share", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("other work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const removed = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  f.runtime.sync([{ pubkey } as Agent]);
+  await vi.waitFor(() =>
+    expect(
+      f.sent.some(
+        (wire) =>
+          wire.method === "thread/unsubscribe" &&
+          (wire.params as { threadId: string }).threadId === removed,
+      ),
+    ).toBe(true),
+  );
+  for (const method of ["turn/interrupt", "thread/backgroundTerminals/clean"])
+    expect(f.sent.find((wire) => wire.method === method)?.params).toMatchObject(
+      { threadId: removed },
+    );
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.runtime.sessions("9".repeat(64))).toHaveLength(0);
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(contents(f.publish)).toEqual(["STILL HERE"]);
+  expect(b.agent.publish).not.toHaveBeenCalled();
+  f.runtime.sync([]);
+  await f.exits.promise;
+  expect(f.process.end).toHaveBeenCalled();
+});
+it("ends a stopped agent's leftover shells and lets it start again only after letting go", async () => {
+  const f = fixture();
+  const b = second(f);
+  await f.runtime.run(f.delivery("work"));
+  await f.runtime.run(b.delivery("start a dev server"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  await f.complete(1, "SERVER RUNNING");
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(b.delivery("busy again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  const index = (method: string) =>
+    f.sent
+      .map(
+        (wire) =>
+          wire.method === method &&
+          (wire.params as { threadId: string }).threadId === thread,
+      )
+      .lastIndexOf(true);
+  const before = index("thread/unsubscribe");
+  f.runtime.sync([{ pubkey } as Agent]);
+  f.runtime.sync([{ pubkey } as Agent, { pubkey: "9".repeat(64) } as Agent]);
+  await f.runtime.run(b.delivery("back"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
+  expect(index("thread/unsubscribe")).toBeGreaterThan(before);
+  expect(index("thread/backgroundTerminals/clean")).toBeGreaterThan(
+    index("thread/unsubscribe"),
+  );
+  expect(index("thread/resume")).toBeGreaterThan(
+    index("thread/backgroundTerminals/clean"),
+  );
+  expect(f.process.end).not.toHaveBeenCalled();
+  await f.complete(3, "BACK");
+  await f.complete(0, "STILL HERE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(b.agent.publish as never)).toEqual([
+    "SERVER RUNNING",
+    "BACK",
+  ]);
+});
+it("reopens the shared server after it exits", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("again"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+});
+it("discovers models and efforts before any turn, sharing one read-only lookup", async () => {
+  const f = fixture();
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  const one = f.runtime.preview(agent);
+  const two = f.runtime.preview(agent);
+  f.runtime.sync([agent]);
+  expect(one).toBe(two);
+  await expect(one).resolves.toEqual({
+    current: "test-model",
+    models: [
+      {
+        id: "test-model",
+        label: "Test Model",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+        effort: "medium",
+      },
+      {
+        id: "deep-model",
+        label: "deep-model",
+        efforts: [
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra high" },
+        ],
+        effort: "high",
+      },
+    ],
+  });
+  expect(f.spawn).toHaveBeenCalledTimes(1);
+  expect(f.spawn.mock.calls[0]?.[1]?.cwd).toBe("~/.buzz");
+  expect(f.starts()).toEqual([]);
+  expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.runtime.preview(agent)).toBe(one);
+  f.runtime.sync([]);
+  f.spawn.mockRejectedValueOnce(new Error("offline"));
+  await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
+});
+it("shares model discovery with active turns and another agent", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const b = second(f);
+  await Promise.all([
+    f.runtime.preview(f.delivery("unused").agent as unknown as Agent),
+    f.runtime.preview(b.agent as unknown as Agent),
+  ]);
+  expect(servers(f)).toHaveLength(1);
+  expect(f.process.end).not.toHaveBeenCalled();
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("still offers the listed models when the configured one is not listed", async () => {
+  const f = fixture();
+  const agent = {
+    pubkey,
+    config: { workspace: "/tmp/codex-test", model: "newer-model" },
+  } as Agent;
+  const { current, models } = await f.runtime.preview(agent);
+  expect(current).toBe("newer-model");
+  expect(models.map((model) => [model.id, model.efforts.length])).toEqual([
+    ["newer-model", 0],
+    ["test-model", 3],
+    ["deep-model", 2],
+  ]);
+});
+it("previews each model at the configured effort when it has it", async () => {
+  const f = fixture();
+  const agent = {
+    pubkey,
+    config: { workspace: "/tmp/codex-test", effort: "low" },
+  } as Agent;
+  const { models } = await f.runtime.preview(agent);
+  expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
+});
+it("starts a turn at the effort its owner picked when the model supports it", async () => {
+  const f = fixture();
+  await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...f.delivery("@Codex other", "e".repeat(64)),
+    effort: "max",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.starts().map((wire) => (wire.params as { effort?: string }).effort),
+  ).toEqual(["high", "low"]);
+});
+it("starts a turn on the model its owner picked, at an effort that model supports", async () => {
+  const f = fixture();
+  const run = async (
+    thread: string,
+    pick: { model?: string; effort?: string },
+  ) => {
+    const before = f.starts().length;
+    await f.runtime.run({ ...f.delivery("@Codex", thread), ...pick });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(before + 1));
+  };
+  await run("a".repeat(64), { model: "deep-model", effort: "xhigh" });
+  // The configured `low` is not one of its levels, so it runs at its default.
+  await run("b".repeat(64), { model: "deep-model" });
+  // A model Codex no longer lists falls back to the agent's own.
+  await run("c".repeat(64), { model: "gone-model" });
+  expect(
+    f.starts().map((wire) => {
+      const { model, effort } = wire.params as {
+        model: string;
+        effort: string;
+      };
+      return { model, effort };
+    }),
+  ).toEqual([
+    { model: "deep-model", effort: "xhigh" },
+    { model: "deep-model", effort: "high" },
+    { model: "test-model", effort: "low" },
+  ]);
 });
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
@@ -457,13 +731,22 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
   await vi.waitFor(() =>
     expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(2),
   );
+  // Each mention counts as working until the turn it was steered into answers.
+  let settled = 0;
+  for (const [done] of f.workingUntil.mock.calls)
+    void Promise.resolve(done).then(() => settled++);
+  expect(f.workingUntil).toHaveBeenCalledTimes(3);
+  // A macrotask lets every pending promise chain finish first.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(settled).toBe(0);
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(settled).toBe(3));
   const steering = f.sent.filter((wire) => wire.method === "turn/steer");
   expect(JSON.stringify(steering[0]?.params)).toContain("FIRST_STEER");
   expect(JSON.stringify(steering[1]?.params)).toContain("SECOND_STEER");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    tags: expect.arrayContaining([["e", "3".padStart(64, "0"), "", "reply"]]),
+    tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
 it("cuts delayed history off before the request, including same-second messages and edits", async () => {
@@ -641,6 +924,35 @@ it("ignores non-owner messages without spawning", async () => {
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });
+it("answers another agent its owner attested, telling the owner of failures", async () => {
+  const f = fixture();
+  const secret = schnorr.utils.randomSecretKey();
+  const owner = bytesToHex(schnorr.getPublicKey(secret));
+  const sibling = bytesToHex(
+    schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+  );
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${sibling}:`)
+    .digest();
+  const ask = f.delivery("work");
+  if (ask.trigger.type !== "timer") {
+    ask.trigger.event.pubkey = sibling;
+    ask.trigger.event.tags.push([
+      "auth",
+      owner,
+      "",
+      bytesToHex(schnorr.sign(digest, secret)),
+    ]);
+  }
+  await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A failure tells the owner: tagging the sibling would wake it to fail too.
+  f.complete(0, "");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
+  expect(failure.tags).toContainEqual(["p", owner]);
+  expect(failure.tags).not.toContainEqual(["p", sibling]);
+});
 it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -658,11 +970,25 @@ it("publishes unexpected exit and empty-completion failures instead of silently 
     content: expect.stringContaining("Codex exited"),
   });
 });
-it("ends the server on community change and suppresses a late final answer", async () => {
+it("sets no deadline of its own on a turn", async () => {
+  // Any deadline Buzz set would already have passed.
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() =>
+    AbortSignal.abort(
+      new DOMException("The operation timed out.", "TimeoutError"),
+    ),
+  );
+  const f = fixture();
+  await f.runtime.run(f.delivery("a long job"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
+});
+it("ends the server when its agent stops running and suppresses a late final answer", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  f.runtime.sync([], "other-community");
+  f.runtime.sync([]);
   f.complete();
   await f.exits.promise;
   expect(f.process.end).toHaveBeenCalled();
@@ -837,8 +1163,8 @@ it("posts tool-sent parts and never duplicates native assistant text", async () 
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.tool("send", { text: "PART ONE" });
-  await f.tool("send", { text: "PART TWO" });
+  await f.tool("send", { audience: "everyone", text: "PART ONE" });
+  await f.tool("send", { audience: "everyone", text: "PART TWO" });
   await f.complete(0, "FINAL");
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -883,7 +1209,7 @@ it("delivers a plain follow-up after startup without waiting for the running tur
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });
 
-it("keeps plugin work alive through relay reconnect and disposes on real community change", async () => {
+it("keeps plugin work alive through relay reconnect and ends it when its agent stops running", async () => {
   const f = fixture([], undefined, true);
   try {
     await f.runPlugin(f.delivery("work"));
@@ -899,9 +1225,7 @@ it("keeps plugin work alive through relay reconnect and disposes on real communi
     expect(f.process.end).not.toHaveBeenCalled();
     await f.runPlugin(f.delivery("more work"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    f.selection.selected = "other-community";
-    f.snapshot.status = "connecting";
-    f.snapshot.scope = undefined;
+    f.running.length = 0;
     f.notify();
     f.complete();
     await f.exits.promise;
@@ -955,25 +1279,33 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it("starts fresh instead of restoring an earlier plugin's conversation", async () => {
-  const f = fixture();
-  f.storage.set(
-    `buzz.codex.sessions.v2:${scope}:${pubkey}`,
-    JSON.stringify({
-      [JSON.stringify(["channel", root])]: {
-        threadId: "legacy-thread",
-        workspace: "/tmp/codex-test",
-      },
-    }),
-  );
-  await f.runtime.run(f.delivery("new work"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
-    0,
-  );
-  f.complete();
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-});
+it.each(["v2", "v3"])(
+  "starts fresh instead of restoring a %s binding, whose tools are out of date",
+  async (version) => {
+    const f = fixture();
+    f.storage.set(
+      `buzz.codex.sessions.${version}:${scope}:${pubkey}`,
+      JSON.stringify({
+        [JSON.stringify(["channel", root])]: {
+          threadId: "legacy-thread",
+          workspace: "/tmp/codex-test",
+        },
+      }),
+    );
+    await f.runtime.run(f.delivery("new work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/resume"),
+    ).toHaveLength(0);
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+      "media_get",
+    );
+    f.complete();
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  },
+);
 
 it("leaves a failed first startup unbound so the next mention can start fresh", async () => {
   const f = fixture();
@@ -1057,7 +1389,14 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
     { arguments: [] },
   ]) {
     expect(
-      (await f.tool("send", { text: "must not send" }, 0, overrides))?.result,
+      (
+        await f.tool(
+          "send",
+          { audience: "everyone", text: "must not send" },
+          0,
+          overrides,
+        )
+      )?.result,
     ).toMatchObject({
       success: false,
       contentItems: [{ type: "inputText", text: expect.any(String) }],
@@ -1074,15 +1413,17 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish.mock.calls.map(([event]) => event)).toMatchObject([
     {
       content: "OTHER",
-      tags: expect.arrayContaining([["e", "e".repeat(64), "", "root"]]),
+      tags: expect.arrayContaining([["e", "e".repeat(64), "", "reply"]]),
     },
     {
       content: "FIRST",
-      tags: expect.arrayContaining([["e", root, "", "root"]]),
+      tags: expect.arrayContaining([["e", root, "", "reply"]]),
     },
   ]);
   const count = f.publish.mock.calls.length;
-  expect((await f.tool("send", { text: "late" }, 0))?.result).toMatchObject({
+  expect(
+    (await f.tool("send", { audience: "everyone", text: "late" }, 0))?.result,
+  ).toMatchObject({
     success: false,
   });
   expect(f.publish).toHaveBeenCalledTimes(count);
@@ -1105,12 +1446,25 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect((await f.tool("mem_get", { slug: "mem/test" }))?.result).toMatchObject(
     { success: true, contentItems: [{ text: "remembered" }] },
   );
+  expect(
+    (await f.tool("media_get", { url: "shot.png" }))?.result,
+  ).toMatchObject({
+    success: true,
+    contentItems: [
+      {
+        type: "inputImage",
+        imageUrl: `data:image/png;base64,${btoa("\x89PNG\r\n")}`,
+      },
+    ],
+  });
+  expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.memoryOpen).toHaveBeenCalledWith(pubkey);
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
   expect(f.memoryView.dispose).toHaveBeenCalledTimes(2);
   expect(
     (
       await f.tool("send", {
+        audience: "everyone",
         path: "answer.txt",
         files: ["attachment.jpg"],
         final: true,
@@ -1134,7 +1488,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("FILE CONTENT"),
-    tags: expect.arrayContaining([["e", "2".padStart(64, "0"), "", "reply"]]),
+    tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
 
@@ -1144,7 +1498,13 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.publish.mockRejectedValueOnce(new Error("Signing rejected"));
   expect(
-    (await f.tool("send", { text: "answer", final: true }))?.result,
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "answer",
+        final: true,
+      })
+    )?.result,
   ).toMatchObject({
     success: false,
     contentItems: [{ type: "inputText", text: "Signing rejected" }],
@@ -1166,7 +1526,11 @@ it("delivers pending owner steering after a final send and posts its own answer"
   await f.runtime.run(f.delivery("new request"));
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
-    await f.tool("send", { text: "prior answer", final: true });
+    await f.tool("send", {
+      audience: "everyone",
+      text: "prior answer",
+      final: true,
+    });
     expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
   } finally {
     gate.resolve([]);
@@ -1174,6 +1538,14 @@ it("delivers pending owner steering after a final send and posts its own answer"
   await vi.waitFor(() =>
     expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
   );
+  // The prior answer settles only the first request.
+  let steered = false;
+  void Promise.resolve(f.workingUntil.mock.calls[1]?.[0]).then(() => {
+    steered = true;
+  });
+  await f.workingUntil.mock.calls[0]?.[0];
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(steered).toBe(false);
   await f.complete(0, "NEW ANSWER");
   await vi.waitFor(() =>
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
@@ -1190,6 +1562,7 @@ it("finishes final sends normally and preserves the agent's background terminals
   await f.runtime.run(f.delivery("start server"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   const reply = await f.tool("send", {
+    audience: "everyone",
     text: "http://localhost:3000",
     final: true,
   });
@@ -1197,6 +1570,9 @@ it("finishes final sends normally and preserves the agent's background terminals
   expect(f.publish).toHaveBeenCalledTimes(1);
   expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
   expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
+  // The request is answered, so it stops counting as working before Codex's
+  // closing model call ends the turn.
+  await f.workingUntil.mock.calls[0]?.[0];
   const threadId = (f.starts()[0]?.params as { threadId: string } | undefined)
     ?.threadId;
   f.emit({
@@ -1235,7 +1611,11 @@ it.each([false, true])(
       started.resolve();
       return late ? gate.promise : child;
     });
-    const reading = f.tool("send", { path: "answer.txt", final: true });
+    const reading = f.tool("send", {
+      audience: "everyone",
+      path: "answer.txt",
+      final: true,
+    });
     await started.promise;
     f.interrupt();
     try {

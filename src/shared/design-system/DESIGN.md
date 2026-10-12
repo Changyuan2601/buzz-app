@@ -79,7 +79,8 @@ Master/detail layouts preserve list selection, scroll, and drafts while inspecti
 an item. Follow the existing host's narrow overlay/navigation behavior rather than
 squeezing two unusable columns into a small viewport. Selection, hover, and focus
 remain distinct. Shared tabs connect related views of one object; route destinations
-retain navigation semantics. When replacing a focused page heading with shared
+retain navigation semantics except for the wide shell topbar described in
+[Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
@@ -626,10 +627,17 @@ use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
-extra-small capsule uses `text-caption`.
+extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
+the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
+horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
+for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
-IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
-sm/md/lg sizes. Existing names
+Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
+(32px square with 16px artwork) and a 10px rounded rectangle
+(`--radius-icon-button`). Choose `md` or `lg` explicitly when an icon action needs
+a larger control; community rail identities and the avatar edit badge retain their
+existing larger treatment. These defaults do not depend on pointer type or viewport
+width. Both controls use the same sm/md/lg scale. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
@@ -1011,7 +1019,8 @@ not add feature-specific top offsets. F6 enters notifications, Tab reaches actio
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
-Route navigation uses NavigationItem with aria-current instead. Tabs can also
+Route navigation uses NavigationItem with aria-current instead, except for the
+wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
 semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
@@ -1122,6 +1131,10 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
+- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
+  default), matching Berd’s relaxed reply rhythm for both sent and received
+  messages. The message renderer uses `space-4` between prose blocks; labels,
+  controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
@@ -1396,5 +1409,29 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The wide shell topbar is the deliberate exception: Me and Messages use
+`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+move focus without selecting; Enter, Space or pointer selection changes the page
+while focus stays on its tab. The host passes per-opening focus intent so page
+autofocus does not override that handoff. Explicit content openings, including
+New conversation, retain their destination focus. This is not a general route-tab
+recipe: toolbar destinations and More pages overflow retain button semantics.
+
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.
+
+### Artwork actions (proposed)
+
+`SurfaceButton` uses Base UI activation and the shared keyboard-only focus ring.
+Use it for artwork tiles whose content owns their geometry, such as new-agent
+and avatar choices. It adds no label wrapper, padding, or background; callers
+must supply an accessible name and keep state colors semantic. The Button
+viewer includes enabled and disabled examples.
+
+### Chip and title fields (proposed)
+
+`Combobox.Control appearance="chip"` drops the field's surface and browse
+button until the control is hovered or open, so a choice reads as a label, such
+as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+`Input appearance="title"` sets its value at title size with no field around it,
+for a name that is also the heading, such as the new agent's name.

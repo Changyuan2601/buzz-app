@@ -1,0 +1,98 @@
+From dfbdbe2af64558f35f3d0cafdf0f4e25a77c741a Mon Sep 17 00:00:00 2001
+From: Dario
+ <0c30d6330cb88c7b0519e2630b057ef0c584ad3f0be0157d9d2fdf0c913780bd@meshllm.communities.buzz.xyz>
+Date: Mon, 12 Oct 2026 20:14:20 +1100
+Subject: [PATCH] fix(buzz-agent): use the ACP session id for every wire update
+
+Turn content, keepalives, tool calls and permission requests were tagged
+with the goose-internal id (no ses_ prefix) while session/new and
+session_info_update used ses_<id>. Carry the ACP id in TurnContext.
+
+Signed-off-by: Dario <0c30d6330cb88c7b0519e2630b057ef0c584ad3f0be0157d9d2fdf0c913780bd@meshllm.communities.buzz.xyz>
+---
+ crates/buzz-agent/src/lib.rs        |  1 +
+ crates/buzz-agent/src/loop_drive.rs | 20 ++++++++++++++------
+ 2 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/crates/buzz-agent/src/lib.rs b/crates/buzz-agent/src/lib.rs
+index ca036792e..f7517d5ff 100644
+--- a/crates/buzz-agent/src/lib.rs
++++ b/crates/buzz-agent/src/lib.rs
+@@ -649,6 +649,7 @@ async fn session_prompt(app: &Arc<App>, id: Value, params: Value, wire_tx: &Wire
+         loop_drive::TurnContext {
+             mcp: &mcp,
+             session_id: &goose_session_id,
++            wire_session_id: &p.session_id,
+             wire_tx,
+             cancel: &cancel,
+             hook_extension: hook_extension.as_deref(),
+diff --git a/crates/buzz-agent/src/loop_drive.rs b/crates/buzz-agent/src/loop_drive.rs
+index 62f7257d4..8c2d8b72d 100644
+--- a/crates/buzz-agent/src/loop_drive.rs
++++ b/crates/buzz-agent/src/loop_drive.rs
+@@ -109,7 +109,10 @@ enum Round {
+ /// Everything a round needs that does not change between rounds.
+ pub struct TurnContext<'a> {
+     pub mcp: &'a Arc<McpRegistry>,
++    /// Goose-internal session id (turn state, history).
+     pub session_id: &'a str,
++    /// ACP `sessionId` the client was given (`ses_…`); every wire update uses it.
++    pub wire_session_id: &'a str,
+     pub wire_tx: &'a WireSender,
+     pub cancel: &'a CancellationToken,
+     pub hook_extension: Option<&'a str>,
+@@ -533,8 +536,13 @@ async fn round(
+         // desktop renders a spinner forever.
+         let results = crate::tools::cancelled_results(&requests);
+         for request in &requests {
+-            crate::agent::emit_tool_call_update(ctx.wire_tx, ctx.session_id, &request.id, true)
+-                .await;
++            crate::agent::emit_tool_call_update(
++                ctx.wire_tx,
++                ctx.wire_session_id,
++                &request.id,
++                true,
++            )
++            .await;
+         }
+         push_tool_results(state, results);
+         return Ok(Round::Stopped(StopReason::Cancelled));
+@@ -552,7 +560,7 @@ async fn round(
+ 
+     let results = crate::tools::execute(
+         ctx.mcp,
+-        &state.session().id,
++        ctx.wire_session_id,
+         ctx.wire_tx,
+         ctx.cancel,
+         ctx.permissions,
+@@ -610,7 +618,7 @@ async fn infer(
+     let mut stream = loop {
+         tokio::select! {
+             _ = keepalive.tick() => {
+-                crate::agent::emit_keepalive(ctx.session_id, ctx.wire_tx).await;
++                crate::agent::emit_keepalive(ctx.wire_session_id, ctx.wire_tx).await;
+             }
+             _ = ctx.cancel.cancelled() => {
+                 return Ok(None);
+@@ -628,7 +636,7 @@ async fn infer(
+         tokio::select! {
+             // Keep the harness idle clock alive during provider silence.
+             _ = keepalive.tick() => {
+-                crate::agent::emit_keepalive(ctx.session_id, ctx.wire_tx).await;
++                crate::agent::emit_keepalive(ctx.wire_session_id, ctx.wire_tx).await;
+             }
+ 
+             // Cancelling the model call is safe to do abruptly: unlike tool
+@@ -649,7 +657,7 @@ async fn infer(
+ 
+                 let Some(chunk) = message else { continue };
+                 for content in &chunk.content {
+-                    crate::agent::emit_content(content, ctx.session_id, ctx.wire_tx).await;
++                    crate::agent::emit_content(content, ctx.wire_session_id, ctx.wire_tx).await;
+                 }
+                 accumulated = Some(match accumulated {
+                     None => chunk,
+-- 
+2.54.0 (Apple Git-157)
+

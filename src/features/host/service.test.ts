@@ -272,6 +272,25 @@ it("starts a declared process as the calling plugin and streams it", async () =>
   await expect(process?.exited).resolves.toBe(0);
 });
 
+it("writes a long input in order, in pieces the host accepts", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(7);
+  const process = await plugin.host.spawn?.("agent");
+  const pieces: string[] = [];
+  vi.mocked(invoke).mockImplementation(async (_command, args) => {
+    pieces.push((args as { data: string }).data);
+  });
+  // A pair straddles the first boundary.
+  const long = `${"a".repeat(256 * 1024 - 1)}😀${"b".repeat(600 * 1024)}`;
+  await Promise.all([process?.write(long), process?.write("next\n")]);
+  expect(pieces).toHaveLength(5);
+  expect(pieces.every((piece) => new Blob([piece]).size <= 1024 * 1024)).toBe(
+    true,
+  );
+  expect(pieces[0]?.endsWith("a")).toBe(true);
+  expect(pieces.join("")).toBe(`${long}next\n`);
+});
+
 it("keeps delivering process events after an output handler throws", async () => {
   const { plugin } = pluginContext();
   vi.mocked(invoke).mockResolvedValueOnce(7);

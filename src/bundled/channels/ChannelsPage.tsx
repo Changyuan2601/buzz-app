@@ -1,6 +1,6 @@
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
+import type { Agents } from "../../features/agents/service";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import type { AgentControl } from "../../features/agents/control";
 import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
@@ -12,8 +12,6 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
-import type { TemplateProviders } from "../../features/channel-templates/provider";
-import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
@@ -86,8 +84,6 @@ import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
-  agentControl,
-  providers,
   extensions,
   relay,
   panels,
@@ -95,10 +91,11 @@ export function ChannelsPage({
   companion,
   navigation,
   navigator,
+  agents,
 }: {
-  agentControl?: AgentControl | undefined;
-  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
+  /** For adding a whole team of the owner's agents from the members dialog. */
+  agents?: Agents | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
@@ -141,8 +138,6 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
-          agentControl={agentControl}
-          providers={providers}
           extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
@@ -155,6 +150,7 @@ export function ChannelsPage({
           panels={panels}
           sessionsEnabled={sessionsEnabled}
           companion={companion}
+          agents={agents}
         />
       )}
     </section>
@@ -162,8 +158,6 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
-  agentControl,
-  providers,
   extensions,
   queries,
   cached,
@@ -174,10 +168,10 @@ function ChannelWorkspace({
   navigation,
   navigator,
   viewer,
+  agents,
 }: {
-  agentControl?: AgentControl | undefined;
-  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
+  agents?: Agents | undefined;
   companion?: ReactNode;
   scope: string;
   navigation?: PageNavigation | undefined;
@@ -198,12 +192,6 @@ function ChannelWorkspace({
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
   );
-  const templateProviders = useSyncExternalStore(
-    providers.subscribe,
-    providers.snapshot,
-  );
-  const templateProvider =
-    templateProviders.length === 1 ? templateProviders[0] : undefined;
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
     // Start the optional catalog afterward so opening Messages cannot strand it.
@@ -706,11 +694,9 @@ function ChannelWorkspace({
     panelTabs,
     drawer,
     drawerContext,
-    rootTabIds,
     selectedTab,
     selectPanelTab,
     afterClose,
-    addTab,
     panelTrigger,
     splitTrigger,
   } = secondary;
@@ -1092,24 +1078,6 @@ function ChannelWorkspace({
       setupTools={
         current && (
           <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            {templateProvider && (
-              <OwnedContribution
-                key={`template:${current.id}`}
-                entry={templateProvider}
-                registry={providers}
-              >
-                {(entry, active) => {
-                  const SaveAs = entry.saveAs;
-                  return (
-                    <SaveAs
-                      session={queries}
-                      channel={current}
-                      active={active}
-                    />
-                  );
-                }}
-              </OwnedContribution>
-            )}
             {personal && (
               <Select
                 label="Personal group"
@@ -1207,7 +1175,6 @@ function ChannelWorkspace({
           key={current.id}
           session={queries}
           channelId={current.id}
-          control={agentControl}
           close={() => setMembersOpen(false)}
           trigger={
             membersTrigger.current?.isConnected
@@ -1215,6 +1182,7 @@ function ChannelWorkspace({
               : membersHeaderTrigger
           }
           canOpenLink={canOpenLink}
+          {...(agents ? { agents } : {})}
           onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
           onOpenConversation={
             navigator && viewer
@@ -1293,8 +1261,6 @@ function ChannelWorkspace({
                       channel={current}
                       session={queries}
                       origin={navigation?.signal}
-                      providers={providers}
-                      templateProvider={templateProvider}
                       trigger={settingsTrigger}
                       openDetails={() => {
                         drawer.close();
@@ -1355,8 +1321,6 @@ function ChannelWorkspace({
                         channel={current}
                         session={queries}
                         origin={navigation?.signal}
-                        providers={providers}
-                        templateProvider={templateProvider}
                         trigger={settingsTrigger}
                         openDetails={() => {
                           drawer.close();
@@ -1415,11 +1379,11 @@ function ChannelWorkspace({
                               : "Open tab pane"
                           }
                           aria-expanded={!!showingChannelPanel}
-                          onClick={() => {
-                            tabState.setPaneOpen(!showingChannelPanel);
-                            if (!showingChannelPanel && !rootTabIds.length)
-                              addTab();
-                          }}
+                          disabled={!hasChannelPanel}
+                          focusableWhenDisabled
+                          onClick={() =>
+                            tabState.setPaneOpen(!showingChannelPanel)
+                          }
                           icon={
                             <SidebarRightIcon size="1rem" aria-hidden="true" />
                           }
@@ -1588,7 +1552,6 @@ function ChannelWorkspace({
                             thread?.messageId !== requestedMessage)))
                     }
                     select={selectPanelTab}
-                    add={addTab}
                     items={[
                       ...(settings
                         ? [
@@ -1619,6 +1582,10 @@ function ChannelWorkspace({
                               },
                               content: (
                                 <ThreadPanel
+                                  retainThread
+                                  onRetryNavigation={() =>
+                                    void navigator?.retry()
+                                  }
                                   sessionConversation={
                                     current?.channelType === "session"
                                   }

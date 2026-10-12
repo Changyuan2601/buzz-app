@@ -7,19 +7,6 @@ use tauri::Manager;
 mod activity;
 pub(crate) mod agent;
 #[cfg(feature = "mesh")]
-pub(crate) mod sharing;
-pub(crate) mod widget;
-#[cfg(feature = "mesh")]
-pub(crate) use agent::community_origin as agent_community;
-pub(crate) use agent::prepare_agent;
-#[cfg(feature = "mesh")]
-pub(crate) fn selected_for_agent(app: &tauri::AppHandle, relay: &str) -> Result<String, String> {
-    use tauri::Manager;
-    app.state::<MeshHost>()
-        .lease
-        .for_community(&agent_community(relay)?)
-}
-#[cfg(feature = "mesh")]
 mod coordinator;
 #[cfg(feature = "mesh")]
 mod discovery;
@@ -29,6 +16,9 @@ mod lease;
 mod preferences;
 #[cfg(feature = "mesh")]
 mod publisher;
+#[cfg(feature = "mesh")]
+pub(crate) mod sharing;
+pub(crate) mod widget;
 
 #[cfg(feature = "mesh")]
 type Admission = (String, String, Vec<String>, Vec<nostr::event::Event>);
@@ -340,7 +330,6 @@ fn mesh_port(name: &str, fallback: u16) -> Result<u16, String> {
 #[cfg(feature = "mesh")]
 pub(crate) async fn retire_selection(
     host: &MeshHost,
-    agents: &crate::agents::AgentHost,
     community: &str,
     viewer: &str,
 ) -> Result<(), String> {
@@ -360,14 +349,11 @@ pub(crate) async fn retire_selection(
         // Retire pending launches first; running agents must exit before port reuse.
         let previous = host.lease.current()?;
         host.lease.clear();
-        let stopped = async {
-            agents.stop_mesh_consumers().await?;
-            host.lifecycle
-                .stop_and_wait()
-                .await
-                .map_err(|error| error.to_string())
-        }
-        .await;
+        let stopped = host
+            .lifecycle
+            .stop_and_wait()
+            .await
+            .map_err(|error| error.to_string());
         if let Err(error) = stopped {
             host.lease.restore(previous)?;
             return Err(error);
@@ -400,13 +386,7 @@ pub async fn mesh_compute_select(
             return Ok(lease);
         }
     }
-    retire_selection(
-        &host,
-        &app.state::<crate::agents::AgentHost>(),
-        &community,
-        &viewer,
-    )
-    .await?;
+    retire_selection(&host, &community, &viewer).await?;
     let lease = host
         .lease
         .try_select_with(community.clone(), viewer_changed, || {
@@ -472,17 +452,12 @@ pub async fn mesh_compute_select(
                 .set_error(error);
         }
     }
-    let agents = app.state::<crate::agents::AgentHost>().inner().clone();
-    let selected = host.lease.community(&lease)?;
-    tauri::async_runtime::spawn(async move {
-        agents.restore_mesh(selected).await;
-    });
     Ok(lease)
 }
 #[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_release<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+    _app: tauri::AppHandle<R>,
     host: tauri::State<'_, MeshHost>,
     lease: String,
 ) -> Result<(), String> {
@@ -498,9 +473,6 @@ pub async fn mesh_compute_release<R: tauri::Runtime>(
             Ok(())
         })?;
         host.lease.revoke(&lease)?;
-        app.state::<crate::agents::AgentHost>()
-            .stop_mesh_consumers()
-            .await?;
         *host
             .admission
             .lock()
@@ -606,51 +578,6 @@ pub async fn mesh_compute_catalog() -> Result<buzz_mesh_compute::catalog::Catalo
 mod persistence_tests {
     use super::*;
     use tauri::Manager;
-
-    #[tokio::test]
-    async fn revoked_selection_retries_failed_cleanup_before_reusing_binding() {
-        use serde_json::{json, Value};
-        let (dir, agents, _app, view) = crate::agents::tests::fixture();
-        let id = crate::agents::tests::seed(dir.path());
-        let path = dir.path().join("store/agents.json");
-        let mut data: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        data["agents"][0]["harness"]["provider"] = json!("relay-mesh");
-        data["agents"][0]["startOnAppLaunch"] = json!(true);
-        let saved = serde_json::to_vec(&data).unwrap();
-        std::fs::write(&path, &saved).unwrap();
-        agents.restore().await;
-        let host = MeshHost::default();
-        host.preferences
-            .lock()
-            .unwrap()
-            .select("viewer".into(), "https://a.example".into());
-        let lease = host.lease.select("https://a.example".into()).unwrap();
-        host.lease.revoke(&lease).unwrap();
-        // Simulate the exact cleanup error boundary: persisted inventory unreadable.
-        std::fs::write(&path, b"invalid").unwrap();
-        assert!(agents.stop_mesh_consumers().await.is_err());
-        assert!(
-            retire_selection(&host, &agents, "https://b.example", "viewer")
-                .await
-                .is_err()
-        );
-        assert!(host.lease.current().unwrap().is_none());
-        std::fs::write(&path, &saved).unwrap();
-        retire_selection(&host, &agents, "https://b.example", "viewer")
-            .await
-            .unwrap();
-        // A cancelled restore cannot restart when its old community returns.
-        agents.restore_mesh("https://relay.example".into()).await;
-        let snapshot =
-            crate::agents::tests::invoke(&view, "agent_control_snapshot", json!({})).unwrap();
-        let agent = snapshot["agents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|agent| agent["id"] == id)
-            .unwrap();
-        assert_eq!(agent["status"], "stopped");
-    }
 
     #[test]
     fn hash_only_adverts_use_known_names_or_an_honest_fallback() {
@@ -801,9 +728,7 @@ mod persistence_tests {
             prefs.checkpoint(config).unwrap();
         }
         *host.sharing.lock().unwrap() = Some(share);
-        let (_agents_dir, agents, _agents_app, _agents_view) = crate::agents::tests::fixture();
         let app = tauri::test::mock_builder()
-            .manage(agents)
             .manage(host)
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
@@ -874,61 +799,5 @@ fn apply_names(
                 .collect();
             entry.model_name = Some(format!("Model name unavailable ({short})"));
         }
-    }
-}
-
-/// Read verified community advertisements without starting a node or touching cloud credentials.
-pub(crate) async fn agent_models<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    relay: Option<&str>,
-) -> Result<Vec<(String, String)>, String> {
-    #[cfg(feature = "mesh")]
-    {
-        use tauri::Manager;
-        let host = app.state::<MeshHost>();
-        let identity = app.state::<crate::identity::IdentityHost>();
-        let (lease, community) = host
-            .lease
-            .current()?
-            .ok_or("Enable Shared compute in this community first")?;
-        if let Some(relay) = relay {
-            let mut url = url::Url::parse(relay).map_err(|_| "Invalid agent community")?;
-            let scheme = match url.scheme() {
-                "wss" => "https",
-                "ws" => "http",
-                other => other,
-            }
-            .to_owned();
-            url.set_scheme(&scheme)
-                .map_err(|_| "Invalid agent community")?;
-            let selected = url::Url::parse(&community).map_err(|_| "Invalid Mesh community")?;
-            let same = url.scheme() == selected.scheme()
-                && url.host_str().map(|host| host.trim_end_matches('.'))
-                    == selected.host_str().map(|host| host.trim_end_matches('.'))
-                && url.port_or_known_default() == selected.port_or_known_default();
-            if !same {
-                return Err("Select the agent’s community before browsing shared models".into());
-            }
-        }
-        let mut inventory = discovery::inventory(&identity, &community).await?;
-        host.lease.community(&lease)?;
-        name_entries(&host, &mut inventory.entries).await;
-        if let Some(error) = inventory.unavailable {
-            return Err(error);
-        }
-        let mut models = std::collections::BTreeMap::new();
-        for entry in inventory.entries {
-            if !matches!(entry.model_id.trim(), "" | "auto" | "mesh") {
-                models
-                    .entry(entry.model_id.clone())
-                    .or_insert(entry.model_name.unwrap_or(entry.model_id));
-            }
-        }
-        Ok(models.into_iter().collect())
-    }
-    #[cfg(not(feature = "mesh"))]
-    {
-        let _ = (app, relay);
-        Err("Mesh native runtime is not included in this build".into())
     }
 }

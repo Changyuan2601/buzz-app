@@ -270,6 +270,24 @@ inserting isolated rows into channel history. Explicit denial revokes the owning
 channel; access loss, cache clear and disposal purge the view. There is no separate
 reader owner, subscription or persistence.
 
+An open thread can call `view.retarget(messageId, signal)` to select another
+message without reallocating its reader. The same bounded exact-read path verifies
+the candidate's signed ancestry against the already-known root; navigation hints
+never establish identity. A same-root selection preserves traversal rows/cursors
+and publishes only after its overlays are complete. A different root, unavailable
+message or read failure leaves the prior selection intact. Selection requests
+supersede each other independently of history paging and repair; cancellation,
+access loss, cache clear and disposal fence late results. All evidence remains
+inside the existing view budget and session authority.
+
+Channel thread panels opt into this retained lifetime. Same-thread links preserve
+the mounted editor, reply target and expansion state; a different verified thread
+still replaces the current view. Failed link selection keeps the existing reply and
+shows one notice in the thread's status area. A message that no longer exists has
+no retry; other failures offer Try again, which stays focused while a fresh
+navigation request runs. Other embedded/preview consumers
+retain their previous lifetime. This does not yet add main-pane tabs or dragging.
+
 ## Global message search and public previews
 
 Global message searches (`kinds: [9, 40002]`, no `#h`) keep the relay's order.

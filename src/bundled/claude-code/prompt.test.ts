@@ -1,6 +1,7 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { steerPrompt, systemPrompt, timerPrompt, turnPrompt } from "./prompt";
 
 const alice = "a".repeat(64);
@@ -32,9 +33,11 @@ it("builds the harness system prompt with instructions and core memory", () => {
     scope: "thread",
     cwd: "~/.buzz",
     instructions: "Be terse.",
+    team: "<team>\nCrew\n</team>",
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
+  expect(prompt).toContain(BUZZ_PROMPT);
   expect(prompt).toContain("## Session Model");
   expect(prompt).toContain(
     "<workspace>\nCurrent working directory: ~/.buzz\n</workspace>",
@@ -43,11 +46,27 @@ it("builds the harness system prompt with instructions and core memory", () => {
     "<agent-instructions>\nBe terse.\n</agent-instructions>",
   );
   expect(prompt).toContain("<core-memory>\nI am Claude.\n</core-memory>");
+  // A team follows the agent's own instructions.
+  expect(prompt).toContain(
+    "</agent-instructions>\n\n<team>\nCrew\n</team>\n\n<core-memory>",
+  );
   expect(systemPrompt({ scope: "thread", cwd: "/w", memory: null })).toContain(
     "No core memory found.",
   );
   expect(systemPrompt({ scope: "channel", cwd: "/w" })).not.toContain(
     "<core-memory>",
+  );
+});
+
+it("names the agent first when it is known", () => {
+  const prompt = systemPrompt({
+    scope: "thread",
+    cwd: "/w",
+    agent: { name: "Claude", pubkey: agent },
+  });
+  expect(prompt).toMatch(/^<identity>\n/);
+  expect(prompt).toContain(
+    `<identity>\nYou are Claude (pubkey ${agent}).\n</identity>\n\n<base>\n`,
   );
 });
 

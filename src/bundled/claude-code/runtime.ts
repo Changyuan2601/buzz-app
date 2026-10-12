@@ -1,4 +1,4 @@
-// Turns Agents2 deliveries into Claude turns. Each agent of this type has its
+// Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation. The run returns once the turn is handed over,
 // so one agent works in several conversations at once. Claude acts in Buzz with
@@ -6,11 +6,14 @@
 // only reports a turn that fails.
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import type {
-  Agent,
-  AgentHandle,
-  Delivery,
-} from "../../features/agents2/service";
+import {
+  fromOwner,
+  type Agent,
+  type AgentHandle,
+  type Delivery,
+  type Effort,
+  type Models,
+} from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -25,7 +28,16 @@ import {
   timerPrompt,
   turnPrompt,
 } from "./prompt";
-import { AgentSessions, localSessions } from "./sessions";
+import { AgentSessions, localSessions, Spare } from "./sessions";
+
+/** What a session can switch to between turns. Claude Code runs `max` as
+ * `xhigh` in a stream-json session, so it is not offered. */
+const EFFORTS = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra high" },
+];
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude Code's own default. */
@@ -35,16 +47,12 @@ export type Config = Readonly<{
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
   scope: Scope;
-  /** Whose messages it acts on. Claude runs commands as you, so by default
-   * only yours, as harness agents do. */
-  respondTo: "owner" | "anyone";
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
-  respondTo: "owner",
 });
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
@@ -60,12 +68,22 @@ const CHAT = [9, 40002];
 type Entry = {
   sessions: AgentSessions;
   config: Config;
+  /** The team sections of the latest run; a change restarts idle sessions. */
+  team: string;
+  /** The agent's name, for its prompt; a rename restarts idle sessions. */
+  name?: string;
   memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
 };
+
+/** Where an agent's processes run, and with which model. */
+const where = ({ workspace, model }: Config) => ({
+  cwd: workspace,
+  ...(model.trim() ? { model: model.trim() } : {}),
+});
 
 export class ClaudeRuntime {
   private readonly agents = new Map<string, Entry>();
@@ -77,10 +95,16 @@ export class ClaudeRuntime {
     string,
     ReturnType<AgentSessions["snapshot"]>
   >();
+  /** One process started ahead of need, for any agent's next new conversation. */
+  private readonly spare = new Spare(
+    (id, options) => this.spawn(id, options),
+    (_conversation, message) => respond(undefined, {}, message),
+  );
 
   constructor(
     private readonly host: Host,
-    private readonly relay: RelayData,
+    /** The owner's connection to each agent's own community. */
+    private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = globalThis.localStorage,
   ) {}
 
@@ -91,11 +115,12 @@ export class ClaudeRuntime {
     return spawn;
   }
 
-  /** Brings the runtime in line with this type's agents: new ones get a warm
-   * session, changed settings restart idle sessions, removed agents stop. */
+  /** Brings the runtime in line with this type's agents: changed settings
+   * restart idle sessions, removed agents stop, and a spare waits while any
+   * agent is here. */
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
-    // Out of view (another community, offline) or deleted: either way its
+    // Deleted, signed out or its community disconnected: either way its
     // processes stop. Saved sessions stay so it resumes when it is back.
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
@@ -105,13 +130,71 @@ export class ClaudeRuntime {
     for (const agent of agents) {
       const next = config(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next).sessions.warm();
-      else if (JSON.stringify(entry.config) !== JSON.stringify(next)) {
+      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
+      else if (
+        JSON.stringify(entry.config) !== JSON.stringify(next) ||
+        entry.name !== agent.name
+      ) {
         entry.config = next;
+        entry.name = agent.name;
         entry.sessions.reconfigure();
       }
     }
+    this.spare.warm(...agents.map((agent) => where(config(agent.config))));
     this.notify();
+  }
+
+  /** The models the agent's next turn can run on, with their effort levels.
+   * Without a pick it uses its own: the configured one, or else the one its
+   * sessions report. `default` duplicates a listed model, so it is not offered. */
+  async models(pubkey: string): Promise<Models> {
+    const entry = this.agents.get(pubkey);
+    const configured = entry?.config.model.trim();
+    const {
+      models: listed,
+      model: reported,
+      effort,
+    } = (await entry?.sessions.metadata()) ?? { models: [] };
+    // A turn without a pick keeps the session's effort on any model.
+    const resting = (efforts: readonly Effort[]) =>
+      effort && efforts.some((level) => level.id === effort) ? { effort } : {};
+    const own = configured || reported || "";
+    const offered = listed.filter((model) => model.value !== "default");
+    const models = offered.map((model) => {
+      const efforts =
+        model.supportsEffort === false
+          ? []
+          : EFFORTS.filter(
+              (level) =>
+                !model.supportedEffortLevels ||
+                model.supportedEffortLevels.includes(level.id),
+            );
+      return {
+        id: model.value,
+        label: modelName(model.resolvedModel ?? model.value),
+        efforts,
+        ...resting(efforts),
+      };
+    });
+    const current =
+      offered.find(
+        (model) => own === model.value || own === model.resolvedModel,
+      )?.value ?? own;
+    // An own model Claude Code does not list is still the one it runs.
+    return models.some((model) => model.id === current)
+      ? { current, models }
+      : {
+          current,
+          models: [
+            {
+              id: current,
+              label: current ? modelName(current) : "Claude Code",
+              efforts: EFFORTS,
+              ...resting(EFFORTS),
+            },
+            ...models,
+          ],
+        };
   }
 
   /** Conversations each agent has running, for its status view. */
@@ -135,20 +218,34 @@ export class ClaudeRuntime {
   }
 
   dispose() {
+    this.spare.dispose();
     for (const entry of this.agents.values()) entry.sessions.dispose();
     this.agents.clear();
   }
 
-  async run({ trigger, agent, config: raw, channelId }: Delivery) {
+  async run({
+    trigger,
+    agent,
+    config: raw,
+    channelId,
+    model,
+    effort,
+    team,
+    workingUntil,
+  }: Delivery) {
     const settings = config(raw);
+    // Claude runs commands as you, so only you and your agents can ask.
     if (
       trigger.type !== "timer" &&
-      settings.respondTo !== "anyone" &&
-      trigger.event.pubkey !== agent.owner
+      !(await fromOwner(trigger.event, agent.owner))
     )
       return;
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
+    entry.team = team ?? "";
+    // Read while the turn's prompt is built, not after: a new session's prompt
+    // needs it, and a spare is only faster if nothing else is awaited.
+    void this.memory(agent.pubkey, entry);
     if (trigger.type === "timer") {
       const done = entry.sessions.deliver(
         `timer/${trigger.slug}`,
@@ -161,6 +258,7 @@ export class ClaudeRuntime {
         }),
         0,
       );
+      workingUntil(done);
       this.watch(done, () => undefined);
       return;
     }
@@ -193,7 +291,10 @@ export class ClaudeRuntime {
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
+      pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
     });
+    // The turn outlives `run`, which the host is told so it shows it as working.
+    workingUntil(done);
     this.notify();
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error);
@@ -210,23 +311,23 @@ export class ClaudeRuntime {
       .finally(() => this.notify());
   }
 
-  /** Says in the thread that a turn failed, so nobody waits on it. */
+  /** Says in the thread that a turn failed, so nobody waits on it. Tells the
+   * owner even when a sibling asked: tagging the sibling would wake it, and two
+   * agents failing alike would wake each other without end. */
   private report(
     agent: AgentHandle,
     channel: string,
     event: EventData,
     error: string,
   ) {
-    const root = threadReference(event)?.rootId ?? event.id;
     return agent
       .publish({
         kind: 9,
         content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
         tags: [
           ["h", channel],
-          ...(root === event.id ? [] : [["e", root, "", "root"]]),
-          ["e", event.id, "", "reply"],
-          ["p", event.pubkey],
+          ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
+          ["p", agent.owner],
         ],
       })
       .catch((failure) =>
@@ -242,8 +343,8 @@ export class ClaudeRuntime {
     channelId: string,
     fresh = false,
   ) {
-    const snapshot = this.relay.snapshot();
-    const session = snapshot.status === "ready" ? snapshot.session : undefined;
+    const snapshot = this.relay(self)?.snapshot();
+    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
     const summary =
       session?.channels.list().channels.find((item) => item.id === channelId) ??
       session?.channels.get?.(channelId);
@@ -320,6 +421,7 @@ export class ClaudeRuntime {
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
+      team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
@@ -327,8 +429,6 @@ export class ClaudeRuntime {
     const tools =
       (cwd: string): ToolServer =>
       async (conversation, message) => {
-        // A spare starts before any delivery: it can list the tools, and has a
-        // handle to call them with by the time it is given a turn.
         const handle = entry.handle;
         const client = handle && {
           ...appClient(handle, {
@@ -347,6 +447,7 @@ export class ClaudeRuntime {
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
+      spare: this.spare,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
       fingerprint: () =>
@@ -355,18 +456,21 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
+          entry.team,
+          entry.name,
         ]),
       launch: async () => {
-        const { model, workspace, instructions, scope } = entry.config;
+        const { workspace, instructions, scope } = entry.config;
         const memory = await this.memory(pubkey, entry);
         return {
-          cwd: workspace,
+          ...where(entry.config),
           tools: tools(workspace),
-          ...(model.trim() ? { model: model.trim() } : {}),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
+            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
+            team: entry.team,
             ...(memory === undefined ? {} : { memory }),
           }),
         };
@@ -406,8 +510,8 @@ export class ClaudeRuntime {
     return reading;
   }
   private async readMemories(pubkey: string): Promise<readonly Memory[]> {
-    const snapshot = this.relay.snapshot();
-    if (snapshot.status !== "ready") throw new Error("Buzz is not connected");
+    const snapshot = this.relay(pubkey)?.snapshot();
+    if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
     const view = snapshot.session.agentMemories.open(pubkey);
     try {
       const done = new Promise<void>((resolve) => {
@@ -434,4 +538,15 @@ export class ClaudeRuntime {
       view.dispose();
     }
   }
+}
+
+/** `claude-opus-5-5` reads as `Opus 5.5`, and an alias such as `opus` as
+ * `Opus`. Anything else is shown as it is. */
+export function modelName(model: string) {
+  const id =
+    /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[.*\])?$/.exec(model);
+  const family = id?.[1] ?? (/^[a-z]+$/.test(model) ? model : undefined);
+  if (!family) return model;
+  const name = family[0]?.toUpperCase() + family.slice(1);
+  return id ? `${name} ${id[2]}${id[3] ? `.${id[3]}` : ""}` : name;
 }

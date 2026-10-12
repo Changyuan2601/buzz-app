@@ -1,6 +1,6 @@
-// The Agents2 "Mesh" type's runtime: a delivery becomes one inference-only turn
+// The Agents "Mesh" type's runtime: a delivery becomes one inference-only turn
 // of the GDK `buzz-agent` helper, spoken to over ACP on stdio. The helper only
-// generates text; identity and publishing stay with Agents2 (`agent.publish`).
+// generates text; identity and publishing stay with Agents (`agent.publish`).
 //
 // Inference comes only from this app's shared compute, through the native
 // readiness adapter (`mesh_compute_prepare_inference`). There is no provider
@@ -11,7 +11,7 @@
 // is dropped. That is stale-result mitigation only. A switch can restart
 // compute on the same port mid-turn, so the prompt may already have reached the
 // newly selected community's mesh, and check→publish is not atomic.
-import type { Delivery } from "../../features/agents2/service";
+import type { Delivery } from "../../features/agents/service";
 import type {
   HostProcess,
   HostProcessOptions,

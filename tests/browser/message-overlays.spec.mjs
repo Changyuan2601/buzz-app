@@ -70,10 +70,14 @@ test("video speed options escape the thread and restore focus after selection an
     });
   await trigger.evaluate((button) => {
     const scroller = button.closest("[data-message-scroller]");
-    scroller.scrollTop +=
-      button.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top -
-      40;
+    // WebKit truncates fractional scroll requests. Round the final position so
+    // fractional message heights still reach the same constrained-menu setup.
+    scroller.scrollTop = Math.round(
+      scroller.scrollTop +
+        button.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top -
+        40,
+    );
   });
   await expect
     .poll(() =>

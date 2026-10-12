@@ -83,12 +83,6 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
-const noProviders: [] = [];
-const providers = {
-  snapshot: () => noProviders,
-  subscribe: () => () => {},
-  register: () => {},
-};
 
 function fixture(
   sidebarPreferences?: ReturnType<
@@ -175,7 +169,6 @@ function fixture(
         <ChannelSidebar
           relay={relay}
           navigator={navigator}
-          providers={providers}
           target={{
             version: 1,
             kind: "conversation",
@@ -590,8 +583,6 @@ it("rejects a deferred header Create section after its navigation origin retires
         channel={h.list.channels[0]}
         session={h.session}
         origin={origin.signal}
-        providers={providers}
-        templateProvider={undefined}
         trigger={createRef<HTMLButtonElement>()}
         openDetails={() => {}}
         openCanvas={() => {}}
@@ -671,7 +662,7 @@ it("clears only the removed section's collapsed intent after confirmation, never
     };
     let dialog = await open();
     expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+      "1 channel will move back to Channels. This does not delete any channels.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(remove).not.toHaveBeenCalled();

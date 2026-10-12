@@ -11,6 +11,14 @@ export type FakeClaude = {
   received: Record<string, unknown>[];
   /** User messages it has taken, in order. */
   prompts: string[];
+  /** The session's effort, which `apply_flag_settings` changes. */
+  effort: string;
+  /** The effort each user message was taken at. */
+  efforts: string[];
+  /** The session's model, which `set_model` changes. */
+  model: string;
+  /** The model each user message was taken on. */
+  models: string[];
   /** When set, a turn stays open until `finish()`. */
   hold: boolean;
   killed: boolean;
@@ -18,6 +26,26 @@ export type FakeClaude = {
   finish(result?: Readonly<{ error?: string }>): void;
   exit(code: number | null, stderr?: string): void;
 };
+
+/** The models the fake lists, as Claude Code's `initialize` answer does. */
+export const MODELS = [
+  { value: "default", resolvedModel: "claude-opus-5-5" },
+  {
+    value: "opus",
+    resolvedModel: "claude-opus-5-5",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    value: "haiku",
+    resolvedModel: "claude-haiku-5-5",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "high"],
+  },
+  { value: "legacy", resolvedModel: "claude-legacy-1", supportsEffort: false },
+];
+const resolved = (model: string) =>
+  MODELS.find((item) => item.value === model)?.resolvedModel ?? model;
 
 /** A spawn whose `claude` processes answer like Claude Code. Sessions named in
  * `known` (or created by a process) can be resumed; others fail to load. */
@@ -43,6 +71,10 @@ export function fakeSpawn(known = new Set<string>()) {
       options,
       received: [],
       prompts: [],
+      effort: "high",
+      efforts: [],
+      model: flag("--model") ?? "default",
+      models: [],
       hold: false,
       killed: false,
       emit(message) {
@@ -78,9 +110,40 @@ export function fakeSpawn(known = new Set<string>()) {
     const take = (message: Record<string, unknown>) => {
       fake.received.push(message);
       if (message.type === "control_request") {
+        const request = message.request as Record<string, unknown>;
+        const level = (request.settings as Record<string, unknown> | undefined)
+          ?.effortLevel;
+        if (
+          request.subtype === "apply_flag_settings" &&
+          typeof level === "string"
+        )
+          fake.effort = level;
+        if (request.subtype === "set_model")
+          fake.model = flag("--model") ?? "default";
+        if (
+          request.subtype === "set_model" &&
+          typeof request.model === "string"
+        )
+          fake.model = request.model;
         fake.emit({
           type: "control_response",
-          response: { subtype: "success", request_id: message.request_id },
+          response: {
+            subtype: "success",
+            request_id: message.request_id,
+            ...(request.subtype === "get_settings"
+              ? {
+                  response: {
+                    applied: {
+                      effort: fake.effort,
+                      model: resolved(fake.model),
+                    },
+                  },
+                }
+              : {}),
+            ...(request.subtype === "initialize"
+              ? { response: { models: MODELS } }
+              : {}),
+          },
         });
         return;
       }
@@ -91,10 +154,17 @@ export function fakeSpawn(known = new Set<string>()) {
       }
       const content = (message.message as { content: string }).content;
       fake.prompts.push(content);
+      fake.efforts.push(fake.effort);
+      fake.models.push(fake.model);
       if (!started) {
         started = true;
         known.add(session);
-        fake.emit({ type: "system", subtype: "init", session_id: session });
+        fake.emit({
+          type: "system",
+          subtype: "init",
+          session_id: session,
+          model: resolved(fake.model),
+        });
       }
       open++;
       fake.emit({

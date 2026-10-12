@@ -1,44 +1,37 @@
-# Agents2 "Mesh" type (draft)
+# Agents "Mesh" type (draft)
 
-Agents2 → New agent → **Mesh**. Its only setting is the prompt. A mention
+Agents → New agent → **Mesh**. Its only setting is the prompt. A mention
 from the agent's owner runs one inference-only turn: the plugin prepares the
 shared-compute target natively (`mesh_compute_prepare_inference`), spawns the
 GDK `buzz-agent` helper as host process `buzz-mesh-agent`, speaks ACP over
-stdio with no MCP servers, and publishes the reply through Agents2
+stdio with no MCP servers, and publishes the reply through Agents
 (`agent.publish`). No tools, no provider fallback.
 
-## Helper setup (draft; not bundled)
+## Helper (pinned, bundled)
 
-The helper is a separate pin from the app's bundled `buzz-agent` CLI/ACP. It is
-the goose-core `buzz-agent` (`block/buzz` branch `micn/buzz-agent-goose-core`,
-`6a7c51a5a`) plus one ACP session-id fix (`dfbdbe2af`, 15 lines in
-`crates/buzz-agent`). That fix is not yet on a remote branch: the block/buzz
-pre-push hook rejects it for branch skew against main and two pre-existing
-`buzz-acp` test failures. It does not cherry-pick onto main (main's
-`buzz-agent` is a different implementation). Until it is published, apply
-the patch shared in the collaboration thread:
+The helper is a separate pin from the app's bundled `buzz-agent` CLI/ACP: the
+goose-core `buzz-agent` (`block/buzz` `micn/buzz-agent-goose-core` at
+`6a7c51a5a9367c9e868c6a2cff5706c8a061cf28`) plus
+`scripts/mesh-helper/acp-session-id.patch` (ACP session id on every wire
+update; not yet on a remote branch). Build and package:
 
 ```sh
-git -C buzz checkout 6a7c51a5a          # micn/buzz-agent-goose-core
-git -C buzz am ACP_SESSION_ID_FIX.patch # -> fix(buzz-agent): ACP session id
-cargo build --release -p buzz-agent
+scripts/mesh-helper/build.sh /path/to/block/buzz   # stages src-tauri/binaries/
+bin/pnpm tauri build --features mesh --bundles app \
+  --config src-tauri/tauri.mesh.conf.json
 ```
 
-Install it where the desktop app resolves host process `buzz-mesh-agent`:
-
-- macOS: `~/.local/bin/buzz-mesh-agent` (searched before the app's PATH).
-- Windows: `buzz-mesh-agent.exe` in a directory on the PATH the app is
-  launched with (no extra search directories on Windows; `.exe` is resolved by
-  the OS). Restart the app after changing PATH. Unverified on Windows so far.
-- Linux: anywhere on the app's PATH. Unverified.
-
-Desktop must be built with `--features mesh`.
+On aarch64-apple-darwin the helper builds to sha256
+`92ab64496b85d28fa163045860e9d65ae8398594f19ca8e5c3e71e89e982e0df`.
+The overlay bundles it as `Contents/MacOS/buzz-mesh-agent`; on macOS host
+processes look in the app bundle first, then `~/.local/bin`, then PATH.
+Windows/Linux: not bundled yet; put `buzz-mesh-agent` on the app's PATH.
 
 ## Triggering
 
 Verified (unit tests only): an explicit `@mention` of the agent by its owner
 in a channel or thread. Plain DMs without a mention have not been exercised;
-whether Agents2 delivers them as a mention is unverified. Test with explicit
+whether Agents delivers them as a mention is unverified. Test with explicit
 owner mentions, non-sensitive prompts, and a single fixed community.
 
 ## Known limitation: community switch is NOT isolated

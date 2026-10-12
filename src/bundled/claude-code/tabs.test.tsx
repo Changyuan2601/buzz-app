@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Agent, AgentType } from "../../features/agents2/service";
+import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
@@ -14,9 +20,19 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => desktop.tauri }));
 beforeEach(() => {
   desktop.tauri = true;
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  // jsdom has no layout observers; the model picker sizes itself with one.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -61,12 +77,12 @@ function applied({ loggedIn = true } = {}) {
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { spawn, request: vi.fn() },
-    relay: { snapshot: () => ({ status: "signed-out" }) },
-    agents2: {
+    agents: {
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
-      snapshot: () => ({ status: "ready", agents: [] }),
+      snapshot: () => ({ status: "ready", agents: [], running: [] }),
+      relay: () => undefined,
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
@@ -91,10 +107,21 @@ async function choose(label: string, option: string) {
 }
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents2", "host", "relay"]);
+  expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
   expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
+  expect(
+    type.adopt?.(
+      { instructions: "Triage.", workspace: "~/code" },
+      DEFAULT_CONFIG,
+    ),
+  ).toEqual({
+    ...DEFAULT_CONFIG,
+    instructions: "Triage.",
+    workspace: "~/code",
+  });
+  expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );
@@ -143,7 +170,7 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
   expect(cancel).not.toHaveAttribute("disabled");
 });
 
-it("saves settings as one config and warns before answering anyone", async () => {
+it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 1);
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
@@ -153,8 +180,6 @@ it("saves settings as one config and warns before answering anyone", async () =>
     "true",
   );
   await choose("Model", "Sonnet");
-  await choose("Answers", "Anyone who mentions it");
-  expect(screen.getByText(/with no approval step/)).toBeVisible();
   expect(screen.getByLabelText("Workspace")).toHaveAccessibleDescription(
     "The folder Claude Code works in. Use ~/ for your home folder.",
   );
@@ -163,7 +188,6 @@ it("saves settings as one config and warns before answering anyone", async () =>
   expect(save).toHaveBeenCalledWith({
     ...DEFAULT_CONFIG,
     model: "sonnet",
-    respondTo: "anyone",
     workspace: "~/.buzz",
   });
 });
@@ -193,4 +217,83 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   await user.click(saveButton);
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("starts a new agent from a model and instructions, keeping the rest", async () => {
+  const Create = installed().type.Create;
+  if (!Create) throw new Error("no create view");
+  const config = {
+    ...DEFAULT_CONFIG,
+    workspace: "~/code",
+    scope: "channel" as const,
+  };
+  const onChange = vi.fn();
+  render(<Create config={config} onChange={onChange} disabled={false} />);
+  await choose("Model", "Opus");
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "Triage." },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...config,
+    instructions: "Triage.",
+  });
+});
+
+it("shows a new agent's starting config, and lets a custom model be typed", async () => {
+  const Create = installed().type.Create;
+  if (!Create) throw new Error("no create view");
+  const onChange = vi.fn();
+  render(
+    <Create
+      config={{ ...DEFAULT_CONFIG, model: "sonnet", instructions: "Triage." }}
+      onChange={onChange}
+      disabled={false}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("Sonnet");
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
+  const user = userEvent.setup();
+  const model = screen.getByRole("combobox", { name: "Model" });
+  await user.clear(model);
+  await user.type(model, "claude-opus-4-1{Enter}");
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...DEFAULT_CONFIG,
+    model: "claude-opus-4-1",
+    instructions: "Triage.",
+  });
+});
+
+it("disables a new agent's controls while it is being created", () => {
+  const Create = installed().type.Create;
+  if (!Create) throw new Error("no create view");
+  render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.getByLabelText("Instructions")).toBeDisabled();
+});
+
+it("keeps a custom model and instructions in settings", async () => {
+  const Settings = tab(installed().type, 1);
+  const save = vi.fn(async () => undefined);
+  render(
+    <Settings
+      agent={agent({ ...DEFAULT_CONFIG, model: "claude-opus-4-1" })}
+      save={save}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+    "claude-opus-4-1",
+  );
+  expect(screen.getByLabelText("Instructions")).toHaveAccessibleDescription(
+    "Added to every session's system prompt, after Buzz's own.",
+  );
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "Triage." },
+  });
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith({
+    ...DEFAULT_CONFIG,
+    model: "claude-opus-4-1",
+    instructions: "Triage.",
+  });
 });

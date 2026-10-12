@@ -9,7 +9,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { CpuIcon } from "../../shared/design-system/icons";
 import { ShareModelPicker } from "./ShareModelPicker";
-import { CommunityAgent } from "./CommunityAgent";
 import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
 import styles from "./Compute.module.css";
@@ -49,9 +48,8 @@ type MeshStatus = {
 export const inject = [
   "relay",
   "settingsCards",
-  "agentControl",
   "communityReader",
-  "agents2",
+  "agents",
   "host",
 ];
 
@@ -158,10 +156,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     lease = undefined;
   });
 
-  // Agents2 "Mesh" type: prompt-only, inference through shared compute only.
+  // Agents "Mesh" type: prompt-only, inference through shared compute only.
   const spawn = ctx.host?.spawn?.bind(ctx.host);
-  if (isTauri() && spawn && ctx.agents2)
-    ctx.agents2.register<MeshAgentConfig>({
+  if (isTauri() && spawn && ctx.agents)
+    ctx.agents.register<MeshAgentConfig>({
       id: "mesh",
       title: "Mesh",
       description:
@@ -606,18 +604,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
             </ShareModelPicker>
           </section>
         )}
-        {community &&
-          snapshot.viewer &&
-          ctx.agentControl &&
-          status?.available &&
-          !otherCommunity && (
-            <CommunityAgent
-              key={`${community.id}:${snapshot.viewer}`}
-              control={ctx.agentControl}
-              destination={community.id}
-              owner={snapshot.viewer}
-            />
-          )}
         {isTauri() && status?.available && community && (
           <details className={styles.options} open>
             <summary className="text-body-sm">Community devices</summary>

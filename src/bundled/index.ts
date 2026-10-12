@@ -11,8 +11,6 @@ import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
-import templatesManifest from "./channel-templates/manifest.json";
-import * as templates from "./channel-templates";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -29,8 +27,6 @@ import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
-import agents2Manifest from "./agents2/manifest.json";
-import * as agents2 from "./agents2";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
@@ -105,11 +101,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...templatesManifest, apiVersion: 1 },
-    module: templates,
-    enabledByDefault: false,
-  },
-  {
     manifest: { ...namingManifest, apiVersion: 1 },
     module: naming,
     enabledByDefault: true,
@@ -182,11 +173,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agentsManifest, apiVersion: 1 },
     module: agents,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...agents2Manifest, apiVersion: 1 },
-    module: agents2,
     enabledByDefault: true,
   },
   {

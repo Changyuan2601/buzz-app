@@ -213,10 +213,12 @@ pub(crate) fn effective_path() -> OsString {
         // Per-user installs, such as Claude Code's official installer, come first:
         // an older system-wide copy in /usr/local/bin would otherwise run instead,
         // and installing again could not replace it.
-        let mut directories = std::env::var_os("HOME")
-            .map(|home| std::path::Path::new(&home).join(".local/bin"))
-            .into_iter()
-            .collect::<Vec<_>>();
+        // Helpers packaged inside the app bundle (Contents/MacOS) win, so a
+        // pinned helper cannot be shadowed by a per-user copy.
+        let mut directories = bundled_programs().into_iter().collect::<Vec<_>>();
+        directories.extend(
+            std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".local/bin")),
+        );
         directories.extend(
             std::env::split_paths(&path).filter(|directory| !directory.as_os_str().is_empty()),
         );
@@ -227,6 +229,12 @@ pub(crate) fn effective_path() -> OsString {
     {
         path
     }
+}
+
+#[cfg(target_os = "macos")]
+fn bundled_programs() -> Option<PathBuf> {
+    let directory = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    directory.ends_with("Contents/MacOS").then_some(directory)
 }
 
 pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf {
@@ -295,17 +303,6 @@ async fn run(
     let (output, status) =
         run_output_with_input(executable, args, deadline, path, max_output_bytes, input).await?;
     status.success().then_some(output)
-}
-
-/// Bounded stdout and exit status; callers must project away private command output.
-pub(crate) async fn run_output(
-    executable: &Path,
-    args: &[String],
-    deadline: Duration,
-    path: &OsStr,
-    max_output_bytes: u64,
-) -> Option<(String, std::process::ExitStatus)> {
-    run_output_with_input(executable, args, deadline, path, max_output_bytes, None).await
 }
 
 async fn run_output_with_input(

@@ -135,10 +135,17 @@ test("Me and Messages retain independent workspaces for the same conversation", 
   const me = renderHook(() => useChannelTabState(session, "alpha", "me"));
   act(() => {
     messages.result.current.setTabs(() => [
-      { id: "messages-tab", kind: "new" },
+      {
+        id: "messages-tab",
+        kind: "thread",
+        channelId: "alpha",
+        messageId: "root",
+      },
     ]);
     messages.result.current.select("messages-tab");
-    me.result.current.setTabs(() => [{ id: "me-tab", kind: "new" }]);
+    me.result.current.setTabs(() => [
+      { id: "me-tab", kind: "conversation", channelId: "beta" },
+    ]);
     me.result.current.select("me-tab");
     me.result.current.setPaneOpen(false);
     me.result.current.retireMenuEntries();

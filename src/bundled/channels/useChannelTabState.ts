@@ -12,7 +12,6 @@ export type PanelOpening = {
   channelContext?: ChannelPanelContext;
 };
 export type ConversationTab =
-  | { id: string; kind: "new" }
   | { id: string; kind: "conversation"; channelId: string }
   | {
       id: string;

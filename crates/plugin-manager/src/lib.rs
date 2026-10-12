@@ -13,6 +13,7 @@ use std::{
 };
 
 pub mod imports;
+mod migrate_agent_flag;
 
 pub type Result<T> = std::result::Result<T, String>;
 const LIMIT: u64 = 8 * 1024 * 1024;
@@ -177,10 +178,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/channel-templates/manifest.json"
-        ))
-        .expect("channel templates manifest"),
-        serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
         .expect("identity naming manifest"),
@@ -222,8 +219,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
-            .expect("agents2 manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/claude-code/manifest.json"
         ))
@@ -269,7 +264,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.reminders"
             | "buzz.projects"
             | "buzz.agents"
-            | "buzz.agents2"
             | "buzz.claude-code"
             | "buzz.codex"
             | "buzz.workflows"
@@ -328,7 +322,7 @@ struct Registry {
 impl Default for Registry {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             bundled_enabled: true,
             bundled_overrides: BTreeMap::new(),
             installed: BTreeMap::new(),
@@ -523,7 +517,7 @@ impl Manager {
         };
         let text = read_file_limited(file)?;
         let mut r: Registry = serde_json::from_str(&text).map_err(err)?;
-        if r.version != 1 {
+        if r.version != 1 && r.version != 2 {
             return Err(
                 "Unsupported settings version; use a compatible Buzz or recover settings".into(),
             );
@@ -546,6 +540,9 @@ impl Manager {
             if let Some(h) = &p.previous {
                 valid_hash(h)?;
             }
+        }
+        if migrate_agent_flag::migrate(&mut r) {
+            self.save(&r)?;
         }
         Ok(r)
     }
@@ -1550,26 +1547,73 @@ mod tests {
 
     #[test]
     fn optional_plugins_default_off_and_preserve_explicit_overrides() {
-        for id in ["buzz.todos", "buzz.channel-templates"] {
+        let id = "buzz.todos";
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
+        let enabled = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == id)
+                .unwrap()
+                .enabled
+        };
+        assert!(!enabled(&manager), "{id} defaults off");
+        manager.change("enable", id).unwrap();
+        let reopened = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
+        assert!(enabled(&reopened), "{id} retains enable after reopening");
+        reopened.change("disable", id).unwrap();
+        assert!(!enabled(&manager), "{id} exposes persisted disable");
+    }
+
+    #[test]
+    fn agents_migrates_its_switch_and_ignores_v1s() {
+        let open = |overrides: serde_json::Value| {
             let temp = tempfile::tempdir().unwrap();
-            let manager = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
-            let enabled = |manager: &Manager| {
-                manager
-                    .catalog()
-                    .unwrap()
-                    .plugins
-                    .into_iter()
-                    .find(|plugin| plugin.manifest.id == id)
-                    .unwrap()
-                    .enabled
-            };
-            assert!(!enabled(&manager), "{id} defaults off");
-            manager.change("enable", id).unwrap();
-            let reopened = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
-            assert!(enabled(&reopened), "{id} retains enable after reopening");
-            reopened.change("disable", id).unwrap();
-            assert!(!enabled(&manager), "{id} exposes persisted disable");
-        }
+            let profile = temp.path().join("profiles").join("agents");
+            fs::create_dir_all(&profile).unwrap();
+            let registry = serde_json::json!({
+                "version": 1,
+                "bundledEnabled": true,
+                "bundledOverrides": overrides,
+                "installed": {},
+            });
+            fs::write(profile.join("registry.json"), registry.to_string()).unwrap();
+            let manager = Manager::open(Some(temp.path().into()), "agents", false).unwrap();
+            (temp, manager)
+        };
+        let enabled = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.agents")
+                .unwrap()
+                .enabled
+        };
+        let (_v1, manager) = open(serde_json::json!({ "buzz.agents": false }));
+        assert!(enabled(&manager), "v1's switch does not turn Agents off");
+        let (_temp, manager) = open(serde_json::json!({ "buzz.agents2": false }));
+        assert!(!enabled(&manager), "the Agents2 switch still applies");
+        manager.change("enable", "buzz.agents").unwrap();
+        assert!(enabled(&manager));
+        let reopened = Manager::open(Some(_temp.path().into()), "agents", false).unwrap();
+        assert!(enabled(&reopened), "reopening keeps the new preference");
+        reopened.change("disable", "buzz.agents").unwrap();
+        assert!(!enabled(&manager), "migration does not reset later changes");
+        reopened.change("enable", "buzz.agents").unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(
+            &fs::read(manager.storage_root().join("registry.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            saved["bundledOverrides"],
+            serde_json::json!({ "buzz.agents": true }),
+            "the switch now uses the current plugin id"
+        );
     }
 
     #[test]

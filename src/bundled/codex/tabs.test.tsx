@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import * as React from "react";
 import {
   cleanup,
   fireEvent,
@@ -8,10 +7,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
-import type { AgentViewProps } from "../../features/agents2/service";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
-import type { RelayData } from "../../features/relay/service";
 import { defaults, type Config } from "./config";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
@@ -23,7 +22,26 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-afterEach(cleanup);
+beforeEach(() => {
+  // jsdom has no layout observers; the compact model picker sizes itself with one.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+async function choose(label: string, option: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
 function fixture() {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
@@ -72,8 +90,8 @@ function fixture() {
     processes.push(process);
     return process;
   });
-  const runtime = new CodexRuntime(spawn, {} as RelayData, {} as Storage);
-  const tabs = createTabs(React, spawn, runtime);
+  const runtime = new CodexRuntime(spawn, () => undefined, {} as Storage);
+  const tabs = createTabs(spawn, runtime);
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
       agent: { pubkey: "a".repeat(64), config: settings },
@@ -86,15 +104,19 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   const saving = deferred<void>();
   const save = vi.fn(() => saving.promise);
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
-  await screen.findByRole("option", { name: "Model A" });
-  await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Model"), {
-    target: { value: "model-b" },
-  });
-  expect(screen.getByLabelText("Thinking")).toHaveValue("medium");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "Codex default · Model A",
+    ),
+  );
+  await choose("Model", "Model B");
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Medium");
+  await userEvent.setup().click(thinking);
   expect(
     screen.queryByRole("option", { name: "High" }),
   ).not.toBeInTheDocument();
+  await userEvent.setup().keyboard("{Escape}");
   fireEvent.change(screen.getByLabelText("Workspace"), {
     target: { value: "relative" },
   });
@@ -118,7 +140,10 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
         instructions: "Custom instructions",
       }),
     );
-    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Saving…" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(screen.getByLabelText("Workspace")).toBeDisabled();
   } finally {
     saving.resolve();
@@ -128,20 +153,9 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   );
   expect(f.processes[0]?.end).toHaveBeenCalled();
 });
-it("preserves unavailable saved choices and closes a process returned after unmount", async () => {
-  const f = fixture();
-  const saved = {
-    ...defaults,
-    model: "retired-model",
-    effort: "high",
-    workspace: "/tmp/codex",
-  };
-  const view = render(<f.tabs.SettingsTab {...f.props(saved)} />);
-  await screen.findByRole("option", { name: "retired-model (unavailable)" });
-  await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
-  expect(screen.getByLabelText("Model")).toHaveValue("retired-model");
-  expect(screen.getByLabelText("Thinking")).toHaveValue("high");
-  view.unmount();
+/** Holds the next spawn until `release`, returning its process, which the
+ * view has not seen yet. */
+async function holdSpawn(f: ReturnType<typeof fixture>) {
   const late = deferred<Awaited<ReturnType<typeof f.spawn>>>();
   const started = deferred<void>();
   const original = f.spawn.getMockImplementation();
@@ -152,11 +166,109 @@ it("preserves unavailable saved choices and closes a process returned after unmo
     started.resolve();
     return late.promise;
   });
+  return {
+    started: started.promise,
+    release: () => late.resolve(process),
+    process: () => process,
+  };
+}
+it("preserves unavailable saved choices and closes a process returned after unmount", async () => {
+  const f = fixture();
+  const saved = {
+    ...defaults,
+    model: "retired-model",
+    effort: "high",
+    workspace: "/tmp/codex",
+  };
+  const view = render(<f.tabs.SettingsTab {...f.props(saved)} />);
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "retired-model",
+    ),
+  );
+  await waitFor(() => expect(f.processes[0]?.end).toHaveBeenCalled());
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "High (unavailable)",
+  );
+  view.unmount();
+  const held = await holdSpawn(f);
   const pending = render(<f.tabs.CodexTab {...f.props(saved)} />);
-  await started.promise;
+  await held.started;
   pending.unmount();
-  late.resolve(process);
-  await waitFor(() => expect(process.end).toHaveBeenCalled());
+  held.release();
+  await waitFor(() => expect(held.process().end).toHaveBeenCalled());
+});
+
+it("starts a new agent from a model and instructions, keeping the rest", async () => {
+  const f = fixture();
+  const config = {
+    ...defaults,
+    model: "model-a",
+    effort: "high",
+    workspace: "/work",
+    scope: "channel" as const,
+  };
+  const onChange = vi.fn();
+  render(
+    <f.tabs.Create config={config} onChange={onChange} disabled={false} />,
+  );
+  await choose("Model", "Model B");
+  // The new model's own effort replaces the old one.
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...config,
+    model: "model-b",
+    effort: "medium",
+  });
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "Triage." },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...config,
+    instructions: "Triage.",
+  });
+  await choose("Model", "Codex default · Model A");
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...config,
+    model: "",
+    effort: "",
+  });
+});
+
+it("lets a new agent use the default or a typed model when the catalog fails", async () => {
+  const f = fixture();
+  f.spawn.mockRejectedValueOnce(new Error("no codex"));
+  const onChange = vi.fn();
+  render(
+    <f.tabs.Create
+      config={{ ...defaults, effort: "high" }}
+      onChange={onChange}
+      disabled={false}
+    />,
+  );
+  const model = screen.getByRole("combobox", { name: "Model" });
+  expect(model).toHaveValue("Codex default");
+  await waitFor(() => expect(f.spawn).toHaveBeenCalled());
+  const user = userEvent.setup();
+  await user.clear(model);
+  await user.type(model, "gpt-custom{Enter}");
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...defaults,
+    model: "gpt-custom",
+    effort: "",
+  });
+});
+
+it("checks the catalog for a new agent only while its view is mounted", async () => {
+  const f = fixture();
+  const held = await holdSpawn(f);
+  expect(f.spawn).not.toHaveBeenCalled();
+  const view = render(
+    <f.tabs.Create config={defaults} onChange={vi.fn()} disabled={false} />,
+  );
+  await held.started;
+  view.unmount();
+  held.release();
+  await waitFor(() => expect(held.process().end).toHaveBeenCalled());
 });
 
 it("shows the default workspace and restores it when the field is cleared", async () => {
@@ -164,7 +276,7 @@ it("shows the default workspace and restores it when the field is cleared", asyn
   const save = vi.fn(async () => {});
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   expect(screen.getByLabelText("Workspace")).toHaveValue("~/.buzz");
-  await screen.findByRole("option", { name: "Model A" });
+  await waitFor(() => expect(f.processes[0]?.end).toHaveBeenCalled());
   fireEvent.change(screen.getByLabelText("Instructions"), {
     target: { value: "Test instructions" },
   });

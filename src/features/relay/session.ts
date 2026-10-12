@@ -2,8 +2,8 @@
 import { createMePreferences, meGroups } from "./me-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember, startAddedAgent } from "../channel-members/members";
-import type { AgentControl } from "../agents/control";
+import { addChannelMember } from "../channel-members/members";
+import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../projects/git";
 import { projectDestinations } from "../projects/destinations";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
@@ -40,7 +40,6 @@ import {
   readRelayLibrary,
 } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
-import { createCommunityCatalog } from "../agents/catalog";
 import { archiveHides, createIdentityArchives } from "./identity-archives";
 import {
   createReadState,
@@ -61,6 +60,7 @@ import type {
   LiveListener,
 } from "./incoming";
 import { objectBody } from "./body";
+import { agentAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
@@ -204,9 +204,7 @@ export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
     identityNames?: IdentityNames | undefined;
-    agentChoices?:
-      | Pick<AgentControl, "snapshot" | "subscribe" | "refresh">
-      | undefined;
+    agentChoices?: LocalAgents | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
@@ -237,7 +235,6 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
-  let resolveChannelAccess: (id: string) => Promise<void> = async () => {};
   const typing = createTyping(
     transport?.viewer ?? "",
     (id) =>
@@ -655,14 +652,6 @@ export function createRelaySession(
       : undefined,
     notify,
   );
-  const communityCatalog = createCommunityCatalog({
-    // Verified reads reconcile fetched heads with the outbox journal.
-    reader: transport && !options.cachedOnly ? verified : undefined,
-    viewer: transport?.viewer ?? "",
-    outbox: writes?.outbox,
-    local: writes?.local,
-    notify,
-  });
   const archives = createIdentityArchives(
     requests.reader,
     transport?.archiveAuthority,
@@ -690,7 +679,6 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
-    (channel) => resolveChannelAccess(channel),
     transport?.activityArchive
       ? {
           host: transport.activityArchive,
@@ -733,10 +721,6 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
-  resolveChannelAccess = (id) =>
-    channels.queries.list().coverage === "partial"
-      ? (channels.queries.resolve?.([id]) ?? Promise.resolve())
-      : Promise.reject(new Error("Channel access is fully resolved"));
   retainedChannelEvent = channels.retainedEvent;
   const projects = projectDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
@@ -1581,16 +1565,6 @@ export function createRelaySession(
         writes?.local,
       );
     },
-    async (channelId, pubkey, control, retryStart): Promise<void> => {
-      await startAddedAgent(
-        control,
-        session,
-        channelId,
-        pubkey,
-        lifetime.signal,
-        retryStart,
-      );
-    },
     writes?.local,
   );
   const session = Object.freeze({
@@ -1699,27 +1673,6 @@ export function createRelaySession(
             },
           })
         : undefined,
-    // Snapshot links are community media, not channel messages or catalog publications.
-    snapshotUpload: uploadAttachment
-      ? Object.freeze({
-          async upload(
-            file: File,
-            signal: AbortSignal,
-          ): Promise<UploadedAttachment> {
-            const combined = AbortSignal.any([
-              signal,
-              lifetime.signal,
-              uploadLifetime.signal,
-            ]);
-            combined.throwIfAborted();
-            if (closed) throw new UploadError("denied");
-            const result = await uploadAttachment(file, combined);
-            combined.throwIfAborted();
-            if (closed) throw new UploadError("denied");
-            return result;
-          },
-        })
-      : undefined,
     // Feedback text is private to the operator inbox; uploaded files retain
     // ordinary community-media access, matching Desktop's attachment path.
     feedbackUpload:
@@ -1786,54 +1739,49 @@ export function createRelaySession(
         throw new Error("Relay view capacity unavailable");
       if (!/^[0-9a-f]{64}$/.test(messageId))
         throw new Error("Thread needs a valid message ID");
+      // Exact selection is available to an existing ordinary thread too; its
+      // raw evidence keeps the same access, cap and atomic-admission checks.
+      const targetReader: RelayReader = {
+        async read(filters, settings) {
+          if (!canReadRemote(channelId))
+            throw new ReadError(
+              "unavailable",
+              "Reconnect to refresh conversation access.",
+            );
+          const epoch = accessEpoch;
+          let events: readonly RelayEvent[];
+          try {
+            events = await requests.reader.read(filters, settings);
+          } catch (error) {
+            if (
+              !closed &&
+              epoch === accessEpoch &&
+              readErrorKind(error) === "denied"
+            )
+              channels.denyChannel(channelId, error);
+            throw error;
+          }
+          if (closed || epoch !== accessEpoch || !canReadRemote(channelId))
+            throw new DOMException("Stale thread target", "AbortError");
+          settings?.signal?.throwIfAborted();
+          // A capped raw target/overlay read cannot establish a safe fold.
+          if (
+            !filters.some((filter) => filter.depth_limit) &&
+            events.length >= 500
+          )
+            throw new Error("Selected message exceeded its evidence limit");
+          // The thread owner admits the complete target fold atomically.
+          return events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
+        },
+      };
       const thread = createThreadView({
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
         signingAuthority: transport?.archiveAuthority,
-        reader: options?.exact
-          ? {
-              async read(filters, settings) {
-                if (!canReadRemote(channelId))
-                  throw new ReadError(
-                    "unavailable",
-                    "Reconnect to refresh conversation access.",
-                  );
-                const epoch = accessEpoch;
-                let events: readonly RelayEvent[];
-                try {
-                  events = await requests.reader.read(filters, settings);
-                } catch (error) {
-                  if (
-                    !closed &&
-                    epoch === accessEpoch &&
-                    readErrorKind(error) === "denied"
-                  )
-                    channels.denyChannel(channelId, error);
-                  throw error;
-                }
-                if (
-                  closed ||
-                  epoch !== accessEpoch ||
-                  !canReadRemote(channelId)
-                )
-                  throw new DOMException("Stale thread target", "AbortError");
-                settings?.signal?.throwIfAborted();
-                // A capped raw target/overlay read cannot establish a safe fold.
-                if (
-                  !filters.some((filter) => filter.depth_limit) &&
-                  events.length >= 500
-                )
-                  throw new Error(
-                    "Selected message exceeded its evidence limit",
-                  );
-                // The thread owner admits the complete target fold atomically.
-                return events.filter(
-                  (event) => event.kind !== PRODUCT_FEEDBACK_KIND,
-                );
-              },
-            }
-          : verified,
+        reader: options?.exact ? targetReader : verified,
+        targetReader,
+        admitTarget: (events) => accept(events, false),
         exact: options?.exact ?? false,
         admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed: recent.peek(messageId)?.event ?? retainedEvent(messageId),
@@ -1863,7 +1811,6 @@ export function createRelaySession(
     emoji: emoji.queries,
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
-    communityCatalog: communityCatalog.queries,
     agentChoices,
     inboxFeed,
     workflows: workflows.capability,
@@ -1885,7 +1832,6 @@ export function createRelaySession(
     channelDetails: details.capability,
     memberAdministration: memberAdministration.capability,
     agentActivity: activity.queries,
-    agentManagement: activity.management,
     agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),
@@ -2432,6 +2378,7 @@ export function createRelaySession(
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
               previewContent: content.slice(0, 4096),
+              ...(agentAudience(event) ? { audience: "agents" as const } : {}),
             }),
           ];
         }),
@@ -2465,7 +2412,6 @@ export function createRelaySession(
         dropHintConfirmations();
         requests.invalidate();
         agentLibrary.clear();
-        communityCatalog.clear();
         archives.clear();
         workflows.interrupt();
         channels.staleHeads();
@@ -2515,7 +2461,6 @@ export function createRelaySession(
             if (!closed) {
               void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
-              communityCatalog.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();
               emoji.reconnect();
@@ -2683,7 +2628,6 @@ export function createRelaySession(
       workflows.dispose();
       identityNames.dispose();
       agentLibrary.dispose();
-      communityCatalog.dispose();
       archives.dispose();
     },
     retainedChannels: channels.retainedChannels,

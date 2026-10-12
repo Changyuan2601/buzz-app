@@ -2,7 +2,7 @@
 // JSON-RPC message at a time, as Claude Code sends them over its stream-json
 // pipe to an in-process (`sdk`) server. Holds no state between messages.
 import type { BuzzClient, Context } from "./client";
-import { callTool, TOOLS } from "./tools";
+import { callTool, type Reply, TOOLS } from "./tools";
 
 type Message = Readonly<{
   id?: string | number | null;
@@ -35,13 +35,13 @@ export async function respond(
     case "tools/call":
       try {
         if (!client) throw new Error("Buzz is not ready yet. Try again.");
-        const text = await callTool(
+        const reply = await callTool(
           client,
           context,
           String(params.name),
           (params.arguments ?? {}) as Record<string, unknown>,
         );
-        return result({ content: [{ type: "text", text }] });
+        return result({ content: content(reply) });
       } catch (error) {
         return result({
           content: [{ type: "text", text: errorText(error) }],
@@ -56,6 +56,12 @@ export async function respond(
       };
   }
 }
+
+/** A tool's answer as MCP content. */
+export const content = (reply: Reply) =>
+  typeof reply === "string"
+    ? [{ type: "text" as const, text: reply }]
+    : [{ type: "image" as const, data: reply.data, mimeType: reply.type }];
 
 export const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);

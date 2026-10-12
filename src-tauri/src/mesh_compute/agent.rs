@@ -1,38 +1,6 @@
 //! Mainline pre-start path: reuse the selected node, then probe its inference route.
-use buzz_agent_controller::{MeshLaunch, MeshRequest};
 #[cfg(feature = "mesh")]
 use tauri::Manager;
-
-pub(crate) struct Prepared {
-    #[cfg(feature = "mesh")]
-    app: tauri::AppHandle,
-    #[cfg(feature = "mesh")]
-    lease: String,
-    config: MeshLaunch,
-}
-impl Prepared {
-    // Keep selection stable through final controller admission, not across async reads.
-    pub(crate) fn with_current<T>(
-        self,
-        launch: impl FnOnce(MeshLaunch) -> Result<T, String>,
-    ) -> Result<T, String> {
-        #[cfg(feature = "mesh")]
-        {
-            let host = self.app.state::<super::MeshHost>();
-            host.lease.with_current(&self.lease, |_| {
-                if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
-                    return Err("Shared compute stopped before agent launch".into());
-                }
-                launch(self.config)
-            })
-        }
-        #[cfg(not(feature = "mesh"))]
-        {
-            let _ = (self.config, launch);
-            Err("Mesh native runtime is not included in this build".into())
-        }
-    }
-}
 
 #[cfg(feature = "mesh")]
 pub(crate) fn community_origin(raw: &str) -> Result<String, String> {
@@ -48,33 +16,6 @@ pub(crate) fn community_origin(raw: &str) -> Result<String, String> {
             .map_err(|_| "Invalid agent community")?;
     }
     Ok(url.origin().ascii_serialization())
-}
-
-pub(crate) async fn prepare_agent(
-    app: &tauri::AppHandle,
-    request: MeshRequest,
-) -> Result<Prepared, String> {
-    #[cfg(not(feature = "mesh"))]
-    {
-        let _ = (app, request);
-        Err("Mesh native runtime is not included in this build".into())
-    }
-    #[cfg(feature = "mesh")]
-    {
-        let ready = ready_inference(app, &request.relay, &request.model).await?;
-        let config = MeshLaunch::new(
-            request.agent_id,
-            request.revision,
-            request.relay,
-            ready.model,
-            ready.port,
-        )?;
-        Ok(Prepared {
-            app: app.clone(),
-            lease: ready.lease,
-            config,
-        })
-    }
 }
 
 /// Shared readiness: the agent's community holds the current lease, compute is
