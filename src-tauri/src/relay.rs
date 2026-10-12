@@ -2,7 +2,7 @@
 pub(crate) mod agent;
 mod huddle;
 use crate::federated_identity::{
-    assertion::{Assertion, HEADER},
+    assertion::{Authorization, HEADER},
     FederatedIdentity,
 };
 use crate::identity::{EventTemplate, IdentityHost};
@@ -786,19 +786,19 @@ async fn evidence(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
     url: &Url,
-) -> Result<Option<Assertion>> {
+) -> Result<Option<Authorization>> {
     match fi {
-        Some(fi) => fi.assertion_for_relay(host, url).await,
+        Some(fi) => fi.assertion_for_relay(host, url).await.map(Some),
         None => Ok(None),
     }
 }
 async fn admit(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
-    assertion: Option<&Assertion>,
+    assertion: Option<&Authorization>,
 ) -> Result<()> {
     if let (Some(fi), Some(assertion)) = (fi, assertion) {
-        fi.admit_assertion(host, assertion).await?;
+        fi.admit_authorization(host, assertion).await?;
     }
     Ok(())
 }
@@ -865,8 +865,8 @@ async fn send(
         request = request.header("Accept", "application/nostr+json");
     }
     admit(host, fi, assertion.as_ref()).await?;
-    if let Some(assertion) = &assertion {
-        request = request.header(HEADER, assertion.header.as_str());
+    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+        request = request.header(HEADER, header);
     }
     // Never replay a write after a transport error: it may already have reached the relay.
     let response = request
@@ -874,7 +874,12 @@ async fn send(
         .await
         .map_err(|_| "Relay request could not be confirmed")?;
     if response.status() == 401 {
-        if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion
+                .as_ref()
+                .and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
             fi.reject_assertion(assertion).await;
         }
     }
@@ -1287,8 +1292,8 @@ async fn upload_file(
     .await?;
     admit(host, fi, assertion.as_ref()).await?;
     let mut request = client()?.put(url);
-    if let Some(assertion) = &assertion {
-        request = request.header(HEADER, assertion.header.as_str());
+    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+        request = request.header(HEADER, header);
     }
     let response = request
         .timeout(Duration::from_secs(600))
@@ -1309,7 +1314,12 @@ async fn upload_file(
         .await
         .map_err(|_| "Upload did not finish")?;
     if response.status() == 401 {
-        if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion
+                .as_ref()
+                .and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
             fi.reject_assertion(assertion).await;
         }
     }
@@ -1831,7 +1841,7 @@ async fn fetch_media_bounded(
         .await
     };
     if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
-        fi.during(host, assertion, operation)
+        fi.during_authorization(host, assertion, operation)
             .await
             .map_err(|_| 401u16)?
     } else {
@@ -1843,7 +1853,7 @@ async fn fetch_media_bounded(
 async fn send_media(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
-    assertion: Option<&Assertion>,
+    assertion: Option<&Authorization>,
     url: Url,
     range: Option<&str>,
 ) -> std::result::Result<reqwest::Response, u16> {
@@ -1860,14 +1870,17 @@ async fn send_media(
         request = request.header("Range", range);
     }
     admit(host, fi, assertion).await.map_err(|_| 401u16)?;
-    if let Some(assertion) = assertion {
-        request = request.header(HEADER, assertion.header.as_str());
+    if let Some(header) = assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
     }
     let upstream = request.send().await.map_err(|_| 502u16)?;
     admit(host, fi, assertion).await.map_err(|_| 401u16)?;
     let status = upstream.status().as_u16();
     if status == 401 {
-        if let (Some(fi), Some(assertion)) = (fi, assertion) {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion.and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
             fi.reject_assertion(assertion).await;
         }
     }

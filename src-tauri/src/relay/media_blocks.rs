@@ -7,7 +7,7 @@
 //! by every read and player of the same URL.
 
 use super::{buffer_media, media_spool, send_media, upstream_type};
-use crate::federated_identity::{assertion::Assertion, FederatedIdentity};
+use crate::federated_identity::{assertion::Authorization, FederatedIdentity};
 use crate::identity::IdentityHost;
 use std::{
     collections::VecDeque,
@@ -72,7 +72,7 @@ enum Uncached {
 async fn fetch_block(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
-    assertion: Option<&Assertion>,
+    assertion: Option<&Authorization>,
     url: &Url,
     index: u64,
 ) -> std::result::Result<Arc<Block>, Uncached> {
@@ -129,7 +129,7 @@ pub(super) async fn read(
     let assertion = super::evidence(host, fi, url).await.map_err(|_| 401u16)?;
     let operation = read_inner(host, fi, assertion.as_ref(), url, start, end, video_limit);
     if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
-        fi.during(host, assertion, operation)
+        fi.during_authorization(host, assertion, operation)
             .await
             .map_err(|_| 401u16)?
     } else {
@@ -140,7 +140,7 @@ pub(super) async fn read(
 async fn read_inner(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
-    assertion: Option<&Assertion>,
+    assertion: Option<&Authorization>,
     url: &Url,
     start: u64,
     end: u64,

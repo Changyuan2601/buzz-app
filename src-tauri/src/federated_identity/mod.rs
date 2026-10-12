@@ -90,6 +90,7 @@ struct Inner {
     operation: AsyncMutex<()>,
     changes: watch::Sender<Snapshot>,
     assertions: Mutex<assertion::AssertionCache>,
+    discoveries: Mutex<assertion::DiscoveryCache>,
 }
 #[derive(Clone)]
 pub(crate) struct FederatedIdentity(Arc<Inner>);
@@ -150,6 +151,7 @@ impl FederatedIdentity {
             operation: AsyncMutex::new(()),
             changes,
             assertions: Mutex::new(Default::default()),
+            discoveries: Mutex::new(Default::default()),
         }))
     }
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
@@ -226,6 +228,7 @@ impl FederatedIdentity {
         session
     }
     pub(crate) fn close(&self) {
+        self.clear_discoveries();
         let mut state = self.state();
         self.retire_state(&mut state, Status::SignedOut, None);
         state.closed = true;

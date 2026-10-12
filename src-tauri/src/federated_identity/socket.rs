@@ -80,7 +80,9 @@ pub(crate) async fn relay_socket_connect(
     }
     let connect = async {
         let url = url::Url::parse(&relay).map_err(|_| "Invalid relay")?;
-        let assertion = fi.assertion_for_relay(identity.inner(), &url).await?;
+        let assertion = fi
+            .assertion_for_socket(identity.inner(), &url, id.clone(), stop.clone())
+            .await?;
         let Some(assertion) = assertion else {
             return Ok(None);
         };
@@ -217,7 +219,12 @@ pub(crate) fn relay_socket_send(
         .map_err(|_| "Socket send queue is full".into())
 }
 #[tauri::command]
-pub(crate) fn relay_socket_close(sockets: tauri::State<'_, Sockets>, id: String) {
+pub(crate) fn relay_socket_close(
+    sockets: tauri::State<'_, Sockets>,
+    fi: tauri::State<'_, FederatedIdentity>,
+    id: String,
+) {
+    fi.close_discovery(&id);
     if let Some(entry) = sockets
         .0
         .lock()

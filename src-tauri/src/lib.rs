@@ -339,7 +339,7 @@ async fn plugin_import_git(
         return Err("Not a repository in this community".into());
     }
     let assertion = if is_community {
-        fi.assertion_for_relay(identity.inner(), &url).await?
+        Some(fi.assertion_for_relay(identity.inner(), &url).await?)
     } else {
         None
     };
@@ -349,24 +349,17 @@ async fn plugin_import_git(
         authorization
     };
     if let Some(assertion) = &assertion {
-        fi.admit_assertion(identity.inner(), assertion).await?;
+        fi.admit_authorization(identity.inner(), assertion).await?;
     }
-    let retirement = assertion
-        .as_ref()
-        .map(|assertion| fi.cancellation_for(&assertion.revision))
-        .transpose()?;
-    let expires = assertion.as_ref().map(|assertion| assertion.expires_at);
     let host = fi.inner().clone();
     let viewer = identity.inner().clone();
     let admitted = assertion.clone();
     let result = prepare_import(imports.inner().clone(), move || {
-        let retired: Option<Box<dyn Fn() -> bool + Send>> = retirement.map(|cancel| {
-            Box::new(move || {
-                cancel.is_cancelled()
-                    || expires.is_some_and(|expiry| {
-                        federated_identity::protocol::now().map_or(true, |now| now as u64 >= expiry)
-                    })
-            }) as Box<dyn Fn() -> bool + Send>
+        let captured = assertion.clone();
+        let guard = host.clone();
+        let retired: Option<Box<dyn Fn() -> bool + Send>> = captured.map(|authorization| {
+            Box::new(move || !guard.authorization_current(&authorization))
+                as Box<dyn Fn() -> bool + Send>
         });
         prepare_git_authorized(
             &repository,
@@ -374,14 +367,14 @@ async fn plugin_import_git(
             authorization.as_deref(),
             assertion
                 .as_ref()
-                .map(|assertion| assertion.header.as_str()),
+                .and_then(|authorization| authorization.header()),
             retired,
         )
         .map(Some)
     })
     .await;
     if let Some(assertion) = &admitted {
-        if let Err(error) = host.admit_assertion(&viewer, assertion).await {
+        if let Err(error) = fi.admit_authorization(&viewer, assertion).await {
             if let Ok(Some(preview)) = &result {
                 let mut pending = imports.0.lock().map_err(|_| "Import state unavailable")?;
                 if pending
@@ -877,6 +870,7 @@ pub fn run() {
                 webview.state::<Huddles>().stop_all();
                 webview.state::<federated_identity::access::Registrations>().clear();
                 webview.state::<federated_identity::socket::Sockets>().clear();
+                webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
             }
