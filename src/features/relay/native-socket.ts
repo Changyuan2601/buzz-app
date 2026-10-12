@@ -58,12 +58,31 @@ export class NativeSocket implements LiveSocket {
       }
     } catch (error) {
       if (this.closed) return;
+      const message =
+        typeof error === "string"
+          ? error
+          : "Native relay connection unavailable";
       const event = Object.assign(new Event("error"), {
-        terminal: true,
-        message:
-          typeof error === "string"
-            ? error
-            : "Native relay connection unavailable",
+        // Connection failures keep live.ts's bounded reconnect policy. Explicit
+        // credential/protocol refusals require user recovery, not more issuance.
+        terminal: [
+          "Federated sign-in is required",
+          "Federated identity is not configured for this community",
+          "reauthentication-required",
+          "binding-mismatch",
+          "authorization-denied",
+          "invalid-proof",
+          "invalid-assertion",
+          "invalid-response",
+          "invalid-expiry",
+          "invalid-viewer",
+          "adapter-refused",
+          "response-too-large",
+          "Invalid federated community discovery",
+          "Incomplete federated community discovery",
+          "Unsupported federated community discovery",
+        ].includes(message),
+        message,
       });
       this.onerror?.(event);
       this.finish();
