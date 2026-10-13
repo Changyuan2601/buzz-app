@@ -1,6 +1,8 @@
 // The type's tabs: Claude's setup on this computer, and the agent's
 // settings; and its part of the New agent dialog.
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import type { Transcript } from "../../features/agents/activity-transcript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateCorner } from "../../features/agents/create-card";
 import { ModelPicker } from "../../features/agents/ModelPicker";
@@ -16,11 +18,20 @@ import {
   type ClaudeRuntime,
   type Config,
   config as readConfig,
+  type SavedConversation,
 } from "./runtime";
 import type { ClaudeSetup } from "./setup";
+import { TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+const label = ({ channelId, name, root }: SavedConversation) =>
+  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+type Read =
+  | { status: "ready"; transcript: Transcript & { more: boolean } }
+  | { status: "missing" }
+  | { status: "error"; error: string };
 
 const options = (choices: readonly (readonly [string, string])[]) => [
   { label: "", options: choices.map(([value, label]) => ({ value, label })) },
@@ -69,17 +80,117 @@ export function createTabs({
   setup,
   runtime,
 }: Readonly<{ setup: ClaudeSetup; runtime: ClaudeRuntime }>) {
-  /** Claude on this computer, and what this agent has running. */
+  /** One conversation's session file, read on open and on Refresh. A refresh
+   * keeps the last result in place until the new one arrives. */
+  function TranscriptView({
+    agent,
+    conversation,
+    working,
+    onBack,
+  }: {
+    agent: AgentViewProps<Config>["agent"];
+    conversation: SavedConversation;
+    working: boolean;
+    onBack(): void;
+  }) {
+    const workspace = readConfig(agent.config).workspace;
+    const [read, setRead] = useState<Read>();
+    const [loading, setLoading] = useState(true);
+    const [attempt, setAttempt] = useState(0);
+    // A turn ending rereads, so its last steps show without a Refresh.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
+    useEffect(() => {
+      const abort = new AbortController();
+      setLoading(true);
+      void runtime
+        .transcript(conversation, workspace, working, abort.signal)
+        .then(
+          (transcript): Read =>
+            transcript
+              ? { status: "ready", transcript }
+              : { status: "missing" },
+          (reason): Read => ({ status: "error", error: message(reason) }),
+        )
+        .then((next) => {
+          if (abort.signal.aborted) return;
+          setRead(next);
+          setLoading(false);
+        });
+      return () => abort.abort();
+    }, [conversation, workspace, working, attempt]);
+    return (
+      <div className="grid gap-4">
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onBack}>
+            Back
+          </Button>
+          <Button
+            variant="ghost"
+            loading={loading}
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            Refresh
+          </Button>
+        </div>
+        <h3 className="m-0 text-body">{label(conversation)}</h3>
+        {!read ? (
+          <p role="status" className="m-0">
+            Reading the Claude session…
+          </p>
+        ) : read.status === "missing" ? (
+          <p className="m-0 text-body-sm text-subtle">
+            Claude has no transcript for this conversation on this computer. It
+            may have been deleted, or the session ran in a different workspace.
+          </p>
+        ) : read.status === "error" ? (
+          <p role="alert" className="m-0">
+            Could not read the Claude session: {read.error}
+          </p>
+        ) : (
+          <ActivityTranscript
+            transcript={read.transcript}
+            agentName={agent.name}
+            state={() => (working ? "working" : undefined)}
+            before={
+              read.transcript.more && (
+                <p className="m-0 text-body-sm text-subtle">
+                  Showing the latest {TURN_LIMIT} turns.
+                </p>
+              )
+            }
+          />
+        )}
+      </div>
+    );
+  }
+
+  /** Claude on this computer, and this agent's conversations. */
   function ClaudeTab({ agent }: AgentViewProps<Config>) {
     const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.pubkey),
     );
+    // Read on each render: bindings change as turns start, which also
+    // changes the session list this tab subscribes to.
+    const conversations = runtime.conversations(agent.pubkey);
+    const busy = new Map(
+      sessions.map((session) => [session.key, session.busy]),
+    );
+    const [open, setOpen] = useState<SavedConversation>();
     const [code, setCode] = useState("");
     useEffect(() => {
       void setup.check();
     }, []);
+    if (open)
+      return (
+        <TranscriptView
+          agent={agent}
+          conversation={open}
+          working={busy.get(open.key) ?? false}
+          onBack={() => setOpen(undefined)}
+        />
+      );
     const status = state.status;
     const line =
       !status || state.checking
@@ -165,15 +276,42 @@ export function createTabs({
           )}
         </section>
         <section className="grid gap-1">
-          <h3 className="m-0 text-body">Running sessions</h3>
-          {sessions.length ? (
-            <ul className="m-0 grid list-none gap-1 p-0">
-              {sessions.map((session) => (
-                <li key={session.key} className="flex justify-between gap-2">
-                  <code className="truncate">{session.key}</code>
-                  <span>{session.busy ? "Working" : "Idle"}</span>
-                </li>
-              ))}
+          <h3 className="m-0 text-body">Conversations</h3>
+          {conversations.length ? (
+            <ul className="m-0 grid list-none gap-2 p-0">
+              {conversations.map((conversation) => {
+                const running = busy.get(conversation.key);
+                return (
+                  <li
+                    key={conversation.key}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate">
+                        {label(conversation)}
+                      </span>
+                      <span className="block text-body-sm text-subtle">
+                        {[
+                          running === undefined
+                            ? undefined
+                            : running
+                              ? "Working"
+                              : "Idle",
+                          new Date(conversation.at).toLocaleString(),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setOpen(conversation)}
+                    >
+                      View transcript
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="m-0 text-body-sm text-subtle">

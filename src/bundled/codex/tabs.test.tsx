@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
+import type { RelayData } from "../../features/relay/service";
 import { defaults, type Config } from "./config";
 import { createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
@@ -42,7 +43,10 @@ async function choose(label: string, option: string) {
   await user.click(screen.getByRole("combobox", { name: label }));
   await user.click(await screen.findByRole("option", { name: option }));
 }
-function fixture() {
+function fixture(
+  saved: Record<string, unknown> = {},
+  turns: (threadId: string) => Wire = () => ({ result: { data: [] } }),
+) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
     const exit = deferred<number | null>();
@@ -51,6 +55,11 @@ function fixture() {
         const wire: Wire = JSON.parse(text);
         if (wire.id == null) return;
         let result: unknown = {};
+        if (wire.method === "thread/turns/list") {
+          const reply = turns((wire.params as { threadId: string }).threadId);
+          options?.onStdout?.(`${JSON.stringify({ id: wire.id, ...reply })}\n`);
+          return;
+        }
         if (wire.method === "account/read")
           result = { account: { type: "chatgpt", email: "test@example.com" } };
         if (wire.method === "model/list")
@@ -90,11 +99,25 @@ function fixture() {
     processes.push(process);
     return process;
   });
-  const runtime = new CodexRuntime(spawn, () => undefined, {} as Storage);
+  const relay = {
+    snapshot: () => ({
+      status: "ready",
+      session: {
+        channels: {
+          list: () => ({ channels: [{ id: "channel", name: "general" }] }),
+        },
+      },
+    }),
+  } as unknown as RelayData;
+  const storage = {
+    getItem: () => JSON.stringify(saved),
+    setItem: () => undefined,
+  } as unknown as Storage;
+  const runtime = new CodexRuntime(spawn, () => relay, storage);
   const tabs = createTabs(spawn, runtime);
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
-      agent: { pubkey: "a".repeat(64), config: settings },
+      agent: { pubkey: "a".repeat(64), name: "Sol", config: settings },
       save,
     }) as unknown as AgentViewProps<Config>;
   return { spawn, processes, tabs, props };
@@ -290,4 +313,66 @@ it("shows the default workspace and restores it when the field is cleared", asyn
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
+});
+
+it("lists saved conversations and shows one's Codex thread, or that Codex no longer has it", async () => {
+  const root = "e".repeat(64);
+  const f = fixture(
+    {
+      [JSON.stringify(["channel", "channel"])]: {
+        threadId: "deleted",
+        workspace: "/w",
+        at: 1,
+      },
+      [JSON.stringify(["channel", root])]: {
+        threadId: "kept",
+        workspace: "/w",
+        at: 2,
+      },
+    },
+    (threadId) =>
+      threadId === "kept"
+        ? {
+            result: {
+              data: [
+                {
+                  id: "turn-1",
+                  status: "completed",
+                  error: null,
+                  startedAt: 1,
+                  completedAt: 2,
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "u",
+                      content: [
+                        { type: "text", text: 'Request: "what changed?"' },
+                      ],
+                    },
+                    { type: "agentMessage", id: "a", text: "Two files." },
+                  ],
+                },
+              ],
+              nextCursor: null,
+            },
+          }
+        : {
+            error: { code: -32600, message: `thread not loaded: ${threadId}` },
+          },
+  );
+  render(<f.tabs.CodexTab {...f.props()} />);
+  const viewButton = (index: number) =>
+    screen.getAllByRole("button", { name: "View transcript" })[
+      index
+    ] as HTMLElement;
+  expect(screen.getByText(/#general · thread eeeeeeee/)).toBeVisible();
+  fireEvent.click(viewButton(0));
+  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(screen.getByText("Two files.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  fireEvent.click(viewButton(1));
+  expect(
+    await screen.findByText(/Codex has no history for this conversation/),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
 });

@@ -233,6 +233,7 @@ const delivery = (content) => {
         "Follow the test request exactly. Explicit file gates are acceptance fixtures. Do not delegate. During this acceptance test do not post progress. Post one completed answer per request with buzz.send and final:true.",
     },
     signal: new AbortController().signal,
+    current: () => true,
   };
   events.push(result.trigger.event);
   return result;

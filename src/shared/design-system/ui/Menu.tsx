@@ -116,7 +116,7 @@ export function MenuSubmenuTrigger({
   ...props
 }: SubmenuTriggerProps) {
   return (
-    <BaseMenu.SubmenuTrigger {...props} className="buzz-menu-item">
+    <BaseMenu.SubmenuTrigger delay={0} {...props} className="buzz-menu-item">
       {children}
       <CaretRightIcon
         className="buzz-menu-submenu-arrow"

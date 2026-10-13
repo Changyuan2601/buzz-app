@@ -62,7 +62,7 @@ export function appClient(
 
 /** Reads a file with the plugin's declared `read` process (`base64 -i`),
  * which passes binary files through intact. */
-async function readFile(
+export async function readFile(
   spawn: Spawn,
   cwd: string,
   path: string,

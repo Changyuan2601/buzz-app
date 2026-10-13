@@ -5,12 +5,12 @@
 // relay-backed store can replace this later without changing the record shape.
 import {
   OBJECT_LIMIT,
-  sameSchedule,
   timerState,
   validateObject,
   type AttentionObject,
   type AttentionValue,
   type TimerState,
+  type TimerWatch,
 } from "./attention";
 
 /** An object a reader cannot apply, kept as it was stored so it can be fixed. */
@@ -29,6 +29,11 @@ export type AgentRecord = Readonly<{
   skipped?: Readonly<Record<string, SkippedObject>>;
   /** Plugin-owned config. The host never reads it. */
   config: unknown;
+  /** True when the owner turned attention on. Off, its watches and timers
+   * stay stored but wake nothing, and the agent is not offered attention
+   * tools. Absent means off, so an agent has no attention until its owner
+   * turns it on. */
+  attentionEnabled?: boolean;
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
@@ -97,6 +102,7 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
       skipped,
       config: record.config,
       timers,
+      ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
     };
   }
   return records;
@@ -132,13 +138,20 @@ export function writeRecords(
 }
 
 /** Replaces or deletes (`value: null`) one attention object, after validating it
- * and the count limits. A timer keeps its run state only while its schedule
- * (`armed_at`, `interval_secs`, `enabled`) is unchanged; otherwise it recounts. */
+ * and the count limits. A timer keeps its run state while its `armed_at` is
+ * unchanged, as Janet's do: a new interval applies from its next run, and
+ * enabling it again runs at most one overdue occurrence. A new `armed_at` (a
+ * rearm) sets a new deadline, one interval after it, and keeps the occurrences
+ * already used. Only a timer with no saved state counts what was already due.
+ * `schedule` overrides that for a timer: `rearm` always sets the new deadline,
+ * even at the same `armed_at`, and `restart` also gives it a fresh budget, as
+ * the owner's "Run again" does. */
 export function setAttention(
   record: AgentRecord,
   slug: string,
   value: AttentionValue | null,
   now = Math.floor(Date.now() / 1000),
+  schedule?: "rearm" | "restart",
 ): AgentRecord {
   const prior = record.attention[slug]?.value;
   const { [slug]: _, ...rest } = record.attention;
@@ -159,8 +172,8 @@ export function setAttention(
       ? {
           ...timers,
           [slug]:
-            state && prior?.type === "timer" && sameSchedule(prior, value)
-              ? state
+            state && prior?.type === "timer"
+              ? rearmed(value, state, schedule)
               : timerState(value, undefined, now),
         }
       : timers;
@@ -227,6 +240,8 @@ export type Unfinished = Readonly<{
   /** Its `wss://` community. */
   relay: string;
   owner: string;
+  /** The HTTPS image URL it was made with, listed once it is set up. */
+  picture?: string;
 }>;
 export const UNFINISHED_KEY = "buzz.agents.unfinished.v1";
 
@@ -256,6 +271,9 @@ export function readUnfinished(storage: Storage): readonly Unfinished[] {
             name: agent.name,
             relay: agent.relay,
             owner: agent.owner as string,
+            ...(typeof agent.picture === "string"
+              ? { picture: agent.picture }
+              : {}),
           },
         ]
       : [],
@@ -267,4 +285,18 @@ export function writeUnfinished(
   agents: readonly Unfinished[],
 ) {
   storage.setItem(UNFINISHED_KEY, JSON.stringify({ version: 1, agents }));
+}
+
+/** `state` for the edited `timer`: unchanged unless it was rearmed. */
+function rearmed(
+  timer: TimerWatch,
+  state: TimerState,
+  schedule?: "rearm" | "restart",
+): TimerState {
+  if (!schedule && state.armedAt === timer.armed_at) return state;
+  return {
+    armedAt: timer.armed_at,
+    nextDue: timer.armed_at + timer.interval_secs,
+    used: schedule === "restart" ? 0 : state.used,
+  };
 }

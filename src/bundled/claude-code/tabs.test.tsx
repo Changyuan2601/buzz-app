@@ -34,6 +34,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 const agent = (config: Config = DEFAULT_CONFIG) =>
@@ -49,10 +50,35 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 // browser drops it, so the focus tests also check for no `disabled`.
 
 /** Applies the plugin to a stand-in context; sign-in runs until killed. */
-function applied({ loggedIn = true } = {}) {
+function applied({
+  loggedIn = true,
+  files = {},
+}: {
+  loggedIn?: boolean;
+  files?: Record<string, string>;
+} = {}) {
   let type: AgentType<Config> | undefined;
-  const spawn = vi.fn(async (_id: string, options: HostProcessOptions = {}) => {
+  const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     const args = (options.args ?? []).join(" ");
+    if (id === "workspace" || id === "read") {
+      const file = files[args];
+      queueMicrotask(() =>
+        id === "workspace"
+          ? options.onStdout?.("/Users/me/.buzz\n")
+          : file === undefined
+            ? options.onStderr?.(`base64: ${args}: No such file or directory`)
+            : options.onStdout?.(btoa(file)),
+      );
+      const code = id === "read" && file === undefined ? 1 : 0;
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number>((resolve) =>
+          setTimeout(() => resolve(code), 0),
+        ),
+      };
+    }
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
       if (args === "auth login") kill = () => resolve(null);
@@ -90,7 +116,7 @@ function applied({ loggedIn = true } = {}) {
   apply(ctx as never);
   return { type, spawn };
 }
-function installed(options?: { loggedIn?: boolean }) {
+function installed(options?: Parameters<typeof applied>[0]) {
   const { type, spawn } = applied(options);
   if (!type) throw new Error("no type registered");
   return { type, spawn };
@@ -217,6 +243,60 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   await user.click(saveButton);
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("lists saved conversations and shows one's transcript, or that it is gone", async () => {
+  const thread = `channel/${"e".repeat(64)}`;
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: {
+        channel: { id: "deleted", seen: 0, at: 1 },
+        [thread]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const transcript = [
+    JSON.stringify({
+      type: "user",
+      uuid: "u1",
+      timestamp: "2026-10-09T10:00:00Z",
+      message: {
+        content:
+          "<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>",
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      uuid: "u2",
+      timestamp: "2026-10-09T10:00:05Z",
+      message: { content: [{ type: "text", text: "Two files." }] },
+    }),
+  ].join("\n");
+  const Claude = tab(
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
+    0,
+  );
+  render(<Claude agent={agent()} save={vi.fn()} />);
+  const user = userEvent.setup();
+  const rows = screen.getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("channel · thread eeeeeeee"),
+    expect.stringContaining("channel · channel"),
+  ]);
+  const viewButton = (index: number) =>
+    screen.getAllByRole("button", { name: "View transcript" })[
+      index
+    ] as HTMLElement;
+  await user.click(viewButton(0));
+  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(screen.getByText("Two files.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(viewButton(1));
+  expect(
+    await screen.findByText(/no transcript for this conversation/),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("starts a new agent from a model and instructions, keeping the rest", async () => {

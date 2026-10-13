@@ -2,7 +2,9 @@
 // each continuing across messages and app restarts. A conversation in use keeps
 // its process; a quiet one is stopped and resumed from its saved session when it
 // is next addressed. One spare process, shared by every agent, waits for the
-// next new conversation, so that starts without a spawn.
+// next new conversation, so that starts without a spawn. A one-off turn (a
+// watch or timer wake) gets a new session of its own, which is never saved,
+// resumed or shared.
 import {
   ClaudeProcess,
   type ClaudeLaunch,
@@ -16,6 +18,9 @@ import {
 
 /** A conversation's process stops after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
+/** How long a one-off turn can run before it is given up; Janet's turn
+ * deadline. */
+export const ONCE_DEADLINE_MS = 5 * 60_000;
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -56,6 +61,9 @@ type Live = {
 
 export class AgentSessions {
   private readonly live = new Map<string, Live>();
+  /** One-off turns running or starting, by label. */
+  private readonly once = new Map<string, Live | undefined>();
+  private onceCount = 0;
   private readonly opening = new Map<string, Promise<Live | undefined>>();
   private discovery:
     | {
@@ -83,10 +91,13 @@ export class AgentSessions {
   }
   /** Conversations with a running process, and whether each is working. */
   snapshot() {
-    return [...this.live].map(([key, live]) => ({
-      key,
-      busy: live.process.busy,
-    }));
+    return [
+      ...[...this.live].map(([key, live]) => ({
+        key,
+        busy: live.process.busy,
+      })),
+      ...[...this.once.keys()].map((key) => ({ key, busy: true })),
+    ];
   }
 
   /** Read defaults without assigning the shared spare to this agent. */
@@ -229,6 +240,60 @@ export class AgentSessions {
     return delivered;
   }
 
+  /** Runs one turn in a new session, then stops its process. The session is
+   * not saved, so it never displaces a conversation's saved session and is
+   * never resumed. `label` names it in the snapshot. It gives up, and stops
+   * the turn, after `deadline` ms of running. `prompt` is asked for the turn's
+   * text once a process is ready, so a turn that should no longer run by then
+   * returns undefined and sends nothing. It settles only when its process has
+   * exited, so it shows as working while it may still be working. */
+  async runOnce(
+    label: string,
+    prompt: () => string | undefined | Promise<string | undefined>,
+    deadline = ONCE_DEADLINE_MS,
+  ): Promise<Settled> {
+    if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    const key = `${label} #${++this.onceCount}`;
+    this.once.set(key, undefined);
+    this.options.onChange?.();
+    let live: Live | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      live = await this.start(undefined);
+      if (this.disposed) return { ok: false, error: "Claude was stopped" };
+      // A key no conversation uses: its tools have no default destination.
+      live.process.conversation = key;
+      this.once.set(key, live);
+      const text = await prompt();
+      if (text === undefined || this.disposed) return { ok: true };
+      return await Promise.race([
+        live.process.send(text),
+        new Promise<Settled>((resolve) => {
+          timer = setTimeout(
+            () =>
+              resolve({
+                ok: false,
+                error: `The turn ran past its ${Math.round(deadline / 1000)}s deadline and was stopped`,
+              }),
+            deadline,
+          );
+        }),
+      ]);
+    } catch (error) {
+      console.warn("Claude could not start a one-off session", error);
+      return { ok: false, error: "Claude could not start" };
+    } finally {
+      clearTimeout(timer);
+      if (live) {
+        // Killing only asks it to stop; the host may let it run a few seconds.
+        void live.process.kill();
+        await live.process.exited.catch(() => undefined);
+      }
+      this.once.delete(key);
+      this.options.onChange?.();
+    }
+  }
+
   /** Stops idle processes started with old settings; busy ones stop when they
    * next fall idle. */
   reconfigure() {
@@ -243,6 +308,7 @@ export class AgentSessions {
     this.disposed = true;
     this.clearDiscovery();
     for (const [key, live] of this.live) this.drop(key, live);
+    for (const live of this.once.values()) void live?.process.kill();
   }
 
   private async start(resume: string | undefined): Promise<Live> {
@@ -414,7 +480,10 @@ export function localSessions(
   storage: Storage,
   agent: string,
   name = "buzz.claude-code.sessions.v1",
-): SessionStore {
+): SessionStore & {
+  /** Saved sessions, most recently used first. */
+  list(): [string, SavedSession][];
+} {
   const readAll = (): Record<string, Record<string, SavedSession>> => {
     try {
       const value = JSON.parse(storage.getItem(name) ?? "{}");
@@ -438,6 +507,10 @@ export function localSessions(
     }
   };
   return {
+    list: () =>
+      Object.entries(readAll()[agent] ?? {})
+        .filter(([, saved]) => typeof saved?.id === "string")
+        .sort(([, a], [, b]) => b.at - a.at),
     get: (key) => {
       const saved = readAll()[agent]?.[key];
       return saved && typeof saved.id === "string" ? saved : undefined;
