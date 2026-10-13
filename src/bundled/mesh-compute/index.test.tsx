@@ -485,9 +485,11 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
   const resume = await screen.findByRole("switch", {
     name: "Share compute",
   });
-  expect(
-    screen.getByRole("combobox", { name: "Model to share" }),
-  ).toHaveTextContent("/models/local.gguf");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Model to share" }),
+    ).toHaveTextContent("/models/local.gguf"),
+  );
   expect(
     native.invoke.mock.calls.some(
       ([command]) =>
