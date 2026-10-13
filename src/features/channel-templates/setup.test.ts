@@ -54,6 +54,8 @@ function fixture() {
       return event.id;
     }),
     retry: vi.fn(),
+    settle: async () => "absent" as const,
+    retire: async () => {},
     dismiss: vi.fn(async (id: string) => {
       const index = events.findIndex((item) => item.event.id === id);
       if (index >= 0) events.splice(index, 1);

@@ -51,6 +51,8 @@ function fixture() {
       events.push(event);
       return event.id;
     }),
+    settle: async () => "absent" as const,
+    retire: async () => {},
     dismiss: vi.fn(async () => {}),
     retry: vi.fn(),
   };

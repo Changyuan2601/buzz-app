@@ -13,6 +13,13 @@ import {
   MAX_CONTENT_BYTES,
   MAX_EVENT_BYTES,
 } from "../agents/catalog-envelope";
+import {
+  INSTRUCTIONS_CONTENT_MAX_BYTES,
+  INSTRUCTIONS_EVENT_MAX_BYTES,
+  INSTRUCTIONS_KIND,
+  instructionsSubject,
+  uncertainRefusal,
+} from "../agents/instructions-envelope";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -38,6 +45,9 @@ export type OutgoingEvent = Readonly<{
   acknowledged?: true;
   /** A caller-scoped admission requires renewed live eligibility for retry. */
   guarded?: boolean;
+  /** Kind 44300: persisted before the signed event can reach the transport, so
+   * its absence proves the event was never sent. */
+  dispatched?: true;
   delivery: Delivery;
   error?: string | undefined;
 }>;
@@ -61,6 +71,11 @@ export interface Outbox {
   /** Attach caller-owned recovery to an existing receipt before resuming it. */
   recover(id: string, recovery: OutboxRecovery): Promise<void>;
   acknowledge(id: string): Promise<void>;
+  /** Kind 44300 cleanup: wait for this entry's transport to settle and report
+   * what its delivery proves. Never sends. */
+  settle(id: string): Promise<Settlement>;
+  /** Kind 44300 cleanup: durably drop the entry whatever its delivery. */
+  retire(id: string): Promise<void>;
   retry(id: string, active?: () => boolean): void;
   dismiss(id: string): Promise<void>;
 }
@@ -75,9 +90,31 @@ export interface OutboxStorage {
   save(operations: readonly OutgoingEvent[]): void | Promise<void>;
 }
 export class PublishRejected extends Error {}
+/** `unsent`: never reached the transport. `stored`: an accepted or `duplicate:`
+ * receipt. `rejected`: refused with no earlier send in doubt. `uncertain`:
+ * dispatched with no receipt. `absent`: no such entry. */
+export type Settlement =
+  | "unsent"
+  | "stored"
+  | "rejected"
+  | "uncertain"
+  | "absent";
+/** Signed 44300 retained against the shared 2 MiB journal, leaving room for ordinary traffic. */
+const INSTRUCTIONS_PENDING_MAX_BYTES = 2 * 1024 * 1024 - 512 * 1024;
 
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
+/** A 44300 refusal that cannot prove the event was not stored stays uncertain. */
+function refusalProof(event: EventData | undefined, error: unknown) {
+  return event?.kind === INSTRUCTIONS_KIND &&
+    error instanceof PublishRejected &&
+    uncertainRefusal(error.message)
+    ? new Error(error.message)
+    : error;
+}
+/** An entry's journal size once signed at the 44300 bound, with its separator. */
+const projectedInstructionsBytes = (item: OutgoingEvent) =>
+  byteSize(item) + INSTRUCTIONS_EVENT_MAX_BYTES + ',"signed":'.length + 1;
 const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
 
@@ -140,6 +177,12 @@ export function createOutbox(
     controller?: AbortController;
   };
   const attempts = new Map<string, Attempt>();
+  /** The transport's own promise for a dispatched 44300, which outlives the
+   * attempt's abort race, with the delivery known before that attempt. */
+  const transports = new Map<
+    string,
+    Promise<{ receipt: boolean; error?: unknown; previous: Delivery }>
+  >();
   const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
@@ -315,6 +358,9 @@ export function createOutbox(
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
       ...(item.acknowledged === true ? { acknowledged: true as const } : {}),
       ...(item.guarded ? { guarded: true } : {}),
+      ...(item.dispatched === true && signed
+        ? { dispatched: true as const }
+        : {}),
       delivery:
         item.delivery === "seen" && signed
           ? "seen"
@@ -464,7 +510,13 @@ export function createOutbox(
         throw new Error("Signer changed the outgoing event");
       const current = find(id);
       if (!current) return; // A verified echo already completed delivery.
-      replace({ ...current, signed });
+      replace({
+        ...current,
+        signed,
+        ...(signed.kind === INSTRUCTIONS_KIND
+          ? { dispatched: true as const }
+          : {}),
+      });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
       const check = preparePublish
@@ -480,7 +532,20 @@ export function createOutbox(
         check?.();
         checkAdmission(id);
         publishing = true;
-        return Promise.race([writer.publish(signed, signal), aborted]);
+        const sent = writer.publish(signed, signal);
+        if (signed.kind === INSTRUCTIONS_KIND)
+          transports.set(
+            id,
+            Promise.resolve(sent).then(
+              () => ({ receipt: true, previous: attempt.previousDelivery }),
+              (error: unknown) => ({
+                receipt: false,
+                error,
+                previous: attempt.previousDelivery,
+              }),
+            ),
+          );
+        return Promise.race([sent, aborted]);
       });
       if (closed || signal.aborted) return;
       if (awaitsReceipt(signed))
@@ -497,8 +562,9 @@ export function createOutbox(
         });
       delivered(signed);
       onAccepted(signed);
-    } catch (error) {
+    } catch (caught) {
       const latest = find(id);
+      const error = refusalProof(latest?.event, caught);
       // A verified observation ends the attempt even if its HTTP ACK never arrives.
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
@@ -663,15 +729,36 @@ export function createOutbox(
       )
         throw new Error("This relay connection cannot publish that event kind");
       const catalog = isCatalogKind(input.kind);
+      const instructions = input.kind === INSTRUCTIONS_KIND;
+      const subject = instructions
+        ? instructionsSubject(input.tags)
+        : undefined;
       if (
         (input.kind === 9 && !input.content.trim()) ||
-        // NIP-AP admits larger public definitions than ordinary input.
+        (instructions && !subject) ||
+        // NIP-AP admits larger public definitions and instructions than ordinary input.
         (catalog
           ? bytes(input.content) > MAX_CONTENT_BYTES ||
             byteSize(input) > MAX_EVENT_BYTES
-          : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
+          : instructions
+            ? bytes(input.content) > INSTRUCTIONS_CONTENT_MAX_BYTES ||
+              byteSize(input) > INSTRUCTIONS_EVENT_MAX_BYTES
+            : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
       )
         throw new Error("Message is empty or too large");
+      const sameSubject = (event: EventData) =>
+        event.kind === INSTRUCTIONS_KIND &&
+        event.pubkey === viewer &&
+        instructionsSubject(event.tags) === subject;
+      if (instructions) {
+        // Hydrated unsigned entries must be counted before anything new is admitted.
+        if (!hydrated)
+          throw new Error("Saved changes are still loading. Try again.");
+        if (snapshot.some((item) => sameSubject(item.event)))
+          throw new Error(
+            "An earlier change to these instructions is still being saved",
+          );
+      }
       if (snapshot.length >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
@@ -707,17 +794,20 @@ export function createOutbox(
             "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
           );
       }
-      if (catalog) {
+      if (catalog || instructions) {
         // NIP-AP: max(now, head + 1) over the observed relay head and this
         // device's retained writes, so a replacement can never lose or tie.
+        // Catalog heads are keyed by `d`, instructions versions by `p`.
         if (supersedes !== undefined)
           createdAt = Math.max(createdAt, supersedes + 1);
         const d = input.tags.find(([name]) => name === "d")?.[1];
         for (const { event } of visible)
           if (
-            event.kind === input.kind &&
-            event.pubkey === viewer &&
-            event.tags.some(([name, value]) => name === "d" && value === d)
+            instructions
+              ? sameSubject(event)
+              : event.kind === input.kind &&
+                event.pubkey === viewer &&
+                event.tags.some(([name, value]) => name === "d" && value === d)
           )
             createdAt = Math.max(createdAt, event.created_at + 1);
         if (createdAt > Math.floor(ms / 1000) + 60)
@@ -742,6 +832,29 @@ export function createOutbox(
         ) as unknown as string[][],
         id: getEventHash(template),
       });
+      if (instructions) {
+        // Persisted entries are counted at their current size; each unsigned
+        // 44300 also reserves the bytes its signature will add, exactly once.
+        const reserved = snapshot.reduce(
+          (sum, item) =>
+            item.event.kind === INSTRUCTIONS_KIND && !item.signed
+              ? sum + projectedInstructionsBytes(item) - byteSize(item)
+              : sum,
+          pendingBytes,
+        );
+        const entry = {
+          event,
+          delivery: "sending" as const,
+          ...(savedRecovery ? { recovery: savedRecovery } : {}),
+        };
+        if (
+          reserved + projectedInstructionsBytes(entry) >
+          INSTRUCTIONS_PENDING_MAX_BYTES
+        )
+          throw new Error(
+            "Too many unsent instruction changes; reconnect to finish them",
+          );
+      }
       if (active) admissionGates.set(event.id, active);
       captureSend(event);
       profiling.measure("send.local", event.id, () => {
@@ -763,6 +876,37 @@ export function createOutbox(
       void intent.catch(() => {}); // Delivery reports persistence errors; disposal still saves queued intent.
       schedule(event.id, intent);
       return event.id;
+    },
+    async settle(id: string): Promise<Settlement> {
+      await outbox.ready();
+      // Wait for the transport itself, never the attempt's abort race.
+      const transport = await transports.get(id);
+      await attempts.get(id)?.intent?.catch(() => {});
+      const item = find(id);
+      if (!item) return "absent";
+      if (item.delivery === "accepted" || item.delivery === "seen")
+        return "stored";
+      if (transport?.receipt) return "stored";
+      if (!item.dispatched) return "unsent";
+      const proven =
+        transport &&
+        transport.error instanceof PublishRejected &&
+        !uncertainRefusal(transport.error.message) &&
+        transport.previous !== "unknown" &&
+        transport.previous !== "accepted";
+      return proven || (!transport && item.delivery === "failed")
+        ? "rejected"
+        : "uncertain";
+    },
+    async retire(id: string) {
+      await outbox.ready();
+      const attempt = attempts.get(id);
+      attempt?.controller?.abort(abortError());
+      if (attempt) clearTimeout(attempt.timer);
+      attempts.delete(id);
+      await persist(id, "dismiss");
+      transports.delete(id);
+      admissionGates.delete(id);
     },
     retry(id: string, active?: () => boolean) {
       const item = find(id);

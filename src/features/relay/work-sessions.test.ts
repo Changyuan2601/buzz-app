@@ -1026,6 +1026,8 @@ function setup(
       items = [{ event, delivery: "accepted" }];
       for (const fn of listeners) fn();
     }),
+    settle: async () => "absent" as const,
+    retire: async () => {},
     dismiss: vi.fn(async () => {}),
   };
   // The store's exact lookup applies through discovery and notifies the list;
@@ -1614,6 +1616,8 @@ it.each([true, false])(
         retry: vi.fn(() => {
           items = [{ event: creation, delivery: "failed" }];
         }),
+        settle: async () => "absent" as const,
+        retire: async () => {},
         dismiss: async () => {},
       };
       const service = createWorkSessions(
