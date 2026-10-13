@@ -20,8 +20,6 @@ export function useChannelPanels(
   panels: Panels,
   context?: ChannelPanelContext,
   onOpen?: () => void,
-  activateTab?: (panel: RegisteredPanel) => boolean,
-  activeTab?: RegisteredPanel,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -72,7 +70,7 @@ export function useChannelPanels(
               <Launcher
                 key={`${panel.key}:${panel.revision}`}
                 context={context}
-                pressed={selected?.panel === panel || activeTab === panel}
+                pressed={selected?.panel === panel}
                 available={() =>
                   mounted.current === context &&
                   panels.snapshot().includes(panel)
@@ -83,7 +81,6 @@ export function useChannelPanels(
                     !panels.snapshot().includes(panel)
                   )
                     return;
-                  if (activateTab?.(panel)) return;
                   if (selected?.panel === panel) hide(selected);
                   else {
                     onOpen?.();

@@ -248,52 +248,10 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
-  const canvasPanel = available.find(
-    (panel) => panel.pluginId === "buzz.canvas" && panel.id === "canvas",
-  );
-  const openCanvas =
-    canvasPanel &&
-    ((trigger: HTMLElement | null) => {
-      const connection = relay.snapshot();
-      if (
-        connection.status !== "ready" ||
-        connection.session !== queries ||
-        !drawerContext ||
-        !active() ||
-        current?.archived ||
-        !panels.snapshot().includes(canvasPanel)
-      )
-        return;
-      drawer.close();
-      panelTrigger.current = trigger;
-      open(
-        {
-          panel: canvasPanel,
-          target: drawerContext.channelId,
-          channelId: drawerContext.channelId,
-          channelContext: drawerContext,
-        },
-        true,
-      );
-    });
-  const drawer = useChannelPanels(
-    panels,
-    drawerContext,
-    () => {
-      onOpenDrawer?.();
-      tabState.setPaneOpen(true);
-    },
-    (panel) => {
-      if (panel !== canvasPanel) return false;
-      openCanvas?.(
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null,
-      );
-      return true;
-    },
-    tabState.paneOpen ? panel : undefined,
-  );
+  const drawer = useChannelPanels(panels, drawerContext, () => {
+    onOpenDrawer?.();
+    tabState.setPaneOpen(true);
+  });
   const sideTabs = tabState.tabs.filter((tab) => tabPane(tab) === "side");
   const mainTabs = mainPane
     ? tabState.tabs.filter((tab) => tabPane(tab) === "main")
@@ -564,7 +522,6 @@ export function useConversationTabs({
     drawerContext,
     splitTrigger,
     panelTrigger,
-    openCanvas,
     openConversationLink,
     openConversationThread,
     announcement,

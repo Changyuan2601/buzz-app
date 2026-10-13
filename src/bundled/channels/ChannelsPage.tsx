@@ -57,7 +57,7 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { Panels } from "../../features/panels/service";
+import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
@@ -696,8 +696,44 @@ function ChannelWorkspace({
     afterClose,
     panelTrigger,
     splitTrigger,
-    openCanvas,
   } = secondary;
+  const menuPanels =
+    current && !cached
+      ? available.filter((panel) =>
+          panel.channelMenu?.eligible(current, queries),
+        )
+      : [];
+  const openMenuPanel = (panel: RegisteredPanel) => {
+    const connection = relay.snapshot();
+    const channel = queries.channels
+      .list()
+      .channels.find((item) => item.id === currentId);
+    if (
+      connection.status !== "ready" ||
+      connection.cached ||
+      connection.session !== queries ||
+      !drawerContext ||
+      drawerContext.channelId !== channel?.id ||
+      !channel ||
+      channel.cached ||
+      channel.readOnly ||
+      !channel.members?.includes(queries.viewer ?? "") ||
+      !panels.snapshot().includes(panel) ||
+      !panel.channelMenu?.eligible(channel, queries)
+    )
+      return;
+    drawer.close();
+    panelTrigger.current = settingsTrigger.current;
+    open(
+      {
+        panel,
+        channelId: channel.id,
+        target: channel.id,
+        channelContext: drawerContext,
+      },
+      true,
+    );
+  };
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1291,7 +1327,8 @@ function ChannelWorkspace({
                         requestSettingsFocus((value) => value + 1);
                         setSettings({ channelId: current.id });
                       }}
-                      openCanvas={openCanvas}
+                      menuPanels={menuPanels}
+                      openMenuPanel={openMenuPanel}
                     />
                   }
                 >
@@ -1346,47 +1383,8 @@ function ChannelWorkspace({
                             requestSettingsFocus((value) => value + 1);
                             setSettings({ channelId: currentId });
                           }}
-                          openCanvas={openCanvas}
-                          menuPanels={
-                            current && !cached
-                              ? available.filter((panel) =>
-                                  panel.channelMenu?.eligible(current, queries),
-                                )
-                              : []
-                          }
-                          openMenuPanel={(panel) => {
-                            const connection = relay.snapshot();
-                            const channel = queries.channels
-                              .list()
-                              .channels.find((item) => item.id === currentId);
-                            if (
-                              connection.status !== "ready" ||
-                              connection.cached ||
-                              connection.session !== queries ||
-                              !drawerContext ||
-                              drawerContext.channelId !== channel?.id ||
-                              !channel ||
-                              channel.cached ||
-                              channel.readOnly ||
-                              !channel.members?.includes(
-                                queries.viewer ?? "",
-                              ) ||
-                              !panels.snapshot().includes(panel) ||
-                              !panel.channelMenu?.eligible(channel, queries)
-                            )
-                              return;
-                            drawer.close();
-                            panelTrigger.current = settingsTrigger.current;
-                            open(
-                              {
-                                panel,
-                                channelId: channel.id,
-                                target: channel.id,
-                                channelContext: drawerContext,
-                              },
-                              true,
-                            );
-                          }}
+                          menuPanels={menuPanels}
+                          openMenuPanel={openMenuPanel}
                         />
                         {current && (
                           <IconButton

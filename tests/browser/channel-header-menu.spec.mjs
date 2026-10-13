@@ -494,7 +494,7 @@ test.describe("dialog origin retirement", () => {
       ),
     ).toHaveText("Beta");
   }
-  test("Canvas stays scoped across browser navigation and restores its original draft", async ({
+  test("Canvas retires without reading the next channel or losing its original draft", async ({
     page,
     app,
   }) => {
@@ -520,12 +520,19 @@ test.describe("dialog origin retirement", () => {
     const before = canvasReads();
     expect(before.length).toBeGreaterThan(0);
     await back(page);
-    await expect(canvas).toBeHidden();
+    await expect(canvas).toHaveCount(0);
     expect(canvasReads()).toEqual(before);
     await page.goForward();
     await expect(
       page.getByRole("tab", { name: channelName, exact: true }),
     ).toBeVisible();
+    await expect(canvas).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
     await expect(editor).toBeFocused();
     await page

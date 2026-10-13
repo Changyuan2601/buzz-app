@@ -214,7 +214,7 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
+Naming, Agent Activity, Canvas, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
 Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
@@ -252,9 +252,11 @@ Disabling or replacing a plugin retires its open tab; a channel change or loss o
 eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
 the panel must independently verify access before reading any sensitive data and
-fence asynchronous reads on revocation. Channel Usage owns this panel and its
-archive projection; the session continues to own archive capture, access and
-retention. Plugin enablement controls visibility without changing capture settings.
+fence asynchronous reads on revocation. Canvas registers **View canvas** this
+way; its editor keeps the channel's draft locally, so reopening after a channel
+change restores it. Channel Usage owns its panel and its archive projection; the
+session continues to own archive capture, access and retention. Plugin enablement
+controls visibility without changing capture settings.
 
 ### Settings cards
 

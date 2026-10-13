@@ -1,40 +1,21 @@
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
-import type {
-  ChannelLauncherProps,
-  PanelProps,
-} from "../../features/panels/service";
-import { FileTextIcon } from "../../shared/design-system/icons/index";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
+import type { PanelProps } from "../../features/panels/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelaySession } from "../../features/relay/session";
 import { CanvasEditor } from "../channels/CanvasEditor";
+
+export function eligible(channel: ChannelSummary, session: RelaySession) {
+  return (
+    !channel.cached &&
+    !channel.readOnly &&
+    !channel.archived &&
+    !!channel.members?.includes(session.viewer ?? "")
+  );
+}
 
 export const inject = ["panels", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  let active = true;
-  ctx.effect(() => () => {
-    active = false;
-  });
-  function Launcher({
-    context,
-    toggle,
-    pressed,
-    available,
-  }: ChannelLauncherProps) {
-    return (
-      <IconButton
-        size="sm"
-        variant={pressed ? "tint" : "ghost"}
-        icon={<FileTextIcon size={16} aria-hidden="true" />}
-        aria-label="Toggle channel canvas"
-        title="Canvas"
-        aria-pressed={pressed}
-        onClick={(event) => {
-          event.currentTarget.focus();
-          if (active && available()) toggle(context.channelId);
-        }}
-      />
-    );
-  }
   function Panel({ channelContext }: PanelProps) {
     const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
     if (
@@ -57,8 +38,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "canvas",
     title: "Canvas",
     matches: () => false,
-    channelLauncher: Launcher,
-    channelPlacement: "side",
+    channelMenu: { label: "View canvas", eligible },
     component: Panel,
   });
 };

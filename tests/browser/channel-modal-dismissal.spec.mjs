@@ -42,10 +42,17 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     name: "Channel settings",
     exact: true,
   });
-  const trigger = page
-    .getByRole("article", { name: "Conversation", exact: true })
-    .getByRole("button", { name: "Toggle channel canvas", exact: true });
-  await trigger.click();
+  const trigger = page.getByRole("button", {
+    name: "Channel actions",
+    exact: true,
+  });
+  const openCanvas = async () => {
+    await trigger.click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+  };
+  await openCanvas();
   const editor = workspace.getByRole("tabpanel", {
     name: "Canvas",
     exact: true,
@@ -93,7 +100,7 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   await expect(settingsTab).toHaveAttribute("aria-selected", "true");
   await expect(settingsTab).toBeFocused();
   await expect(settings).toBeVisible();
-  await trigger.click();
+  await openCanvas();
   await expect(text).toHaveValue("Local draft");
   expect(app.report.lifecyclePublications ?? []).toEqual([]);
 });
