@@ -260,11 +260,10 @@ The **+** action in the DMs sidebar header opens **New message**, a routed empty
 conversation in Messages. The header remains available before the first DM exists. Its inline **To:**
 field owns a paginated people picker and up to eight recipient chips, excluding
 this viewer. Agent profiles are offered only when their exact public key is one of the viewer's
-local agents (Agents) for this community, the `managed` choices of
-`session.agentChoices`. Public profile hints and the inventory library do not
-qualify; this filter also applies to searches and cached results. Selected agent
-chips are revalidated against the current local agents before a fresh open and
-again before enqueueing.
+agents in `session.agentChoices` for this community, local (`managed`) or remote.
+Public profile hints alone do not qualify; this filter also applies to searches
+and cached results. Selected agent chips are revalidated against the current
+choices before a fresh open and again before enqueueing.
 Already queued messages retain exact-event recovery. Namesake identities show
 unambiguous shared public-key labels in their options and selected chips. Human profiles remain available while controls load
 or fail. The shared popover hugs shorter result lists up to ten rows (or available

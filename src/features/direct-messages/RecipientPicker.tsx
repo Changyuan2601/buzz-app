@@ -1,5 +1,6 @@
 import { Popover } from "@base-ui/react/popover";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { directMessageAgents } from "../agents/choices";
 import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
@@ -52,12 +53,8 @@ export function RecipientPicker({
   selection.current = selected;
   const id = useId();
   const directory = usePeople(session, query);
-  const agents = useAgentChoices(session, false);
-  const controlled = new Set(
-    agents.identities
-      .filter((agent) => agent.managed)
-      .map((agent) => agent.pubkey),
-  );
+  const agents = useAgentChoices(session);
+  const controlled = directMessageAgents(agents);
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
   const existing = new Set<string>();
@@ -98,15 +95,15 @@ export function RecipientPicker({
   const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
   // Remember eligible namesakes while search text and selection change.
   const known = useRef(new Map<string, Recipient>());
-  // A managed agent also matches by its own name, as in mentions, even when
+  // The viewer's agent also matches by its own name, as in mentions, even when
   // its profile name differs. The directory searches profile names only.
   const inDirectory = new Map(
     directory.people.map((person) => [person.pubkey, person]),
   );
-  // A managed agent's own name, kept for ranking and for Space.
+  // The viewer's agent's own name, kept for ranking and for Space.
   const agentName = new Map(
     agents.identities.flatMap((agent) =>
-      agent.managed && agent.name ? [[agent.pubkey, agent.name] as const] : [],
+      agent.name ? [[agent.pubkey, agent.name] as const] : [],
     ),
   );
   const namesOf = (person: Recipient) => {
@@ -116,7 +113,6 @@ export function RecipientPicker({
   const byAgentName = query.trim()
     ? agents.identities.flatMap((agent): Recipient[] => {
         if (
-          !agent.managed ||
           !agent.name ||
           inDirectory.has(agent.pubkey) ||
           matchPerson(agent.name, query) === undefined

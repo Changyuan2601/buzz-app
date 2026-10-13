@@ -28,11 +28,13 @@ function fixture(available = true) {
     vi.fn<(keys: readonly string[], signal: AbortSignal) => Promise<string>>();
   let choices = owner.session.agentChoices.snapshot();
   const choiceListeners = new Set<() => void>();
+  const ensure = vi.fn();
   const session = {
     ...owner.session,
     directMessages: { ...owner.session.directMessages, available, open },
     agentChoices: {
       ...owner.session.agentChoices,
+      ensure,
       snapshot: () => choices,
       subscribe(listener: () => void) {
         choiceListeners.add(listener);
@@ -40,12 +42,15 @@ function fixture(available = true) {
       },
     },
   };
-  /** Makes `person` a known agent; `managed` means ready native control here. */
-  const agent = (managed: boolean, notify = true) => {
+  /** Makes `person` the viewer's local (`managed`) or remote agent, or neither. */
+  const agent = (managed?: boolean, notify = true) => {
     choices = {
       ...choices,
       status: "ready",
-      identities: [{ pubkey: person, name: "Agent", managed }],
+      identities:
+        managed === undefined
+          ? []
+          : [{ pubkey: person, name: "Agent", managed }],
     };
     if (notify)
       act(() => {
@@ -91,7 +96,16 @@ function fixture(available = true) {
       snapshot = { ...snapshot, generation: 2, scope };
       for (const listener of listeners) listener();
     });
-  return { owner, open, navigate, panel, reconnect, agent, failChoices };
+  return {
+    owner,
+    open,
+    navigate,
+    panel,
+    reconnect,
+    agent,
+    failChoices,
+    ensure,
+  };
 }
 function deferred() {
   let resolve!: (id: string) => void;
@@ -118,16 +132,27 @@ it("offers Message only for a foreign profile on a DM-capable connection", () =>
   f.owner.dispose();
 });
 
-it("offers Message to a known agent only under this community's native control", () => {
+it("offers Message to an agent only when it is the viewer's, local or remote", () => {
   const f = fixture();
-  f.agent(false);
-  const view = render(f.panel(person));
+  const view = render(f.panel(person, true));
   expect(message()).toBeNull();
+  f.agent(false);
+  expect(message()).toBeTruthy();
   f.agent(true);
   expect(message()).toBeTruthy();
-  f.agent(false);
+  f.agent();
   expect(message()).toBeNull();
   view.unmount();
+  f.owner.dispose();
+});
+
+it("loads the viewer's agents only for an agent profile", () => {
+  const f = fixture();
+  const view = render(f.panel(other));
+  expect(f.ensure).not.toHaveBeenCalled();
+  view.unmount();
+  render(f.panel(person, true));
+  expect(f.ensure).toHaveBeenCalled();
   f.owner.dispose();
 });
 
@@ -147,8 +172,8 @@ it("rechecks agent control on activation", async () => {
   const f = fixture();
   f.agent(true);
   f.open.mockResolvedValue("dm-1");
-  render(f.panel(person));
-  f.agent(false, false);
+  render(f.panel(person, true));
+  f.agent(undefined, false);
   fireEvent.click(message() as HTMLElement);
   expect(f.open).not.toHaveBeenCalled();
   f.agent(true, false);

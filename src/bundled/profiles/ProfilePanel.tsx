@@ -24,6 +24,7 @@ import {
 import { CopyIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
+import { directMessageAgents } from "../../features/agents/choices";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -243,12 +244,13 @@ function ProfileDetails({
     [picture, name, knownAgent],
   );
   usePanelTabTitle(name, tabAvatar);
-  // As in New message, a known agent needs this community's ready native control.
+  // As in New message, a DM may include only the viewer's own agents.
+  useEffect(() => {
+    if (displayAgent) session.agentChoices.ensure();
+  }, [session, displayAgent]);
   const messageable = () =>
     !displayAgent ||
-    session.agentChoices
-      .snapshot()
-      .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
+    directMessageAgents(session.agentChoices.snapshot()).has(pubkey);
   const canMessage =
     session.directMessages.available &&
     !!navigation &&

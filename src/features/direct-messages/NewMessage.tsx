@@ -13,6 +13,7 @@ import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
+import { directMessageAgents } from "../agents/choices";
 import { RecipientPicker } from "./RecipientPicker";
 import type { Recipient } from "./usePeople";
 import styles from "./NewMessage.module.css";
@@ -210,12 +211,7 @@ export function NewMessage({
     };
   }, [outbox, session.viewer, session.directMessages, scope]);
   function validateAgents() {
-    const controlled = new Set(
-      session.agentChoices
-        .snapshot()
-        .identities.filter((agent) => agent.managed)
-        .map((agent) => agent.pubkey),
-    );
+    const controlled = directMessageAgents(session.agentChoices.snapshot());
     if (
       recipients.some(
         (person) =>

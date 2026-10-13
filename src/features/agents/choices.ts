@@ -228,6 +228,11 @@ export function createAgentChoices({
   });
 }
 
+/** The viewer's agents a DM may include, local or remote. */
+export function directMessageAgents(agents: AgentChoicesSnapshot) {
+  return new Set(agents.identities.map((agent) => agent.pubkey));
+}
+
 /** Match the Agents page's source, retaining community and archive policy at the
  * action boundary. Never substitute old-library identities during a native error.
  * Templates are stricter than `selectable`: they need verified non-archived state. */

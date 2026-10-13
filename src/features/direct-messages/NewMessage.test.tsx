@@ -54,12 +54,12 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-function setup() {
+function setup(library: readonly { pubkey: string; name: string }[] = []) {
   const empty: never[] = [];
   const emoji = { status: "ready", entries: empty };
   const profiles = new Map();
   const channels: { channels: ChannelSummary[] } = { channels: [] };
-  const agents = { status: "ready", identities: empty };
+  const agents = { status: "ready", identities: library, definitions: empty };
   const directMessages = {
     available: true,
     people: vi.fn<RelaySession["directMessages"]["people"]>(async () => ({
@@ -132,6 +132,7 @@ function setup() {
       snapshot: () => agents,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
     emoji: {
       snapshot: () => emoji,
@@ -201,7 +202,7 @@ const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
 
-it("offers only local agents in this community, including cached searches after their list changes", async () => {
+it("offers only the viewer's agents in this community, including cached searches after their list changes", async () => {
   const t = setup();
   const foreign = {
     pubkey: "a".repeat(64),
@@ -250,6 +251,29 @@ it("offers only local agents in this community, including cached searches after 
   expect(screen.getByRole("option", { name: "Person 1" })).toBeVisible();
   t.updateControl(state);
   expect(screen.getByRole("option", { name: "Person 2, Agent" })).toBeVisible();
+});
+
+it("offers and opens a DM with the viewer's remote agent", async () => {
+  const remote = {
+    pubkey: "e".repeat(64),
+    name: "Remote agent",
+    isAgent: true as const,
+  };
+  const t = setup([{ pubkey: remote.pubkey, name: remote.name }]);
+  t.directMessages.people.mockResolvedValue({
+    people: [...people, remote],
+    hasMore: false,
+  });
+  t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Remote agent, Agent" }),
+  );
+  await t.user.click(screen.getByRole("button", { name: "Open conversation" }));
+  await waitFor(() => expect(t.onOpened).toHaveBeenCalledWith(channel));
+  expect(t.directMessages.open).toHaveBeenCalledWith(
+    [remote.pubkey],
+    expect.any(AbortSignal),
+  );
 });
 
 it("appends background pages without reshuffling and ranks new search results", async () => {
