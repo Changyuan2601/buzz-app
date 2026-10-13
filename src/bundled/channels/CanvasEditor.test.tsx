@@ -273,6 +273,96 @@ it("retains the draft after a failed save and keeps editing after a successful r
   expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
 });
 
+function pendingSave(canvas: { save: ReturnType<typeof vi.fn> }) {
+  let land!: (event: typeof head) => void;
+  const pending = new Promise<typeof head>((resolve) => {
+    land = resolve;
+  });
+  canvas.save.mockReturnValueOnce(pending);
+  // The editor awaited this promise first, so its continuation has run once
+  // a later await of the same promise resumes.
+  return async (event: typeof head) => {
+    land(event);
+    await pending;
+  };
+}
+async function saveThenClose(content: string) {
+  const user = userEvent.setup();
+  let land!: (event: typeof head) => Promise<void>;
+  const { canvas } = fixture((canvas) => {
+    land = pendingSave(canvas);
+  });
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toHaveValue("Saved"));
+  fireEvent.change(text, { target: { value: content } });
+  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+  await waitFor(() => expect(canvas.save).toHaveBeenCalledOnce());
+  // Closing the tab, changing channel or disabling the plugin unmounts it.
+  cleanup();
+  return land;
+}
+it("retires the saved draft when the editor closes before its save lands", async () => {
+  const land = await saveThenClose("Edited");
+  const saved = { ...head, content: "Edited", id: "b".repeat(64) };
+  await land(saved);
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
+  fixture((canvas) => canvas.read.mockResolvedValue(saved));
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toHaveValue("Edited"));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
+});
+
+it("keeps a reopened editor's draft when an earlier save lands after close", async () => {
+  const land = await saveThenClose("Edited");
+  fixture();
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toBeEnabled());
+  expect(text).toHaveValue("Edited");
+  fireEvent.change(text, { target: { value: "Newer" } });
+  await land({ ...head, content: "Edited", id: "b".repeat(64) });
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Newer",
+    base: head.id,
+  });
+});
+
+it("takes focus once loaded unless focus moved elsewhere meanwhile", async () => {
+  for (const moved of [false, true]) {
+    let finish!: (event: typeof head) => void;
+    const reading = new Promise<typeof head>((resolve) => {
+      finish = resolve;
+    });
+    const canvas = {
+      available: true,
+      history: vi.fn<ChannelCanvas["history"]>(),
+      read: vi.fn(() => reading),
+      save: vi.fn(async () => head),
+    };
+    render(
+      <>
+        <button type="button">Message composer</button>
+        <CanvasEditor
+          canvas={canvas}
+          profiles={profiles}
+          scope={scope}
+          channelId={channelId}
+        />
+      </>,
+    );
+    const composer = screen.getByRole("button", { name: "Message composer" });
+    if (moved) composer.focus();
+    await act(async () => {
+      finish(head);
+      await reading;
+    });
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+    await waitFor(() => expect(text).toBeEnabled());
+    expect(moved ? composer : text).toHaveFocus();
+    cleanup();
+  }
+});
+
 const old = {
   ...head,
   id: "c".repeat(64),
@@ -304,6 +394,24 @@ function historyFixture() {
     canvas.save.mockResolvedValue(restored);
   });
 }
+it("retires an unchanged draft when the editor closes before a restore lands", async () => {
+  const user = userEvent.setup();
+  const { canvas } = historyFixture();
+  const land = pendingSave(canvas);
+  await openHistory(user);
+  await user.click(
+    screen.getByRole("button", { name: "Restore this version" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Restore version" }));
+  await waitFor(() => expect(canvas.save).toHaveBeenCalledOnce());
+  cleanup();
+  await land(restored);
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull();
+  fixture((canvas) => canvas.read.mockResolvedValue(restored));
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toHaveValue(restored.content));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
 it("loads history only on demand and preserves draft/base through preview and cancelled restore", async () => {
   const user = userEvent.setup();
   const { canvas } = historyFixture();

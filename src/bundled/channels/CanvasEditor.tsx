@@ -4,7 +4,12 @@ import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { CanvasHistory } from "./CanvasHistory";
 import type { RelayEvent } from "../../features/relay/events";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  replaceView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -43,8 +48,20 @@ export function CanvasEditor({
     [error, setError] = useState("");
   const operation = useRef(0);
   const editor = useRef<HTMLTextAreaElement>(null);
+  // The tab host places focus when Canvas opens. Take it into the editor once
+  // loaded only if it is still there; never pull it back from elsewhere.
+  const handoff = useRef<Element | null>(null);
   useEffect(() => {
-    if (loaded) editor.current?.focus();
+    handoff.current = document.activeElement;
+  }, []);
+  useEffect(() => {
+    const previous = handoff.current;
+    if (
+      loaded &&
+      (previous === document.activeElement ||
+        (!previous?.isConnected && document.activeElement === document.body))
+    )
+      editor.current?.focus();
   }, [loaded]);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
@@ -89,9 +106,13 @@ export function CanvasEditor({
   const dirty = (head?.id ?? null) !== base || draft !== (head?.content ?? "");
   const restore = async (revision: RelayEvent) => {
     const generation = ++operation.current;
+    const stored = viewRevision(scope, key);
     setBusy(true);
     try {
       const event = await canvas.save(channelId, revision.content, head?.id);
+      // A write can land after this editor closed. Retire the unchanged draft
+      // unless a reopened editor has replaced it since.
+      if (!dirty) replaceView(scope, key, stored, null);
       if (generation !== operation.current) return;
       setHead(event);
       if (dirty) {
@@ -123,14 +144,16 @@ export function CanvasEditor({
   };
   const save = async () => {
     const generation = ++operation.current;
+    const stored = viewRevision(scope, key);
     setBusy(true);
     setError("");
     try {
       const event = await canvas.save(channelId, draft, base ?? undefined);
+      // Retire the saved draft even if this editor has closed since.
+      replaceView(scope, key, stored, null);
       if (generation === operation.current) {
         setHead(event);
         setBase(event.id);
-        writeView(scope, key, null);
       }
     } catch (reason) {
       if (generation === operation.current)
