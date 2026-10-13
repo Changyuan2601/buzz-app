@@ -160,6 +160,7 @@ function setup() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    refresh: async () => {},
   };
   Object.assign(session, {
     agentChoices: createAgentChoices({

@@ -367,6 +367,9 @@
     .shell-navigation {
       display: none;
     }
+    .shell-navigation[data-sidebar-collapsible] {
+      display: none;
+    }
     .shell-navigation[data-expanded="true"] {
       @apply absolute inset-y-0 left-0 z-20 flex;
       background: var(--surface-panel);

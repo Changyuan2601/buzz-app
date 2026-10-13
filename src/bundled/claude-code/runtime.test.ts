@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
@@ -34,7 +36,12 @@ const message = (
 
 function setup(
   thread: readonly EventData[] = [],
-  options: Readonly<{ hold?: boolean; starting?: Promise<void> }> = {},
+  options: Readonly<{
+    hold?: boolean;
+    starting?: Promise<void>;
+    workflowAuthority?: string;
+    signal?: AbortSignal;
+  }> = {},
 ) {
   const fake = fakeSpawn();
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
@@ -47,6 +54,7 @@ function setup(
   const host = { spawn, request: vi.fn() } as unknown as Host;
   const read = vi.fn(async () => thread);
   const session = {
+    workflowAuthority: options.workflowAuthority,
     read,
     channels: {
       list: () => ({
@@ -59,8 +67,9 @@ function setup(
       resolve: (pubkey: string) => (pubkey === alice ? "Alice" : undefined),
     },
     profiles: {
-      ensure: async () => undefined,
+      ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
+      event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
   };
   const relay = {
@@ -128,7 +137,7 @@ function setup(
       channelId: channel,
       agent,
       config: DEFAULT_CONFIG,
-      signal: new AbortController().signal,
+      signal: options.signal ?? new AbortController().signal,
       workingUntil,
       // The host's answer, as it is when asked.
       current: () =>
@@ -153,6 +162,7 @@ function setup(
     attention,
     objects,
     stale,
+    session,
   };
 }
 
@@ -624,6 +634,123 @@ it("acts only on messages from its owner and the owner's agents", async () => {
   await flush(10);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);
 });
+
+it.each([true, false])(
+  "runs a relay workflow mention only with explicit community authority (%s)",
+  async (trusted) => {
+    const relay = keypair();
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    );
+    const f = setup(
+      [event],
+      trusted ? { workflowAuthority: relay.pubkey } : {},
+    );
+    try {
+      await f.deliver({ type: "mention", event });
+      if (trusted) {
+        await vi.waitFor(() =>
+          expect(f.claudes().some((process) => process.prompts.length)).toBe(
+            true,
+          ),
+        );
+        expect(f.workingUntil).toHaveBeenCalled();
+      } else {
+        expect(f.claudes()).toHaveLength(0);
+        expect(f.workingUntil).not.toHaveBeenCalled();
+      }
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "handles sibling workflow authorization with cancellation=%s",
+  async (cancelled) => {
+    const relay = keypair(),
+      human = keypair(),
+      creator = keypair();
+    const attestation = [
+      "auth",
+      human.pubkey,
+      "",
+      bytesToHex(
+        schnorr.sign(
+          createHash("sha256")
+            .update(`nostr:agent-auth:${creator.pubkey}:`)
+            .digest(),
+          human.secret,
+        ),
+      ),
+    ];
+    const profile = eventDto(
+      signed(creator, { kind: 0, content: "{}", tags: [attestation] }),
+    );
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", creator.pubkey],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    );
+    const controller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const f = setup([event], {
+      workflowAuthority: relay.pubkey,
+      signal: controller.signal,
+    });
+    f.agent.owner = human.pubkey;
+    f.session.profiles.event.mockReturnValue(profile);
+    f.session.profiles.ensure.mockReturnValue(gate);
+    try {
+      const done = f.deliver({ type: "mention", event });
+      await vi.waitFor(() =>
+        expect(f.session.profiles.ensure).toHaveBeenCalledOnce(),
+      );
+      if (cancelled) {
+        f.runtime.sync([]);
+        controller.abort();
+        release();
+        await expect(done).rejects.toMatchObject({ name: "AbortError" });
+        expect(f.fake.processes).toHaveLength(0);
+        expect(f.workingUntil).not.toHaveBeenCalled();
+        expect(f.runtime.sessions(self)).toEqual([]);
+        return;
+      }
+      release();
+      await done;
+      await vi.waitFor(() =>
+        expect(f.claudes().some((process) => process.prompts.length)).toBe(
+          true,
+        ),
+      );
+      expect(f.workingUntil).toHaveBeenCalled();
+    } finally {
+      release();
+      f.runtime.dispose();
+    }
+  },
+);
 
 /** Asks a process for something over its in-process Buzz tool server. */
 async function mcp(

@@ -7,11 +7,8 @@ import type {
   Transcript,
   TranscriptItem,
   TranscriptTurn,
-} from "../../features/agents/activity-transcript";
-import {
-  MAX_MARKDOWN_LENGTH,
-  scanMarkdown,
-} from "../../features/relay/message-content";
+} from "./activity-transcript";
+import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import {
   BulbIcon,
   ChatCircleIcon,
@@ -233,6 +230,9 @@ function Item({
           <ChatCircleIcon size={16} aria-hidden="true" />
           <div className={styles.reply}>
             <strong>{agentName}</strong>
+            {item.posted && (
+              <span className="text-body-sm text-secondary"> · Posted</span>
+            )}
             <Reply text={item.text} />
           </div>
         </div>

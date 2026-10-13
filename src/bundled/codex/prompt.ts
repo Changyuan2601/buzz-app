@@ -37,6 +37,30 @@ export function turnInput(
     : "buzz-event";
   return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", session_thread: conversation.root, reply_to: rootOf(event) })}\n</context>\n<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
 }
+/** The readable part of a conversation's thread name; earlier versions used
+ * it alone. */
+export function sessionTitle(agentName: string, conversation: Conversation) {
+  return `Buzz #${conversation.name.replace(/\s+/g, " ").slice(0, 100)}${conversation.root ? ` · thread ${conversation.root.slice(0, 8)}` : ""} · ${agentName}`;
+}
+/** Names the agent's conversation in its thread names, so its threads can be
+ * found from any build of the app, each of which saves its own bindings. A
+ * 64-bit FNV-1a hash: stable and synchronous, so naming a thread does not
+ * reorder concurrent turn starts. */
+export function sessionTag(
+  agentPubkey: string,
+  conversation: Pick<Conversation, "channelId" | "root">,
+) {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(
+    JSON.stringify([
+      agentPubkey,
+      conversation.channelId,
+      conversation.root ?? "channel",
+    ]),
+  ))
+    hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+  return `buzz:${hash.toString(16).padStart(16, "0")}`;
+}
 export function sessionName(agent: AgentHandle, conversation: Conversation) {
-  return `Buzz #${conversation.name.replace(/\s+/g, " ").slice(0, 100)}${conversation.root ? ` · thread ${conversation.root.slice(0, 8)}` : ""} · ${agent.name}`;
+  return `${sessionTitle(agent.name, conversation)} · ${sessionTag(agent.pubkey, conversation)}`;
 }

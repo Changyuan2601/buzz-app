@@ -14,7 +14,7 @@ afterEach(() => {
 
 const snapshot = {
   status: "ready",
-  agents: [],
+  agents: [{ pubkey: "a".repeat(64), name: "Ada" }],
   running: [],
   teams: [
     { id: "t1", name: "Core", instructions: "", members: [] },
@@ -26,11 +26,12 @@ const agents = {
   subscribe: () => () => {},
 } as unknown as Agents;
 
-it("makes, edits and deletes a template of teams and a Canvas", async () => {
+it("makes, edits and deletes a template of agents, teams and a Canvas", async () => {
   const user = userEvent.setup();
   render(<ChannelTemplateSettings agents={agents} active={() => true} />);
   await user.click(screen.getByRole("button", { name: "New template" }));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Launch");
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
   await user.click(screen.getByRole("checkbox", { name: "Docs" }));
   await user.type(
     screen.getByRole("textbox", { name: /Starting Canvas/ }),
@@ -38,9 +39,14 @@ it("makes, edits and deletes a template of teams and a Canvas", async () => {
   );
   await user.click(screen.getByRole("button", { name: "Save template" }));
   expect(channelTemplates.snapshot()).toMatchObject([
-    { name: "Launch", teams: ["t2"], canvas: "# Goal" },
+    {
+      name: "Launch",
+      teams: ["t2"],
+      agents: ["a".repeat(64)],
+      canvas: "# Goal",
+    },
   ]);
-  expect(screen.getByText("Docs · Canvas")).toBeVisible();
+  expect(screen.getByText("Ada, Docs · Canvas")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Edit Launch" }));
   await user.click(screen.getByRole("checkbox", { name: "Core" }));

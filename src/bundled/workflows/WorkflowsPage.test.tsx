@@ -362,9 +362,11 @@ it("discards form-only state on same-revision review and re-arms the next draft'
     );
     await user.click(screen.getByRole("combobox", { name: "Add condition" }));
     await user.click(await screen.findByRole("option", { name: "Author" }));
-    // Paste: typing per key is a fifth of this long journey's runtime.
-    await user.click(screen.getByRole("textbox", { name: "Value" }));
-    await user.paste(value);
+    // One change event keeps this two-cycle test inside the default timeout;
+    // keystroke entry is pinned by the `guards canonical…` siblings.
+    fireEvent.change(screen.getByRole("textbox", { name: "Value" }), {
+      target: { value },
+    });
     expect(warnsOnUnload()).toBe(true);
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Close inspector" }));

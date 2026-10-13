@@ -200,6 +200,8 @@ function ChannelWorkspace({
       ? groupEntry.record.value
       : undefined;
   const [composerFocus, setComposerFocus] = useState(0);
+  // A visit applied by a header opening must not take that opening's focus.
+  const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
@@ -676,7 +678,7 @@ function ChannelWorkspace({
     continuingVisit,
     navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
-    openLink: (url) => openLink(url, true),
+    openLink: (url) => openLink(url, { fromThread: true }),
     fallbackFocus: settingsTrigger,
     eligible: (entry) =>
       !entry.panel.channelMenu ||
@@ -742,11 +744,13 @@ function ChannelWorkspace({
     // Each visit is applied once: Back/Forward switch tabs, never close them,
     // and a closed tab is not reopened by a re-render of the same visit. A
     // message still resolving its placement waits rather than recording.
-    if (routedThread || !requestedMessage || exact?.inTimeline)
+    if (routedThread || !requestedMessage || exact?.inTimeline) {
       tabState.enterVisit(
         `${navigation.entryId}:${routedThread ? "thread" : "channel"}`,
         routedThread,
       );
+      if (navigation.focus === "preserve") setPreservedVisit(navigation);
+    }
     const activity = handoff?.activityThread.current;
     if (
       activity &&
@@ -927,7 +931,18 @@ function ChannelWorkspace({
     };
   }, [currentId, routedThread]);
   const openLink = useCallback(
-    (url: string, fromThread = false, returnFocus?: HTMLElement) => {
+    (
+      url: string,
+      {
+        fromThread = false,
+        returnFocus,
+        rootId,
+      }: {
+        fromThread?: boolean;
+        returnFocus?: HTMLElement | undefined;
+        rootId?: string;
+      } = {},
+    ) => {
       const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
@@ -1000,6 +1015,7 @@ function ChannelWorkspace({
         open(
           {
             channelId: context.channelId,
+            ...(rootId && { rootId }),
             panel: candidate,
             target: url,
           },
@@ -1228,7 +1244,14 @@ function ChannelWorkspace({
           scope={scope}
           channelId={current.id}
           channelName={current.name}
-          autoFocus={!current.readOnly && !requestedMessage && !requestedThread}
+          autoFocus={
+            // The bound request arrives after the composer's first render.
+            (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
+              "preserve" &&
+            !current.readOnly &&
+            !requestedMessage &&
+            !requestedThread
+          }
           onOpenLink={openLink}
           canOpenLink={canOpenLink}
           label={
@@ -1257,7 +1280,7 @@ function ChannelWorkspace({
           }
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
-          onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
+          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
           onOpenConversation={
             navigator && viewer
               ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
@@ -1349,6 +1372,7 @@ function ChannelWorkspace({
                     drag={secondary.drag.main}
                     label="Channel tabs"
                     focusOnMount={false}
+                    adoptSelection={preservedVisit}
                     value={secondary.selectedMain}
                     select={(id) =>
                       tabState.selectMain(

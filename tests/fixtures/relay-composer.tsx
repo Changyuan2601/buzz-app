@@ -29,6 +29,7 @@ const confirmed: RelayEvent[] = [];
 const rejected = new Set<string>();
 let saved: readonly OutgoingEvent[] = [];
 const attachmentSources = new Map<string, string>();
+const uploadProgress = new Map<string, (sent: number, total: number) => void>();
 const attachmentOrigin = "https://attachments.invalid";
 const params = new URLSearchParams(location.search);
 const root = new Context();
@@ -44,7 +45,15 @@ const owner = createRelaySession(
     media: (url) => attachmentSources.get(url),
     ...(params.has("attachments")
       ? {
-          async uploadAttachment(file: File, signal: AbortSignal) {
+          async uploadAttachment(
+            file: File,
+            signal: AbortSignal,
+            progress?: (sent: number, total: number) => void,
+          ) {
+            if (progress)
+              uploadProgress.set(file.name, (sent, total) => {
+                if (!signal.aborted) progress(sent, total);
+              });
             if (params.has("uploadRequests")) {
               const response = await fetch("/api/relay/upload", {
                 method: "POST",
@@ -57,6 +66,8 @@ const owner = createRelaySession(
               });
               await response.body?.cancel();
               signal.throwIfAborted();
+              if (!response.ok)
+                throw new Error("Upload failed. Retry or remove this file.");
             }
             const digest = await crypto.subtle.digest(
               "SHA-256",
@@ -142,6 +153,8 @@ const owner = createRelaySession(
 // Observable delivery barrier for keyboard workflows; the fixture never uses real keys.
 Object.assign(window, {
   composerFixture: {
+    reportUploadProgress: (name: string, sent: number, total: number) =>
+      uploadProgress.get(name)?.(sent, total),
     pending: () =>
       owner.session.outbox?.snapshot().map((item) => ({
         kind: item.event.kind,

@@ -480,7 +480,10 @@ export function localSessions(
   storage: Storage,
   agent: string,
   name = "buzz.claude-code.sessions.v1",
-): SessionStore {
+): SessionStore & {
+  /** Saved sessions, most recently used first. */
+  list(): [string, SavedSession][];
+} {
   const readAll = (): Record<string, Record<string, SavedSession>> => {
     try {
       const value = JSON.parse(storage.getItem(name) ?? "{}");
@@ -504,6 +507,10 @@ export function localSessions(
     }
   };
   return {
+    list: () =>
+      Object.entries(readAll()[agent] ?? {})
+        .filter(([, saved]) => typeof saved?.id === "string")
+        .sort(([, a], [, b]) => b.at - a.at),
     get: (key) => {
       const saved = readAll()[agent]?.[key];
       return saved && typeof saved.id === "string" ? saved : undefined;

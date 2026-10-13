@@ -321,10 +321,14 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
     await header
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
-    const profileAvatar = page.getByRole("menuitem", {
+    const profileMenu = page.locator(".buzz-menu-popup[data-profile-menu]");
+    const profileAvatar = profileMenu.getByRole("menuitem", {
       name: "View your profile",
     });
     await expect(profileAvatar).toBeVisible();
+    // The popup enters through a translate transition; Chromium's transformed
+    // client rects carry float error, so measure the settled menu.
+    await expect(profileMenu).toHaveCSS("transform", "none");
     const avatarBox = await profileAvatar.boundingBox();
     expect([avatarBox.width, avatarBox.height]).toEqual([40, 40]);
     await page.keyboard.press("Escape");
@@ -412,7 +416,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   });
   const toggle = page.locator("[data-shell-sidebar-toggle]");
   await expect(toggle).toHaveCount(1);
-  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(toggle).toHaveAccessibleName("Show sidebar");
   await expect(sidebar).not.toBeVisible();
   await toggle.click();
   await expect(sidebar).toBeVisible();
@@ -432,7 +436,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   await expect(sidebar).not.toBeVisible();
   await expect(toggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
-  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
+  await expect(toggle).toHaveAccessibleName("Show sidebar");
   await toggle.click();
   await expect(sidebar).toBeVisible();
 });

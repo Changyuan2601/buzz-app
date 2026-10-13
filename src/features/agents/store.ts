@@ -240,6 +240,8 @@ export type Unfinished = Readonly<{
   /** Its `wss://` community. */
   relay: string;
   owner: string;
+  /** The HTTPS image URL it was made with, listed once it is set up. */
+  picture?: string;
 }>;
 export const UNFINISHED_KEY = "buzz.agents.unfinished.v1";
 
@@ -269,6 +271,9 @@ export function readUnfinished(storage: Storage): readonly Unfinished[] {
             name: agent.name,
             relay: agent.relay,
             owner: agent.owner as string,
+            ...(typeof agent.picture === "string"
+              ? { picture: agent.picture }
+              : {}),
           },
         ]
       : [],

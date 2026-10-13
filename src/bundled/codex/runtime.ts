@@ -33,6 +33,7 @@ import {
   type ToolCall,
   type ToolReply,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
@@ -57,7 +58,9 @@ type Request = {
   superseded?: () => void;
   failActivity(reason: string): void;
 };
-type Saved = { threadId: string; workspace: string };
+/** `at` is when the binding last started a turn; bindings saved before it
+ * existed have none. */
+type Saved = { threadId: string; workspace: string; at?: number };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -67,6 +70,9 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  /** What the turn runs on, once resolved; a differing pick queues a turn. */
+  model?: string;
+  effort?: string;
   workspace: string;
   signal: AbortSignal;
   version: number;
@@ -78,6 +84,8 @@ type Active = {
 };
 type Lane = {
   tail: Promise<void>;
+  /** Turns waiting on `tail` to start; steering past them would reorder. */
+  queued: number;
   active?: Active;
 };
 type Entry = {
@@ -95,6 +103,16 @@ type Server = {
   threads: Map<string, string>;
 };
 export type SessionView = { key: string; status: string; detail: string };
+/** A saved binding, newest first, for the owner's transcript list. */
+export type SavedConversation = {
+  key: string;
+  channelId: string;
+  /** The channel's name, when this community lists it. */
+  name?: string;
+  root?: string;
+  threadId: string;
+  at?: number;
+};
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -239,10 +257,16 @@ export class CodexRuntime {
       );
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
+          if (this.server !== server) return;
           server.threads.delete(threadId);
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
-            .catch(() => undefined);
+            .catch((error) =>
+              console.error(
+                "Codex could not clean a stopped agent's terminals",
+                error,
+              ),
+            );
         }
     })();
     this.stopping.set(pubkey, stopped);
@@ -287,25 +311,9 @@ export class CodexRuntime {
     const pubkey = request.agent.pubkey;
     const prior = this.entries.get(pubkey);
     if (prior) return prior;
-    let saved: Record<string, Saved> = {};
-    try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(this.storageKey(request)) ?? "{}",
-      );
-      if (stored && typeof stored === "object" && !Array.isArray(stored))
-        saved = Object.fromEntries(
-          Object.entries(stored).filter(
-            ([, value]) =>
-              value &&
-              typeof value.threadId === "string" &&
-              typeof value.workspace === "string",
-          ),
-        );
-    } catch {
-      /* Start fresh after malformed local data. */
-    }
+    const saved = this.load(this.storageKey(request.scope, pubkey));
     const entry: Entry = {
-      storageKey: this.storageKey(request),
+      storageKey: this.storageKey(request.scope, pubkey),
       abort: new AbortController(),
       after: this.stopping.get(pubkey) ?? Promise.resolve(),
       saved,
@@ -314,12 +322,103 @@ export class CodexRuntime {
     this.entries.set(pubkey, entry);
     return entry;
   }
-  private storageKey(request: Request) {
+  private load(storageKey: string) {
+    try {
+      const stored: unknown = JSON.parse(
+        this.storage.getItem(storageKey) ?? "{}",
+      );
+      if (stored && typeof stored === "object" && !Array.isArray(stored))
+        return Object.fromEntries(
+          Object.entries(stored).filter(
+            ([, value]) =>
+              value &&
+              typeof value.threadId === "string" &&
+              typeof value.workspace === "string",
+          ),
+        ) as Record<string, Saved>;
+    } catch {
+      /* Start fresh after malformed local data. */
+    }
+    return {};
+  }
+  /** The agent's bindings in this community, most recently used first. */
+  conversations(pubkey: string): SavedConversation[] {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    const ready = snapshot?.status === "ready" ? snapshot : undefined;
+    const saved =
+      this.entries.get(pubkey)?.saved ??
+      (ready ? this.load(this.storageKey(ready.scope ?? "", pubkey)) : {});
+    const channels = ready?.session.channels.list().channels ?? [];
+    // Untimestamped bindings keep save order, newest last; listed newest first.
+    return Object.entries(saved)
+      .reverse()
+      .flatMap(([key, { threadId, at }]) => {
+        try {
+          const [channelId, root] = JSON.parse(key) as unknown[];
+          if (typeof channelId !== "string" || typeof root !== "string")
+            return [];
+          const name = channels.find((row) => row.id === channelId)?.name;
+          return [
+            {
+              key,
+              channelId,
+              ...(name ? { name } : {}),
+              ...(root === "channel" ? {} : { root }),
+              threadId,
+              ...(at === undefined ? {} : { at }),
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** A display name for a pubkey in the agent's community, if known. */
+  name(agentPubkey: string, pubkey: string) {
+    const snapshot = this.relay(agentPubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? (snapshot.session.names.resolve(pubkey) ??
+          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
+          undefined)
+      : undefined;
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const name =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
+  }
+  private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v4 added media_get.
-    return `buzz.codex.sessions.v4:${request.scope}:${request.agent.pubkey}`;
+    return `buzz.codex.sessions.v4:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
+    // Reinserted so the bounded set keeps the most recently used bindings.
+    delete entry.saved[key];
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
@@ -341,11 +440,22 @@ export class CodexRuntime {
       throw new Error(
         "Codex timers are not supported yet; use mentions or event watches.",
       );
-    if (!(await fromOwner(trigger.event, agent.owner))) {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    if (
+      !(await fromOwner(trigger.event, agent.owner, {
+        agent: agent.pubkey,
+        authority:
+          snapshot?.status === "ready"
+            ? snapshot.session.workflowAuthority
+            : undefined,
+        profiles:
+          snapshot?.status === "ready" ? snapshot.session.profiles : undefined,
+      }))
+    ) {
       delivery.ignored?.();
       return;
     }
-    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    delivery.signal.throwIfAborted();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
@@ -410,7 +520,7 @@ export class CodexRuntime {
     const entry = this.entry(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
-      lane = { tail: entry.after };
+      lane = { tail: entry.after, queued: 0 };
       entry.lanes.set(key, lane);
     }
     if (lane.active) {
@@ -423,7 +533,16 @@ export class CodexRuntime {
             request.failActivity("Codex was stopped");
             return;
           }
-          if (active.finished) {
+          // Steering cannot carry a model or effort, so a differing pick
+          // waits for this turn and runs as the next one. Everything after
+          // it queues too until the lane drains: steering would run later
+          // messages first.
+          if (
+            active.finished ||
+            lane.queued ||
+            (request.model && request.model !== active.model) ||
+            (request.effort && request.effort !== active.effort)
+          ) {
             this.start(request, text, key, lane, entry);
             return;
           }
@@ -495,9 +614,11 @@ export class CodexRuntime {
     entry: Entry,
   ) {
     const current = lane;
+    current.queued++;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
+        current.queued--;
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;
@@ -776,6 +897,8 @@ export class CodexRuntime {
         [request.effort, settings.effort].find(
           (level) => level && supported.includes(level),
         ) ?? selected.defaultReasoningEffort;
+      active.model = model;
+      active.effort = effort;
       const mcp = Object.fromEntries(
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [
@@ -860,6 +983,7 @@ export class CodexRuntime {
       this.save(request, entry, key, {
         threadId: started.thread.id,
         workspace,
+        at: Date.now(),
       });
       ready();
       this.status(agent.pubkey, key, "Working");

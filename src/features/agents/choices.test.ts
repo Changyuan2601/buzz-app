@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { createLocalAgents } from "./local";
 import { localAgentsFixture } from "./local-testing";
 import { createAgentLibrary } from "./library";
 import { createAgentChoices, templateAgentChoices } from "./choices";
@@ -205,6 +206,76 @@ it("revokes failed local evidence without dropping ready legacy candidates, then
   expect(choices.snapshot().identities).toEqual([]);
   stop();
   library.dispose();
+});
+
+it("reads the local list again from Retry and clears its error once a read succeeds", async () => {
+  // The error shape Agents reports when `app_agent_list` fails at startup.
+  const native = localAgentsFixture([], "error");
+  native.set({
+    status: "error",
+    error: "Could not read saved agent identities",
+  });
+  const bound = createLocalAgents();
+  bound.bind(native);
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [],
+  }));
+  const lifetime = new AbortController();
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: bound.agents,
+    archives: archiveFixture(),
+    signal: lifetime.signal,
+  });
+  try {
+    await library.queries.refresh();
+    expect(choices.snapshot()).toMatchObject({
+      status: "ready",
+      error: "Could not read saved agent identities",
+      identities: [],
+    });
+    expect(choices.snapshot().templates.complete).toBe(false);
+    // The read problem is resolved before Retry; only Retry reads again.
+    native.onRefresh(() => native.set({ status: "ready", agents: [agent] }));
+    await choices.refresh();
+    expect(native.reads()).toBe(1);
+    const state = choices.snapshot();
+    expect(state.error).toBeUndefined();
+    expect(state.identities).toEqual([
+      {
+        pubkey: agent.pubkey,
+        name: agent.name,
+        managed: true,
+        managedName: agent.name,
+      },
+    ]);
+    expect(state.templates).toMatchObject({
+      status: "ready",
+      complete: true,
+      pending: false,
+    });
+    expect(state.templates.error).toBeUndefined();
+    // Template refreshes read whichever source they use, and only that one.
+    await choices.refresh("templates");
+    expect(native.reads()).toBe(2);
+    const unavailable = localAgentsFixture([], "unavailable");
+    const legacyOnly = createAgentChoices({
+      scope,
+      library: library.queries,
+      native: unavailable,
+      archives: archiveFixture(),
+      signal: lifetime.signal,
+    });
+    await legacyOnly.refresh("templates");
+    expect(unavailable.reads()).toBe(0);
+    await legacyOnly.refresh(false);
+    expect(unavailable.reads()).toBe(1);
+  } finally {
+    lifetime.abort();
+    library.dispose();
+  }
 });
 
 it("uses legacy roster choices only on hosts without local agents", async () => {

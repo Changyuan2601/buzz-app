@@ -104,7 +104,11 @@ it("carries a verified mention through host handover into all three scopes witho
     undefined,
     local,
   );
-  identities.bind({ snapshot: service.local, subscribe: service.subscribe });
+  identities.bind({
+    snapshot: service.local,
+    subscribe: service.subscribe,
+    refresh: () => service.refresh(),
+  });
   const plugin = ctx.extend({ pluginOwner: { id: "test", revision: "one" } });
   let finish!: (outcome: WorkOutcome) => void;
   const done = new Promise<WorkOutcome>((resolve) => {

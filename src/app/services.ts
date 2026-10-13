@@ -82,7 +82,11 @@ export function createServices() {
     localActivity,
   );
   ctx.effect(() =>
-    localAgents.bind({ snapshot: agents.local, subscribe: agents.subscribe }),
+    localAgents.bind({
+      snapshot: agents.local,
+      subscribe: agents.subscribe,
+      refresh: () => agents.refresh(),
+    }),
   );
   const notifications = new NotificationsService(
     ctx,

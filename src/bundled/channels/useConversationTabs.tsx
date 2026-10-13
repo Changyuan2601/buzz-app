@@ -16,6 +16,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { Panels } from "../../features/panels/service";
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelCard } from "../../features/panels/PanelCard";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import {
   BrowserIcon,
   ChatCircleIcon,
@@ -24,7 +25,7 @@ import {
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
 import { ConversationTab } from "./ConversationTab";
 import { TabSlot, useTabNodes } from "./TabHosts";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelPanels } from "./useChannelPanels";
 import {
@@ -153,7 +154,15 @@ export function useConversationTabs({
                 entry.panel === next.panel && entry.target === next.target,
             )
           : undefined;
-      const selected = existing || next;
+      // A link from another conversation retargets the open tab's context.
+      const retarget =
+        existing &&
+        next &&
+        (existing.channelId !== next.channelId ||
+          existing.rootId !== next.rootId)
+          ? next
+          : undefined;
+      const selected = retarget || existing || next;
       // Timeline actions replace transient details, never retained channel tools.
       const retained = append
         ? entryList.current
@@ -162,8 +171,11 @@ export function useConversationTabs({
               entry.channelContext &&
               (!selected || panelTabId(entry) !== panelTabId(selected)),
           );
-      const updated =
-        selected && !existing ? [...retained, selected] : retained;
+      const updated = retarget
+        ? retained.map((entry) => (entry === existing ? retarget : entry))
+        : selected && !existing
+          ? [...retained, selected]
+          : retained;
       entryList.current = updated;
       setEntries(updated);
       selectOpening(selected);
@@ -199,6 +211,7 @@ export function useConversationTabs({
   };
   const panelContext = (entry: Opening) => ({
     channelId: entry.channelId,
+    ...(entry.rootId && { rootId: entry.rootId }),
     canOpen: (target: string) => !!panels.resolve(target),
     open: (target: string) => {
       if (!panelActive(entry)) return false;
@@ -309,6 +322,17 @@ export function useConversationTabs({
     notify();
   };
   const [announcement, setAnnouncement] = useState("");
+  // Place the tab and focus it where it landed in the same task. Reinserting
+  // the tab's element blurs it, and a frame-deferred refocus would take focus
+  // back from wherever the user has since moved it.
+  const placeTab = (id: string, pane: TabPane, index: number) => {
+    flushSync(() => tabState.moveTab(id, pane, index));
+    document
+      .querySelector<HTMLElement>(
+        `[role="tab"][data-tab-value="${CSS.escape(id)}"]`,
+      )
+      ?.focus({ preventScroll: true });
+  };
   // One keyboard gesture both reorders and crosses panes at an edge.
   const moveBy = (tab: Tab, delta: -1 | 1) => {
     if (!currentVisit() || tab.kind !== "thread") return;
@@ -326,18 +350,11 @@ export function useConversationTabs({
       target = pane === "main" ? "side" : "main";
       position = target === "side" ? 0 : mainTabs.length;
     } else if (position < 0 || position >= order.length) return;
-    tabState.moveTab(tab.id, target, position);
+    placeTab(tab.id, target, position);
     setAnnouncement(
       crossing
         ? `Moved to the ${target === "main" ? "main" : "side"} pane.`
         : `Moved to position ${position + 1} of ${order.length}.`,
-    );
-    requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLElement>(
-          `[role="tab"][data-tab-value="${CSS.escape(tab.id)}"]`,
-        )
-        ?.focus({ preventScroll: true }),
     );
   };
   const drag = useTabDrag({
@@ -366,15 +383,8 @@ export function useConversationTabs({
       const order = tabState.tabs.filter((tab) => tabPane(tab) === pane);
       if (moving && tabPane(moving) === pane && order.indexOf(moving) === index)
         return;
-      tabState.moveTab(id, pane, index);
+      placeTab(id, pane, index);
       setAnnouncement(`Moved to position ${index + 1} in the ${pane} pane.`);
-      requestAnimationFrame(() =>
-        document
-          .querySelector<HTMLElement>(
-            `[role="tab"][data-tab-value="${CSS.escape(id)}"]`,
-          )
-          ?.focus({ preventScroll: true }),
-      );
     },
   });
   const openConversationThread = (
@@ -394,7 +404,11 @@ export function useConversationTabs({
       mainPane ? undefined : "side",
     );
   };
-  const openConversationLink = (channelId: string, url: string) => {
+  const openConversationLink = (
+    channelId: string,
+    url: string,
+    origin?: MessageLinkOrigin,
+  ) => {
     const connection = relay.snapshot();
     if (
       !active() ||
@@ -420,7 +434,15 @@ export function useConversationTabs({
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      open({ channelId, panel: candidate, target: url }, true);
+      open(
+        {
+          channelId,
+          ...(origin && { rootId: origin.rootId }),
+          panel: candidate,
+          target: url,
+        },
+        true,
+      );
       return true;
     }
     return openLink(url);
@@ -497,7 +519,9 @@ export function useConversationTabs({
             session={queries}
             scope={scope}
             extensions={extensions}
-            openLink={(url) => openConversationLink(target.id, url)}
+            openLink={(url, origin) =>
+              openConversationLink(target.id, url, origin)
+            }
             canOpenLink={canOpenLink}
             openThread={(id, root, intent) =>
               openConversationThread(target.id, id, root, intent)
@@ -579,7 +603,9 @@ export function useConversationTabs({
               onDifferentThread={(requested, kept) =>
                 tabState.divertThread(tab.id, requested, kept)
               }
-              openLink={(url) => openConversationLink(target.id, url)}
+              openLink={(url, origin) =>
+                openConversationLink(target.id, url, origin)
+              }
               canOpenLink={canOpenLink}
               openThread={(id, root, intent) =>
                 openConversationThread(target.id, id, root, intent)

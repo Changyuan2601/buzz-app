@@ -6,11 +6,13 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 
@@ -34,6 +36,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 const agent = (config: Config = DEFAULT_CONFIG) =>
@@ -49,10 +52,57 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 // browser drops it, so the focus tests also check for no `disabled`.
 
 /** Applies the plugin to a stand-in context; sign-in runs until killed. */
-function applied({ loggedIn = true } = {}) {
+function applied({
+  loggedIn = true,
+  files = {},
+}: {
+  loggedIn?: boolean;
+  files?: Record<string, string>;
+} = {}) {
   let type: AgentType<Config> | undefined;
-  const spawn = vi.fn(async (_id: string, options: HostProcessOptions = {}) => {
+  const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     const args = (options.args ?? []).join(" ");
+    if (id === "find") {
+      // Session files in the project folder that mention the pattern.
+      const project = options.cwd?.split("/").pop();
+      const [pattern = ""] = options.args ?? [];
+      const found = Object.keys(files).filter(
+        (path) =>
+          path.startsWith(`./${project}/`) && files[path]?.includes(pattern),
+      );
+      queueMicrotask(() =>
+        options.onStdout?.(
+          found.map((path) => `./${path.split("/").pop()}\n`).join(""),
+        ),
+      );
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number>((resolve) =>
+          setTimeout(() => resolve(found.length ? 0 : 1), 0),
+        ),
+      };
+    }
+    if (id === "workspace" || id === "read") {
+      const file = files[args];
+      queueMicrotask(() =>
+        id === "workspace"
+          ? options.onStdout?.("/Users/me/.buzz\n")
+          : file === undefined
+            ? options.onStderr?.(`base64: ${args}: No such file or directory`)
+            : options.onStdout?.(btoa(file)),
+      );
+      const code = id === "read" && file === undefined ? 1 : 0;
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number>((resolve) =>
+          setTimeout(() => resolve(code), 0),
+        ),
+      };
+    }
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
       if (args === "auth login") kill = () => resolve(null);
@@ -90,7 +140,7 @@ function applied({ loggedIn = true } = {}) {
   apply(ctx as never);
   return { type, spawn };
 }
-function installed(options?: { loggedIn?: boolean }) {
+function installed(options?: Parameters<typeof applied>[0]) {
   const { type, spawn } = applied(options);
   if (!type) throw new Error("no type registered");
   return { type, spawn };
@@ -217,6 +267,144 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   await user.click(saveButton);
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("lists saved conversations and shows one's transcript, or that it is gone", async () => {
+  const thread = `channel/${"e".repeat(64)}`;
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: {
+        channel: { id: "deleted", seen: 0, at: 1 },
+        [thread]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const transcript = [
+    JSON.stringify({
+      type: "user",
+      uuid: "u1",
+      timestamp: "2026-10-09T10:00:00Z",
+      message: {
+        content:
+          "<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>",
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      uuid: "u2",
+      timestamp: "2026-10-09T10:00:05Z",
+      message: { content: [{ type: "text", text: "Two files." }] },
+    }),
+  ].join("\n");
+  const Claude = tab(
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
+    0,
+  );
+  render(
+    <PanelSubviewHost close={vi.fn()}>
+      <Claude agent={agent()} save={vi.fn()} />
+    </PanelSubviewHost>,
+  );
+  const user = userEvent.setup();
+  const rows = screen.getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("channel · thread eeeeeeee"),
+    expect.stringContaining("channel · channel"),
+  ]);
+  const viewButton = (index: number) =>
+    screen.getAllByRole("button", { name: "View transcript" })[
+      index
+    ] as HTMLElement;
+  const opened = viewButton(0);
+  await user.click(opened);
+  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(screen.getByText("Two files.")).toBeVisible();
+  // The transcript covers the tab, and Back returns focus to what opened it.
+  const back = screen.getByRole("button", { name: "Back to profile" });
+  expect(back).toHaveFocus();
+  await user.click(back);
+  expect(opened).toHaveFocus();
+  await user.click(viewButton(1));
+  expect(
+    await screen.findByText(/no transcript for this conversation/),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("sets the conversation the profile was opened from apart from the recent ones", async () => {
+  const root = "e".repeat(64);
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: {
+        channel: { id: "channel-session", seen: 0, at: 1 },
+        [`channel/${root}`]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const Claude = tab(installed().type, 0);
+  const user = userEvent.setup();
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  const opened = screen.getByRole("region", { name: "This thread" });
+  expect(screen.getAllByRole("listitem").map((row) => row.textContent)).toEqual(
+    [expect.stringContaining("channel · channel")],
+  );
+  await user.click(
+    within(opened).getByRole("button", { name: "View transcript" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "channel · thread eeeeeeee" }),
+  ).toBeVisible();
+  cleanup();
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "elsewhere" }}
+    />,
+  );
+  const empty = screen.getByRole("region", { name: "This channel" });
+  expect(empty).toHaveTextContent("Looking for a Claude session…");
+  await waitFor(() =>
+    expect(empty).toHaveTextContent("No Claude session here yet"),
+  );
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+});
+
+it("finds the thread's session another build of the app started", async () => {
+  const root = "f".repeat(64);
+  const started = JSON.stringify({
+    type: "user",
+    uuid: "u1",
+    timestamp: "2026-10-09T10:00:00Z",
+    message: {
+      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
+    },
+  });
+  const Claude = tab(
+    installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
+    0,
+  );
+  const user = userEvent.setup();
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  const opened = screen.getByRole("region", { name: "This thread" });
+  await user.click(
+    await within(opened).findByRole("button", { name: "View transcript" }),
+  );
+  expect(await screen.findByText("what changed?")).toBeVisible();
 });
 
 it("starts a new agent from a model and instructions, keeping the rest", async () => {

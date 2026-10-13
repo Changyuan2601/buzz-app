@@ -43,7 +43,7 @@ type Props = {
   pending?: CreateChannelInput | undefined;
   finalFocus?: RefObject<HTMLElement | null> | undefined;
   session: RelaySession;
-  /** Supplies the teams a template adds. */
+  /** Supplies the agents and teams a template adds. */
   agents?: Agents | undefined;
   groups: Groups | undefined;
   destinations?: readonly (Pick<Group, "id" | "name"> & { icon?: string })[];
@@ -108,7 +108,7 @@ function OpenCreateChannelDialog({
   // A template deleted meanwhile, here or in another window, is no choice.
   const template = templates.find((item) => item.id === chosenTemplate);
   const templateId = template?.id ?? "";
-  // The team members that are the owner's agents in this community.
+  // The template's agents and team members that are the owner's agents here.
   const agentNames = new Map(
     (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
   );

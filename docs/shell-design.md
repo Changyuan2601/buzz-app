@@ -60,9 +60,11 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Me, Messages, Agents, and desktop Settings share an animated header toggle; hiding
-  the sidebar preserves its mounted state and saved width. Reduced motion disables
-  the transition. Other desktop pages retain the visible sidebar.
+  Me, Messages, Agents, desktop Settings, and any selected primary page share an
+  animated header toggle; hiding the sidebar preserves its mounted state and saved
+  width. Pages without a Channel or Me-specific label use generic "Hide sidebar" /
+  "Show sidebar" labels. Reduced motion disables the transition. Non-primary
+  desktop destinations retain the visible sidebar.
   The same header keeps history and account/search actions, plus a centered
   navigation strip and full-page toolbar icons. Real control widths, native insets
   and text scale determine whether header pages fit without overlap. Otherwise
@@ -72,11 +74,20 @@ semantic tokens, UI authoring rules and the local component reference.
   tab. Each opening carries focus intent: topbar activation suppresses destination
   autofocus, while explicit New conversation, sidebar and deep-link openings keep
   their content focus. This intent is not saved in addresses or history; retry
-  preserves it for the same opening. The selected page is a separately focusable,
+  preserves it for the same opening. A focused Retry navigation control hands
+  focus to main once retry removes it, even if reconnect temporarily remounts
+  the shell. A new opening or focus elsewhere cancels this
+  handoff. The selected page is a separately focusable,
   labelled tabpanel. Toolbar
   and overflow destinations remain native buttons using `aria-current` and
-  focus main content on selection. Header pages never become companion launchers,
-  and only the exact current page is selected.
+  focus main content on selection. Header pages never become companion launchers.
+  Independent header pages retain exact destination selection. Messages stays
+  selected for registered sidebar/default-placement pages, including non-primary
+  pages reached through search or links; their sidebar selection and route remain
+  exact. Its tab labels the active child panel, and activating Messages from a
+  child returns to the existing conversation view. More pages indicates this
+  containing area with `aria-current="true"` (not `page`). Me and Settings remain
+  separate; missing/unregistered destinations do not borrow Messages selection.
   The shell owns one joined Panel around navigation and page content, with a
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout

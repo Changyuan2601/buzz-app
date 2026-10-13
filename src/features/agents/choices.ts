@@ -181,6 +181,9 @@ export function createAgentChoices({
     source === "templates"
       ? !native || native.snapshot().status === "unavailable"
       : source;
+  // Booleans only toggle the legacy inventory; local agents are always chosen.
+  const usesLocal = (source: SelectionSource) =>
+    !!native && (source !== "templates" || !usesLegacy(source));
   return Object.freeze({
     snapshot,
     subscribe(listener: () => void) {
@@ -213,6 +216,7 @@ export function createAgentChoices({
       if (signal.aborted) return;
       await Promise.all([
         usesLegacy(source) ? library.refresh() : undefined,
+        usesLocal(source) ? native?.refresh() : undefined,
         // Archive reads stay lazy; templates always need fresh evidence.
         source === "templates" || archives?.snapshot().status !== "idle"
           ? archives?.refresh()

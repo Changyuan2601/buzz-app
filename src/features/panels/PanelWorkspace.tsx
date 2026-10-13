@@ -64,6 +64,7 @@ export function PanelWorkspace({
   main = false,
   label = "Panel tabs",
   focusOnMount = true,
+  adoptSelection,
   drag,
 }: {
   drag?: TabDragHost | undefined;
@@ -80,6 +81,8 @@ export function PanelWorkspace({
   label?: string;
   /** Restoring a channel visit leaves focus with its main conversation. */
   focusOnMount?: boolean;
+  /** A new value adopts the current selection without moving focus. */
+  adoptSelection?: unknown;
 }) {
   const prefix = useId();
   const panelId = (id: string) => `${prefix}-${id}`;
@@ -183,7 +186,13 @@ export function PanelWorkspace({
   const previous = useRef<string>(focusOnMount ? undefined : selected);
   const instance = items.find((item) => item.id === selected)?.instance;
   const previousInstance = useRef<object>(focusOnMount ? undefined : instance);
+  const adopted = useRef(adoptSelection);
   useLayoutEffect(() => {
+    if (adopted.current !== adoptSelection) {
+      adopted.current = adoptSelection;
+      previous.current = selected;
+      previousInstance.current = instance;
+    }
     if (
       previous.current !== selected ||
       previousInstance.current !== instance ||

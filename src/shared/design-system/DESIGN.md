@@ -1447,6 +1447,12 @@ while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
+Messages represents the containing area for registered sidebar/default-placement
+pages, while their sidebar selection and route remain exact. Its tab stays linked
+to the active child panel. The shell opts into Tabs' `onReselect` to return from a
+child to Messages without changing ordinary active-tab behavior elsewhere. More
+pages marks that containing area with `aria-current="true"`, reserving `page` for
+an exact destination. Settings and independent header pages stay separate.
 
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.

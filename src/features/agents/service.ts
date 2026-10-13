@@ -4,6 +4,8 @@ import {
   type WorkOutcome,
 } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
+import { workflowMentionOwner } from "../relay/workflow-attribution";
+import type { ProfileQueries } from "../relay/profile-directory";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -41,7 +43,12 @@ import {
   type NipOaAuthorization,
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
-import { newer, type EventData, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  newer,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
@@ -143,8 +150,17 @@ export type AgentChange<Config = unknown> = Readonly<{
 export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
 /** What each of a type's settings tabs receives. A type writes only its own
  * config; the app owns the name and attention. */
+/** The message's conversation a profile was opened from: its channel, and its
+ * thread root when the message had one. Which session that is stays the type's
+ * own rule. */
+export type AgentConversation = Readonly<{
+  channelId: string;
+  rootId?: string;
+}>;
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
+  /** Where the agent was opened from, when it was opened from a conversation. */
+  conversation?: AgentConversation;
   /** Replaces the type's whole config. Spread `agent.config` to change one
    * field, or tabs that each save a part will erase each other's fields. A
    * hosted type's tabs save to its provider instead; for them this rejects. */
@@ -503,13 +519,41 @@ const bounded = (set: Set<string>, id: string) => {
   set.add(id);
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
-/** Whether an agent answers `event`: its owner's, or one by another agent the
- * owner attested (NIP-OA). Both bundled types answer nobody else. */
+/** Owner prompts, attested siblings, and verified relay workflow mentions
+ * delegated by the owner or a profile-verified sibling to this particular agent. */
 export async function fromOwner(
-  event: Pick<RelayEvent, "pubkey" | "kind" | "created_at" | "tags">,
+  event: EventData,
   owner: string,
+  workflow?: {
+    authority: string | undefined;
+    agent: string;
+    profiles?: Pick<ProfileQueries, "ensure" | "event"> | undefined;
+  },
 ) {
-  return event.pubkey === owner || (await attestedOwner(event)) === owner;
+  if (event.pubkey === owner || (await attestedOwner(event)) === owner)
+    return true;
+  const creator =
+    workflow && workflowMentionOwner(event, workflow.authority, workflow.agent);
+  if (!creator) return false;
+  if (creator === owner) return true;
+  const profiles = workflow?.profiles;
+  if (!profiles?.event) return false;
+  try {
+    await profiles.ensure([creator]);
+    const profile = profiles.event(creator);
+    return (
+      !!profile &&
+      hasEventProof(profile) &&
+      profile.kind === 0 &&
+      profile.pubkey === creator &&
+      (await attestedOwner(profile)) === owner &&
+      profiles.event(creator) === profile
+    );
+  } catch {
+    // Missing or failed profile reads are not ownership verdicts; a later
+    // mention can retry through the session's existing profile directory.
+    return false;
+  }
 }
 
 /** The model and effort the triggering message asks of this agent. Only the
@@ -852,13 +896,10 @@ export class AgentsService extends Service implements Agents {
     if (!name.trim()) throw new Error("Name the agent");
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
-      const agent = await this.provision(type, remote, name.trim());
-      if (!picture) return agent;
-      // It exists now, so a picture that fails to save does not fail it.
-      await this.save(agent.pubkey, { picture }).catch((error: unknown) =>
-        console.warn(`Agent ${agent.name} picture was not saved`, error),
-      );
-      return this.find(agent.pubkey) ?? agent;
+      const listed = recordPicture(picture);
+      if (picture && !listed)
+        console.warn(`Agent ${name.trim()} picture is not an HTTPS image URL`);
+      return this.provision(type, remote, name.trim(), listed);
     }
     return this.add(
       type,
@@ -873,7 +914,12 @@ export class AgentsService extends Service implements Agents {
 
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */
-  private async provision(type: string, remote: RemoteAgentType, name: string) {
+  private async provision(
+    type: string,
+    remote: RemoteAgentType,
+    name: string,
+    picture: string | undefined,
+  ) {
     const binding = this.selectedBinding();
     const community = wssOf(binding.origin);
     const { pubkey } = await remote.provision({
@@ -891,7 +937,14 @@ export class AgentsService extends Service implements Agents {
       throw new Error("The provider returned a key that is already in use");
     this.writeUnfinished([
       ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
-      { pubkey, type, name, relay: community, owner: binding.viewer },
+      {
+        pubkey,
+        type,
+        name,
+        relay: community,
+        owner: binding.viewer,
+        ...(picture ? { picture } : {}),
+      },
     ]);
     return this.finish(pubkey);
   }
@@ -920,15 +973,30 @@ export class AgentsService extends Service implements Agents {
       auth,
       signal,
     });
+    const { picture } = setup;
     await this.writeListing(origin, binding, {
       pubkey,
       name: setup.name,
+      ...(picture ? { picture } : {}),
       runtime: setup.type,
       prior: this.rowOf(origin, pubkey)?.prior,
     });
     this.writeUnfinished(this.unfinished.filter((entry) => entry !== setup));
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
+    // Listed with its picture either way; its own profile is the provider's.
+    if (picture)
+      await remote
+        .profile({
+          pubkey,
+          community: setup.relay,
+          name: setup.name,
+          picture,
+          signal,
+        })
+        .catch((error: unknown) =>
+          console.warn(`Agent ${setup.name} picture was not published`, error),
+        );
     return agent;
   }
 
@@ -1370,6 +1438,7 @@ export class AgentsService extends Service implements Agents {
           this.show({
             pubkey: setup.pubkey,
             name: setup.name,
+            ...(setup.picture ? { picture: setup.picture } : {}),
             type: setup.type,
             owner: setup.owner,
             relay: setup.relay,
@@ -1487,8 +1556,8 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Reads the agent list from native. Every change is made there first and
-   * then read back here, so the list has one source. */
-  private async refresh() {
+   * then read back here, so the list has one source; Retry reads it again. */
+  async refresh() {
     if (!this.native) return;
     const turn = ++this.listed;
     try {
@@ -1496,7 +1565,9 @@ export class AgentsService extends Service implements Agents {
       // A newer list is on its way; this one may predate a change.
       if (turn !== this.listed) return;
       this.identities = identities;
-      this.state = Object.freeze({ ...this.state, status: "ready" });
+      // A read that succeeds ends the failure the last one reported.
+      const { error: _, ...state } = this.state;
+      this.state = Object.freeze({ ...state, status: "ready" });
       // Settings whose agent is gone do nothing.
       const live = new Set(
         identities
