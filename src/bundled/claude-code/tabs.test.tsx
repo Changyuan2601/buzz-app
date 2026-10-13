@@ -496,7 +496,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   const autoMemory = screen.getByRole("switch", {
     name: "Claude auto memory",
   });
-  expect(autoMemory).not.toBeChecked();
+  expect(autoMemory).toBeChecked();
   expect(autoMemory).toHaveAccessibleDescription(
     "Let Claude write its own auto memory in addition to Buzz memory. CLAUDE.md works either way.",
   );
@@ -556,12 +556,12 @@ it("preserves native behavior for invalid defaults and keeps explicit agent mode
   const defaults = new ClaudeDefaults(localStorage);
   expect(defaults.resolve(DEFAULT_CONFIG)).toEqual({
     ...DEFAULT_CONFIG,
-    disableAutoMemory: true,
+    disableAutoMemory: false,
   });
-  defaults.save({ model: "sonnet", autoMemory: true });
+  defaults.save({ model: "sonnet", autoMemory: false });
   const inherited = { ...DEFAULT_CONFIG };
   expect(defaults.resolve(inherited).model).toBe("sonnet");
-  expect(defaults.resolve(inherited).disableAutoMemory).toBe(false);
+  expect(defaults.resolve(inherited).disableAutoMemory).toBe(true);
   expect(inherited).toEqual(DEFAULT_CONFIG);
   expect(defaults.resolve({ ...DEFAULT_CONFIG, model: "opus" }).model).toBe(
     "opus",
@@ -572,7 +572,7 @@ it("preserves native behavior for invalid defaults and keeps explicit agent mode
   );
   expect(
     new ClaudeDefaults(localStorage).resolve(DEFAULT_CONFIG).disableAutoMemory,
-  ).toBe(true);
+  ).toBe(false);
 });
 
 it("can cancel sign-in and try again", async () => {
