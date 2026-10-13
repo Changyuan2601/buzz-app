@@ -202,7 +202,8 @@ async fn chat_completion(
     let response = client
         .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
         .bearer_auth("mesh-local")
-        .json(&serde_json::json!({"model": model, "messages": messages, "stream": false}))
+        // Chat asks for direct answers: hidden reasoning can outlast Mesh's route budget.
+        .json(&serde_json::json!({"model": model, "messages": messages, "stream": false, "reasoning_effort": "none"}))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -395,6 +396,7 @@ mod tests {
         let request = server.await.unwrap();
         assert!(request.starts_with("POST /v1/chat/completions"));
         assert!(request.contains(r#""stream":false"#));
+        assert!(request.contains(r#""reasoning_effort":"none""#));
         assert!(request.contains(r#""content":"when?""#));
     }
 

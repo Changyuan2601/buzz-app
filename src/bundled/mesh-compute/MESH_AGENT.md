@@ -24,7 +24,9 @@ workspace (default `~/.buzz`).
 ## Modes (per agent, Settings)
 
 - **Chat:** no goose harness or tools. One mesh chat completion is posted as
-  a direct reply; intended for small models.
+  a direct reply; intended for small models. Native Chat requests specify
+  `reasoning_effort: "none"` so thinking-capable models answer directly rather
+  than spend Mesh's route budget on hidden reasoning.
   An owner-configured event watch with exactly `author == "<64-character hex public key>"`
   may also follow that sender's messages, including thread replies. Set the watch's
   channels to where it should listen. Names and Interest instructions do not filter
