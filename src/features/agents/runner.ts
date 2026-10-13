@@ -57,6 +57,9 @@ import { type Pulses, pulseTyping } from "./typing";
 const QUEUE_LIMIT = 32;
 /** The spec asks for at least the agent's 2,048 most recent events. */
 const SEEN_LIMIT = 2_048;
+/** Watched events each agent keeps while their channel's roster is only the one
+ * saved on disk, until the relay confirms it. */
+const HELD_LIMIT = 256;
 /** Runs per agent per minute; bounds two agents that answer each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
@@ -139,6 +142,9 @@ type Runner = {
   readonly typing: Pulses;
   /** A provider/config transition owns the idle runner and pauses its queue. */
   transitioning: boolean;
+  /** Watched events whose channel roster is not confirmed yet, by id: they are
+   * matched again once it is (see `RunnerHost.member`). */
+  readonly held: Map<string, { event: RelayEvent; channelId?: string }>;
   /** Whether native may hold the agent for this copy; true at first, since
    * native outlives a page reload. */
   mayHold: boolean;
@@ -176,8 +182,9 @@ export type RunnerHost = {
   ready(pubkey: string): Agent | undefined;
   /** A running agent, in any community. */
   agent(pubkey: string): Agent | undefined;
-  /** Whether the agent is in the event's channel. */
-  member(agent: Agent, event: RelayEvent): boolean;
+  /** Whether the agent is in the event's channel, or undefined while its
+   * roster is only the one saved on disk and the relay has not confirmed it. */
+  member(agent: Agent, event: RelayEvent): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** The partition its community's activity is kept under, while live. */
@@ -359,6 +366,7 @@ export class AgentRunners {
       working: 0,
       typing: new Map(),
       transitioning: false,
+      held: new Map(),
       mayHold: true,
       epoch: 0,
       lanes: new Lanes(),
@@ -369,6 +377,7 @@ export class AgentRunners {
   private retire(runner: Runner) {
     this.host.activity.clear(undefined, runner.pubkey);
     runner.queue.length = 0;
+    runner.held.clear();
     runner.controller.abort();
     runner.lanes.stop();
   }
@@ -392,12 +401,18 @@ export class AgentRunners {
     return watches;
   }
 
-  /** Gives a community's live events to the agents in it. */
-  dispatch(batch: LiveBatch, heard: (agent: Agent) => boolean) {
+  /** Gives a community's live events, and replayed ones from `since` on, to
+   * the agents in it. */
+  dispatch(
+    batch: LiveBatch,
+    heard: (agent: Agent) => boolean,
+    since: number,
+  ) {
     for (const runner of this.runners.values()) {
       const agent = this.host.ready(runner.pubkey);
       if (!agent || !heard(agent) || !runner.type?.run) continue;
       for (const event of batch.events) {
+        if (batch.replay && event.created_at < since) continue;
         if (runner.seen.has(event.id)) continue;
         bounded(runner.seen, event.id);
         // An agent never hears itself; its own events keep reactions to them
@@ -406,24 +421,52 @@ export class AgentRunners {
           bounded(runner.wrote, event.id);
           continue;
         }
-        for (const trigger of this.heard(runner, agent, event)) {
-          const job = {
-            trigger,
-            ...(batch.channelId ? { channelId: batch.channelId } : {}),
-            ...(trigger.type === "watch"
-              ? {
-                  matched: {
-                    object: agent.attention[trigger.slug] as AttentionObject,
-                    epoch: runner.epoch,
-                  },
-                }
-              : {}),
-          };
-          if (trigger.type === "watch" && trigger.watch.classifier)
-            this.classified(runner, agent, { ...job, trigger });
-          else this.enqueue(runner, job);
-        }
+        this.deliver(runner, agent, event, batch.channelId);
       }
+    }
+  }
+  /** Matches the held events of a community's agents again, as its rosters
+   * change: one now confirmed wakes the watches it matches, or none. */
+  releaseHeld(heard: (agent: Agent) => boolean) {
+    for (const runner of this.runners.values()) {
+      if (!runner.held.size) continue;
+      const agent = this.host.ready(runner.pubkey);
+      if (!agent || !heard(agent)) continue;
+      for (const [id, { event, channelId }] of [...runner.held]) {
+        runner.held.delete(id);
+        this.deliver(runner, agent, event, channelId);
+      }
+    }
+  }
+  private deliver(
+    runner: Runner,
+    agent: Agent,
+    event: RelayEvent,
+    channelId: string | undefined,
+  ) {
+    const triggers = this.heard(runner, agent, event);
+    if (triggers === "held") {
+      runner.held.set(event.id, { event, ...(channelId ? { channelId } : {}) });
+      if (runner.held.size > HELD_LIMIT)
+        runner.held.delete(runner.held.keys().next().value as string);
+      return;
+    }
+    for (const trigger of triggers) {
+      const job = {
+        trigger,
+        ...(channelId ? { channelId } : {}),
+        ...(trigger.type === "watch"
+          ? {
+              matched: {
+                object: agent.attention[trigger.slug] as AttentionObject,
+                epoch: runner.epoch,
+              },
+            }
+          : {}),
+      };
+      if (trigger.type === "watch" && trigger.watch.classifier)
+        this.classified(runner, agent, { ...job, trigger });
+      else this.enqueue(runner, job);
     }
   }
   /** Runs a matched watch's classifier, then queues the event if it passes.
@@ -503,7 +546,13 @@ export class AgentRunners {
       }
     })();
   }
-  private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
+  /** What `event` wakes in the agent, or "held" while a watch it matches waits
+   * for its channel's roster to be confirmed. */
+  private heard(
+    runner: Runner,
+    agent: Agent,
+    event: RelayEvent,
+  ): Trigger[] | "held" {
     const wrote = (id: string) => runner.wrote.has(id);
     // Another of the owner's agents wakes it only by naming it, wherever: were a
     // watch enough, two agents replying to each other would never stop. The
@@ -528,10 +577,20 @@ export class AgentRunners {
       return CHAT_KINDS.includes(event.kind)
         ? [{ type: "mention", event }]
         : [];
-    if (!agent.attentionEnabled || !this.host.member(agent, event)) return [];
-    return this.watches(runner, agent)
-      .filter(({ watch, filter }) => watchMatches(watch, event, filter))
-      .map(({ filter: _, ...match }) => ({ type: "watch", event, ...match }));
+    if (!agent.attentionEnabled) return [];
+    const matches = this.watches(runner, agent).filter(({ watch, filter }) =>
+      watchMatches(watch, event, filter),
+    );
+    if (!matches.length) return [];
+    const member = this.host.member(agent, event);
+    if (member === undefined) return "held";
+    return member
+      ? matches.map(({ filter: _, ...match }) => ({
+          type: "watch",
+          event,
+          ...match,
+        }))
+      : [];
   }
   /** The job as it should run now, or undefined when it should not run: a
    * watch's event is matched again against the agent's current attention, so

@@ -2216,20 +2216,32 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
-   * connection recovers, which happens within the same session. */
+   * connection recovers, which happens within the same session. A subscription
+   * that comes back, after a reconnect or a failed route, first sends its
+   * recent history again: what in it is new since this listener started was
+   * missed while it was down, and is delivered now (`seen` drops the rest).
+   * Older history is catch-up's, not replay's. */
   private listen(session: RelaySession, origin: string) {
     let connected = session.live.snapshot().status === "connected";
-    const stopEvents = session.subscribeLive((batch) =>
-      this.runners.dispatch(batch, (agent) => originOf(agent.relay) === origin),
+    const since = Math.floor(Date.now() / 1000);
+    const heard = (agent: Agent) => originOf(agent.relay) === origin;
+    const stopEvents = session.subscribeLive(
+      (batch) => this.runners.dispatch(batch, heard, since),
+      { replay: true },
     );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
       if (now && !connected) this.sync();
       connected = now;
     });
+    // A roster the relay confirms decides the events held for it.
+    const stopRosters = session.channels.subscribeList?.(() =>
+      this.runners.releaseHeld(heard),
+    );
     return () => {
       stopEvents();
       stopStatus();
+      stopRosters?.();
     };
   }
 
@@ -2380,9 +2392,13 @@ export class AgentsService extends Service implements Agents {
   /** Whether the agent is in the event's channel, by its relay-signed roster.
    * The stream is the owner's, so a watch, even of "all", sees only what the
    * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. */
-  private member(agent: Agent, event: RelayEvent) {
-    return !!this.channelOf(agent, event)?.members?.includes(agent.pubkey);
+   * unknown, wakes no watch. A roster only loaded from disk decides nothing
+   * (undefined): the agent may have been removed or added since it was saved,
+   * so the event waits until the relay confirms it. */
+  private member(agent: Agent, event: RelayEvent): boolean | undefined {
+    const summary = this.channelOf(agent, event);
+    if (summary?.cached) return undefined;
+    return !!summary?.members?.includes(agent.pubkey);
   }
   /** Whether the event's channel is a DM of exactly the agent and one other,
    * by the same roster. A group DM, or one whose roster is unknown, is not. */
