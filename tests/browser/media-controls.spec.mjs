@@ -215,17 +215,17 @@ test("mute glides the volume knob and keyboard changes stay immediate", async ({
     .last();
   await expect(volume).toHaveValue("1");
   // Hold the actual CSS transition at its midpoint instead of racing its duration.
+  // Pause it in the task that commits the new transform: Linux WebKit starts the
+  // transition when style resolves, so a frame that lags past its duration
+  // delivers transitionrun after it has already finished with nothing to pause.
   await knob.evaluate((el) => {
-    el.addEventListener(
-      "transitionrun",
-      () => {
-        for (const animation of el.getAnimations()) {
-          animation.pause();
-          animation.currentTime = animation.effect.getTiming().duration / 2;
-        }
-      },
-      { once: true },
-    );
+    new MutationObserver((_, observer) => {
+      observer.disconnect();
+      for (const animation of el.getAnimations()) {
+        animation.pause();
+        animation.currentTime = animation.effect.getTiming().duration / 2;
+      }
+    }).observe(el, { attributes: true, attributeFilter: ["style"] });
   });
   try {
     await popup
