@@ -132,7 +132,8 @@ export function createAgentClient(
     let response: HostResponse;
     try {
       response = await host.request({
-        url: `${oauthTarget()}/v3/beekeeper/${path}`,
+        // Beekeeper action names are relative; account routes are absolute.
+        url: `${oauthTarget()}${path.startsWith("/") ? path : `/v3/beekeeper/${path}`}`,
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -308,14 +309,35 @@ export function createAgentClient(
     );
     const status = resultStatus(result.status);
     if ([1, "ACTIVE"].includes(status)) return;
-    throw new Error(
+    const message =
       ATTEST_FAILURES.find(([codes]) => codes.includes(status))?.[1] ??
-        `Agent setup was not confirmed (${
-          typeof result.status === "string" || typeof result.status === "number"
-            ? result.status
-            : "no status"
-        }). Retry setup in Agents.`,
+      `Agent setup was not confirmed (${
+        typeof result.status === "string" || typeof result.status === "number"
+          ? result.status
+          : "no status"
+      }). Retry setup in Agents.`;
+    throw new Error(
+      [10, "BOUND", 11, "AUTHORIZATION"].includes(status)
+        ? `${message}${await linkedIdentity(signal)}`
+        : message,
     );
+  }
+  /** Names the Buzz identity this account is linked to, for a binding refusal. */
+  async function linkedIdentity(signal: AbortSignal): Promise<string> {
+    try {
+      const { identity } = await request(
+        "/v1/buzz/nostr-identities/current",
+        {},
+        signal,
+      );
+      const npub = (identity as { npub?: unknown } | undefined)?.npub;
+      return typeof npub === "string" &&
+        /^npub1[02-9ac-hj-np-z]{58}$/.test(npub)
+        ? ` This account is linked to ${npub}.`
+        : " This account isn't linked to any Buzz identity.";
+    } catch {
+      return "";
+    }
   }
   return {
     link,
