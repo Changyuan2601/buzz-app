@@ -73,10 +73,13 @@ function mountList(
       settled: { current: true },
     },
   });
-  /** Moves a row out of the viewport, as a user scroll does. */
-  const scrollAway = (index: number) => {
+  /** Moves a row out of the viewport, as a user scroll does, then samples it. */
+  const scrollAway = async (index: number) => {
     rows[index]?.mockReturnValue(new DOMRect(0, 600, 400, 100));
     list.dispatchEvent(new Event("scroll"));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
   };
   return { leases, scrollAway };
 }
@@ -110,7 +113,7 @@ it.each(["in view", "window blur", "scroll away"] as const)(
       await vi.waitFor(() => expect(list.leases[0]?.disposed).toBe(true));
       expect(attention()).toMatchObject({ unread: false, viewing: true });
       if (state === "window blur") window.dispatchEvent(new Event("blur"));
-      if (state === "scroll away") list.scrollAway(0);
+      if (state === "scroll away") await list.scrollAway(0);
       delivery.present();
       await flush();
       expect(h.show).toHaveBeenCalledTimes(state === "in view" ? 1 : 0);
@@ -148,7 +151,7 @@ it("Notify while viewing: a row read and scrolled away stays quiet while a later
     expect(attention(alerted.id).unread).toBe(false);
     expect(attention(quiet.id).unread).toBe(true);
     expect(list.leases[0]?.disposed).toBe(false);
-    list.scrollAway(0);
+    await list.scrollAway(0);
     expect(attention(alerted.id)).toMatchObject({
       unread: false,
       viewing: false,

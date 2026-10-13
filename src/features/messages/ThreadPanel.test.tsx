@@ -452,8 +452,16 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
+/** A frame as a zero-delay task, so dwell boundaries stay exact under fake timers. */
+function framesAsTasks() {
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(performance.now()), 0),
+  );
+  vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+}
 it("keeps seeded rows usable but unread until the initial legacy walk settles", async () => {
   vi.useFakeTimers();
+  framesAsTasks();
   const h = messagesHarness(ordinaryNavigation());
   h.resize(600);
   vi.mocked(document.hasFocus).mockReturnValue(true);
@@ -518,6 +526,7 @@ it.each([false, true])(
   "reads a background-completed exact thread after fresh dwell (deactivate before reveal=%s)",
   async (deactivateBeforeReveal) => {
     vi.useFakeTimers();
+    framesAsTasks();
     const navigation = ordinaryNavigation();
     navigation.target.threadRootId = "different-root";
     const h = messagesHarness(navigation);
@@ -1088,6 +1097,7 @@ it("without close, the embedded thread keeps its reader but has no close header 
 
 it("observes a visible reply before its root resolves, then enables thread catch-up", async () => {
   vi.useFakeTimers();
+  framesAsTasks();
   const h = messagesHarness();
   const reply = {
     ...row,

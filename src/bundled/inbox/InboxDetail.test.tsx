@@ -505,6 +505,7 @@ it("does not earn read dwell while a retained reader is hidden", async () => {
   act(() => sender.focus()); // Cancel the opening dwell before controlling time.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   act(() => (row as HTMLElement).focus());
+  await frame();
   const before = h.journal()?.state.frontiers;
   expect(h.session.unread.sync().capability).toBe("frontier-sync");
   expect(before).toEqual({});
@@ -529,6 +530,7 @@ it("does not earn read dwell while a retained reader is hidden", async () => {
     const scroller = reader.querySelector("[data-message-scroller]");
     if (!scroller) throw new Error("Missing reading scroller");
     fireEvent.scroll(scroller);
+    await frame();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });

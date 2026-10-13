@@ -75,7 +75,10 @@ export function useReading({
       document.hasFocus() &&
       focused(document.activeElement) &&
       // Style, not layout: this also answers `view()` validity per `attention()`.
-      element.checkVisibility();
+      // WebKit before Safari 17.4 (and jsdom) lacks it; fall back to layout.
+      (typeof element.checkVisibility === "function"
+        ? element.checkVisibility()
+        : element.getClientRects().length > 0);
     function cancel() {
       if (timer) clearTimeout(timer);
       timer = undefined;
