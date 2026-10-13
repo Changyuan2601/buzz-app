@@ -31,11 +31,17 @@ test.each([undefined, { defaultWidth: 420, maxRatio: 0.5 }])(
     vi.stubGlobal(
       "ResizeObserver",
       class {
+        callback: () => void;
         constructor(callback: () => void) {
-          measure = callback;
+          this.callback = callback;
         }
-        observe() {}
-        disconnect = disconnect;
+        // The handle observes its own panel; track only the container.
+        observe(element: HTMLElement) {
+          if (element.dataset.testid !== "workspace") return;
+          measure = this.callback;
+          this.disconnect = disconnect;
+        }
+        disconnect() {}
       },
     );
     function Workspace() {

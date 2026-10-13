@@ -270,11 +270,11 @@ exact registration identity and mounted lifetime revoke callbacks on removal.
 The channel template extension point (`ctx.channelTemplates`) was removed with the
 v1 Agents system. The host sidebar owns personal groups and the existing + creation
 buttons. Channel templates are now device-local (`buzz.channel-templates.v1`,
-`features/channel-templates/local.ts`): a name, Agents team ids and a starting
-Canvas, managed under Settings → Channel templates. Picking one in Create resolves
-its teams to their members that are the owner's agents in this community and sends
-them with the Canvas as ordinary channel setup, which the session applies and
-retries as before.
+`features/channel-templates/local.ts`): a name, agent pubkeys, Agents team ids
+and a starting Canvas, managed under Settings → Channel templates. Picking one in
+Create resolves its agents and its teams' members to those that are the owner's
+agents in this community and sends them with the Canvas as ordinary channel setup,
+which the session applies and retries as before.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
 under Settings → Communities. It manages Block-hosted relays through a Builderlab

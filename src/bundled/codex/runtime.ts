@@ -57,7 +57,9 @@ type Request = {
   superseded?: () => void;
   failActivity(reason: string): void;
 };
-type Saved = { threadId: string; workspace: string };
+/** `at` is when the binding last started a turn; bindings saved before it
+ * existed have none. */
+type Saved = { threadId: string; workspace: string; at?: number };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -95,6 +97,18 @@ type Server = {
   threads: Map<string, string>;
 };
 export type SessionView = { key: string; status: string; detail: string };
+/** A saved binding, newest first, for the owner's transcript list. */
+export type SavedConversation = {
+  key: string;
+  channelId: string;
+  /** The channel's name, when this community lists it. */
+  name?: string;
+  root?: string;
+  threadId: string;
+  at?: number;
+};
+/** Bindings listed for the owner. */
+const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -287,25 +301,9 @@ export class CodexRuntime {
     const pubkey = request.agent.pubkey;
     const prior = this.entries.get(pubkey);
     if (prior) return prior;
-    let saved: Record<string, Saved> = {};
-    try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(this.storageKey(request)) ?? "{}",
-      );
-      if (stored && typeof stored === "object" && !Array.isArray(stored))
-        saved = Object.fromEntries(
-          Object.entries(stored).filter(
-            ([, value]) =>
-              value &&
-              typeof value.threadId === "string" &&
-              typeof value.workspace === "string",
-          ),
-        );
-    } catch {
-      /* Start fresh after malformed local data. */
-    }
+    const saved = this.load(this.storageKey(request.scope, pubkey));
     const entry: Entry = {
-      storageKey: this.storageKey(request),
+      storageKey: this.storageKey(request.scope, pubkey),
       abort: new AbortController(),
       after: this.stopping.get(pubkey) ?? Promise.resolve(),
       saved,
@@ -314,12 +312,67 @@ export class CodexRuntime {
     this.entries.set(pubkey, entry);
     return entry;
   }
-  private storageKey(request: Request) {
+  private load(storageKey: string) {
+    try {
+      const stored: unknown = JSON.parse(
+        this.storage.getItem(storageKey) ?? "{}",
+      );
+      if (stored && typeof stored === "object" && !Array.isArray(stored))
+        return Object.fromEntries(
+          Object.entries(stored).filter(
+            ([, value]) =>
+              value &&
+              typeof value.threadId === "string" &&
+              typeof value.workspace === "string",
+          ),
+        ) as Record<string, Saved>;
+    } catch {
+      /* Start fresh after malformed local data. */
+    }
+    return {};
+  }
+  /** The agent's most recently used bindings in this community. */
+  conversations(pubkey: string): SavedConversation[] {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    const ready = snapshot?.status === "ready" ? snapshot : undefined;
+    const saved =
+      this.entries.get(pubkey)?.saved ??
+      (ready ? this.load(this.storageKey(ready.scope ?? "", pubkey)) : {});
+    const channels = ready?.session.channels.list().channels ?? [];
+    // Untimestamped bindings keep save order, newest last; listed newest first.
+    return Object.entries(saved)
+      .reverse()
+      .flatMap(([key, { threadId, at }]) => {
+        try {
+          const [channelId, root] = JSON.parse(key) as unknown[];
+          if (typeof channelId !== "string" || typeof root !== "string")
+            return [];
+          const name = channels.find((row) => row.id === channelId)?.name;
+          return [
+            {
+              key,
+              channelId,
+              ...(name ? { name } : {}),
+              ...(root === "channel" ? {} : { root }),
+              threadId,
+              ...(at === undefined ? {} : { at }),
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+      .slice(0, CONVERSATION_LIMIT);
+  }
+  private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v4 added media_get.
-    return `buzz.codex.sessions.v4:${request.scope}:${request.agent.pubkey}`;
+    return `buzz.codex.sessions.v4:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
+    // Reinserted so the bounded set keeps the most recently used bindings.
+    delete entry.saved[key];
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
@@ -341,11 +394,22 @@ export class CodexRuntime {
       throw new Error(
         "Codex timers are not supported yet; use mentions or event watches.",
       );
-    if (!(await fromOwner(trigger.event, agent.owner))) {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    if (
+      !(await fromOwner(trigger.event, agent.owner, {
+        agent: agent.pubkey,
+        authority:
+          snapshot?.status === "ready"
+            ? snapshot.session.workflowAuthority
+            : undefined,
+        profiles:
+          snapshot?.status === "ready" ? snapshot.session.profiles : undefined,
+      }))
+    ) {
       delivery.ignored?.();
       return;
     }
-    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    delivery.signal.throwIfAborted();
     if (snapshot?.status !== "ready")
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
@@ -860,6 +924,7 @@ export class CodexRuntime {
       this.save(request, entry, key, {
         threadId: started.thread.id,
         workspace,
+        at: Date.now(),
       });
       ready();
       this.status(agent.pubkey, key, "Working");

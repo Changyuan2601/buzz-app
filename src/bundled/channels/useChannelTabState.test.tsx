@@ -468,3 +468,21 @@ test("new ordinary and routed threads follow the device choice; existing tabs an
   act(() => mounted.result.current.moveTab("thread:alpha:two", "side", 0));
   expect(threadPlacementPreference()).toBe("main");
 });
+
+test("the returned state keeps its identity across unrelated re-renders", () => {
+  const session = {} as RelaySession;
+  const mounted = renderHook(
+    ({ channel }) => useChannelTabState(session, channel),
+    { initialProps: { channel: "alpha" } },
+  );
+  const initial = mounted.result.current;
+  mounted.rerender({ channel: "alpha" });
+  expect(mounted.result.current).toBe(initial);
+  act(() => mounted.result.current.select("beta-tab"));
+  const selected = mounted.result.current;
+  expect(selected).not.toBe(initial);
+  expect(selected.selected).toBe("beta-tab");
+  expect(selected.select).toBe(initial.select);
+  mounted.rerender({ channel: "beta" });
+  expect(mounted.result.current).not.toBe(selected);
+});

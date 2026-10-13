@@ -1,6 +1,7 @@
 // The type's tabs: Codex's setup on this computer, and the agent's settings;
 // and its part of the New agent dialog.
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateCorner } from "../../features/agents/create-card";
 import { ModelPicker } from "../../features/agents/ModelPicker";
@@ -20,7 +21,8 @@ import {
   type Model,
 } from "./config";
 import { AppServer, listModels, type Spawn } from "./rpc";
-import type { CodexRuntime } from "./runtime";
+import type { CodexRuntime, SavedConversation } from "./runtime";
+import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
 
 type Catalog = { models: Model[]; account: string };
 /** Read-only setup/catalog discovery uses the same declared native transport. */
@@ -51,6 +53,12 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+const label = ({ channelId, name, root }: SavedConversation) =>
+  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+type Read =
+  | { status: "ready"; transcript: CodexTranscript }
+  | { status: "missing" }
+  | { status: "error"; error: string };
 
 const SCOPES = [
   {
@@ -152,11 +160,114 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
     );
   }
 
+  /** One conversation's Codex thread, read on open and on Refresh. A refresh
+   * keeps the last result in place until the new one arrives. */
+  function TranscriptView({
+    agent,
+    conversation,
+    onBack,
+  }: {
+    agent: AgentViewProps<Config>["agent"];
+    conversation: SavedConversation;
+    onBack(): void;
+  }) {
+    const [read, setRead] = useState<Read>();
+    const [loading, setLoading] = useState(true);
+    const [attempt, setAttempt] = useState(0);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
+    useEffect(() => {
+      const abort = new AbortController();
+      setLoading(true);
+      void readTranscript(
+        spawn,
+        conversation.threadId,
+        conversation,
+        abort.signal,
+      )
+        .then(
+          (transcript): Read =>
+            transcript
+              ? { status: "ready", transcript }
+              : { status: "missing" },
+          (reason): Read => ({ status: "error", error: message(reason) }),
+        )
+        .then((next) => {
+          if (abort.signal.aborted) return;
+          setRead(next);
+          setLoading(false);
+        });
+      return () => abort.abort();
+    }, [conversation, attempt]);
+    return (
+      <div className="grid gap-4">
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onBack}>
+            Back
+          </Button>
+          <Button
+            variant="ghost"
+            loading={loading}
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            Refresh
+          </Button>
+        </div>
+        <h3 className="m-0 text-body">{label(conversation)}</h3>
+        {!read ? (
+          <p role="status" className="m-0">
+            Reading the Codex session…
+          </p>
+        ) : read.status === "missing" ? (
+          <p className="m-0 text-body-sm text-subtle">
+            Codex has no history for this conversation on this computer. Its
+            session may have been deleted.
+          </p>
+        ) : read.status === "error" ? (
+          <p role="alert" className="m-0">
+            Could not read the Codex session: {read.error}
+          </p>
+        ) : (
+          <ActivityTranscript
+            transcript={read.transcript}
+            agentName={agent.name}
+            state={() => (read.transcript.working ? "working" : undefined)}
+            before={
+              read.transcript.more && (
+                <p className="m-0 text-body-sm text-subtle">
+                  Showing the latest {TURN_LIMIT} turns.
+                </p>
+              )
+            }
+          />
+        )}
+      </div>
+    );
+  }
+
   /** Codex on this computer, and what this agent has running. */
   function CodexTab({ agent }: AgentViewProps<Config>) {
     const { data, error, checking, retry } = useCatalog();
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.pubkey),
+    );
+    // Read on each render: bindings change as turns start, which also
+    // changes the session list this tab subscribes to.
+    const conversations = runtime.conversations(agent.pubkey);
+    const [open, setOpen] = useState<SavedConversation>();
+    if (open)
+      return (
+        <TranscriptView
+          agent={agent}
+          conversation={open}
+          onBack={() => setOpen(undefined)}
+        />
+      );
+    const saved = new Set(conversations.map((row) => row.key));
+    const views = new Map(sessions.map((view) => [view.key, view]));
+    const detail = (text: string) => (
+      <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap text-caption">
+        {text}
+      </pre>
     );
     return (
       <div className="grid gap-4">
@@ -190,20 +301,47 @@ export function createTabs(spawn: Spawn, runtime: CodexRuntime) {
         </section>
         <section className="grid gap-1">
           <h3 className="m-0 text-body">Conversations</h3>
-          {sessions.length ? (
+          {conversations.length || sessions.length ? (
             <ul className="m-0 grid list-none gap-4 p-0">
-              {sessions.map((session) => (
-                <li key={session.key}>
-                  <p className="m-0">
-                    <code>{session.key}</code> · {session.status}
-                  </p>
-                  {session.detail && (
-                    <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap text-caption">
-                      {session.detail}
-                    </pre>
-                  )}
-                </li>
-              ))}
+              {/* Work that failed before Codex started a thread has no binding. */}
+              {sessions
+                .filter((view) => !saved.has(view.key))
+                .map((view) => (
+                  <li key={view.key}>
+                    <p className="m-0">
+                      <code>{view.key}</code> · {view.status}
+                    </p>
+                    {view.detail && detail(view.detail)}
+                  </li>
+                ))}
+              {conversations.map((conversation) => {
+                const view = views.get(conversation.key);
+                return (
+                  <li key={conversation.key} className="grid gap-2">
+                    <p className="m-0">
+                      {label(conversation)}
+                      {[
+                        view?.status,
+                        conversation.at
+                          ? new Date(conversation.at).toLocaleString()
+                          : undefined,
+                      ]
+                        .filter(Boolean)
+                        .map((part) => ` · ${part}`)
+                        .join("")}
+                    </p>
+                    {view?.detail && detail(view.detail)}
+                    <div>
+                      <Button
+                        variant="ghost"
+                        onClick={() => setOpen(conversation)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="m-0 text-body-sm text-subtle">

@@ -1,5 +1,5 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type {
   ChannelPanelContext,
@@ -431,21 +431,42 @@ export function useChannelTabState(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
   );
-  return {
-    ...state,
-    setEntries,
-    retireMenuEntries,
-    setTabs,
-    openThreadTab,
-    moveTab,
-    resolveThreadRoot,
-    divertThread,
-    enterVisit,
-    leaveVisit,
-    selectMain,
-    select,
-    setThread,
-    setSettings,
-    setPaneOpen,
-  };
+  // Workspace callbacks list this object as a dependency; a fresh object per
+  // render would recreate them and re-render every memoized message row.
+  return useMemo(
+    () => ({
+      ...state,
+      setEntries,
+      retireMenuEntries,
+      setTabs,
+      openThreadTab,
+      moveTab,
+      resolveThreadRoot,
+      divertThread,
+      enterVisit,
+      leaveVisit,
+      selectMain,
+      select,
+      setThread,
+      setSettings,
+      setPaneOpen,
+    }),
+    [
+      state,
+      setEntries,
+      retireMenuEntries,
+      setTabs,
+      openThreadTab,
+      moveTab,
+      resolveThreadRoot,
+      divertThread,
+      enterVisit,
+      leaveVisit,
+      selectMain,
+      select,
+      setThread,
+      setSettings,
+      setPaneOpen,
+    ],
+  );
 }

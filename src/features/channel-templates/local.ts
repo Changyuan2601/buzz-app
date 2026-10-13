@@ -1,6 +1,6 @@
-// The owner's channel templates on this device: a name, the Agents teams a
-// new channel starts with, and its starting Canvas. Creating a channel from
-// one sends ordinary channel setup, so the session owns applying it.
+// The owner's channel templates on this device: a name, the agents and Agents
+// teams a new channel starts with, and its starting Canvas. Creating a channel
+// from one sends ordinary channel setup, so the session owns applying it.
 import { useSyncExternalStore } from "react";
 import { CANVAS_BYTES } from "./model";
 
@@ -9,6 +9,8 @@ export type ChannelTemplate = Readonly<{
   name: string;
   /** Agents team ids. A team deleted since is skipped. */
   teams: readonly string[];
+  /** Agent pubkeys, added alongside the teams' members. */
+  agents: readonly string[];
   canvas: string;
 }>;
 export type ChannelTemplateChange = Omit<ChannelTemplate, "id"> &
@@ -37,6 +39,10 @@ function parse(raw: string | null): readonly ChannelTemplate[] {
             id: item.id,
             name: item.name,
             teams: item.teams.filter((team) => typeof team === "string"),
+            // Templates saved before agents could be chosen have none.
+            agents: Array.isArray(item.agents)
+              ? item.agents.filter((agent) => typeof agent === "string")
+              : [],
             canvas: item.canvas,
           },
         ]
@@ -71,7 +77,13 @@ export const channelTemplates = {
     };
   },
   /** Creates a template, or replaces the one with `id`. */
-  save({ id, name, teams, canvas }: ChannelTemplateChange): ChannelTemplate {
+  save({
+    id,
+    name,
+    teams,
+    agents,
+    canvas,
+  }: ChannelTemplateChange): ChannelTemplate {
     if (!name.trim()) throw new Error("Name the template");
     if (new TextEncoder().encode(canvas).length > CANVAS_BYTES)
       throw new Error("Canvas is too large (24 KiB maximum)");
@@ -82,6 +94,7 @@ export const channelTemplates = {
       id: id ?? crypto.randomUUID(),
       name: name.trim(),
       teams: Object.freeze([...new Set(teams)]),
+      agents: Object.freeze([...new Set(agents)]),
       canvas: canvas.trim() ? canvas : "",
     });
     write(
@@ -112,18 +125,19 @@ export function useChannelTemplates() {
   );
 }
 
-/** The agents a template adds: each member of its teams, once, that is one of
- * `agents` (the owner's agents in this community). */
+/** The agents a template adds: its own agents and each member of its teams,
+ * once, that is one of `agents` (the owner's agents in this community). */
 export function templateAgents(
   template: ChannelTemplate,
   teams: readonly Readonly<{ id: string; members: readonly string[] }>[],
   agents: ReadonlySet<string>,
 ) {
   return [
-    ...new Set(
-      template.teams.flatMap(
+    ...new Set([
+      ...template.agents,
+      ...template.teams.flatMap(
         (id) => teams.find((team) => team.id === id)?.members ?? [],
       ),
-    ),
+    ]),
   ].filter((pubkey) => agents.has(pubkey));
 }

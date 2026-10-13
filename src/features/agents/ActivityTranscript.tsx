@@ -7,11 +7,8 @@ import type {
   Transcript,
   TranscriptItem,
   TranscriptTurn,
-} from "../../features/agents/activity-transcript";
-import {
-  MAX_MARKDOWN_LENGTH,
-  scanMarkdown,
-} from "../../features/relay/message-content";
+} from "./activity-transcript";
+import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import {
   BulbIcon,
   ChatCircleIcon,

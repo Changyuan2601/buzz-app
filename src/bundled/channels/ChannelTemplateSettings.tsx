@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useTeams } from "../../features/agents/react";
-import type { Agents, Team } from "../../features/agents/service";
+import { useAgentsSnapshot, useTeams } from "../../features/agents/react";
+import type { Agent, Agents, Team } from "../../features/agents/service";
 import {
   channelTemplates,
   useChannelTemplates,
@@ -19,7 +19,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTemplates.module.css";
 
-/** Templates a new channel can start from: its teams and its Canvas. */
+/** Templates a new channel can start from: its agents, teams and Canvas. */
 export function ChannelTemplateSettings({
   agents,
   active,
@@ -29,6 +29,7 @@ export function ChannelTemplateSettings({
 }) {
   const templates = useChannelTemplates();
   const teams = useTeams(agents);
+  const choices = useAgentsSnapshot(agents)?.agents ?? noAgents;
   // A template's id while it is edited, or "new" for one being made.
   const [editing, setEditing] = useState<string>();
   const template = templates.find((item) => item.id === editing);
@@ -45,7 +46,7 @@ export function ChannelTemplateSettings({
               <PreferenceRow
                 key={item.id}
                 title={item.name}
-                subtitle={summary(item, teams)}
+                subtitle={summary(item, choices, teams)}
                 trailing={
                   <Button
                     aria-label={`Edit ${item.name}`}
@@ -69,13 +70,14 @@ export function ChannelTemplateSettings({
         <EmptyState
           icon={<CopyIcon />}
           title="No channel templates yet"
-          description="Start new channels with your teams and a Canvas already in place."
+          description="Start new channels with your agents, teams and a Canvas already in place."
           action={<Button onClick={newTemplate}>New template</Button>}
         />
       )}
       {(editing === "new" || template) && (
         <TemplateDialog
           key={editing}
+          agents={choices}
           teams={teams}
           {...(template ? { template } : {})}
           onClose={() => setEditing(undefined)}
@@ -85,10 +87,21 @@ export function ChannelTemplateSettings({
   );
 }
 
-function summary(template: ChannelTemplate, teams: readonly Team[]) {
-  const names = template.teams.flatMap(
-    (id) => teams.find((team) => team.id === id)?.name ?? [],
-  );
+const noAgents: readonly never[] = Object.freeze([]);
+
+function summary(
+  template: ChannelTemplate,
+  agents: readonly Agent[],
+  teams: readonly Team[],
+) {
+  const names = [
+    ...template.agents.flatMap(
+      (pubkey) => agents.find((agent) => agent.pubkey === pubkey)?.name ?? [],
+    ),
+    ...template.teams.flatMap(
+      (id) => teams.find((team) => team.id === id)?.name ?? [],
+    ),
+  ];
   return (
     [names.join(", "), template.canvas.trim() ? "Canvas" : ""]
       .filter(Boolean)
@@ -97,15 +110,20 @@ function summary(template: ChannelTemplate, teams: readonly Team[]) {
 }
 
 function TemplateDialog({
+  agents,
   teams,
   template,
   onClose,
 }: {
+  agents: readonly Agent[];
   teams: readonly Team[];
   template?: ChannelTemplate;
   onClose(): void;
 }) {
   const [name, setName] = useState(template?.name ?? "");
+  const [chosenAgents, setChosenAgents] = useState<readonly string[]>(
+    template?.agents ?? [],
+  );
   const [chosen, setChosen] = useState<readonly string[]>(
     template?.teams ?? [],
   );
@@ -159,6 +177,7 @@ function TemplateDialog({
               ...(template ? { id: template.id } : {}),
               name,
               teams: chosen,
+              agents: chosenAgents,
               canvas,
             }),
           );
@@ -171,6 +190,27 @@ function TemplateDialog({
             onChange={(event) => setName(event.target.value)}
           />
         </Field>
+        <fieldset className={styles.teams}>
+          <legend className="text-label-sm">Agents</legend>
+          {agents.length ? (
+            agents.map((agent) => (
+              <Checkbox
+                key={agent.pubkey}
+                label={agent.name}
+                checked={chosenAgents.includes(agent.pubkey)}
+                onCheckedChange={(checked) =>
+                  setChosenAgents((last) =>
+                    checked
+                      ? [...last, agent.pubkey]
+                      : last.filter((pubkey) => pubkey !== agent.pubkey),
+                  )
+                }
+              />
+            ))
+          ) : (
+            <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
+          )}
+        </fieldset>
         <fieldset className={styles.teams}>
           <legend className="text-label-sm">Teams</legend>
           {teams.length ? (

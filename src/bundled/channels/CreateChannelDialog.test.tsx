@@ -843,9 +843,13 @@ it("does not offer to discard frozen recovery when it arrives during confirmatio
   expect(props.onCreate).not.toHaveBeenCalled();
 });
 
-it("starts a channel from a template with its teams' agents here and its Canvas", async () => {
+it("starts a channel from a template with its agents and teams' agents here and its Canvas", async () => {
   const user = userEvent.setup();
-  const [ada, bo, elsewhere] = ["a", "b", "c"].map((c) => c.repeat(64));
+  const [ada, bo, elsewhere] = ["a", "b", "c"].map((c) => c.repeat(64)) as [
+    string,
+    string,
+    string,
+  ];
   const snapshot = {
     status: "ready",
     running: [],
@@ -866,6 +870,7 @@ it("starts a channel from a template with its teams' agents here and its Canvas"
   channelTemplates.save({
     name: "Launch",
     teams: ["t1", "t2", "gone"],
+    agents: [elsewhere, bo],
     canvas: "# Goal",
   });
   const onCreate = vi.fn(async () => {});
@@ -881,7 +886,7 @@ it("starts a channel from a template with its teams' agents here and its Canvas"
   await user.type(screen.getByRole("textbox", { name: "Name" }), "launch");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
-  expect(screen.getByText("Adds Ada, Bo · Starts the Canvas")).toBeVisible();
+  expect(screen.getByText("Adds Bo, Ada · Starts the Canvas")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   const [template] = channelTemplates.snapshot();
   await waitFor(() =>
@@ -889,7 +894,7 @@ it("starts a channel from a template with its teams' agents here and its Canvas"
       name: "launch",
       visibility: "open",
       setup: {
-        agents: [ada, bo],
+        agents: [bo, ada],
         canvas: "# Goal",
         groupId: "",
         templateId: template?.id,
@@ -914,7 +919,12 @@ it("offers no template choice without saved templates", () => {
 
 it("creates a plain channel from a template that adds nothing here", async () => {
   const user = userEvent.setup();
-  channelTemplates.save({ name: "Empty", teams: ["gone"], canvas: "  " });
+  channelTemplates.save({
+    name: "Empty",
+    teams: ["gone"],
+    agents: [],
+    canvas: "  ",
+  });
   const onCreate = vi.fn(async () => {});
   render(
     <CreateChannelDialog
