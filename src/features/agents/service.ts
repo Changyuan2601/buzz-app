@@ -545,6 +545,8 @@ export type Agents = {
   unconfirmed?(): readonly AgentIdentity[];
   /** "Finish importing" Retry. */
   finishImport?(pubkey: string): Promise<void>;
+  /** Whether Retry can finish it, or only Delete. */
+  canFinish?(pubkey: string): boolean;
   /** "Finish importing" Delete. */
   discardImport?(pubkey: string): Promise<void>;
   /** Previews the destination config and transferable settings the same
@@ -1046,6 +1048,7 @@ export class AgentsService extends Service implements Agents {
     }
     return this.add(
       type,
+      { mode: "create" },
       async (native, destination, owner, intentId) => ({
         agent: await native.create(
           destination,
@@ -1168,8 +1171,11 @@ export class AgentsService extends Service implements Agents {
     const { type } = input;
     if (input.source !== "shared") {
       const { source, pubkey } = input;
-      return this.add(type, (native, destination, owner, intentId) =>
-        native.port(source, pubkey, destination, owner, type, intentId),
+      return this.add(
+        type,
+        { mode: "import", source, pubkey },
+        (native, destination, owner, intentId) =>
+          native.port(source, pubkey, destination, owner, type, intentId),
       );
     }
     const name = input.name.trim();
@@ -1179,6 +1185,7 @@ export class AgentsService extends Service implements Agents {
     // what was shared, as a brought-over one does.
     return this.add(
       type,
+      { mode: "create" },
       async (native, destination, owner, intentId) => ({
         agent: await native.create(destination, owner, type, name, intentId),
         ...(instructions?.trim() ? { carry: { instructions } } : {}),
@@ -1192,6 +1199,9 @@ export class AgentsService extends Service implements Agents {
    * brought-over one carried. */
   private async add(
     type: string,
+    mode:
+      | Readonly<{ mode: "create" }>
+      | Readonly<{ mode: "import"; source: PortSource; pubkey: string }>,
     save: (
       native: AgentsNative,
       destination: string,
@@ -1211,17 +1221,51 @@ export class AgentsService extends Service implements Agents {
     if (!kind) throw new Error("That agent type is not available");
     if (kind.remote)
       throw new Error("A hosted agent's key stays with its provider");
-    const settings = defaults("", kind);
     // The identity stays provisional, never run or listed, until its own
-    // intent confirms it after its settings are staged.
+    // intent confirms it after its settings are staged. The intent is written
+    // first, so a crash after the native commit can still finish (§3).
     const intentId = crypto.randomUUID();
-    const { agent: identity, carry } = await save(
+    const destination = relayOrigin(binding.origin);
+    this.instructionStore.putIntent({
+      intentId,
+      owner: binding.viewer,
+      community: destination,
+      type,
+      ...(mode.mode === "import"
+        ? mode
+        : {
+            mode: "create",
+            ...(made.instructions === undefined
+              ? {}
+              : { text: made.instructions }),
+            ...(made.config === undefined ? {} : { config: made.config }),
+            ...(made.picture ? { picture: made.picture } : {}),
+          }),
+    });
+    const { agent, carry } = await save(
       native,
-      relayOrigin(binding.origin),
+      destination,
       binding.viewer,
       intentId,
     );
-    let record = { ...settings, pubkey: identity.pubkey };
+    return this.confirmAdd(native, kind, agent, intentId, carry, made);
+  }
+
+  /** §3 steps 3-4: settings, then staged text, then the confirm that makes
+   * the agent runnable; the intent is retired last. */
+  private async confirmAdd(
+    native: AgentsNative,
+    kind: RegisteredAgentType,
+    identity: AgentIdentity,
+    intentId: string,
+    carry: Carry | undefined,
+    made: Readonly<{
+      config?: unknown;
+      picture?: string | undefined;
+      instructions?: string | undefined;
+    }>,
+  ) {
+    let record = { ...defaults("", kind), pubkey: identity.pubkey };
     try {
       if (made.config !== undefined)
         record = { ...record, config: made.config };
@@ -1237,14 +1281,15 @@ export class AgentsService extends Service implements Agents {
     if (text)
       this.instructionStore.stage(
         subjectKey(
-          binding.viewer,
-          relayOrigin(binding.origin),
+          identity.owner,
+          relayOrigin(identity.relay),
           identity.pubkey,
         ),
         text,
         intentId,
       );
     await native.confirm(identity.pubkey, intentId);
+    this.instructionStore.dropIntent(intentId);
     // Before the refresh, which publishes its profile with the picture. The
     // agent exists either way; its picture can be set again later.
     let shown = identity;
@@ -1289,12 +1334,62 @@ export class AgentsService extends Service implements Agents {
   unconfirmed(): readonly AgentIdentity[] {
     return this.provisional;
   }
-  /** "Finish importing" Retry: its settings were staged before it stopped. */
+  /** The row's own intent, when it matches the row exactly (§3 step 5). */
+  private intentOf(row: AgentIdentity | undefined) {
+    const intent = row?.intentId
+      ? this.instructionStore.intent(row.intentId)
+      : undefined;
+    let community: string | undefined;
+    try {
+      community = row && relayOrigin(row.relay);
+    } catch {}
+    return intent &&
+      row &&
+      intent.owner === row.owner &&
+      intent.community === community &&
+      intent.type === row.type
+      ? intent
+      : undefined;
+  }
+  /** Whether "Finish importing" can offer Retry; otherwise Delete only. */
+  canFinish(pubkey: string) {
+    return !!this.intentOf(
+      this.provisional.find((saved) => saved.pubkey === pubkey),
+    );
+  }
+  /** "Finish importing" Retry: re-runs the create or import from its stored
+   * intent, staging its text before the confirm. A crash after the native
+   * commit left nothing staged, so confirming alone would lose the text. */
   async finishImport(pubkey: string) {
     const row = this.provisional.find((saved) => saved.pubkey === pubkey);
-    if (!this.native || !row?.intentId) throw new Error("Nothing to finish");
-    await this.native.confirm(pubkey, row.intentId);
-    await this.refresh();
+    const intent = this.intentOf(row);
+    const kind = this.types().find((entry) => entry.key === row?.type);
+    if (!this.native || !row || !intent || !kind)
+      throw new Error("This agent can only be deleted");
+    if (intent.mode === "import") {
+      const { agent, carry } = await this.native.port(
+        intent.source,
+        intent.pubkey,
+        intent.community,
+        row.owner,
+        row.type,
+        intent.intentId,
+      );
+      await this.confirmAdd(
+        this.native,
+        kind,
+        agent,
+        intent.intentId,
+        carry,
+        {},
+      );
+      return;
+    }
+    await this.confirmAdd(this.native, kind, row, intent.intentId, undefined, {
+      config: intent.config,
+      picture: intent.picture,
+      instructions: intent.text,
+    });
   }
   /** "Finish importing" Delete: its key goes, and cleanup runs as for any. */
   async discardImport(pubkey: string) {

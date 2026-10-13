@@ -1,4 +1,5 @@
 import type { LiveSnapshot } from "../relay/live";
+import type { PortSource } from "./native";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import {
@@ -71,6 +72,25 @@ export const recoveryKey = (owner: string, community: string, agent: string) =>
 
 type Decoded = Readonly<{ text: string } | { invalid: string }>;
 
+/** §3: a create or import written before the native call, so a crash after
+ * the native commit can finish from what it was asked to do. */
+export type AgentIntent = Readonly<
+  {
+    intentId: string;
+    owner: string;
+    community: string;
+    type: string;
+  } & (
+    | {
+        mode: "create";
+        text?: string;
+        config?: unknown;
+        picture?: string;
+      }
+    | { mode: "import"; source: PortSource; pubkey: string }
+  )
+>;
+
 /** Device storage for instruction state. Owner-scoped: every read goes through
  * the current owner's key, and sign-out clears that owner's entries only. */
 export class InstructionStore {
@@ -80,6 +100,7 @@ export class InstructionStore {
   /** Complete scans per `owner:community`; a subject without a version then
    * resolves as absent. */
   private scans = new Map<string, number>();
+  private intents = new Map<string, AgentIntent>();
   /** In memory only, re-derived through native decode. */
   private decoded = new Map<string, Decoded>();
   private listeners = new Set<() => void>();
@@ -87,12 +108,19 @@ export class InstructionStore {
 
   constructor(private storage: Pick<Storage, "getItem" | "setItem">) {
     const store = parse(storage.getItem(INSTRUCTIONS_STORE_KEY)) as
-      | { entries?: Record<string, unknown>; scans?: Record<string, unknown> }
+      | {
+          entries?: Record<string, unknown>;
+          scans?: Record<string, unknown>;
+          intents?: Record<string, unknown>;
+        }
       | undefined;
     for (const [key, value] of Object.entries(store?.entries ?? {}))
       if (validEntry(value)) this.entries.set(key, value);
     for (const [key, value] of Object.entries(store?.scans ?? {}))
       if (typeof value === "number") this.scans.set(key, value);
+    for (const [key, value] of Object.entries(store?.intents ?? {}))
+      if (validIntent(value) && value.intentId === key)
+        this.intents.set(key, value);
     const had = parse(storage.getItem(HAD_VERSION_KEY));
     if (Array.isArray(had))
       for (const key of had) if (typeof key === "string") this.had.add(key);
@@ -186,6 +214,23 @@ export class InstructionStore {
     this.persist();
   }
 
+  intent(intentId: string) {
+    return this.intents.get(intentId);
+  }
+  /** Throws when storage fails, so the native call is never made. */
+  putIntent(intent: AgentIntent) {
+    this.intents.set(intent.intentId, intent);
+    try {
+      this.persist();
+    } catch (error) {
+      this.intents.delete(intent.intentId);
+      throw error;
+    }
+  }
+  dropIntent(intentId: string) {
+    if (this.intents.delete(intentId)) this.persist();
+  }
+
   cleanupIds(owner: string, community: string) {
     return this.cleanup
       .filter(
@@ -222,6 +267,7 @@ export class InstructionStore {
       JSON.stringify({
         entries: Object.fromEntries(this.entries),
         scans: Object.fromEntries(this.scans),
+        intents: Object.fromEntries(this.intents),
       }),
     );
     this.changed();
@@ -242,6 +288,24 @@ function validEntry(value: unknown): value is Entry {
     !!v?.head &&
     ("event" in v.head || "absent" in v.head || "unknown" in v.head) &&
     ["never", "staged", "done"].includes(v.migration?.state as string)
+  );
+}
+
+function validIntent(value: unknown): value is AgentIntent {
+  const v = value as Record<string, unknown> | null;
+  if (typeof v !== "object" || !v) return false;
+  if (
+    !["intentId", "owner", "community", "type"].every(
+      (field) => typeof v[field] === "string",
+    )
+  )
+    return false;
+  if (v.mode === "create")
+    return v.text === undefined || typeof v.text === "string";
+  return (
+    v.mode === "import" &&
+    typeof v.pubkey === "string" &&
+    ["harness", "installed", "development"].includes(v.source as string)
   );
 }
 

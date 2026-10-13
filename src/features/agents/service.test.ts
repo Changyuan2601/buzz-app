@@ -20,6 +20,7 @@ import {
   teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
+import { INSTRUCTIONS_STORE_KEY } from "./instructions";
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
@@ -204,18 +205,27 @@ function fakeNative(identities: AgentIdentity[] = []) {
   };
   const native = {
     list: vi.fn(async () => [...identities]),
-    create: vi.fn(async (_: string, __: string, type: string, name: string) => {
-      const identity = {
-        pubkey: keys.shift() as string,
-        relay: "wss://relay.example.test",
-        owner: viewer,
-        type,
-        name,
-        deleted: false,
-      };
-      identities.push(identity);
-      return identity;
-    }),
+    create: vi.fn(
+      async (
+        _: string,
+        __: string,
+        type: string,
+        name: string,
+        intentId: string,
+      ) => {
+        const identity = {
+          pubkey: keys.shift() as string,
+          relay: "wss://relay.example.test",
+          owner: viewer,
+          type,
+          name,
+          deleted: false,
+          intentId,
+        };
+        identities.push(identity);
+        return identity;
+      },
+    ),
     portable: vi.fn(async () => ({
       agents: [
         { source: "harness" as const, pubkey: bot, name: "Old", relay: "" },
@@ -233,16 +243,30 @@ function fakeNative(identities: AgentIdentity[] = []) {
         _: string,
         pubkey: string,
         __: string,
-        ___: string,
+        owner: string,
         type: string,
+        intentId: string,
       ) => {
+        // Repeatable only while provisional, for the same intent (§3 step 2).
+        const saved = identities[at(pubkey)];
+        if (saved) {
+          if (
+            saved.deleted ||
+            saved.intentId !== intentId ||
+            saved.owner !== owner ||
+            saved.type !== type
+          )
+            throw new Error("That agent is already here");
+          return { agent: saved, carry: { instructions: "Triage." } };
+        }
         const identity = {
           pubkey,
           relay: "wss://relay.example.test",
-          owner: viewer,
+          owner,
           type,
           name: "Older",
           deleted: false,
+          intentId,
         };
         identities.push(identity);
         return { agent: identity, carry: { instructions: "Triage." } };
@@ -1312,11 +1336,16 @@ it("retries a cleanup that fails after the connection recovered while it ran", a
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
   const storage = memoryStorage();
   const { service } = await setup({ storage });
-  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
-    throw new Error("QuotaExceededError");
-  });
+  const setItem = storage.setItem.bind(storage);
+  const quota = vi
+    .spyOn(storage, "setItem")
+    .mockImplementation((key, value) => {
+      if (key === "buzz.agents.v1") throw new Error("QuotaExceededError");
+      setItem(key, value);
+    });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   await service.create({ type: "example/echo", name: "Echo" });
+  quota.mockRestore();
   warn.mockRestore();
   expect(storage.getItem("buzz.agents.v1") ?? "").not.toContain(bot);
   expect(service.find(bot)).toMatchObject({ config: { reply: "ok" } });
@@ -2987,4 +3016,153 @@ it("stops watches and timers while attention is off, keeps every object, and res
     "watch",
     "timer",
   ]);
+});
+
+/** The staged text in the persisted instruction store, by subject. */
+function stagedText(storage: Storage, agent: string) {
+  const store = JSON.parse(storage.getItem(INSTRUCTIONS_STORE_KEY) ?? "{}");
+  const entry =
+    store.entries?.[`${viewer}:https://relay.example.test:${agent}`];
+  return entry?.migration?.state === "staged"
+    ? entry.migration.text
+    : undefined;
+}
+
+it("T26 Retry re-runs port with the stored source and intent after a crash before staging, and stages the carried text", async () => {
+  const storage = memoryStorage();
+  const identities: AgentIdentity[] = [];
+  const first = await setup({ storage, identities });
+  // The crash: native committed the provisional row, then the app stopped.
+  const port = first.native.port.getMockImplementation();
+  first.native.port.mockImplementationOnce(async (...args) => {
+    await port?.(...args);
+    throw new Error("crashed");
+  });
+  await expect(
+    first.service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    }),
+  ).rejects.toThrow("crashed");
+  expect(stagedText(storage, sibling)).toBeUndefined();
+
+  const { service, native, run } = await setup({ storage, identities });
+  expect(service.unconfirmed().map((row) => row.pubkey)).toEqual([sibling]);
+  expect(service.find(sibling)).toBeUndefined();
+  expect(service.canFinish(sibling)).toBe(true);
+  await service.finishImport(sibling);
+  expect(native.port).toHaveBeenCalledWith(
+    "installed",
+    sibling,
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    first.native.port.mock.calls[0]?.[5],
+  );
+  expect(identities[0]?.intentId).toBeUndefined();
+  expect(stagedText(storage, sibling)).toBe("Triage.");
+  expect(native.confirm.mock.invocationCallOrder[0]).toBeGreaterThan(
+    native.port.mock.invocationCallOrder[0] ?? Infinity,
+  );
+  expect(service.unconfirmed()).toEqual([]);
+  expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("T26 port refuses another owner, type or a deleted row, and a confirmed duplicate", async () => {
+  const identities: AgentIdentity[] = [];
+  const { service, native } = await setup({ identities });
+  await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  const intent = native.port.mock.calls[0]?.[5] as string;
+  await expect(
+    native.port("installed", sibling, "", viewer, "example/echo", intent),
+  ).rejects.toThrow("already here");
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    }),
+  ).rejects.toThrow("already here");
+  identities[0] = { ...(identities[0] as AgentIdentity), intentId: intent };
+  await expect(
+    native.port(
+      "installed",
+      sibling,
+      "",
+      "e".repeat(64),
+      "example/echo",
+      intent,
+    ),
+  ).rejects.toThrow();
+  await expect(
+    native.port("installed", sibling, "", viewer, "other/type", intent),
+  ).rejects.toThrow();
+  identities[0] = { ...(identities[0] as AgentIdentity), deleted: true };
+  await expect(
+    native.port("installed", sibling, "", viewer, "example/echo", intent),
+  ).rejects.toThrow();
+});
+
+it("T25 two creates that crash after the native commit each resume with their own text", async () => {
+  const storage = memoryStorage();
+  const identities: AgentIdentity[] = [];
+  const first = await setup({ storage, identities });
+  const create = first.native.create.getMockImplementation();
+  first.native.create.mockImplementation(async (...args) => {
+    await create?.(...args);
+    throw new Error("crashed");
+  });
+  await expect(
+    first.service.create({
+      type: "example/echo",
+      name: "A",
+      instructions: "Alpha.",
+    }),
+  ).rejects.toThrow("crashed");
+  await expect(
+    first.service.create({
+      type: "example/echo",
+      name: "B",
+      instructions: "Beta.",
+    }),
+  ).rejects.toThrow("crashed");
+
+  const { service, run } = await setup({ storage, identities });
+  expect(service.unconfirmed().map((row) => row.name)).toEqual(["A", "B"]);
+  expect(service.snapshot().agents ?? []).not.toContainEqual(
+    expect.objectContaining({ pubkey: bot }),
+  );
+  await service.finishImport(sibling);
+  await service.finishImport(bot);
+  expect(stagedText(storage, bot)).toBe("Alpha.");
+  expect(stagedText(storage, sibling)).toBe("Beta.");
+  expect(service.unconfirmed()).toEqual([]);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("T25 a provisional row whose intent is missing or mismatched offers Delete only", async () => {
+  const identities: AgentIdentity[] = [
+    {
+      pubkey: bot,
+      relay: "wss://relay.example.test",
+      owner: viewer,
+      type: "example/echo",
+      name: "Orphan",
+      deleted: false,
+      intentId: "lost",
+    },
+  ];
+  const { service, native } = await setup({ identities });
+  expect(service.unconfirmed().map((row) => row.pubkey)).toEqual([bot]);
+  expect(service.canFinish(bot)).toBe(false);
+  await expect(service.finishImport(bot)).rejects.toThrow("only be deleted");
+  expect(native.confirm).not.toHaveBeenCalled();
+  await service.discardImport(bot);
+  expect(native.remove).toHaveBeenCalledWith(bot);
 });

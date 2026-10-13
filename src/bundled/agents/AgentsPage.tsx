@@ -740,7 +740,7 @@ function Unfinished({ agents }: { agents: Agents }) {
           <span className="min-w-0 flex-1 truncate">
             Finish importing {row.name}
           </span>
-          {row.intentId && (
+          {agents.canFinish?.(row.pubkey) && (
             <Button
               variant="primary"
               loading={busy === row.pubkey}
