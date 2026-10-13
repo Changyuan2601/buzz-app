@@ -15,7 +15,8 @@ use url::Url;
 use uuid::Uuid;
 
 const READ: &str = "channel.read";
-const CHAT: [u16; 2] = [9, 40002];
+// Match the existing read scheduler's lexicographic kind ordering.
+const CHAT: [u16; 2] = [40002, 9];
 // Auditing must neither queue unbounded work nor hold up the normal read.
 static AUDITS: Semaphore = Semaphore::const_new(2);
 
@@ -65,11 +66,7 @@ async fn audit(
     let context: Context =
         serde_json::from_value(context).map_err(|_| "Invalid IFC read context")?;
     let channel = message_channel(&context.trigger)?;
-    let filters: Value = serde_json::from_str(filters).map_err(|_| "Invalid IFC history filter")?;
-    ensure(
-        filters == json!([{ "kinds": CHAT, "#h": [channel.to_string()], "limit": 13 }]),
-        "IFC audit requires the recent DM history filter",
-    )?;
+    admit_history_filter(filters, channel)?;
     let agent = agents.agent(context.agent).await?;
     ensure(
         Url::parse(&agent.query_url())
@@ -121,6 +118,14 @@ async fn audit(
         &context.trigger,
         &policy.body,
         history,
+    )
+}
+
+fn admit_history_filter(filters: &str, channel: Uuid) -> Result<()> {
+    let filters: Value = serde_json::from_str(filters).map_err(|_| "Invalid IFC history filter")?;
+    ensure(
+        filters == json!([{ "kinds": CHAT, "#h": [channel.to_string()], "limit": 13 }]),
+        "IFC audit requires the recent DM history filter",
     )
 }
 

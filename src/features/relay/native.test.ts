@@ -3,6 +3,7 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
+import historyReadFilter from "../ifc/history-read-filter.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -2186,21 +2187,24 @@ it("cancellation during ingress prevents further chunks and final upload", async
 });
 
 it("carries an IFC audit through the normal read scheduler to relay_http", async () => {
-  const incoming = message(viewer, "channel", "history", 1700000000);
+  const channel = historyReadFilter[0]?.["#h"][0];
+  assert(channel);
+  const incoming = message(viewer, channel, "history", 1700000000);
   respond = () => ({ body: [incoming] });
   const transport = await connectNativeTransport(community);
   const owner = createRelayReader(transport);
   const ifc = { agent: viewer.pubkey, trigger: incoming };
   try {
     expect(
-      await owner.reader.read([{ kinds: [9], "#h": ["channel"], limit: 13 }], {
-        ifc,
-      }),
+      await owner.reader.read(
+        [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+        { ifc },
+      ),
     ).toEqual([incoming]);
     expect(requests.find((request) => request.path === "/query")).toMatchObject(
       {
         ifc,
-        body: JSON.stringify([{ "#h": ["channel"], kinds: [9], limit: 13 }]),
+        body: JSON.stringify(historyReadFilter),
       },
     );
     expect(

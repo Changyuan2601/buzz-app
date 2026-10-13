@@ -71,6 +71,36 @@ impl Facts {
 }
 
 #[test]
+fn history_filter_admits_the_scheduler_payload_and_rejects_other_reads() {
+    // Shared with the native transport test, which produces this through the scheduler.
+    let filters = include_str!("../../../../src/features/ifc/history-read-filter.json");
+    let channel = Uuid::from_u128(1);
+    assert!(admit_history_filter(filters, channel).is_ok());
+    assert!(admit_history_filter(filters, Uuid::from_u128(2)).is_err());
+
+    let expected: Value = serde_json::from_str(filters).unwrap();
+    for (field, value) in [
+        ("#h", json!([])),
+        (
+            "#h",
+            json!([channel.to_string(), Uuid::from_u128(2).to_string()]),
+        ),
+        ("limit", json!(12)),
+        ("kinds", json!([9])),
+        ("kinds", json!([40002, 9, 1])),
+        ("kinds", json!([40002, 9, 9])),
+        ("search", json!("extra filter field")),
+    ] {
+        let mut invalid = expected.clone();
+        invalid[0][field] = value;
+        assert!(admit_history_filter(&invalid.to_string(), channel).is_err());
+    }
+    for invalid in ["{", "[]", &json!([expected[0], expected[0]]).to_string()] {
+        assert!(admit_history_filter(invalid, channel).is_err());
+    }
+}
+
+#[test]
 fn production_check_uses_verified_members_and_message_sources() {
     let facts = Facts::new();
     let history = json!([facts.message(facts.channel)]).to_string();

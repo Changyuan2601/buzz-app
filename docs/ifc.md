@@ -37,6 +37,8 @@ checks `IfcSession::call` and `IfcSession::read`, and verifies the history's
 signatures and channel. IFC failures are printed to the native log; the original
 read result is returned immediately. Existing read authorization, signature
 checks and network errors retain their behavior.
+The audit covers the raw `/query` response; events later merged or projected by
+`session.read()` remain unaudited.
 
 At most two audits run concurrently, with a three-second deadline each. Capacity
 exhaustion and timeouts are logged rather than delaying or rejecting history.
