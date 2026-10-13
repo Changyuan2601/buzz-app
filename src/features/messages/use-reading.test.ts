@@ -49,12 +49,16 @@ function setup({
   panel.append(header, element);
   document.body.append(panel, composer, parent, outside);
   ({ element, composer, parent, outside, header })[focus].focus();
-  vi.spyOn(element, "getClientRects").mockReturnValue([
-    new DOMRect(0, 0, 500, 500),
-  ] as unknown as DOMRectList);
-  vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
-    new DOMRect(0, 0, 500, 500),
+  // jsdom lays nothing out: a displayed list and a frame are both simulated.
+  element.checkVisibility = () => true;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(performance.now()), 0),
   );
+  vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+  const frame = () => vi.advanceTimersByTime(0);
+  const viewport = vi
+    .spyOn(element, "getBoundingClientRect")
+    .mockReturnValue(new DOMRect(0, 0, 500, 500));
   element.replaceChildren(
     row("visible", 100, 200),
     row("overscan", 600, 700),
@@ -127,6 +131,7 @@ function setup({
         ),
       ),
   });
+  frame();
   return {
     element,
     composer,
@@ -137,7 +142,15 @@ function setup({
     leases,
     position,
     disconnected,
-    mutation: () => mutation(),
+    viewport,
+    frame,
+    /** Observer callbacks, then the frame that samples them. */
+    mutation: (count = 1) => {
+      for (let i = 0; i < count; i++) mutation();
+      frame();
+    },
+    /** One observer callback with no frame yet. */
+    mutate: () => mutation(),
     /** A completed dwell hands viewing to a fresh view-only lease after it. */
     dwelled: () => leases.at(-2),
     setVisibility: (next: DocumentVisibilityState) => {
@@ -147,7 +160,7 @@ function setup({
       observe = next;
     },
     setRows: (next: HTMLElement[]) => element.replaceChildren(...next),
-    retarget: (channelId: string, nextSession = session) =>
+    retarget: (channelId: string, nextSession = session) => {
       view.rerender({
         session: nextSession,
         channelId,
@@ -155,7 +168,9 @@ function setup({
         settled: position,
         latestMessageId,
         rootId,
-      }),
+      });
+      frame();
+    },
     unmount: view.unmount,
   };
 }
@@ -264,6 +279,7 @@ it("only the owning selected tab earns dwell; inactive and restored content does
   vi.advanceTimersByTime(300);
   expect(h.reading).toHaveBeenCalledTimes(count);
   movedTab.focus();
+  h.frame();
   const movedLease = h.leases.at(-1);
   expect(h.reading).toHaveBeenCalledTimes(count + 1);
   vi.advanceTimersByTime(299);
@@ -301,6 +317,7 @@ it("captures the cancellable lease before dwell and disposes it on hidden/unmoun
   expect(h.leases[0]?.dispose).toHaveBeenCalledTimes(1);
   h.setVisibility("visible");
   document.dispatchEvent(new Event("visibilitychange"));
+  h.frame();
   h.unmount();
   vi.advanceTimersByTime(1000);
   expect(h.leases[1]?.observe).not.toHaveBeenCalled();
@@ -310,6 +327,7 @@ it("scroll and content changes restart dwell; a row seen only at the end is not 
   const h = setup();
   vi.advanceTimersByTime(100);
   h.element.dispatchEvent(new Event("scroll"));
+  h.frame();
   expect(h.leases[0]?.dispose).toHaveBeenCalled();
   vi.advanceTimersByTime(100);
   h.setRows([row("replacement", 100, 200)]);
@@ -369,7 +387,10 @@ it.each(["blur", "scroll", "unmount"] as const)(
     expect(h.leases).toHaveLength(2);
     expect(viewing?.observe).not.toHaveBeenCalled();
     if (end === "blur") window.dispatchEvent(new Event("blur"));
-    if (end === "scroll") h.element.dispatchEvent(new Event("scroll"));
+    if (end === "scroll") {
+      h.element.dispatchEvent(new Event("scroll"));
+      h.frame();
+    }
     if (end === "unmount") h.unmount();
     expect(viewing?.dispose).toHaveBeenCalledOnce();
   },
@@ -429,12 +450,12 @@ it("releases the old channel and session on rerender and only observes the curre
   expect(h.leases[2]?.dispose).toHaveBeenCalledOnce();
 });
 
-it("StrictMode releases its probe lease and disconnects observation on unmount", () => {
+it("StrictMode's probe effect never samples; unmount disconnects observation", () => {
   const h = setup({ strict: true });
-  expect(h.leases).toHaveLength(2);
-  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
-  expect(h.leases[1]?.dispose).not.toHaveBeenCalled();
-  const validity = h.leases[1]?.view.mock.calls[0]?.[1];
+  // The probe effect's frame is cancelled with it, so only the kept effect leases.
+  expect(h.leases).toHaveLength(1);
+  expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
+  const validity = h.leases[0]?.view.mock.calls[0]?.[1];
   h.unmount();
   expect(validity()).toBe(false);
   for (const lease of h.leases) expect(lease.dispose).toHaveBeenCalledOnce();
@@ -445,7 +466,7 @@ it("StrictMode releases its probe lease and disconnects observation on unmount",
     document.dispatchEvent(new Event("visibilitychange"));
     vi.advanceTimersByTime(1000);
   });
-  expect(h.reading).toHaveBeenCalledTimes(2);
+  expect(h.reading).toHaveBeenCalledTimes(1);
   for (const lease of h.leases) expect(lease.observe).not.toHaveBeenCalled();
 });
 function elementEvents(element: HTMLElement) {
@@ -492,4 +513,68 @@ it("settled notification starts dwell without changed rows, focus or geometry", 
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+
+it("a burst of mutations in one frame reads geometry once and takes one lease", () => {
+  const h = setup();
+  vi.advanceTimersByTime(100);
+  h.setRows([row("burst", 100, 200)]);
+  const reads = h.viewport.mock.calls.length;
+  for (let i = 0; i < 5; i++) h.mutate();
+  // Nothing is read, and the current lease is held, until the frame samples.
+  expect(h.viewport).toHaveBeenCalledTimes(reads);
+  expect(h.reading).toHaveBeenCalledOnce();
+  expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
+  h.frame();
+  expect(h.reading).toHaveBeenCalledTimes(2);
+  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
+  const sampled = h.viewport.mock.calls.length;
+  h.frame();
+  expect(h.viewport).toHaveBeenCalledTimes(sampled);
+  vi.advanceTimersByTime(299);
+  expect(h.leases[1]?.observe).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(h.leases[1]?.observe).toHaveBeenCalledExactlyOnceWith(["burst"]);
+});
+it("a row entering mid-dwell restarts the interval and earns only its own dwell", () => {
+  const h = setup();
+  vi.advanceTimersByTime(150);
+  h.setRows([row("visible", 100, 200), row("late", 250, 350)]);
+  h.mutation();
+  vi.advanceTimersByTime(150);
+  expect(h.leases[0]?.observe).not.toHaveBeenCalled();
+  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(149);
+  expect(h.leases[1]?.observe).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(h.leases[1]?.observe).toHaveBeenCalledExactlyOnceWith([
+    "visible",
+    "late",
+  ]);
+});
+it("catch-up still fires for the newest row after a coalesced burst at the bottom", async () => {
+  const h = setup({ latestMessageId: "newest" });
+  h.setRows([row("visible", 100, 200), row("newest", 300, 400)]);
+  h.mutation(3);
+  expect(h.reading).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(299);
+  expect(h.leases.at(-1)?.catchUp).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "newest",
+    undefined,
+  );
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
+    "visible",
+    "newest",
+  ]);
+});
+it("viewing validity, asked per incoming message by attention(), reads no geometry", () => {
+  const h = setup();
+  const visible = h.leases[0]?.view.mock.calls[0]?.[1];
+  const rects = vi.spyOn(h.element, "getClientRects");
+  const reads = h.viewport.mock.calls.length;
+  for (let i = 0; i < 50; i++) expect(visible()).toBe(true);
+  expect(rects).not.toHaveBeenCalled();
+  expect(h.viewport).toHaveBeenCalledTimes(reads);
 });

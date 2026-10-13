@@ -87,6 +87,10 @@ it("one bottom dwell in a DM reads only through the newest message it saw", asyn
   // A focused list whose only row is the fully visible newest message.
   vi.useFakeTimers();
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(performance.now()), 0),
+  );
+  vi.stubGlobal("cancelAnimationFrame", clearTimeout);
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -98,9 +102,7 @@ it("one bottom dwell in a DM reads only through the newest message it saw", asyn
   list.tabIndex = 0;
   document.body.append(list);
   list.focus();
-  vi.spyOn(list, "getClientRects").mockReturnValue([
-    new DOMRect(0, 0, 500, 500),
-  ] as unknown as DOMRectList);
+  list.checkVisibility = () => true;
   vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 500, 500),
   );

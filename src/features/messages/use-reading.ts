@@ -40,6 +40,7 @@ export function useReading({
     const element: HTMLElement = scroller.current;
     let handle: ReadingHandle | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let frame: number | undefined;
     let stopped = false;
     const observing = new Set<ReadingHandle>();
     // The message list or its own composer: typing under a conversation is
@@ -73,7 +74,8 @@ export function useReading({
       document.visibilityState === "visible" &&
       document.hasFocus() &&
       focused(document.activeElement) &&
-      element.getClientRects().length > 0;
+      // Style, not layout: this also answers `view()` validity per `attention()`.
+      element.checkVisibility();
     function cancel() {
       if (timer) clearTimeout(timer);
       timer = undefined;
@@ -81,6 +83,8 @@ export function useReading({
       handle = undefined;
     }
     function stop() {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
       cancel();
       for (const observed of observing) observed.dispose();
       observing.clear();
@@ -124,7 +128,13 @@ export function useReading({
         ? latestMessageId
         : undefined;
     }
+    // One sample per frame: a burst of appended rows, scrolls and resizes reads
+    // geometry once, and the current lease is held until that sample replaces it.
     function schedule() {
+      frame ??= requestAnimationFrame(sample);
+    }
+    function sample() {
+      frame = undefined;
       cancel();
       if (!active()) return;
       const ids = visibleIds();
