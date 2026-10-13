@@ -51,8 +51,7 @@ selected community's agents, with their settings.
 - the identity-name service, which lets a local agent's name win in its own
   community; and
 - `session.agentChoices` (the communities service hands it to each session), which
-  marks matching agents `managed`. Mention ranking reads that flag; New message and
-  profile **Message** accept any of the viewer's agents, `managed` or not.
+  marks matching agents `managed`. New message and mention choices read that flag.
 
 `sameCommunityAgents` keeps only rows whose `owner` is the viewer and whose
 `relayUrl` maps to this session's community partition. Local agents carry no
