@@ -39,6 +39,30 @@ function resultStatus(value: unknown) {
       : "";
 }
 
+/** beekeeper_messages.proto `AttestAgentStatus`, as number or enum name suffix. */
+const ATTEST_FAILURES: readonly (readonly [
+  readonly (string | number)[],
+  string,
+])[] = [
+  [[2, "DISABLED"], "This Builderlab account can't run remote agents yet."],
+  [
+    [3, "FOUND"],
+    "Builderlab no longer has this agent. Delete it in Agents, then create it again.",
+  ],
+  [
+    [4, "UNATTESTED"],
+    "Builderlab has already set up or revoked this agent. Review it in Agents.",
+  ],
+  [
+    [10, "BOUND"],
+    "Link your Buzz identity to this Builderlab account, then finish setup in Agents.",
+  ],
+  [
+    [11, "AUTHORIZATION"],
+    "This Builderlab account is linked to a different Buzz identity. Sign in to Buzz with that identity, or to the Builderlab account linked to this one, then finish setup in Agents.",
+  ],
+];
+
 function agentStatus(value: unknown): RemoteAgent["status"] {
   const status = String(value ?? "")
     .split("_")
@@ -282,14 +306,16 @@ export function createAgentClient(
       },
       signal,
     );
-    if (![1, "ACTIVE"].includes(resultStatus(result.status)))
-      throw new Error(
+    const status = resultStatus(result.status);
+    if ([1, "ACTIVE"].includes(status)) return;
+    throw new Error(
+      ATTEST_FAILURES.find(([codes]) => codes.includes(status))?.[1] ??
         `Agent setup was not confirmed (${
           typeof result.status === "string" || typeof result.status === "number"
             ? result.status
             : "no status"
         }). Retry setup in Agents.`,
-      );
+    );
   }
   return {
     link,

@@ -364,6 +364,18 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
     }),
   );
 });
+it.each([
+  ["ATTEST_AGENT_STATUS_NO_OWNER_IDENTITY_BOUND", "Link your Buzz identity"],
+  [11, "linked to a different Buzz identity"],
+  ["ATTEST_AGENT_STATUS_FEATURE_DISABLED", "can't run remote agents"],
+  [0, "not confirmed"],
+])("explains attestation status %s", async (status, error) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(response({ status }));
+  await expect(
+    h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
+  ).rejects.toThrow(error);
+});
 it.each(["network", "server", "malformed", "cancel"])(
   "retains the registration UUID after an uncertain %s result",
   async (failure) => {
