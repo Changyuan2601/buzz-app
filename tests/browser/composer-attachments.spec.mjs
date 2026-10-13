@@ -847,16 +847,24 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect
       .poll(() => video.evaluate((el) => el.readyState))
       .toBeGreaterThanOrEqual(2);
+    // The viewer autoplays this 2-second clip, so it can be playing or ended
+    // here. Stop autoplay and rewind a looping clip, then start it with Play.
+    // In CI, Linux WebKit restarted an ended clip and it ended again at once.
+    await video.evaluate((el) => {
+      window.openDraftVideo = el;
+      el.autoplay = false;
+      el.pause();
+      el.loop = true;
+      el.currentTime = 0;
+    });
     await dialog
       .getByRole("button", { name: "Play video", exact: true })
       .click();
     await expect
-      .poll(() => video.evaluate((el) => el.currentTime))
-      .toBeGreaterThan(0);
-    await video.evaluate((el) => {
-      window.openDraftVideo = el;
-      el.loop = true;
-    });
+      .poll(() =>
+        video.evaluate((el) => !el.paused && !el.ended && el.currentTime > 0),
+      )
+      .toBe(true);
     const openedSource = await video.getAttribute("src");
     // Finish the held eager queue while the local video is actually playing.
     release();
