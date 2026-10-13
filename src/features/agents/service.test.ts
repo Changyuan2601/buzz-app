@@ -86,12 +86,14 @@ function fakeRelay(origin = "https://relay.example.test") {
     read: vi.fn(async () => [...listed]),
     // STOPGAP(agent-local-typing): delete with local-typing.ts.
     typing: { local: vi.fn() },
-    // The agent is in `channel`; `private` is the owner's alone.
+    // The agent is in `channel`; `private` is the owner's alone. `stale`
+    // lists it only in a roster loaded from disk, not yet confirmed.
     channels: {
       list: () => ({
         channels: [
           { id: channel, name: "general", members: [viewer, bot] },
           { id: "private", name: "private", members: [viewer] },
+          { id: "stale", name: "stale", members: [viewer, bot], cached: true },
         ],
       }),
     },
@@ -1639,8 +1641,10 @@ it("wakes a watch only for channels the agent is in, even when it watches all", 
   });
   emit({
     events: [
-      // The owner's own channel, one whose roster is unknown, and no channel.
+      // The owner's own channel, one whose roster is unknown or only saved
+      // on disk, and no channel.
       event("secret", { tags: [["h", "private"]] }),
+      event("saved", { tags: [["h", "stale"]] }),
       event("unknown", { tags: [["h", "elsewhere"]] }),
       event("bare", { kind: 1, tags: [] }),
       event("open"),

@@ -1905,7 +1905,8 @@ export class AgentsService extends Service implements Agents {
   /** Whether the agent is in the event's channel, by its relay-signed roster.
    * The stream is the owner's, so a watch, even of "all", sees only what the
    * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. */
+   * unknown or only loaded from disk, wakes no watch: the agent may have
+   * been removed since that roster was saved. */
   private member(agent: Agent, event: RelayEvent) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     const channels = this.bindingOf(agent)?.session.channels;
@@ -1913,7 +1914,7 @@ export class AgentsService extends Service implements Agents {
     const summary =
       channels.list().channels.find((item) => item.id === channel) ??
       channels.get?.(channel);
-    return !!summary?.members?.includes(agent.pubkey);
+    return !summary?.cached && !!summary?.members?.includes(agent.pubkey);
   }
   /** The job as it should run now, or undefined when it should not run: a
    * watch's event is matched again against the agent's current attention, so
