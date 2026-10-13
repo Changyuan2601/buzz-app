@@ -568,6 +568,14 @@ pub(crate) struct RelayResponse {
     body: String,
 }
 
+#[derive(Serialize)]
+pub(crate) struct AuditedResponse {
+    #[serde(flatten)]
+    response: RelayResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ifc: Option<ifc::Binding>,
+}
+
 async fn verify_owned_event(host: &IdentityHost, event: &serde_json::Value) -> Result<()> {
     if event.get("pubkey").and_then(serde_json::Value::as_str)
         != Some(host.viewer().await?.as_str())
@@ -660,7 +668,7 @@ pub(crate) async fn relay_http(
     method: String,
     body: Option<String>,
     ifc: Option<serde_json::Value>,
-) -> Result<RelayResponse> {
+) -> Result<AuditedResponse> {
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
         || (method == "GET" && body.is_some())
@@ -708,20 +716,28 @@ pub(crate) async fn relay_http(
     )
     .await?;
 
-    if path == "/query" && response.status == 200 {
+    let binding = if path == "/query" && response.status == 200 {
         if let (Some(context), Some(filters)) = (ifc, audit_filters) {
             ifc::observe(
-                host.inner().clone(),
-                agents.inner().clone(),
+                host.inner(),
+                agents.inner(),
                 url,
                 context,
-                filters,
+                &filters,
                 &response,
-            );
+            )
+            .await
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
-    Ok(response)
+    Ok(AuditedResponse {
+        response,
+        ifc: binding,
+    })
 }
 
 async fn send(

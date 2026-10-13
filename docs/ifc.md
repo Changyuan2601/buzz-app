@@ -29,33 +29,48 @@ DM history. The shared `IfcContext` carries the agent and signed triggering even
 through the existing scheduler, transport and `relay_http` command. There is no
 opt-in flag, alternate history command, or change to the history result.
 
-After a successful history response, Rust starts a bounded background audit.
-It looks up the saved agent and owner, resolves community identity and relay
-key from the same HTTPS origin, and fetches current relay-signed DM metadata
-and membership. It derives the execution domain and independent resource label,
-checks `IfcSession::call` and `IfcSession::read`, and verifies the history's
-signatures and channel. IFC failures are printed to the native log; the original
-read result is returned immediately. Existing read authorization, signature
-checks and network errors retain their behavior.
-The audit covers the raw `/query` response; events later merged or projected by
-`session.read()` remain unaudited.
+For native non-thread DMs, the harness selects the actual Claude `sessionId`
+before building the prompt. Its existing recent-history read carries that ID,
+the saved binding (if any), and whether the history is new. After the ordinary
+authorized `/query` succeeds, Rust resolves the saved agent and owner, community
+identity and relay key from the same HTTPS origin, and current relay-signed DM
+metadata and membership. It derives the execution domain and independent resource
+label, checks `IfcSession::call/read`, and verifies history signatures and channel.
 
-At most two audits run concurrently, with a three-second deadline each. Capacity
-exhaustion and timeouts are logged rather than delaying or rejecting history.
-Audited reads do not share a scheduler job with another caller's read, so their
-agent and triggering event remain attached to the correct request. Browser/dev
-broker reads keep working but have no Rust audit in this slice. Thread history
-and other adapters are unchanged.
+Rust returns versioned verified facts alongside the unchanged HTTP response.
+The trusted app stores those facts in the existing saved Claude session record,
+under its actual ID, before sending the first prompt. The first binding remains
+stable across idle process eviction, reconfiguration, saved resume and app restart.
+Later turns reconstruct that original structural `ExecutionDomain` and compare it
+with the current verified domain. Incompatible reuse is logged; read checks use
+the original domain rather than relabeling retained history. A failed resume's
+replacement gets a new ID and a new binding. Stale process results and concurrent
+first turns cannot replace a newer or already installed binding.
 
-This checks one read. It does not bind an IFC session to Claude's retained model
-state, rotate model history, enforce publication, or establish a security boundary.
-Policy is observed after the read, so the audit makes no claim about membership
-throughout the read. Other inputs remain unknown to IFC. Community identity
-currently uses the relay's version-1 `read_state_snapshot.community_id` discovery
-field; relays without it produce a diagnostic and still return history.
+Old histories without valid metadata remain unknown. A failed lookup or failed
+binding persistence also leaves history unknown; a later turn cannot retroactively
+bind it as new. Each reconstructed `IfcSession` marks unmediated inputs unknown,
+so this association does not attest clean provenance. The audit covers the raw
+`/query` response; events later merged or projected by `session.read()` remain
+unaudited, as do other model inputs and tools.
 
-For acceptance with an agreed isolated native agent and DM, send a non-thread
-mention and confirm ordinary history and model-session reuse. A missing membership
-or unavailable policy lookup should produce an `IFC history audit failed` message
-in the native log while the normal read and prompt continue. Runtime and human
-acceptance are deferred; local tests remain stopped at the author's request.
+Policy work admits at most two simultaneous lookups, without a queue, and has a
+three-second deadline. The eligible read now waits for that bounded observation
+before prompt delivery. Errors, timeouts, capacity exhaustion and incompatible
+reuse are diagnostic: they never deny the ordinary authorized read, replace its
+history with an empty batch, rotate history, or prevent model delivery. The
+harness's eligible-read timeout includes the added three-second budget. Existing
+read authorization, network failures and model-session reuse retain their behavior.
+Audited reads do not share a scheduler job with another caller. Browser/dev broker
+reads have no native binding, and thread history and other adapters are unchanged.
+
+This is a log-only retained-domain association, not isolation, publication or
+managed-memory enforcement, and not remote-agent support. Domain equality is
+structural, not an epoch: leaving and rejoining the same membership set can yield
+the same domain. Policy is fetched after the read, so membership throughout the
+read is not attested. Community discovery requires the relay's version-1
+`read_state_snapshot.community_id`; unavailable facts produce a diagnostic.
+
+Runtime and human acceptance are deferred. Focused session-lifecycle, native
+transport, runtime wiring and signed-policy regression coverage is added, but
+tests remain unexecuted at the author's request.

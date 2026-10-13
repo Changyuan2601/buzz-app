@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { fakeSpawn, flush } from "./claude-testing";
+import type { IfcBinding, IfcHistory } from "../../features/ifc/context";
 import type { ToolServer } from "./claude";
 import {
   AgentSessions,
@@ -27,7 +28,7 @@ const memoryStore = (): SessionStore & { all: Map<string, SavedSession> } => {
 function sessions(
   options: Partial<{
     known: Set<string>;
-    store: ReturnType<typeof memoryStore>;
+    store: SessionStore;
     /** Every process keeps its turns open until finished. */
     hold: boolean;
     /** Holds each launch after it reads the settings, as a memory read does. */
@@ -511,4 +512,214 @@ it("does not start metadata discovery after its agent is disposed during launch"
   release();
   await stopped;
   expect(claudes()).toHaveLength(0);
+});
+
+const nativeBinding = (sessionId: string, channel = "dm"): IfcBinding => ({
+  version: 1,
+  sessionId,
+  channel,
+  community: "community",
+  agent: "agent",
+  owner: "owner",
+  relay: "relay",
+  requester: "owner",
+  members: ["agent", "owner"],
+});
+const preparedTurn = (text: string) => ({ text, steer: `steer ${text}` });
+
+it("pins native facts to the actual saved id across idle, reconfigure and app restart", async () => {
+  vi.useFakeTimers();
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const known = new Set<string>();
+  const store = localSessions(storage, "agent");
+  const first = sessions({ known, store });
+  const original = nativeBinding("new-1");
+  await first.pool.deliver("dm", "", 1, {
+    prepare: async (history, receipt) => {
+      expect(history).toEqual({ id: "new-1", fresh: true, binding: null });
+      expect(first.claudes()[0]?.prompts).toEqual([]);
+      receipt(original);
+      expect(store.get("dm")?.ifc).toEqual(original);
+      return preparedTurn("first");
+    },
+  });
+  vi.advanceTimersByTime(IDLE_MS + 1);
+  const later = async (
+    history: IfcHistory,
+    receipt: (binding: IfcBinding) => void,
+  ) => {
+    expect(history).toEqual({ id: "new-1", fresh: false, binding: original });
+    receipt(nativeBinding("new-1", "incompatible"));
+    return preparedTurn("later");
+  };
+  await first.pool.deliver("dm", "", 2, { prepare: later });
+  first.setModel("haiku");
+  first.pool.reconfigure();
+  await first.pool.deliver("dm", "", 3, { prepare: later });
+  first.pool.dispose();
+  const restarted = sessions({ known, store: localSessions(storage, "agent") });
+  try {
+    await restarted.pool.deliver("dm", "", 4, { prepare: later });
+    expect(restarted.claudes()[0]?.options.args).toContain("--resume");
+    expect(store.get("dm")).toMatchObject({
+      id: "new-1",
+      seen: 4,
+      ifc: original,
+    });
+  } finally {
+    restarted.pool.dispose();
+  }
+});
+
+it("keeps legacy history unknown and binds a failed resume's replacement without copying old facts", async () => {
+  const store = memoryStore();
+  store.set("legacy", { id: "legacy", seen: 1, at: 1 });
+  store.set("lost", { id: "lost", seen: 1, at: 1, ifc: nativeBinding("lost") });
+  const { pool } = sessions({ store, known: new Set(["legacy"]) });
+  const observed: IfcHistory[] = [];
+  const prepare = async (
+    history: IfcHistory,
+    receipt: (binding: IfcBinding) => void,
+  ) => {
+    observed.push(history);
+    receipt(nativeBinding(history.id, "current"));
+    return preparedTurn("ordinary prompt");
+  };
+  try {
+    await pool.deliver("legacy", "", 2, { prepare });
+    expect(store.get("legacy")?.ifc).toBeUndefined();
+    await expect(pool.deliver("lost", "", 2, { prepare })).resolves.toEqual({
+      ok: true,
+    });
+    expect(observed).toEqual([
+      { id: "legacy", fresh: false, binding: null },
+      { id: "lost", fresh: false, binding: nativeBinding("lost") },
+      { id: "new-1", fresh: true, binding: null },
+    ]);
+    expect(store.get("lost")).toMatchObject({
+      id: "new-1",
+      ifc: nativeBinding("new-1", "current"),
+    });
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("finishes the first binding before a concurrent turn prepares and preserves busy steering", async () => {
+  const { pool, store, claudes } = sessions({ hold: true });
+  let release!: () => void;
+  const gate = new Promise<void>((done) => {
+    release = done;
+  });
+  let entered = false;
+  const original = nativeBinding("new-1");
+  const first = pool.deliver("dm", "", 1, {
+    prepare: async (_history, receipt) => {
+      entered = true;
+      await gate;
+      receipt(original);
+      return preparedTurn("first");
+    },
+  });
+  await vi.waitFor(() => expect(entered).toBe(true));
+  const next = vi.fn(
+    async (history: IfcHistory, receipt: (binding: IfcBinding) => void) => {
+      expect(history.binding).toEqual(original);
+      expect(history.fresh).toBe(false);
+      receipt(nativeBinding("new-1", "changed"));
+      return preparedTurn("second");
+    },
+  );
+  const second = pool.deliver("dm", "", 2, { prepare: next });
+  expect(next).not.toHaveBeenCalled();
+  try {
+    release();
+    await vi.waitFor(() =>
+      expect(claudes()[0]?.prompts).toEqual(["first", "steer second"]),
+    );
+    expect(store.get("dm")?.ifc).toEqual(original);
+  } finally {
+    release();
+    claudes()[0]?.finish();
+    await Promise.all([first, second]);
+    pool.dispose();
+  }
+});
+
+it("fences a first lookup from a stopped generation before preparing its replacement", async () => {
+  const { pool, store, setModel } = sessions();
+  let receipt: ((binding: IfcBinding) => void) | undefined;
+  let release!: () => void;
+  const gate = new Promise<void>((done) => {
+    release = done;
+  });
+  const prepare = async (
+    history: IfcHistory,
+    received: (binding: IfcBinding) => void,
+  ) => {
+    if (!receipt) {
+      receipt = received;
+      await gate;
+    }
+    if (history.id !== "new-1" && history.fresh)
+      received(nativeBinding(history.id));
+    return preparedTurn("prompt");
+  };
+  const done = pool.deliver("dm", "", 1, { prepare });
+  await vi.waitFor(() => expect(receipt).toBeDefined());
+  try {
+    setModel("haiku");
+    pool.reconfigure();
+    receipt?.(nativeBinding("new-1"));
+    expect(store.get("dm")?.ifc).toBeUndefined();
+  } finally {
+    release();
+  }
+  await expect(done).resolves.toEqual({ ok: true });
+  expect(store.get("dm")).toMatchObject({
+    id: "new-2",
+    ifc: nativeBinding("new-2"),
+  });
+  pool.dispose();
+});
+
+it("delivers ordinary prompts after binding persistence fails and keeps later history unknown", async () => {
+  const memory = memoryStore();
+  const store: SessionStore = {
+    ...memory,
+    set: (key, saved) => {
+      if (saved.ifc !== undefined) return false;
+      memory.set(key, saved);
+      return true;
+    },
+  };
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { pool, claudes } = sessions({ store });
+  const prepare = vi.fn(
+    async (history: IfcHistory, receipt: (binding: IfcBinding) => void) => {
+      receipt(nativeBinding(history.id));
+      return preparedTurn("ordinary");
+    },
+  );
+  try {
+    await pool.deliver("dm", "", 1, { prepare });
+    await pool.deliver("dm", "", 2, { prepare });
+    expect(prepare.mock.calls[1]?.[0]).toEqual({
+      id: "new-1",
+      fresh: false,
+      binding: null,
+    });
+    expect(store.get("dm")?.ifc).toBeUndefined();
+    expect(claudes()[0]?.prompts).toEqual(["ordinary", "ordinary"]);
+    expect(warn).toHaveBeenCalledWith(
+      "IFC binding was not saved; history remains unknown",
+    );
+  } finally {
+    pool.dispose();
+    warn.mockRestore();
+  }
 });

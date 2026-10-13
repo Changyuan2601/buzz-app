@@ -33,6 +33,7 @@ import {
   watchPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
+import type { IfcContext } from "../../features/ifc/context";
 import { readTranscript, type Conversation } from "./transcript";
 
 /** What a session can switch to between turns. Claude runs `max` as
@@ -373,18 +374,29 @@ export class ClaudeRuntime {
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
-    // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean) => {
-      const turn = await this.turn(entry, agent.pubkey, event, channel, fresh);
-      return {
-        key: turn.key,
-        text: this.review(
-          entry,
-          turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
-        ),
-      };
+    const { key, dm, thread } = this.conversation(
+      entry,
+      agent.pubkey,
+      event,
+      channel,
+    );
+    const audited = dm && !thread;
+    const prompt = async (fresh: boolean, ifc?: IfcContext) => {
+      const turn = await this.turn(
+        entry,
+        agent.pubkey,
+        event,
+        channel,
+        fresh,
+        ifc,
+      );
+      const text = this.review(
+        entry,
+        turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
+      );
+      return { text, steer: steerPrompt(text) };
     };
-    const { key, text } = await prompt(false);
+    const prepared = audited ? undefined : await prompt(false);
     // A conversation's tools default to its thread; a session shared by
     // several threads is told which to reply in instead.
     entry.contexts.set(
@@ -393,19 +405,36 @@ export class ClaudeRuntime {
         ? { channel }
         : { channel, root: threadReference(event)?.rootId ?? event.id },
     );
-    const done = entry.sessions.deliver(key, text, event.created_at, {
-      steer: steerPrompt(text),
-      fresh: async () => (await prompt(true)).text,
-      ...(trigger.type === "mention"
-        ? {
-            activityScope: threadReference(event)?.rootId ?? event.id,
-            ...(step ? { step } : {}),
-            ...(acknowledged ? { acknowledged } : {}),
-            ...(superseded ? { superseded } : {}),
-          }
-        : {}),
-      pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
-    });
+    const done = entry.sessions.deliver(
+      key,
+      prepared?.text ?? "",
+      event.created_at,
+      {
+        ...(audited
+          ? {
+              prepare: (history, onBinding) =>
+                prompt(history.fresh, {
+                  agent: agent.pubkey,
+                  trigger: event,
+                  history,
+                  onBinding,
+                }),
+            }
+          : {
+              steer: prepared?.steer ?? "",
+              fresh: async () => (await prompt(true)).text,
+            }),
+        ...(trigger.type === "mention"
+          ? {
+              activityScope: threadReference(event)?.rootId ?? event.id,
+              ...(step ? { step } : {}),
+              ...(acknowledged ? { acknowledged } : {}),
+              ...(superseded ? { superseded } : {}),
+            }
+          : {}),
+        pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      },
+    );
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
     this.notify();
@@ -550,13 +579,12 @@ export class ClaudeRuntime {
       );
   }
 
-  /** Where the event's turn goes, and what its prompt needs. */
-  private async turn(
+  /** Choose the conversation before selecting its actual Claude history. */
+  private conversation(
     entry: Entry,
     self: string,
     event: RelayEvent,
     channelId: string,
-    fresh = false,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -569,6 +597,20 @@ export class ClaudeRuntime {
     const scope = entry.config.scope;
     const key =
       dm || scope === "channel" ? channelId : `${channelId}/${rootId}`;
+    return { session, summary, dm, thread, rootId, scope, key };
+  }
+
+  /** What the turn needs, once its actual retained history is selected. */
+  private async turn(
+    entry: Entry,
+    self: string,
+    event: RelayEvent,
+    channelId: string,
+    fresh = false,
+    ifc?: IfcContext,
+  ) {
+    const { session, summary, dm, thread, rootId, scope, key } =
+      this.conversation(entry, self, event, channelId);
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm))
@@ -581,8 +623,10 @@ export class ClaudeRuntime {
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
           {
-            signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
-            ...(dm && !thread ? { ifc: { agent: self, trigger: event } } : {}),
+            signal: AbortSignal.timeout(
+              NAMES_TIMEOUT_MS * 2 + (dm && !thread ? 3_000 : 0),
+            ),
+            ...(dm && !thread && ifc ? { ifc } : {}),
           },
         );
         earlier = events

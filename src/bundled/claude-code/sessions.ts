@@ -15,6 +15,12 @@ import {
   type ToolServer,
   type TurnPick,
 } from "./claude";
+import type { IfcBinding, IfcHistory } from "../../features/ifc/context";
+
+type PrepareTurn = (
+  history: IfcHistory,
+  onBinding: (binding: IfcBinding) => void,
+) => Promise<{ text: string; steer: string }>;
 
 /** A conversation's process stops after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -30,10 +36,12 @@ export type SavedSession = Readonly<{
   /** created_at of the newest event this session has been shown. */
   seen: number;
   at: number;
+  /** Native-issued facts for this id; absent or invalid means unknown history. */
+  ifc?: unknown;
 }>;
 export type SessionStore = {
   get(key: string): SavedSession | undefined;
-  set(key: string, session: SavedSession): void;
+  set(key: string, session: SavedSession): boolean | undefined;
   delete(key: string): void;
 };
 
@@ -56,6 +64,7 @@ type Live = {
   process: ClaudeProcess;
   fingerprint: string;
   used: number;
+  fresh: boolean;
   timer?: ReturnType<typeof setTimeout>;
 };
 
@@ -166,21 +175,31 @@ export class AgentSessions {
     key: string,
     text: string,
     seen: number,
-    {
+    options: Readonly<{
+      steer?: string;
+      fresh?: () => Promise<string>;
+      prepare?: PrepareTurn;
+      pick?: TurnPick;
+    }> &
+      ActivityReceipt = {},
+  ): Promise<Settled> {
+    const {
       steer = text,
       fresh,
+      prepare,
       pick = {},
       step,
       acknowledged,
       superseded,
       activityScope,
-    }: Readonly<{
-      steer?: string;
-      fresh?: () => Promise<string>;
-      pick?: TurnPick;
-    }> &
-      ActivityReceipt = {},
-  ): Promise<Settled> {
+    } = options;
+    const activity = {
+      ...pick,
+      ...(activityScope ? { activityScope } : {}),
+      ...(step ? { step } : {}),
+      ...(acknowledged ? { acknowledged } : {}),
+      ...(superseded ? { superseded } : {}),
+    };
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
     // A message that arrives while its conversation's process starts uses it.
     // Checked without awaiting first, so the first message opens it at once.
@@ -196,44 +215,65 @@ export class AgentSessions {
       live = undefined;
     }
     if (live) {
+      const built = prepare
+        ? await this.prepareTurn(key, live, prepare)
+        : { text, steer };
+      if (this.live.get(key) !== live)
+        return this.deliver(key, text, seen, options);
       this.touch(key, live, seen);
-      return this.answer(key, live, live.process.busy ? steer : text, {
-        ...pick,
-        ...(activityScope ? { activityScope } : {}),
-        ...(step ? { step } : {}),
-        ...(acknowledged ? { acknowledged } : {}),
-        ...(superseded ? { superseded } : {}),
-      });
+      return this.answer(
+        key,
+        live,
+        live.process.busy ? built.steer : built.text,
+        activity,
+      );
     }
     const saved = this.options.store.get(key);
-    const starting = this.start(saved?.id).catch((error) => {
-      console.warn("Claude could not start", error);
-      return undefined;
-    });
+    let built = { text, steer };
+    const starting = this.start(saved?.id)
+      .then(async (live) => {
+        if (!this.disposed) {
+          this.adopt(key, live);
+          try {
+            if (prepare) built = await this.prepareTurn(key, live, prepare);
+          } catch (error) {
+            this.drop(key, live);
+            throw error;
+          }
+        }
+        return live;
+      })
+      .catch((error) => {
+        console.warn("Claude could not start", error);
+        return undefined;
+      });
     this.opening.set(key, starting);
     live = await starting;
     if (this.opening.get(key) === starting) this.opening.delete(key);
-    if (live && !this.disposed) this.adopt(key, live, seen);
     if (!live) return { ok: false, error: "Claude could not start" };
     if (this.disposed) {
       void live.process.kill();
       return { ok: false, error: "Claude was stopped" };
     }
-    const activity = {
-      ...pick,
-      ...(activityScope ? { activityScope } : {}),
-      ...(step ? { step } : {}),
-      ...(acknowledged ? { acknowledged } : {}),
-      ...(superseded ? { superseded } : {}),
-    };
-    const delivered = await this.answer(key, live, text, activity);
+    if (this.live.get(key) !== live)
+      return this.deliver(key, text, seen, options);
+
+    this.touch(key, live, seen);
+    const delivered = await this.answer(key, live, built.text, activity);
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
-    if (!delivered.ok && saved && !live.process.started) {
+    if (
+      !delivered.ok &&
+      saved &&
+      !live.process.started &&
+      (!this.live.has(key) || this.live.get(key) === live) &&
+      this.options.store.get(key)?.id === live.process.sessionId
+    ) {
       this.options.store.delete(key);
       this.drop(key, live);
       return this.deliver(key, fresh ? await fresh() : text, seen, {
         pick,
+        ...(prepare ? { prepare } : {}),
         ...activity,
       });
     }
@@ -319,7 +359,7 @@ export class AgentSessions {
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
       : await this.fresh(launch);
     if (fingerprint === this.options.fingerprint() || this.disposed)
-      return { process, fingerprint, used: this.now() };
+      return { process, fingerprint, used: this.now(), fresh: !resume };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
     return this.start(resume);
@@ -339,10 +379,10 @@ export class AgentSessions {
       sessionId: this.newId(),
     });
   }
-  private adopt(key: string, live: Live, seen: number) {
+  private adopt(key: string, live: Live) {
     live.process.conversation = key;
     this.live.set(key, live);
-    this.touch(key, live, seen);
+    this.touch(key, live);
     this.options.onChange?.();
     void live.process.exited.then(() => {
       if (this.live.get(key) === live) this.drop(key, live);
@@ -354,6 +394,7 @@ export class AgentSessions {
     text: string,
     activity: TurnPick & ActivityReceipt,
   ) {
+    live.fresh = false;
     const settled = await live.process.send(text, activity);
     if (this.live.get(key) === live) {
       this.touch(key, live);
@@ -361,6 +402,42 @@ export class AgentSessions {
         this.drop(key, live);
     }
     return settled;
+  }
+
+  private prepareTurn(key: string, live: Live, prepare: PrepareTurn) {
+    const id = live.process.sessionId ?? "";
+    const prior = this.options.store.get(key);
+    const fresh = live.fresh;
+    live.fresh = false;
+    return prepare(
+      { id, fresh, binding: prior?.id === id ? (prior.ifc ?? null) : null },
+      (binding) => {
+        // Only the first turn of this actual history may install its binding.
+        if (
+          !fresh ||
+          this.disposed ||
+          this.live.get(key) !== live ||
+          live.process.sessionId !== id
+        )
+          return;
+        try {
+          const saved = this.options.store.get(key);
+          if (
+            binding.sessionId !== id ||
+            saved?.id !== id ||
+            saved.ifc !== undefined
+          )
+            return;
+          if (this.options.store.set(key, { ...saved, ifc: binding }) === false)
+            console.warn("IFC binding was not saved; history remains unknown");
+        } catch (error) {
+          console.warn(
+            "IFC binding was not saved; history remains unknown",
+            error,
+          );
+        }
+      },
+    );
   }
   /** Saves the session and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
@@ -377,6 +454,9 @@ export class AgentSessions {
       id,
       seen: Math.max(seen ?? 0, prior?.id === id ? prior.seen : 0),
       at: live.used,
+      ...(prior?.id === id && prior.ifc !== undefined
+        ? { ifc: prior.ifc }
+        : {}),
     });
   }
   private drop(key: string, live: Live) {
@@ -502,8 +582,10 @@ export function localSessions(
     all[agent] = Object.fromEntries(kept);
     try {
       storage.setItem(name, JSON.stringify(all));
+      return true;
     } catch (error) {
       console.warn("Claude sessions were not saved", error);
+      return false;
     }
   };
   return {

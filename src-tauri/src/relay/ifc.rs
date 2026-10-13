@@ -4,10 +4,10 @@ use crate::{app_agents::AppAgentHost, identity::IdentityHost};
 use buzz_agent_controller::AppAgent;
 use buzz_ifc::{
     derive_execution_domain, CapabilityPolicy, CapabilitySet, CommunityId, ConversationKind,
-    DomainFacts, IfcSession, OperationEffect, Principal, ResourceLabel,
+    DomainFacts, ExecutionDomain, IfcSession, OperationEffect, Principal, ResourceLabel,
 };
 use nostr::{event::Event, key::PublicKey};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, time::Duration};
 use tokio::sync::Semaphore;
@@ -17,7 +17,7 @@ use uuid::Uuid;
 const READ: &str = "channel.read";
 // Match the existing read scheduler's lexicographic kind ordering.
 const CHAT: [u16; 2] = [40002, 9];
-// Auditing must neither queue unbounded work nor hold up the normal read.
+// Bound policy work without queuing or denying the ordinary history read.
 static AUDITS: Semaphore = Semaphore::const_new(2);
 
 #[derive(Deserialize)]
@@ -25,35 +25,90 @@ static AUDITS: Semaphore = Semaphore::const_new(2);
 struct Context {
     agent: String,
     trigger: Event,
+    history: Option<History>,
 }
 
-pub(super) fn observe(
-    host: IdentityHost,
-    agents: AppAgentHost,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct History {
+    id: String,
+    fresh: bool,
+    binding: Value,
+}
+
+/// Versioned verified facts, stored by the trusted app with this actual history.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Binding {
+    version: u8,
+    session_id: String,
+    community: String,
+    channel: String,
+    agent: String,
+    owner: String,
+    relay: String,
+    requester: String,
+    members: BTreeSet<String>,
+}
+
+impl Binding {
+    fn domain(&self) -> Result<ExecutionDomain> {
+        ensure(self.version == 1, "Unknown IFC binding version")?;
+        let principal = |key: &str| Principal::from_hex(key).map_err(|error| error.to_string());
+        let capabilities = CapabilitySet::from_operations([(READ, OperationEffect::NonEgressing)]);
+        derive_execution_domain(
+            DomainFacts {
+                community: CommunityId::from_uuid(
+                    Uuid::parse_str(&self.community).map_err(|_| "Invalid IFC bound community")?,
+                ),
+                channel_id: Uuid::parse_str(&self.channel)
+                    .map_err(|_| "Invalid IFC bound channel")?,
+                kind: ConversationKind::DirectMessage,
+                members: self
+                    .members
+                    .iter()
+                    .map(|key| principal(key))
+                    .collect::<Result<_>>()?,
+                executing_agent: principal(&self.agent)?,
+                requesters: BTreeSet::from([principal(&self.requester)?]),
+                owner: Some(principal(&self.owner)?),
+                system_principal: Some(principal(&self.relay)?),
+            },
+            &CapabilityPolicy::new(capabilities.clone(), capabilities),
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+pub(super) async fn observe(
+    host: &IdentityHost,
+    agents: &AppAgentHost,
     url: Url,
     context: Value,
-    filters: String,
+    filters: &str,
     response: &RelayResponse,
-) {
-    let Ok(permit) = AUDITS.try_acquire() else {
+) -> Option<Binding> {
+    let Ok(_permit) = AUDITS.try_acquire() else {
         eprintln!("IFC history audit skipped: audit capacity reached");
-        return;
+        return None;
     };
 
-    let history = response.body.clone();
-    tauri::async_runtime::spawn(async move {
-        let _permit = permit;
-        match tokio::time::timeout(
-            Duration::from_secs(3),
-            audit(&host, &agents, url, context, &filters, &history),
-        )
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => eprintln!("IFC history audit failed: {error}"),
-            Err(_) => eprintln!("IFC history audit failed: policy lookup timed out"),
+    match tokio::time::timeout(
+        Duration::from_secs(3),
+        audit(host, agents, url, context, filters, &response.body),
+    )
+    .await
+    {
+        Ok(Ok(binding)) => Some(binding),
+        Ok(Err(error)) => {
+            eprintln!("IFC history audit failed: {error}");
+            None
         }
-    });
+        Err(_) => {
+            eprintln!("IFC history audit failed: policy lookup timed out");
+            None
+        }
+    }
 }
 
 async fn audit(
@@ -63,7 +118,7 @@ async fn audit(
     context: Value,
     filters: &str,
     history: &str,
-) -> Result<()> {
+) -> Result<Binding> {
     let context: Context =
         serde_json::from_value(context).map_err(|_| "Invalid IFC read context")?;
     let channel = message_channel(&context.trigger)?;
@@ -123,6 +178,7 @@ async fn audit(
         &context.trigger,
         &policy.body,
         history,
+        context.history.as_ref(),
     )
 }
 
@@ -141,7 +197,8 @@ fn evaluate(
     trigger: &Event,
     policy: &str,
     history: &str,
-) -> Result<()> {
+    retained: Option<&History>,
+) -> Result<Binding> {
     let channel = message_channel(trigger)?;
     let events: Vec<Event> = serde_json::from_str(policy).map_err(|_| "Invalid IFC DM policy")?;
     let (mut metadata, mut membership) = (None, None);
@@ -198,28 +255,22 @@ fn evaluate(
     )
     .map_err(|error| error.to_string())?;
 
-    let capabilities = CapabilitySet::from_operations([(READ, OperationEffect::NonEgressing)]);
-    let domain = derive_execution_domain(
-        DomainFacts {
-            community,
-            channel_id: channel,
-            kind: ConversationKind::DirectMessage,
-            members,
-            executing_agent: Principal::from_hex(&agent.pubkey)
-                .map_err(|error| error.to_string())?,
-            requesters: BTreeSet::from([
-                Principal::from_public_key(&trigger.pubkey).map_err(|error| error.to_string())?
-            ]),
-            owner: Some(Principal::from_hex(&agent.owner).map_err(|error| error.to_string())?),
-            system_principal: Some(
-                Principal::from_public_key(&relay).map_err(|error| error.to_string())?,
-            ),
-        },
-        &CapabilityPolicy::new(capabilities.clone(), capabilities),
-    )
-    .map_err(|error| error.to_string())?;
+    let retained = retained.ok_or("Unknown IFC retained history")?;
+    ensure(!retained.id.is_empty(), "Missing IFC history id")?;
+    let current = Binding {
+        version: 1,
+        session_id: retained.id.clone(),
+        community: community.to_string(),
+        channel: channel.to_string(),
+        agent: agent.pubkey.clone(),
+        owner: agent.owner.clone(),
+        relay: relay.to_hex(),
+        requester: trigger.pubkey.to_hex(),
+        members: members.iter().map(Principal::to_hex).collect(),
+    };
+    let (binding, domain) = retained_domain(current, retained)?;
 
-    // This is a check of one read, not a binding to Claude's retained state.
+    // Reconstruct the pinned domain; unmediated input remains permanently unknown.
     let mut session = IfcSession::enter(domain);
     session.mark_unknown_input();
     session.call(READ).map_err(|error| error.to_string())?;
@@ -237,7 +288,25 @@ fn evaluate(
         )?;
     }
 
-    Ok(())
+    Ok(binding)
+}
+
+fn retained_domain(current: Binding, history: &History) -> Result<(Binding, ExecutionDomain)> {
+    let current_domain = current.domain()?;
+    if history.fresh && history.binding.is_null() {
+        return Ok((current, current_domain));
+    }
+    let pinned: Binding = serde_json::from_value(history.binding.clone())
+        .map_err(|_| "Unknown or invalid IFC retained-history binding")?;
+    ensure(
+        pinned.session_id == history.id,
+        "IFC binding belongs to another history",
+    )?;
+    let pinned_domain = pinned.domain()?;
+    if pinned_domain != current_domain {
+        eprintln!("IFC retained history reused with an incompatible execution domain");
+    }
+    Ok((pinned, pinned_domain))
 }
 
 fn message_channel(event: &Event) -> Result<Uuid> {

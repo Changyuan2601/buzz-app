@@ -1,4 +1,4 @@
-import type { IfcContext } from "../ifc/context";
+import type { IfcBinding, IfcContext } from "../ifc/context";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -112,16 +112,31 @@ export async function nativeRelayRequest(
     status: number;
     headers: Record<string, string>;
     body: string;
+    ifc?: IfcBinding;
   }>("relay_http", {
     community: communityDestination(community).url,
     path,
     method: body === undefined ? "GET" : "POST",
     body: body === undefined ? null : JSON.stringify(body),
-    ...(ifc ? { ifc } : {}),
+    ...(ifc
+      ? {
+          ifc: {
+            agent: ifc.agent,
+            trigger: ifc.trigger,
+            ...(ifc.history ? { history: ifc.history } : {}),
+          },
+        }
+      : {}),
   });
   // IPC cannot abort reqwest. Retain the shared admission slot until native work
   // settles (bounded by its timeout), then reject any obsolete result.
   bounded.throwIfAborted();
+  if (result.ifc)
+    try {
+      ifc?.onBinding?.(result.ifc);
+    } catch (error) {
+      console.warn("IFC binding receipt failed", error);
+    }
   return nativeResponse(result);
 }
 

@@ -4,6 +4,7 @@ import {
 } from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
 import historyReadFilter from "../ifc/history-read-filter.json";
+import bindingContract from "../ifc/retained-history-binding.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -21,7 +22,7 @@ import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
 import { createRelayReader } from "./reader";
-import type { IfcContext } from "../ifc/context";
+import type { IfcBinding, IfcContext } from "../ifc/context";
 import { createRelaySession } from "./session";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
@@ -54,8 +55,8 @@ let discovery: Record<string, unknown> = {};
 let respond: (
   request: Request,
 ) =>
-  | { status?: number; body: unknown }
-  | Promise<{ status?: number; body: unknown }>;
+  | { status?: number; body: unknown; ifc?: IfcBinding }
+  | Promise<{ status?: number; body: unknown; ifc?: IfcBinding }>;
 const requests: Request[] = [];
 const uploads: { bytes: Uint8Array; headers: Record<string, string> }[] = [];
 const received = new Map<string, Uint8Array[]>();
@@ -108,6 +109,7 @@ beforeEach(() => {
         status: result.status ?? 200,
         headers: {},
         body: JSON.stringify(result.body),
+        ...("ifc" in result ? { ifc: result.ifc } : {}),
       };
     }
     if (command === "relay_upload_begin") {
@@ -2190,10 +2192,17 @@ it("carries an IFC audit through the normal read scheduler to relay_http", async
   const channel = historyReadFilter[0]?.["#h"][0];
   assert(channel);
   const incoming = message(viewer, channel, "history", 1700000000);
-  respond = () => ({ body: [incoming] });
+  const binding: IfcBinding = { ...bindingContract, version: 1 };
+  respond = () => ({ body: [incoming], ifc: binding });
   const transport = await connectNativeTransport(community);
   const owner = createRelayReader(transport);
-  const ifc = { agent: viewer.pubkey, trigger: incoming };
+  const onBinding = vi.fn();
+  const wire = {
+    agent: viewer.pubkey,
+    trigger: incoming,
+    history: { id: "actual-id", fresh: true, binding: null },
+  };
+  const ifc = { ...wire, onBinding };
   try {
     expect(
       await owner.reader.read(
@@ -2203,10 +2212,39 @@ it("carries an IFC audit through the normal read scheduler to relay_http", async
     ).toEqual([incoming]);
     expect(requests.find((request) => request.path === "/query")).toMatchObject(
       {
-        ifc,
+        ifc: wire,
         body: JSON.stringify(historyReadFilter),
       },
     );
+    expect(onBinding).toHaveBeenCalledWith(binding);
+    expect(
+      requests.find((request) => request.path === "/query")?.ifc,
+    ).not.toHaveProperty("onBinding");
+    onBinding.mockImplementation(() => {
+      throw new Error("storage failed");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        owner.reader.read([{ kinds: [9, 40002], "#h": [channel], limit: 13 }], {
+          ifc,
+        }),
+      ).resolves.toEqual([incoming]);
+      expect(warn).toHaveBeenCalledWith(
+        "IFC binding receipt failed",
+        expect.any(Error),
+      );
+      respond = () => ({ body: [incoming] });
+      onBinding.mockClear();
+      await expect(
+        owner.reader.read([{ kinds: [9, 40002], "#h": [channel], limit: 13 }], {
+          ifc,
+        }),
+      ).resolves.toEqual([incoming]);
+      expect(onBinding).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
     expect(
       vi
         .mocked(invoke)

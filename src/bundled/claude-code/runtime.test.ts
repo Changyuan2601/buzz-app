@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
+import type { IfcBinding } from "../../features/ifc/context";
 import type { ReadOptions } from "../../features/relay/reader";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
@@ -1129,20 +1130,67 @@ it("tags the existing DM history read for audit and keeps the model session", as
   const earlier = message("1", "Earlier DM context");
   const trigger = message("2", "@Claude hello", { created_at: 110 });
   const f = setup([earlier], { dm: true });
+  let original: IfcBinding | undefined;
+  f.read.mockImplementation(async (_filters, options) => {
+    const ifc = options?.ifc;
+    if (ifc?.history?.fresh) {
+      expect(f.claudes().every((process) => !process.prompts.length)).toBe(
+        true,
+      );
+      original = {
+        version: 1,
+        sessionId: ifc.history.id,
+        community: "community",
+        channel,
+        agent: self,
+        owner: alice,
+        requester: alice,
+        relay: "relay",
+        members: [self, alice],
+      };
+      ifc.onBinding?.(original);
+    } else expect(ifc?.history?.binding).toEqual(original);
+    return [earlier];
+  });
   await f.deliver({ type: "mention", event: trigger });
-  await flush(10);
+  await vi.waitFor(() => expect(f.read).toHaveBeenCalledOnce());
+  await vi.waitFor(() =>
+    expect(f.claudes().some((process) => process.prompts.length === 1)).toBe(
+      true,
+    ),
+  );
   expect(f.read).toHaveBeenCalledWith(
     [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
-    expect.objectContaining({ ifc: { agent: self, trigger } }),
+    expect.objectContaining({
+      ifc: expect.objectContaining({
+        agent: self,
+        trigger,
+        history: expect.objectContaining({
+          id: original?.sessionId,
+          fresh: true,
+        }),
+        onBinding: expect.any(Function),
+      }),
+    }),
   );
   expect(
     f.claudes().find((process) => process.prompts.length)?.prompts[0],
   ).toContain("Earlier DM context");
   const later = message("3", "@Claude again", { created_at: 120 });
   await f.deliver({ type: "mention", event: later });
-  await flush(10);
+  await vi.waitFor(() =>
+    expect(f.claudes().some((process) => process.prompts.length === 2)).toBe(
+      true,
+    ),
+  );
   const used = f.claudes().filter((process) => process.prompts.length);
   expect(used).toHaveLength(1);
   expect(used[0]?.prompts).toHaveLength(2);
+  expect(used[0]?.options.args).toContain(original?.sessionId);
+  expect(
+    JSON.parse(f.data.get("buzz.claude-code.sessions.v1") ?? "{}")[self][
+      channel
+    ].ifc,
+  ).toEqual(original);
   expect(f.agent.query).not.toHaveBeenCalled();
 });
