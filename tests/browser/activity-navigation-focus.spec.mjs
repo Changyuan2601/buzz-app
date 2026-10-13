@@ -125,15 +125,12 @@ for (const destination of ["reply", "off-window root"]) {
     await expect(panel).toBeVisible();
     // A repeat activity intent must reveal its retained thread, including when
     // another tab is selected or the entire pane is collapsed.
-    const main = page.getByRole("article", {
-      name: "Conversation",
-      exact: true,
-    });
+    const workspace = page.locator("[data-panel-workspace]");
     for (const hiddenBy of ["settings", "collapsed"]) {
       await openChannelDetails(page);
       await expect(panel).toBeHidden();
       if (hiddenBy === "collapsed")
-        await main
+        await workspace
           .getByRole("button", { name: "Toggle tab pane", exact: true })
           .click();
       await row.focus();

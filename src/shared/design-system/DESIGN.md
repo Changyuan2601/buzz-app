@@ -408,11 +408,11 @@ in identity, guidance, transitions, and ceremony. Use color to convey meaning.
 
 Use the surface that matches the content and its position in the interface.
 
-- **Panels:** the shell uses one `Panel joined` around navigation and content on the gradient backdrop. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels keep their own outer treatment.
+- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-1` (4px at default scale). Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
 - **Reading surfaces:** documentation and dense prose sit on `bg-panel`. Keep page-wide gradients behind product chrome and panels, where their changing contrast will not interfere with reading.
 - **Borders:** use `border-standard` for quiet separators, `border-prominent` for controls, and `border-focus` for keyboard-focus recipes. Errors and warnings have their own boundary roles. Measure the actual pairing in both themes.
-- **Shadows:** use the two shared elevation values and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
+- **Shadows:** use the shared elevation roles and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
 
 ### Floating surfaces
 
@@ -431,9 +431,9 @@ content; Base UI retains each control's keyboard and focus semantics.
 Short action menus and compact account popovers retain 8px `radius-row`
 corners, a 2px list inset, and concentric inner rows. Choose compact for the content,
 never automatically because the viewport is narrow. Dialogs and alert dialogs
-use the same `elevated-material` fill, blur, and accessibility fallback while
-retaining their 20px `radius-panel` corners and modal backdrop. Stepped dialogs
-apply the material to each step; their shared wrapper stays transparent.
+use opaque `surface-popover` so inset fields stay distinct above the dimmed
+page, retaining their 20px `radius-panel` corners and modal backdrop. Stepped
+dialogs apply the fill to each step; their shared wrapper stays transparent.
 
 ### Corner scale and nesting
 
@@ -678,13 +678,16 @@ form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
-trailing row choices: a small ghost trigger with a visually hidden accessible
+trailing row choices: a small outlined trigger with a quiet `border-standard`
+boundary and a visually hidden accessible
 label, bounded single-line value, and full choice text in the popup and value hint.
 Its popup has an 11.25rem minimum (bounded by the viewport) and reserves the
 selection-mark slot in every option so selecting the widest label cannot resize it.
 The caller owns its column width. `align="end"` anchors a trailing choice popup
 to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. For searchable choices, use the shared Combobox parts; keep
+when the choice is unavailable. An option may include one concise supporting
+description; Select shows it as a byline in the popup while the closed trigger
+retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep
@@ -1431,6 +1434,13 @@ is a specific product-mark exception, not another general icon family.
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on
 Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in
 the shared icon gateway. It does not permit another general icon library.
+
+Agent-type provider marks follow the same single-owner path. Keep approved artwork
+in `icons/HarnessLogos.tsx` (with colocated raster assets when needed), record its
+provenance in `NOTICE.md`, and export it through `icons/index.ts` with custom-icon
+metadata. The registering agent type references that export once through
+`AgentType.icon`; host-owned selectors render the registered mark and never rebuild
+a provider-to-icon map from type IDs.
 
 ### Picker search and choices
 

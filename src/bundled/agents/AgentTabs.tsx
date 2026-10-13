@@ -2,9 +2,11 @@ import { useState } from "react";
 import type { ChannelChoice } from "../../features/agents/attention";
 import type {
   Agent,
+  AgentSettingsHost,
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
+import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import { agentSections } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 
@@ -14,6 +16,8 @@ export function AgentTabs(props: {
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
+  settingsHost: AgentSettingsHost;
+  memories: AgentMemories | undefined;
 }) {
   const sections = agentSections(props);
   const [tab, setTab] = useState<string>(sections[0]?.value ?? "");

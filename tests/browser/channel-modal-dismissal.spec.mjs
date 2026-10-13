@@ -68,11 +68,8 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   await expect(
     confirmation.getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
-  await expect(confirmation).toHaveCSS("backdrop-filter", "blur(8px)");
-  await expect(confirmation).toHaveCSS(
-    "background-color",
-    "rgba(40, 40, 40, 0.9)",
-  );
+  await expect(confirmation).toHaveCSS("backdrop-filter", "none");
+  await expect(confirmation).toHaveCSS("background-color", "rgb(40, 40, 40)");
   await confirmation.getByRole("heading").click();
   await expect(confirmation).toBeVisible();
   const bounds = await confirmation.boundingBox();
