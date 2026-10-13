@@ -266,6 +266,12 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
+  /** Whether the trigger should still run, asked again now. False once the
+   * agent is removed or its type replaced; for a watch or timer, also once
+   * attention was turned off or its object disabled or removed; and for a
+   * watch, once it was changed or its event no longer matches. A type that queues a
+   * watch's or timer's work asks before it starts that work. */
+  current(): boolean;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
 /** A model with its effort levels, lowest first. */
@@ -1934,6 +1940,18 @@ export class AgentsService extends Service implements Agents {
     };
   }
 
+  /** Whether `job`, already started, should still run: the rule `current()`
+   * applies to a queued job, asked again for work a type queued itself. */
+  private stillCurrent(runner: Runner, job: Job) {
+    const agent = this.find(runner.pubkey);
+    if (!agent) return false;
+    const { trigger } = job;
+    if (trigger.type === "mention") return true;
+    if (trigger.type === "watch") return !!this.current(runner, agent, job);
+    const timer = agent.attention[trigger.slug]?.value;
+    return agent.attentionEnabled && timer?.type === "timer" && timer.enabled;
+  }
+
   // Spec schedule rules: occurrence k is due at armed_at + k × interval, at most one
   // runs when overdue, then the next is due interval after it ran. A timer with no
   // saved state counts what was already due as used (see timerState). Checked as a
@@ -2115,6 +2133,7 @@ export class AgentsService extends Service implements Agents {
             superseded: () => job.work?.supersede(),
             step: (tool: string, target?: string) =>
               job.work?.step(tool, target),
+            current: () => !lifetime.aborted && this.stillCurrent(runner, job),
           }),
         );
       });

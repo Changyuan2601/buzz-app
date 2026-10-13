@@ -22,6 +22,8 @@ export type FakeClaude = {
   /** When set, a turn stays open until `finish()`. */
   hold: boolean;
   killed: boolean;
+  /** When false, a kill is only a request; the test calls `exit()`. */
+  exitOnKill: boolean;
   emit(message: Record<string, unknown>): void;
   finish(result?: Readonly<{ error?: string }>): void;
   exit(code: number | null, stderr?: string): void;
@@ -77,6 +79,7 @@ export function fakeSpawn(known = new Set<string>()) {
       models: [],
       hold: false,
       killed: false,
+      exitOnKill: true,
       emit(message) {
         if (alive) options.onStdout?.(`${JSON.stringify(message)}\n`);
       },
@@ -185,7 +188,7 @@ export function fakeSpawn(known = new Set<string>()) {
       end: async () => undefined,
       kill: async () => {
         fake.killed = true;
-        fake.exit(null);
+        if (fake.exitOnKill) fake.exit(null);
       },
       exited,
     };
