@@ -29,13 +29,13 @@ struct Target {
     repo: String,
     pr: u32,
 }
+fn hex(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
 impl Target {
     fn validate(&self) -> Result<(), String> {
-        let hex = |s: &str| {
-            s.len() == 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        };
         if !hex(&self.pubkey)
             || !hex(&self.owner)
             || !hex(&self.root)
@@ -82,7 +82,7 @@ struct Pending {
     event: Option<Value>,
     attempted: bool,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
     version: u8,
@@ -150,11 +150,20 @@ struct Poll {
     output: String,
     terminal: bool,
 }
+#[derive(Clone)]
 struct Store {
     path: PathBuf,
-    _lock: File,
+    _lock: Arc<File>,
 }
 impl Store {
+    async fn open_async(dir: PathBuf, target: Target) -> Result<(Self, Journal), String> {
+        crate::app_agents::blocking(move || Self::open(&dir, &target)).await
+    }
+    async fn persist(&self, journal: &Journal) -> Result<(), String> {
+        let store = self.clone();
+        let journal = journal.clone();
+        crate::app_agents::blocking(move || store.save(&journal)).await
+    }
     #[allow(clippy::incompatible_msrv)] // Same file-lock primitive as native agent hosting.
     fn open(dir: &Path, target: &Target) -> Result<(Self, Journal), String> {
         std::fs::create_dir_all(dir).map_err(|_| "Cannot open PR subscription storage")?;
@@ -170,7 +179,7 @@ impl Store {
             .map_err(|_| "PR subscription is already active")?;
         let store = Self {
             path: dir.join(format!("{id}.json")),
-            _lock: lock,
+            _lock: Arc::new(lock),
         };
         let journal = match std::fs::read(&store.path) {
             Ok(bytes) if bytes.len() <= LIMIT => serde_json::from_slice::<Journal>(&bytes)
@@ -204,6 +213,11 @@ impl Store {
         Ok(())
     }
 }
+fn registration_paths(paths: impl Iterator<Item = PathBuf>) -> Vec<PathBuf> {
+    paths
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect()
+}
 #[derive(Clone)]
 pub(crate) struct Subscriptions {
     dir: Result<PathBuf, String>,
@@ -217,38 +231,38 @@ impl Subscriptions {
         }
     }
     pub(crate) fn resume(&self, host: AppAgentHost, pubkey: String) {
-        let Ok(dir) = &self.dir else {
-            return;
-        };
-        let Ok(files) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for file in files.flatten().take(100) {
-            if file.path().extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let Ok(bytes) = std::fs::read(file.path()) else {
-                continue;
+        let owner = self.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let Ok(dir) = &owner.dir else {
+                return;
             };
-            if bytes.len() > LIMIT {
-                continue;
-            }
-            let Ok(journal) = serde_json::from_slice::<Journal>(&bytes) else {
-                continue;
+            let Ok(files) = std::fs::read_dir(dir) else {
+                return;
             };
-            if journal.target.pubkey != pubkey
-                || journal.sender.is_none()
-                || journal.snapshot.is_none()
-                || (journal.terminal && journal.pending.is_empty())
-            {
-                continue;
+            for path in registration_paths(files.flatten().map(|f| f.path())) {
+                let Ok(bytes) = std::fs::read(path) else {
+                    continue;
+                };
+                if bytes.len() > LIMIT {
+                    continue;
+                }
+                let Ok(journal) = serde_json::from_slice::<Journal>(&bytes) else {
+                    continue;
+                };
+                if journal.target.pubkey != pubkey
+                    || journal.sender.is_none()
+                    || journal.snapshot.is_none()
+                    || (journal.terminal && journal.pending.is_empty())
+                {
+                    continue;
+                }
+                let owner = owner.clone();
+                let host = host.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = owner.start(host, journal.target, None).await;
+                });
             }
-            let owner = self.clone();
-            let host = host.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = owner.start(host, journal.target, None).await;
-            });
-        }
+        });
     }
     async fn start(
         &self,
@@ -302,7 +316,7 @@ impl Subscriptions {
                             tick(&host, &store, &mut journal, &sender_key, refresh_roster).await
                         {
                             journal.error = Some(error);
-                            if store.save(&journal).is_err() {
+                            if store.persist(&journal).await.is_err() {
                                 break;
                             }
                         } else {
@@ -337,7 +351,7 @@ impl Subscriptions {
         if agent.owner != target.owner || agent.relay != target.relay {
             return Err("Agent ownership changed".into());
         }
-        let (store, mut journal) = Store::open(self.dir.as_ref().map_err(Clone::clone)?, &target)?;
+        let (store, mut journal) = Store::open_async(self.dir.clone()?, target.clone()).await?;
         validate_route(&agent, &key, &target).await?;
         let sender_key = Arc::new(load_sender_key().await?);
         if journal.sender.is_none() {
@@ -359,7 +373,7 @@ impl Subscriptions {
                 profile: None,
                 deleted: false,
             });
-            store.save(&journal)?;
+            store.persist(&journal).await?;
         }
         let sender = journal
             .sender
@@ -393,7 +407,7 @@ impl Subscriptions {
                         })
                         .await?,
                 );
-                store.save(&journal)?;
+                store.persist(&journal).await?;
             }
             if journal.invitation_attempted {
                 return Err(
@@ -401,8 +415,9 @@ impl Subscriptions {
                         .into(),
                 );
             }
+            NativeDelivery(&host).authorize(&target).await?;
             journal.invitation_attempted = true;
-            store.save(&journal)?;
+            store.persist(&journal).await?;
             crate::relay::publish_owned_event(
                 identity,
                 &target.relay,
@@ -418,10 +433,11 @@ impl Subscriptions {
         }
         // A profile is not parsed through the CLI. The owner attestation is native-verified.
         if journal.snapshot.is_none() {
+            NativeDelivery(&host).authorize(&target).await?;
             journal.checkpoint(source_poll(&target, None, true).await?)?;
-            store.save(&journal)?;
+            store.persist(&journal).await?;
         }
-        deliver(&store, &mut journal, &sender_key).await?;
+        deliver(&host, &store, &mut journal, &sender_key).await?;
         Ok((store, journal, sender_key))
     }
 }
@@ -467,17 +483,34 @@ async fn member(
     channel: &str,
     pubkey: &str,
 ) -> Result<bool, String> {
+    let community = agent.relay.replacen("wss://", "https://", 1);
+    let info = crate::relay::community_information(&community).await?;
+    let authority = info["self"]
+        .as_str()
+        .filter(|s| hex(s))
+        .ok_or("Community roster authority unavailable")?;
     let value = read(
         agent,
         key,
-        &[json!({"kinds": [39002], "#d": [channel], "limit": 1})],
+        &[json!({"kinds": [39002], "authors": [authority], "#d": [channel], "limit": 1})],
     )
     .await?;
     let rows = value.as_array().ok_or("Malformed channel membership")?;
     let Some(row) = rows.first() else {
         return Ok(false);
     };
+    membership(row, authority, channel, pubkey)
+}
+fn membership(row: &Value, authority: &str, channel: &str, pubkey: &str) -> Result<bool, String> {
     verified(row)?;
+    if row["pubkey"] != authority
+        || row["kind"] != 39002
+        || !row["tags"]
+            .as_array()
+            .is_some_and(|ts| ts.iter().any(|t| t[0] == "d" && t[1] == channel))
+    {
+        return Err("Channel membership authority mismatch".into());
+    }
     let tags = row["tags"]
         .as_array()
         .ok_or("Malformed channel membership")?;
@@ -523,14 +556,14 @@ async fn tick(
         return Err("Subscription agent ownership changed".into());
     }
     validate_route(&agent, &target_key, &journal.target).await?;
-    deliver(store, journal, key).await?;
+    deliver(host, store, journal, key).await?;
     if journal.terminal {
         return Ok(());
     }
     let poll = source_poll(&journal.target, journal.snapshot.as_ref(), refresh_roster).await?;
     journal.checkpoint(poll)?;
-    store.save(journal)?;
-    deliver(store, journal, key).await
+    store.persist(journal).await?;
+    deliver(host, store, journal, key).await
 }
 fn matches_callback(
     event: &Value,
@@ -562,6 +595,12 @@ fn matches_callback(
     Ok(())
 }
 trait DeliveryTransport {
+    fn authorize(
+        &self,
+        _target: &Target,
+    ) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        async { Ok(()) }
+    }
     fn read(
         &self,
         sender: &AppAgent,
@@ -575,8 +614,18 @@ trait DeliveryTransport {
         event: Value,
     ) -> impl std::future::Future<Output = Result<(), String>> + Send;
 }
-struct NativeDelivery;
-impl DeliveryTransport for NativeDelivery {
+struct NativeDelivery<'a>(&'a AppAgentHost);
+impl DeliveryTransport for NativeDelivery<'_> {
+    async fn authorize(&self, target: &Target) -> Result<(), String> {
+        let agent = self.0.agent(target.pubkey.clone()).await?;
+        if !self.0.claimed(&target.pubkey)
+            || agent.owner != target.owner
+            || agent.relay != target.relay
+        {
+            return Err("Subscription hosting authority changed".into());
+        }
+        Ok(())
+    }
     async fn read(
         &self,
         sender: &AppAgent,
@@ -589,8 +638,13 @@ impl DeliveryTransport for NativeDelivery {
         post(sender, key, event).await.map(|_| ())
     }
 }
-async fn deliver(store: &Store, journal: &mut Journal, key: &Secret) -> Result<(), String> {
-    deliver_with(store, journal, key, &NativeDelivery).await
+async fn deliver(
+    host: &AppAgentHost,
+    store: &Store,
+    journal: &mut Journal,
+    key: &Secret,
+) -> Result<(), String> {
+    deliver_with(store, journal, key, &NativeDelivery(host)).await
 }
 async fn deliver_with(
     store: &Store,
@@ -598,7 +652,9 @@ async fn deliver_with(
     key: &Secret,
     transport: &impl DeliveryTransport,
 ) -> Result<(), String> {
-    while let Some(pending) = journal.pending.first() {
+    while !journal.pending.is_empty() {
+        transport.authorize(&journal.target).await?;
+        let pending = &journal.pending[0];
         let sender = journal
             .sender
             .as_ref()
@@ -616,7 +672,7 @@ async fn deliver_with(
             ]);
             let event = sender.sign(key, 9, content, tags)?;
             journal.pending[0].event = Some(event);
-            store.save(journal)?;
+            store.persist(journal).await?;
             continue;
         }
         let event = pending.event.clone().ok_or("Missing signed callback")?;
@@ -633,7 +689,8 @@ async fn deliver_with(
             matches_callback(found, sender, &journal.target, &content, &pending.id)?;
         } else {
             journal.pending[0].attempted = true;
-            store.save(journal)?;
+            store.persist(journal).await?;
+            transport.authorize(&journal.target).await?;
             transport.post(sender, key, event.clone()).await?;
         }
         journal.receipts.push(
@@ -646,7 +703,7 @@ async fn deliver_with(
             journal.receipts.remove(0);
         }
         journal.pending.remove(0);
-        store.save(journal)?;
+        store.persist(journal).await?;
     }
     Ok(())
 }

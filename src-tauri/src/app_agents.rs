@@ -232,7 +232,7 @@ fn open_lock(path: &Path) -> Result<File, String> {
 }
 
 /// Runs blocking file and credential work off the async runtime.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work)

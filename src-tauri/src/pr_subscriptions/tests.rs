@@ -84,8 +84,16 @@ struct Transport {
     uncertain: bool,
     wrong_receipt: bool,
     unavailable: bool,
+    authorized: bool,
 }
 impl DeliveryTransport for Transport {
+    async fn authorize(&self, _: &Target) -> Result<(), String> {
+        if self.authorized {
+            Ok(())
+        } else {
+            Err("Hosting authority released".into())
+        }
+    }
     async fn read(&self, _: &AppAgent, _: &Secret, _: &[Value]) -> Result<Value, String> {
         if self.unavailable {
             return Err("Unavailable transport".into());
@@ -148,6 +156,7 @@ async fn restart_reconciles_the_exact_known_receipt_without_resending() {
         uncertain: true,
         wrong_receipt: false,
         unavailable: false,
+        authorized: true,
     };
     assert!(deliver_with(&store, &mut journal, &key, &transport)
         .await
@@ -179,6 +188,7 @@ async fn unavailable_readback_preserves_ambiguous_callback_and_blocks_resend() {
         uncertain: true,
         wrong_receipt: false,
         unavailable: true,
+        authorized: true,
     };
     assert!(deliver_with(&store, &mut journal, &key, &transport)
         .await
@@ -205,6 +215,7 @@ async fn a_receipt_from_a_different_route_cannot_acknowledge_delivery() {
         uncertain: true,
         wrong_receipt: true,
         unavailable: false,
+        authorized: true,
     };
     assert!(deliver_with(&store, &mut journal, &key, &transport)
         .await
@@ -243,6 +254,7 @@ async fn the_real_source_process_and_journal_deliver_a_new_event_once_after_rest
         uncertain: false,
         wrong_receipt: false,
         unavailable: false,
+        authorized: true,
     };
     deliver_with(&store, &mut journal, &key, &transport)
         .await
@@ -266,4 +278,55 @@ async fn an_active_registration_cannot_survive_the_loss_of_native_hosting_author
     subscriptions.active.lock().unwrap().insert(route.id());
     let host = AppAgentHost::new(Err("unused".into()), Err("unused".into()), false);
     assert!(subscriptions.start(host, route, None).await.is_err());
+}
+
+#[test]
+fn restoration_counts_journals_after_filtering_lock_files() {
+    let paths = (0..100).flat_map(|i| {
+        [
+            PathBuf::from(format!("{i}.lock")),
+            PathBuf::from(format!("{i}.json")),
+        ]
+    });
+    assert_eq!(registration_paths(paths).len(), 100);
+}
+#[test]
+fn signed_non_authoritative_or_wrong_channel_rosters_are_rejected() {
+    use nostr::event::FinalizeEvent;
+    let route = target();
+    let keys = nostr::key::Keys::generate();
+    let authority = keys.public_key().to_hex();
+    let event = serde_json::to_value(
+        nostr::event::EventBuilder::new(nostr::event::Kind::Custom(39002), "")
+            .tags([
+                nostr::event::Tag::parse(["d", route.channel.as_str()]).unwrap(),
+                nostr::event::Tag::parse(["p", route.pubkey.as_str()]).unwrap(),
+            ])
+            .finalize(&keys)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(membership(&event, &route.owner, &route.channel, &route.pubkey).is_err());
+    assert!(membership(&event, &authority, "other", &route.pubkey).is_err());
+    assert!(membership(&event, &authority, &route.channel, &route.pubkey).unwrap());
+}
+#[tokio::test]
+async fn released_hosting_authority_preserves_the_callback_without_sending() {
+    let (key, sender, route) = sender();
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut journal) = Store::open(dir.path(), &route).unwrap();
+    journal.sender = Some(sender);
+    journal.checkpoint(poll("new review")).unwrap();
+    let transport = Transport {
+        sent: Mutex::default(),
+        uncertain: false,
+        wrong_receipt: false,
+        unavailable: false,
+        authorized: false,
+    };
+    assert!(deliver_with(&store, &mut journal, &key, &transport)
+        .await
+        .is_err());
+    assert!(transport.sent.lock().unwrap().is_empty());
+    assert!(!journal.pending[0].attempted);
 }

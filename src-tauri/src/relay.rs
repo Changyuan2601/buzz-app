@@ -606,7 +606,7 @@ fn verify_signature(event: &serde_json::Value) -> Result<()> {
         .map_err(|_| "Invalid outgoing signature".into())
 }
 
-async fn channel_creation_supported(community: &str) -> Result<bool> {
+pub(crate) async fn community_information(community: &str) -> Result<serde_json::Value> {
     let url = request_url(community, "/", "GET")?;
     let mut response = client()?
         .get(url)
@@ -626,6 +626,10 @@ async fn channel_creation_supported(community: &str) -> Result<bool> {
     .await?;
     let info: serde_json::Value =
         serde_json::from_slice(&body).map_err(|_| "Invalid community information")?;
+    Ok(info)
+}
+async fn channel_creation_supported(community: &str) -> Result<bool> {
+    let info = community_information(community).await?;
     Ok(info
         .get("self")
         .and_then(serde_json::Value::as_str)
