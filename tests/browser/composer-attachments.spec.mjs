@@ -847,16 +847,20 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect
       .poll(() => video.evaluate((el) => el.readyState))
       .toBeGreaterThanOrEqual(2);
-    await dialog
-      .getByRole("button", { name: "Play video", exact: true })
-      .click();
-    await expect
-      .poll(() => video.evaluate((el) => el.currentTime))
-      .toBeGreaterThan(0);
+    // Own the playback boundary; the short fixture's autoplay may still be
+    // running or may already have ended when WebKit reaches this assertion.
     await video.evaluate((el) => {
       window.openDraftVideo = el;
       el.loop = true;
+      el.pause();
     });
+    await dialog
+      .getByRole("button", { name: "Play video", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("button", { name: "Pause video", exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => video.evaluate((el) => el.paused)).toBe(false);
     const openedSource = await video.getAttribute("src");
     // Finish the held eager queue while the local video is actually playing.
     release();
