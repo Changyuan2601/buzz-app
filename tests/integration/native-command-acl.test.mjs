@@ -59,8 +59,25 @@ test("literal frontend IPC commands are declared and allowed by the main capabil
   }
 });
 
+// Commands deliberately granted only to a narrower window capability.
+const widget = JSON.parse(read("src-tauri/capabilities/compute-widget.json"));
+const windowScoped = new Map([["mesh_compute_widget_status", widget]]);
+
 test("every declared app command has a main-window permission, including host stop", () => {
   for (const command of commands) {
+    const scoped = windowScoped.get(command);
+    if (scoped) {
+      const allow = `allow-${command.replaceAll("_", "-")}`;
+      assert.ok(
+        scoped.permissions.includes(allow),
+        `${command} missing from ${scoped.identifier}`,
+      );
+      assert.ok(
+        !permissions.includes(allow),
+        `${command} must stay out of main capability`,
+      );
+      continue;
+    }
     assert.ok(
       permissions.includes(`allow-${command.replaceAll("_", "-")}`),
       `${command} missing from main capability`,
