@@ -1735,6 +1735,23 @@ pub(crate) async fn agent_security(
         }
         _ => None,
     };
+    if matches!(
+        &request,
+        buzz_agent_controller::security::Request::Agent { .. }
+    ) {
+        let restarted = save_and_restart(owner.clone(), move |host| {
+            host.controller.security(request).map(drop)
+        })
+        .await?;
+        let mut result = run(owner, |host| {
+            host.controller
+                .security(buzz_agent_controller::security::Request::Snapshot)
+        })
+        .await?;
+        result["restarted"] = serde_json::json!(restarted.restarted);
+        result["restartFailures"] = serde_json::json!(restarted.restart_failures);
+        return Ok(result);
+    }
     let result = run(owner.clone(), move |host| host.controller.security(request)).await?;
     if let Some(provider) = provider {
         tauri::async_runtime::spawn(async move {
