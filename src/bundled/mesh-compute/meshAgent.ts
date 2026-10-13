@@ -11,10 +11,11 @@
 //   key. A turn that never calls `send` still has its text posted.
 // - "direct": the plugin posts goose's final text as the reply.
 //
-// Bridge: goose only spawns stdio MCP servers, so the plugin declares
-// `nc -U <socket>` as the `buzz` server and holds the other end itself through a
-// declared `nc -lU <socket>` process. macOS only; the socket lives under /tmp
-// for the turn.
+// Bridge: goose only adds tools as stdio MCP servers it spawns, with no way to
+// call the client back. The app's own executable is both ends of a private
+// per-turn channel (`src-tauri/src/tool_relay.rs`): the plugin starts it with
+// `--tool-listen` and answers MCP on its stdio; goose spawns it with
+// `--tool-relay`, the socket and a one-time token. Unix only for now.
 //
 // LIMITATION (not isolation): the lease returned with the inference target is
 // checked again before publishing so a reply produced across a community switch
@@ -33,7 +34,6 @@ import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
-import { TOOLS } from "../../buzz-mcp/tools";
 
 export type ReplyMode = "tools" | "direct";
 export type MeshAgentConfig = Readonly<{
@@ -71,8 +71,6 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
   };
 };
 
-/** The Buzz tools a Mesh agent gets; the rest of `TOOLS` stay unexposed. */
-export const BUZZ_TOOLS = new Set(["send", "read"]);
 /** Where goose keeps its own config, sessions and state for Mesh agents. */
 const GOOSE_ROOT = "~/.local/share/buzz-mesh-goose";
 
@@ -295,7 +293,7 @@ export type TurnTools = Readonly<{
   sent(): boolean;
 }>;
 
-/** The Buzz tools for one turn, as an MCP server limited to `BUZZ_TOOLS`. */
+/** The Buzz tools for one turn, as an MCP server: the same tools and handler as Codex and Claude Code. */
 export function turnTools(
   delivery: Delivery<MeshAgentConfig>,
   deps: Pick<MeshAgentDeps, "spawn">,
@@ -316,22 +314,7 @@ export function turnTools(
     async serve(message) {
       const { id, method, params = {} } = message;
       if (id === undefined || id === null) return undefined;
-      if (method === "tools/list")
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { tools: TOOLS.filter((tool) => BUZZ_TOOLS.has(tool.name)) },
-        };
       const name = String(params.name);
-      if (method === "tools/call" && !BUZZ_TOOLS.has(name))
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            content: [{ type: "text", text: `No tool ${name}` }],
-            isError: true,
-          },
-        };
       const reply = (await respond(client, context, message)) as {
         result?: { isError?: boolean };
       };
@@ -351,21 +334,45 @@ export function turnTools(
   };
 }
 
-/** Holds the plugin's end of the `buzz` MCP bridge: a declared `nc -lU`
- * process whose stdio carries goose's MCP messages. */
+/** Holds the plugin's end of the `buzz` MCP bridge: the app's
+ * `--tool-listen` process, whose stdio carries goose's MCP messages once
+ * goose's `--tool-relay` connects with the token. */
 async function openBridge(
   deps: Pick<MeshAgentDeps, "spawn">,
   tools: TurnTools,
 ): Promise<{ server: object; close(): void }> {
-  const socket = `/tmp/buzz-mesh-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}.sock`;
   let buffer = "";
   let bridge: HostProcess | undefined;
+  let ready: (value: {
+    command: string;
+    socket: string;
+    token: string;
+  }) => void;
+  const announced = new Promise<{
+    command: string;
+    socket: string;
+    token: string;
+  }>((resolve) => {
+    ready = resolve;
+  });
+  let first = true;
   const handle = (line: string) => {
-    let message: Message;
+    let message: Message & {
+      command?: string;
+      socket?: string;
+      token?: string;
+    };
     try {
       message = JSON.parse(line);
     } catch {
       return;
+    }
+    if (first) {
+      first = false;
+      if (message.command && message.socket && message.token)
+        return ready(
+          message as { command: string; socket: string; token: string },
+        );
     }
     void tools
       .serve(message)
@@ -373,7 +380,6 @@ async function openBridge(
       .catch(() => {});
   };
   bridge = await deps.spawn("bridge", {
-    args: [socket],
     onStdout: (data) => {
       buffer += data;
       let index = buffer.indexOf("\n");
@@ -385,12 +391,27 @@ async function openBridge(
       }
     },
   });
-  // goose connects when the session starts; let the listener bind first.
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  return {
-    server: { name: "buzz", command: "nc", args: ["-U", socket], env: [] },
-    close: () => void bridge?.kill(),
-  };
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Buzz tools did not start")), 10_000),
+  );
+  try {
+    const { command, socket, token } = await Promise.race([announced, timeout]);
+    return {
+      server: {
+        name: "buzz",
+        command,
+        args: ["--tool-relay"],
+        env: [
+          { name: "BUZZ_TOOL_SOCKET", value: socket },
+          { name: "BUZZ_TOOL_TOKEN", value: token },
+        ],
+      },
+      close: () => void bridge?.kill(),
+    };
+  } catch (error) {
+    void bridge.kill();
+    throw error;
+  }
 }
 
 /** Runs one goose turn and returns its final text. */
@@ -475,7 +496,7 @@ export function instructions(config: MeshAgentConfig): string {
   if (config.reply === "direct") return prompt;
   return `${BUZZ_PROMPT}
 
-You can use only the Buzz tools \`send\` and \`read\`. Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
+Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
 
 <agent-instructions>
 ${prompt}

@@ -1,3 +1,4 @@
+import { TOOLS } from "../../buzz-mcp/tools";
 import { describe, expect, it, vi } from "vitest";
 import type { Delivery } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
@@ -31,6 +32,12 @@ type Seen = {
 function fakeSpawn(reply: string, seen: Seen) {
   return vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     if (id === "workspace" || id === "bridge") {
+      if (id === "bridge")
+        queueMicrotask(() =>
+          options.onStdout?.(
+            `${JSON.stringify({ command: "/app/buzz-foundation", socket: "/t/bt-1/s", token: "tok" })}\n`,
+          ),
+        );
       if (id === "workspace")
         queueMicrotask(() =>
           options.onStdout?.(
@@ -181,11 +188,15 @@ describe("Mesh agent runtime", () => {
     const servers = seen.calls.find((c) => c.method === "session/new")?.params
       .mcpServers as { name: string; command: string; args: string[] }[];
     expect(servers).toHaveLength(1);
-    expect(servers[0]).toMatchObject({ name: "buzz", command: "nc" });
-    expect(servers[0]?.args[0]).toBe("-U");
-    expect(servers[0]?.args[1]).toMatch(
-      /^\/tmp\/buzz-mesh-[0-9a-f]{16}\.sock$/,
-    );
+    expect(servers[0]).toEqual({
+      name: "buzz",
+      command: "/app/buzz-foundation",
+      args: ["--tool-relay"],
+      env: [
+        { name: "BUZZ_TOOL_SOCKET", value: "/t/bt-1/s" },
+        { name: "BUZZ_TOOL_TOKEN", value: "tok" },
+      ],
+    });
     expect(publish.mock.calls[0]?.[0]).toMatchObject({
       content: "hi from mesh",
     });
@@ -239,28 +250,21 @@ describe("Mesh agent Buzz tools", () => {
     }) as unknown as Delivery<MeshAgentConfig>;
   const spawn = vi.fn();
 
-  it("lists only send and read", async () => {
+  it("lists the same Buzz tools as Codex and Claude Code", async () => {
     const tools = turnTools(delivery(), { spawn }, "/w", { channel: "chan" });
     const reply = (await tools.serve({ id: 1, method: "tools/list" })) as {
       result: { tools: { name: string }[] };
     };
-    expect(reply.result.tools.map((tool) => tool.name).sort()).toEqual([
-      "read",
-      "send",
-    ]);
+    expect(reply.result.tools.map((tool) => tool.name).sort()).toEqual(
+      TOOLS.map((tool) => tool.name).sort(),
+    );
   });
 
-  it("refuses other Buzz tools and ignores notifications", async () => {
+  it("ignores notifications", async () => {
     const tools = turnTools(delivery(), { spawn }, "/w", { channel: "chan" });
     expect(
       await tools.serve({ method: "notifications/initialized" }),
     ).toBeUndefined();
-    const reply = (await tools.serve({
-      id: 2,
-      method: "tools/call",
-      params: { name: "dm", arguments: { to: ["x"] } },
-    })) as { result: { isError: boolean } };
-    expect(reply.result.isError).toBe(true);
   });
 
   it("posts with send as the agent and ends the turn on final", async () => {

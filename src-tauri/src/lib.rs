@@ -1,4 +1,5 @@
 mod archive;
+pub mod tool_relay;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
