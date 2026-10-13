@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
+import type { InstructionCodec } from "./instructions";
 
 /** A plugin agent's identity as native custody reports it; never the key. The
  * saved identities are the agent list. */
@@ -16,6 +17,9 @@ export type AgentIdentity = Readonly<{
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
   deleted: boolean;
+  /** The create or import intent this identity still waits on; until it is
+   * confirmed the identity is never run, listed or published. */
+  intentId?: string;
 }>;
 /** Where an earlier agent system saved an identity on this machine: this app's
  * harness agents, or the installed or development build of old Buzz. */
@@ -64,6 +68,7 @@ export type AgentsNative = {
     owner: string,
     type: string,
     name: string,
+    intentId: string,
   ): Promise<AgentIdentity>;
   /** Earlier agent systems' identities on this machine. */
   portable(): Promise<PortableAgents>;
@@ -75,7 +80,12 @@ export type AgentsNative = {
     destination: string,
     owner: string,
     type: string,
+    intentId: string,
   ): Promise<Readonly<{ agent: AgentIdentity; carry: Carry }>>;
+  /** The native cipher for the viewer's own kind 44300 versions there. */
+  instructions?(community: string): InstructionCodec;
+  /** Ends a provisional create or import; only its own intent may. */
+  confirm(pubkey: string, intentId: string): Promise<void>;
   rename(pubkey: string, name: string): Promise<void>;
   /** Sets its profile picture, an HTTPS image URL, or with `null` clears it. */
   setPicture(pubkey: string, picture: string | null): Promise<void>;
@@ -116,17 +126,32 @@ export const nativeAgents = (): AgentsNative | undefined =>
   isTauri()
     ? {
         list: () => invoke("app_agent_list"),
-        create: (destination, owner, agentType, name) =>
-          invoke("app_agent_create", { destination, owner, agentType, name }),
+        create: (destination, owner, agentType, name, intentId) =>
+          invoke("app_agent_create", {
+            destination,
+            owner,
+            agentType,
+            name,
+            intentId,
+          }),
         portable: () => invoke("app_agent_portable"),
-        port: (source, pubkey, destination, owner, agentType) =>
+        port: (source, pubkey, destination, owner, agentType, intentId) =>
           invoke("app_agent_port", {
             source,
             pubkey,
             destination,
             owner,
             agentType,
+            intentId,
           }),
+        confirm: (pubkey, intentId) =>
+          invoke("app_agent_confirm", { pubkey, intentId }),
+        instructions: (community) => ({
+          prepare: (subject, text) =>
+            invoke("relay_instructions_prepare", { community, subject, text }),
+          decode: (subject, events) =>
+            invoke("relay_instructions_decode", { community, subject, events }),
+        }),
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
         setPicture: (pubkey, picture) =>
           invoke("app_agent_set_picture", { pubkey, picture }),

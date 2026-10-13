@@ -337,8 +337,14 @@ export class ClaudeRuntime {
     acknowledged,
     superseded,
     current,
+    instructions,
   }: Delivery) {
-    const settings = this.resolveConfig(raw);
+    // The app owns the agent's instructions; a session keeps the text it
+    // launched with until its fingerprint changes.
+    const settings = {
+      ...this.resolveConfig(raw),
+      instructions: instructions.text,
+    };
     // Claude runs commands as you; mentions need owner or delegated authority.
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.

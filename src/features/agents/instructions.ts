@@ -150,6 +150,16 @@ export class InstructionStore {
     this.entries.set(key, entry);
     this.persist();
   }
+  /** §3: keeps text written at create, import or migration as launchable local
+   * text until its first version is confirmed. Never over an earlier stage. */
+  stage(key: string, text: string, sourceRevision: string) {
+    const entry = this.entries.get(key);
+    if (entry && entry.migration.state !== "never") return;
+    this.write(key, {
+      ...(entry ?? { head: { unknown: true } }),
+      migration: { state: "staged", text, sourceRevision },
+    });
+  }
   completeScan(owner: string, community: string, scanId: number) {
     this.scans.set(`${owner}:${community}`, scanId);
     this.persist();

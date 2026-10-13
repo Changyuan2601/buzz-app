@@ -20,6 +20,15 @@ import type { ProfileQueries } from "../relay/profile-directory";
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
+import {
+  InstructionStore,
+  InstructionSync,
+  resolveInstructions,
+  subjectKey,
+  type Fallback,
+  type Inventory,
+  type Resolved,
+} from "./instructions";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import type { ComponentType, ReactNode } from "react";
@@ -288,6 +297,9 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A section for each team the agent is on, with the team's name, roster and
    * instructions, to follow the agent's own instructions. Absent without one. */
   team?: string;
+  /** The agent's own instructions for this run, resolved by the app (NIP-AP
+   * kind 44300 history, then the record's fallbacks). Never a plugin setting. */
+  instructions: Extract<Resolved, { text: string }>;
   /** Aborts on the run's deadline, or when the agent is removed or its type is
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
@@ -388,6 +400,11 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Migration only: the instructions an existing agent kept in its config
+   * before the app owned them. `undefined` when it has none. */
+  legacyInstructions?(config: Config): string | undefined;
+  /** Migration only: `config` without those instructions. */
+  withoutInstructions?(config: Config): Config;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
@@ -475,6 +492,9 @@ export type NewAgent = Readonly<{
   /** Its starting config, from the type's `Create`; else the type's defaults.
    * A hosted type's settings are its provider's, so it has none here. */
   config?: unknown;
+  /** Its starting instructions, kept as local text until the first version
+   * of them is confirmed on the relay. */
+  instructions?: string;
 }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -689,6 +709,8 @@ type Binding = {
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
   stopLive: () => void;
+  /** Its instructions sync; absent where this device can't sign them. */
+  instructions?: InstructionSync | undefined;
 };
 /** A community the viewer has an agent in, and its session while live. */
 type Bound = {
@@ -811,6 +833,10 @@ export class AgentsService extends Service implements Agents {
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
   private identities: readonly AgentIdentity[] = [];
+  /** Device instruction state, shared by every binding's sync. */
+  private readonly instructionStore: InstructionStore;
+  /** Created or imported identities not yet confirmed: "Finish importing". */
+  private provisional: readonly AgentIdentity[] = [];
   private records: Record<string, AgentRecord>;
   private teamList: readonly Team[];
   private state: AgentsSnapshot;
@@ -855,6 +881,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     migrateAgentStorage(storage);
+    this.instructionStore = new InstructionStore(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.teamList = Object.freeze(readTeams(storage));
@@ -981,7 +1008,7 @@ export class AgentsService extends Service implements Agents {
     return value;
   };
 
-  async create({ type, name, picture, config }: NewAgent) {
+  async create({ type, name, picture, config, instructions }: NewAgent) {
     if (!name.trim()) throw new Error("Name the agent");
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
@@ -992,10 +1019,16 @@ export class AgentsService extends Service implements Agents {
     }
     return this.add(
       type,
-      async (native, destination, owner) => ({
-        agent: await native.create(destination, owner, type, name.trim()),
+      async (native, destination, owner, intentId) => ({
+        agent: await native.create(
+          destination,
+          owner,
+          type,
+          name.trim(),
+          intentId,
+        ),
       }),
-      { config, picture },
+      { config, picture, instructions },
     );
   }
   /** Whether watch classifiers can run on this device. */
@@ -1108,8 +1141,8 @@ export class AgentsService extends Service implements Agents {
     const { type } = input;
     if (input.source !== "shared") {
       const { source, pubkey } = input;
-      return this.add(type, (native, destination, owner) =>
-        native.port(source, pubkey, destination, owner, type),
+      return this.add(type, (native, destination, owner, intentId) =>
+        native.port(source, pubkey, destination, owner, type, intentId),
       );
     }
     const name = input.name.trim();
@@ -1119,8 +1152,8 @@ export class AgentsService extends Service implements Agents {
     // what was shared, as a brought-over one does.
     return this.add(
       type,
-      async (native, destination, owner) => ({
-        agent: await native.create(destination, owner, type, name),
+      async (native, destination, owner, intentId) => ({
+        agent: await native.create(destination, owner, type, name, intentId),
         ...(instructions?.trim() ? { carry: { instructions } } : {}),
       }),
       { picture },
@@ -1136,8 +1169,13 @@ export class AgentsService extends Service implements Agents {
       native: AgentsNative,
       destination: string,
       owner: string,
+      intentId: string,
     ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
-    made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
+    made: Readonly<{
+      config?: unknown;
+      picture?: string | undefined;
+      instructions?: string | undefined;
+    }> = {},
   ) {
     const native = this.native;
     if (!native) throw new Error("Agents run only in the desktop app");
@@ -1147,10 +1185,14 @@ export class AgentsService extends Service implements Agents {
     if (kind.remote)
       throw new Error("A hosted agent's key stays with its provider");
     const settings = defaults("", kind);
+    // The identity stays provisional, never run or listed, until its own
+    // intent confirms it after its settings are staged.
+    const intentId = crypto.randomUUID();
     const { agent: identity, carry } = await save(
       native,
       relayOrigin(binding.origin),
       binding.viewer,
+      intentId,
     );
     let record = { ...settings, pubkey: identity.pubkey };
     try {
@@ -1163,6 +1205,19 @@ export class AgentsService extends Service implements Agents {
       // The agent exists either way; unsaved settings start from the defaults.
       console.warn(`Agent ${identity.name} settings were not saved`, error);
     }
+    // Staged before the confirm, so a confirmed agent always launches with it.
+    const text = (made.instructions ?? carry?.instructions)?.trim();
+    if (text)
+      this.instructionStore.stage(
+        subjectKey(
+          binding.viewer,
+          relayOrigin(binding.origin),
+          identity.pubkey,
+        ),
+        text,
+        intentId,
+      );
+    await native.confirm(identity.pubkey, intentId);
     // Before the refresh, which publishes its profile with the picture. The
     // agent exists either way; its picture can be set again later.
     let shown = identity;
@@ -1177,6 +1232,25 @@ export class AgentsService extends Service implements Agents {
       );
     await this.refresh();
     return this.view(shown, record);
+  }
+
+  /** Created or imported agents that stopped before they were confirmed. */
+  unconfirmed(): readonly AgentIdentity[] {
+    return this.provisional;
+  }
+  /** "Finish importing" Retry: its settings were staged before it stopped. */
+  async finishImport(pubkey: string) {
+    const row = this.provisional.find((saved) => saved.pubkey === pubkey);
+    if (!this.native || !row?.intentId) throw new Error("Nothing to finish");
+    await this.native.confirm(pubkey, row.intentId);
+    await this.refresh();
+  }
+  /** "Finish importing" Delete: its key goes, and cleanup runs as for any. */
+  async discardImport(pubkey: string) {
+    if (!this.native || !this.provisional.some((row) => row.pubkey === pubkey))
+      throw new Error("Nothing to delete");
+    await this.native.remove(pubkey);
+    await this.refresh();
   }
 
   /** The selected community's live binding, where agents are made. */
@@ -1791,7 +1865,14 @@ export class AgentsService extends Service implements Agents {
       const identities = await this.native.list();
       // A newer list is on its way; this one may predate a change.
       if (turn !== this.listed) return;
-      this.identities = identities;
+      // A provisional identity is quarantined: never run, listed or published
+      // until its create or import confirms it, or Delete removes it.
+      this.identities = identities.filter(
+        (saved) => !saved.intentId || saved.deleted,
+      );
+      this.provisional = identities.filter(
+        (saved) => saved.intentId && !saved.deleted,
+      );
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
       this.state = Object.freeze({ ...state, status: "ready" });
@@ -1839,6 +1920,14 @@ export class AgentsService extends Service implements Agents {
   private sync() {
     for (const [origin, { binding }] of this.bound) {
       if (!binding) continue;
+      // The cleanup list runs whether or not a deleted row is left.
+      void binding.instructions
+        ?.sweepCleanup()
+        .then(() => binding.instructions?.recover())
+        .catch((error: unknown) =>
+          console.warn("Instructions cleanup will be retried", error),
+        );
+      this.migrateInstructions(binding);
       if (this.listings.has(origin)) this.list(origin, binding);
       else void this.readListings(origin, binding);
     }
@@ -1857,6 +1946,37 @@ export class AgentsService extends Service implements Agents {
         const binding = this.bindingOf(identity);
         if (binding) void this.cleanup(identity.pubkey, binding);
       }
+  }
+  /** §3: moves instructions a plugin still keeps in its config to the app,
+   * one agent at a time, stripping them only once the version is confirmed. */
+  private migrateInstructions(binding: Binding) {
+    const sync = binding.instructions;
+    if (!sync) return;
+    const kinds = new Map(this.types().map((kind) => [kind.key, kind]));
+    for (const identity of this.identities) {
+      if (identity.deleted || this.bindingOf(identity) !== binding) continue;
+      const kind = kinds.get(identity.type);
+      const text = kind?.legacyInstructions?.(this.recordOf(identity).config);
+      const strip = kind?.withoutInstructions;
+      if (text === undefined || !strip) continue;
+      this.instructionStore.stage(
+        subjectKey(
+          binding.viewer,
+          relayOrigin(binding.origin),
+          identity.pubkey,
+        ),
+        text,
+        "plugin",
+      );
+      void sync
+        .migrate(identity.pubkey, async () => {
+          const record = this.recordOf(identity);
+          this.write({ ...record, config: strip(record.config) });
+        })
+        .catch((error: unknown) =>
+          console.warn(`Agent ${identity.name} instructions not moved`, error),
+        );
+    }
   }
   /** As harness Delete does: leave every channel, then archive the identity so
    * it drops out of member lists and mention suggestions. The owner signs both,
@@ -1891,6 +2011,8 @@ export class AgentsService extends Service implements Agents {
         signal.throwIfAborted();
         if (consent) await archives.request("archive", pubkey, signal);
       }
+      // §2.7: its versions go before the identity is forgotten.
+      await binding.instructions?.deleteAgent(pubkey);
       await deleteAgentRecord(session, binding.viewer, pubkey, signal);
       for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
       await this.native?.forget(pubkey);
@@ -1986,11 +2108,139 @@ export class AgentsService extends Service implements Agents {
         ...live,
         stopLive: this.listen(live.session, origin),
       };
+      if (entry.binding)
+        entry.binding.instructions = this.startInstructions(
+          origin,
+          entry.binding,
+        );
     }
     // Disconnecting stops its agents even when no binding changed.
     this.update();
     // Its sync reads the community's agent records too.
     if (changed && entry.binding) this.sync();
+  }
+
+  /** The binding's instructions sync, where native can sign them. Stopped by
+   * the binding's controller. */
+  private startInstructions(origin: string, binding: Binding) {
+    const community = relayOrigin(binding.origin);
+    const codec = this.native?.instructions?.(community);
+    if (!codec) return undefined;
+    const { session, viewer, controller } = binding;
+    const sync = new InstructionSync({
+      owner: viewer,
+      community,
+      signal: controller.signal,
+      store: this.instructionStore,
+      codec,
+      // Only relay-returned events carry a signature; the outbox's own unsigned
+      // projections are not versions until the relay returns them.
+      read: async (filters, signal) =>
+        (
+          await session.read(filters, {
+            signal,
+            priority: "background",
+            fresh: true,
+          })
+        ).flatMap((event) =>
+          "sig" in event && typeof event.sig === "string"
+            ? [
+                {
+                  id: event.id,
+                  pubkey: event.pubkey,
+                  created_at: event.created_at,
+                  kind: event.kind,
+                  tags: event.tags,
+                  content: event.content,
+                  sig: event.sig,
+                } as RelayEvent,
+              ]
+            : [],
+        ),
+      outbox: session.outbox,
+      live: session.live,
+      subscribeLive: (listener) => session.subscribeLive(listener),
+      admitDeletions: (holds) => session.admitInstructionsDeletions(holds),
+      now: () => Math.floor(Date.now() / 1000),
+    });
+    sync.start();
+    sync.identities(this.inventoryOf(origin, binding));
+    return sync;
+  }
+  /** §2.7: this owner and community's agents. Loading or failed until both the
+   * native list and the relay listings have been read. */
+  private inventoryOf(origin: string, binding: Binding): Inventory {
+    const mine = this.identities.filter(
+      (identity) => this.bindingOf(identity) === binding,
+    );
+    const listed = this.listings.get(origin);
+    const state =
+      this.state.status === "ready" && listed
+        ? "ready"
+        : this.state.error
+          ? "failed"
+          : "loading";
+    return {
+      state,
+      known: new Set([
+        ...mine.filter((row) => !row.deleted).map((row) => row.pubkey),
+        ...(listed ?? []).map((row) => row.pubkey),
+      ]),
+      deleted: new Set(
+        mine.filter((row) => row.deleted).map((row) => row.pubkey),
+      ),
+    };
+  }
+  /** §2.4: the instructions an agent launches with, from the store alone. */
+  private instructionsFor(
+    identity: Pick<AgentIdentity, "relay" | "owner" | "pubkey" | "type">,
+    config: unknown,
+  ): Resolved {
+    const binding = this.bindingOf(identity);
+    const origin = originOf(identity.relay);
+    if (!binding || !origin)
+      return { blocked: "Connect to its community first" };
+    if (!binding.instructions) {
+      // §9 item 5: where this device can't sign versions, the agent keeps the
+      // text it was made or imported with, else what its config still holds.
+      const entry = this.instructionStore.entry(
+        subjectKey(
+          binding.viewer,
+          relayOrigin(binding.origin),
+          identity.pubkey,
+        ),
+      );
+      const kind = this.types().find((item) => item.key === identity.type);
+      const text =
+        entry?.migration.state === "staged"
+          ? entry.migration.text
+          : kind?.legacyInstructions?.(config);
+      return text === undefined
+        ? { source: "none", text: "" }
+        : { source: "local", text };
+    }
+    const listed = this.listings.get(origin);
+    const prior = listed?.find((row) => row.pubkey === identity.pubkey)?.prior;
+    const fallback: Fallback | undefined = prior
+      ? {
+          linked: prior.tags.some(
+            (tag) => tag[0] === "a" && tag[1]?.startsWith("30175:"),
+          ),
+          ...(typeof prior.content.system_prompt === "string"
+            ? { legacy: prior.content.system_prompt }
+            : {}),
+        }
+      : listed
+        ? { linked: false }
+        : undefined;
+    return resolveInstructions(
+      this.instructionStore,
+      binding.viewer,
+      relayOrigin(binding.origin),
+      identity.pubkey,
+      fallback,
+      binding.instructions.pendingDeletion(identity.pubkey),
+    );
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -2016,6 +2266,8 @@ export class AgentsService extends Service implements Agents {
   // reconnects; one is retired only when its agent is deleted, and its run is
   // aborted when the agent's type is replaced.
   private update() {
+    for (const [origin, { binding }] of this.bound)
+      binding?.instructions?.identities(this.inventoryOf(origin, binding));
     const identities = this.identities.filter((identity) => !identity.deleted);
     const running: Agent[] = [];
     for (const identity of identities) {
@@ -2431,6 +2683,8 @@ export class AgentsService extends Service implements Agents {
       const working = this.working(runner, job);
       const completion = Promise.resolve().then(async () => {
         const pick = await pickFor(job.trigger, agent, type);
+        const instructions = this.instructionsFor(agent, agent.config);
+        if ("blocked" in instructions) throw new Error(instructions.blocked);
         const team = teamPrompt(
           this.teamList,
           this.identities.filter((identity) => !identity.deleted),
@@ -2445,6 +2699,7 @@ export class AgentsService extends Service implements Agents {
             config: agent.config,
             ...pick,
             ...(team ? { team } : {}),
+            instructions,
             signal,
             workingUntil: working.hold,
             ignored: () => job.work?.remove(),

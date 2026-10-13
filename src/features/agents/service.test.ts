@@ -248,6 +248,12 @@ function fakeNative(identities: AgentIdentity[] = []) {
         return { agent: identity, carry: { instructions: "Triage." } };
       },
     ),
+    confirm: vi.fn(async (pubkey: string, _: string) => {
+      const { intentId: __, ...identity } = identities[
+        at(pubkey)
+      ] as AgentIdentity;
+      identities[at(pubkey)] = identity;
+    }),
     rename: vi.fn(async (pubkey: string, name: string) => {
       change(pubkey, { name });
     }),
@@ -437,6 +443,8 @@ it("creates an agent in the community shown, with its type's defaults, and publi
     viewer,
     "example/echo",
     "Echo",
+
+    expect.any(String),
   );
   expect(native.publishProfile).toHaveBeenCalledWith(bot);
   expect(agent).toMatchObject({
@@ -470,6 +478,7 @@ it("brings over an identity not already an agent, with its type's defaults and w
     "https://relay.example.test",
     viewer,
     "example/echo",
+    expect.any(String),
   );
   expect(native.publishProfile).toHaveBeenCalledWith(sibling);
   expect(agent).toMatchObject({
@@ -501,6 +510,8 @@ it("imports a shared agent as a new identity with its name and picture, adopting
     viewer,
     "example/echo",
     "Baymax",
+
+    expect.any(String),
   );
   expect(native.port).not.toHaveBeenCalled();
   expect(native.setPicture).toHaveBeenCalledWith(
@@ -1344,6 +1355,8 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     viewer,
     "example/echo",
     "Echo",
+
+    expect.any(String),
   );
   expect(native.setPicture).toHaveBeenCalledExactlyOnceWith(bot, picture);
   expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });

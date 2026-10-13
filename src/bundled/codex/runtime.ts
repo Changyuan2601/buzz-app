@@ -484,7 +484,11 @@ export class CodexRuntime {
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = this.resolveConfig(delivery.config);
+    // The app owns the agent's instructions, never the plugin config.
+    const settings = {
+      ...this.resolveConfig(delivery.config),
+      instructions: delivery.instructions.text,
+    };
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);

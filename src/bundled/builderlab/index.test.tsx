@@ -65,6 +65,7 @@ function provideAgents(
     create: vi.fn(),
     portable: vi.fn(),
     port: vi.fn(),
+    confirm: vi.fn(async () => {}),
     rename: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),

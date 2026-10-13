@@ -389,7 +389,6 @@ it("is an agent type on the desktop app", () => {
     ),
   ).toEqual({
     ...DEFAULT_CONFIG,
-    instructions: "Triage.",
     workspace: "~/code",
   });
   expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);

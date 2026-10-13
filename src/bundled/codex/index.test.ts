@@ -60,12 +60,12 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
-it("adopts and carries an agent's instructions and workspace, nothing else", () => {
+it("adopts only an agent's workspace and carries its instructions and workspace", () => {
   const type = applied();
   const saved = type?.defaults().config;
   expect(
     type?.adopt?.({ instructions: "Triage.", model: "gpt" } as never, saved),
-  ).toEqual({ ...(saved as object), instructions: "Triage." });
+  ).toEqual(saved);
   expect(type?.adopt?.({ workspace: "/work/code" }, saved)).toEqual({
     ...(saved as object),
     workspace: "/work/code",

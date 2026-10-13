@@ -84,9 +84,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createModelLabel,
     adopt: (carry, saved) => ({
       ...saved,
-      instructions: carry.instructions ?? saved.instructions,
       workspace: carry.workspace ?? saved.workspace,
     }),
+    // Instructions moved to the app (kind 44300); these read and drop what
+    // an existing agent still keeps in its config.
+    legacyInstructions: (saved) => {
+      const { instructions } = config(saved);
+      return instructions.trim() ? instructions : undefined;
+    },
+    withoutInstructions: (saved) => ({ ...config(saved), instructions: "" }),
     carry: (saved) => {
       const { instructions, workspace } = config(saved);
       return {
