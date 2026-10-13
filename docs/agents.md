@@ -70,6 +70,21 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear as collapsed diagnostics in Settings, but is not durable history.
 
+The app, not the agent type, owns a local agent's instructions. Each save is a
+NIP-AP kind `44300` version the owner signs for the agent's community, kept
+under the current owner and community and published through the outbox. The
+host Instructions tab and the New agent dialog edit them; plugin settings carry
+`instructions` only to import or migrate older text. A launch resolves the
+newest valid version, never falls back to older local text once a version was
+seen, and stays blocked while a read is failing. A running session keeps the
+snapshot it started with; a remote edit shows Restart to apply. A save whose
+receipt was lost stays "Couldn't confirm this change saved", even when a re-send
+is refused, until a later read finds it; only a refused first send is
+"rejected". Delete Agent never re-sends, deletes every version the relay
+returns or acknowledged, and keeps lost saves on a content-free cleanup list
+that every sync sweeps. Deletion is local to this device until agent settings
+sync: another device holding the agent keeps it and its history.
+
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 

@@ -209,21 +209,24 @@ export function AgentsPage({
         />
       );
     return (
-      <Inventory
-        agents={snapshot.agents}
-        selected={selected?.pubkey}
-        typeOf={typeOf}
-        onSelect={browse}
-        onBuild={build}
-        newAgent={
-          types.length > 0 && (
-            <NewAgentTile
-              disabled={snapshot.status !== "ready"}
-              onClick={() => setCreating(true)}
-            />
-          )
-        }
-      />
+      <>
+        <Unfinished agents={agents} />
+        <Inventory
+          agents={snapshot.agents}
+          selected={selected?.pubkey}
+          typeOf={typeOf}
+          onSelect={browse}
+          onBuild={build}
+          newAgent={
+            types.length > 0 && (
+              <NewAgentTile
+                disabled={snapshot.status !== "ready"}
+                onClick={() => setCreating(true)}
+              />
+            )
+          }
+        />
+      </>
     );
   })();
 
@@ -706,6 +709,61 @@ function SideHeader({ title, onClose }: { title: ReactNode; onClose(): void }) {
         onClick={onClose}
       />
     </div>
+  );
+}
+
+/** Agents whose create or import stopped before it was confirmed: never run
+ * or listed until Retry confirms them, or Delete removes their key. */
+function Unfinished({ agents }: { agents: Agents }) {
+  const rows = agents.unconfirmed?.() ?? [];
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  if (!rows.length) return null;
+  const run = async (
+    pubkey: string,
+    action?: (key: string) => Promise<void>,
+  ) => {
+    if (!action) return;
+    setBusy(pubkey);
+    setError("");
+    try {
+      await action.call(agents, pubkey);
+    } catch (reason) {
+      setError(message(reason));
+    }
+    setBusy("");
+  };
+  return (
+    <Section title="Finish importing">
+      {rows.map((row) => (
+        <div key={row.pubkey} className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate">
+            Finish importing {row.name}
+          </span>
+          {row.intentId && (
+            <Button
+              variant="primary"
+              loading={busy === row.pubkey}
+              onClick={() => void run(row.pubkey, agents.finishImport)}
+            >
+              Retry
+            </Button>
+          )}
+          <Button
+            variant="subtle"
+            disabled={!!busy}
+            onClick={() => void run(row.pubkey, agents.discardImport)}
+          >
+            Delete
+          </Button>
+        </div>
+      ))}
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+    </Section>
   );
 }
 

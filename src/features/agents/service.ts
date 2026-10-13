@@ -541,6 +541,12 @@ export type Agents = {
     text: string,
     base: string | undefined,
   ): Promise<void>;
+  /** Created or imported agents that stopped before they were confirmed. */
+  unconfirmed?(): readonly AgentIdentity[];
+  /** "Finish importing" Retry. */
+  finishImport?(pubkey: string): Promise<void>;
+  /** "Finish importing" Delete. */
+  discardImport?(pubkey: string): Promise<void>;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
   previewRetype(pubkey: string, type: string): RetypePreview;
