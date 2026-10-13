@@ -605,8 +605,13 @@ pub struct IdentityHost(Arc<Mutex<Identity>>);
 impl IdentityHost {
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
+        Self::fixture_with([1; 32])
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_with(secret: [u8; 32]) -> Self {
         Self(Arc::new(Mutex::new(Identity {
-            state: State::Ready(Key(Zeroizing::new([1; 32]))),
+            state: State::Ready(Key(Zeroizing::new(secret))),
             store: Box::new(OsStore),
         })))
     }
@@ -1046,6 +1051,31 @@ mod tests;
 
 impl IdentityHost {
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.
+    /// Owner-to-self NIP-44 v2 for agent instructions versions only (NIP-AP kind 44300).
+    pub(crate) async fn instructions_cipher(&self, text: String, encrypt: bool) -> Result<String> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            let secret = NostrSecretKey::from_slice(key.0.as_ref()).map_err(|_| INVALID)?;
+            let public = Keys::new(secret.clone()).public_key();
+            if encrypt {
+                nostr::nips::nip44::encrypt(
+                    &secret,
+                    &public,
+                    &text,
+                    nostr::nips::nip44::Version::V2,
+                )
+                .map_err(|_| "Invalid instructions".into())
+            } else {
+                nostr::nips::nip44::decrypt(&secret, &public, &text)
+                    .map_err(|_| "Invalid instructions".into())
+            }
+        })
+        .await
+    }
+
     pub(crate) async fn kit_cipher(&self, ciphertext: String, encrypt: bool) -> Result<String> {
         with_identity(self.clone(), move |identity| {
             identity.restore()?;

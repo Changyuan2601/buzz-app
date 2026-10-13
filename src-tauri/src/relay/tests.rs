@@ -3574,3 +3574,23 @@ async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() 
         assert_strict(&blossom_event(&headers), "get", server);
     }
 }
+
+#[test]
+fn relay_sign_rejects_instructions_versions_and_their_deletions() {
+    let event = |kind, tags: Vec<Vec<String>>| EventTemplate {
+        created_at: 1,
+        kind,
+        tags,
+        content: String::new(),
+    };
+    let p = vec!["p".to_string(), "a".repeat(64)];
+    assert!(validate_event("https://relay.test", &event(44300, vec![p])).is_err());
+    let deletion = event(
+        5,
+        vec![
+            vec!["e".into(), "b".repeat(64)],
+            vec!["k".into(), "44300".into()],
+        ],
+    );
+    assert!(validate_event("https://relay.test", &deletion).is_err());
+}

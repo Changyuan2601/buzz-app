@@ -18,6 +18,10 @@ use url::Url;
 
 mod catalog;
 mod channel_writes;
+mod instructions;
+pub(crate) use instructions::{
+    relay_instructions_decode, relay_instructions_prepare, relay_instructions_sign,
+};
 mod kit;
 pub(crate) use channel_writes::{
     relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
@@ -258,6 +262,9 @@ pub(crate) async fn relay_sign(
 
 fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
     let mut relay = origin(community)?;
+    if instructions::names_instructions(event) {
+        return Err("Agent instructions use their own signer".into());
+    }
     if event.kind == 22242 {
         relay.set_scheme("wss").map_err(|_| "Invalid relay")?;
         let relay_tags: Vec<_> = event
