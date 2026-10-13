@@ -5,7 +5,8 @@
 //! doubles as both ends of a private, per-turn channel:
 //!
 //! - `--tool-listen` (started by a plugin as a declared host process): binds a
-//!   Unix socket in a fresh 0700 directory under the per-user temp dir, prints
+//!   Unix socket in a fresh private directory under the per-user temp dir
+//!   (0700 on Unix; AF_UNIX on Windows 10 and later, see `private_dir`), prints
 //!   `{"command","socket","token"}` as its first stdout line, accepts exactly
 //!   one connection presenting the token, then copies that connection to and
 //!   from its own stdio, so the plugin answers the MCP messages itself.
@@ -17,6 +18,10 @@
 //! after 5 minutes with none), so nothing else can connect; the listener exits
 //! when either side closes.
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 /// Runs a relay mode if `args` asks for one, returning its exit code.
 pub fn run_if_requested(args: &[String]) -> Option<i32> {
@@ -45,25 +50,34 @@ fn pump(mut from: impl Read, mut to: impl Write) {
     }
 }
 
+/// Creates `dir` so only the current user can enter it.
 #[cfg(unix)]
-fn listen() -> Result<(), String> {
+fn private_dir(dir: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
-    use std::os::unix::net::UnixListener;
 
+    std::fs::DirBuilder::new().mode(0o700).create(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+
+/// Creates `dir` under the per-user temp dir. Windows keeps that directory in
+/// the user's profile, whose ACL admits only the user (plus SYSTEM and the
+/// administrators), and the new directory inherits it.
+#[cfg(windows)]
+fn private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir(dir)
+}
+
+#[cfg(any(unix, windows))]
+fn listen() -> Result<(), String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| "No randomness")?;
     let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     getrandom::fill(&mut bytes).map_err(|_| "No randomness")?;
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    // macOS's temp dir is already per-user; the 0700 directory keeps others out
-    // everywhere. Kept short: Unix socket paths are limited to ~104 bytes.
+    // macOS's temp dir is already per-user; the private directory keeps others
+    // out everywhere. Kept short: socket paths are limited to ~104 bytes.
     let dir = std::env::temp_dir().join(format!("bt-{}", &id[..12]));
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&dir)
-        .map_err(|e| format!("Could not create the tool directory: {e}"))?;
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|e| e.to_string())?;
+    private_dir(&dir).map_err(|e| format!("Could not create the tool directory: {e}"))?;
     let socket = dir.join("s");
     let cleanup = || {
         let _ = std::fs::remove_file(&socket);
@@ -123,10 +137,8 @@ fn listen() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn relay() -> Result<(), String> {
-    use std::os::unix::net::UnixStream;
-
     let socket = std::env::var("BUZZ_TOOL_SOCKET").map_err(|_| "BUZZ_TOOL_SOCKET is required")?;
     let token = std::env::var("BUZZ_TOOL_TOKEN").map_err(|_| "BUZZ_TOOL_TOKEN is required")?;
     let mut stream =
@@ -141,11 +153,11 @@ fn relay() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn listen() -> Result<(), String> {
     Err("Buzz tools for this agent are not yet supported on this platform".into())
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn relay() -> Result<(), String> {
     listen()
 }
