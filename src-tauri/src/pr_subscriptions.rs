@@ -690,7 +690,11 @@ async fn deliver_with(
         } else {
             journal.pending[0].attempted = true;
             store.persist(journal).await?;
-            transport.authorize(&journal.target).await?;
+            if let Err(error) = transport.authorize(&journal.target).await {
+                journal.pending[0].attempted = false;
+                store.persist(journal).await?;
+                return Err(error);
+            }
             transport.post(sender, key, event.clone()).await?;
         }
         journal.receipts.push(

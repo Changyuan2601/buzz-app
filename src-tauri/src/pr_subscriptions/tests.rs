@@ -330,3 +330,62 @@ async fn released_hosting_authority_preserves_the_callback_without_sending() {
     assert!(transport.sent.lock().unwrap().is_empty());
     assert!(!journal.pending[0].attempted);
 }
+
+struct ReleasingTransport {
+    inner: Transport,
+    checks: std::sync::atomic::AtomicUsize,
+}
+impl DeliveryTransport for ReleasingTransport {
+    async fn authorize(&self, _: &Target) -> Result<(), String> {
+        if self
+            .checks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            == 2
+        {
+            Err("Hosting released during journal persistence".into())
+        } else {
+            Ok(())
+        }
+    }
+    async fn read(
+        &self,
+        sender: &AppAgent,
+        key: &Secret,
+        filters: &[Value],
+    ) -> Result<Value, String> {
+        self.inner.read(sender, key, filters).await
+    }
+    async fn post(&self, sender: &AppAgent, key: &Secret, event: Value) -> Result<(), String> {
+        self.inner.post(sender, key, event).await
+    }
+}
+#[tokio::test]
+async fn a_final_authorization_refusal_remains_sendable_after_restart() {
+    let (key, sender, route) = sender();
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut journal) = Store::open(dir.path(), &route).unwrap();
+    journal.sender = Some(sender);
+    journal.checkpoint(poll("new review")).unwrap();
+    let transport = ReleasingTransport {
+        inner: Transport {
+            sent: Mutex::default(),
+            uncertain: false,
+            wrong_receipt: false,
+            unavailable: false,
+            authorized: true,
+        },
+        checks: std::sync::atomic::AtomicUsize::new(0),
+    };
+    assert!(deliver_with(&store, &mut journal, &key, &transport)
+        .await
+        .is_err());
+    assert!(transport.inner.sent.lock().unwrap().is_empty());
+    drop(store);
+    let (store, mut journal) = Store::open(dir.path(), &route).unwrap();
+    assert!(!journal.pending[0].attempted);
+    deliver_with(&store, &mut journal, &key, &transport)
+        .await
+        .unwrap();
+    assert_eq!(transport.inner.sent.lock().unwrap().len(), 1);
+    assert!(journal.pending.is_empty());
+}
