@@ -15,7 +15,15 @@ export type Spawn = (
 
 /** How a burst of work ended: every message sent so far has been answered,
  * or the session or its process is gone. */
-export type Settled = Readonly<{ ok: boolean; error?: string }>;
+/** The most of a turn's text kept, to post when it calls no Buzz tool. */
+const WRITTEN_LIMIT = 20_000;
+
+export type Settled = Readonly<{
+  ok: boolean;
+  error?: string;
+  /** What goose wrote, when it called no Buzz tool. Nobody in Buzz saw it. */
+  text?: string;
+}>;
 
 export type ActivityReceipt = Readonly<{
   /** Steps show on the latest acknowledged message of each scope. */
@@ -122,6 +130,12 @@ export class GooseProcess {
       env: { ...ENV, ...launch.env },
       onStdout: (data) => (goose ? goose.read(data) : early.push(data)),
       onStderr: (data) => goose?.readError(data),
+    }).catch((error: unknown) => {
+      throw /os error 2|no such file|not found/i.test(errorMessage(error))
+        ? new Error(
+            "goose-acp is not installed. Buzz looks for it on your PATH, including ~/.local/bin.",
+          )
+        : error;
     });
     goose = new GooseProcess(process, launch.tools);
     for (const data of early) goose.read(data);
@@ -152,15 +166,20 @@ export class GooseProcess {
   }
 
   /** Opens a new session in `cwd`, named `title`, whose system prompt has
-   * `systemPrompt` appended. */
+   * `systemPrompt` appended. A `bare` one has no tools at all. */
   async open(
-    launch: Readonly<{ cwd: string; systemPrompt: string; title?: string }>,
+    launch: Readonly<{
+      cwd: string;
+      systemPrompt: string;
+      title?: string;
+      bare?: boolean;
+    }>,
   ): Promise<GooseSession> {
     const { sessionId } = (await this.request("session/new", {
       cwd: launch.cwd,
-      mcpServers: [ACP_SERVER],
+      mcpServers: launch.bare ? [] : [ACP_SERVER],
       _meta: {
-        enabledExtensions: EXTENSIONS,
+        enabledExtensions: launch.bare ? [] : EXTENSIONS,
         ...(launch.title ? { sessionTitle: launch.title } : {}),
       },
     })) as { sessionId: string };
@@ -169,12 +188,13 @@ export class GooseProcess {
     try {
       // Appended under goose's own prompt, which carries each extension's
       // instructions; `set` would replace it, and render ours as a template.
-      await this.request("_goose/unstable/session/system-prompt/set", {
-        sessionId,
-        mode: "append",
-        key: "buzz",
-        text: launch.systemPrompt,
-      });
+      if (launch.systemPrompt)
+        await this.request("_goose/unstable/session/system-prompt/set", {
+          sessionId,
+          mode: "append",
+          key: "buzz",
+          text: launch.systemPrompt,
+        });
     } catch (error) {
       void this.close(session);
       throw error;
@@ -404,7 +424,7 @@ export class GooseSession {
     if (kind === "agent_message_chunk" && !this.acted) {
       const content = update.content as { text?: unknown } | undefined;
       if (typeof content?.text === "string")
-        this.written = (this.written + content.text).slice(0, 2_000);
+        this.written = (this.written + content.text).slice(0, WRITTEN_LIMIT);
     }
     if (kind === "session_info_update") {
       const goose = (update._meta as { goose?: { activeRunId?: unknown } })
@@ -501,12 +521,14 @@ export class GooseSession {
     activity.acknowledged?.();
   }
   private done() {
-    // Work that wrote text and never acted in Buzz left the conversation
-    // waiting: its text says why, as when goose cannot reach its provider.
-    const error =
-      this.lastError ??
-      (!this.acted && this.written.trim() ? this.written.trim() : undefined);
-    this.settle(error ? { ok: false, error } : { ok: true });
+    // Work that wrote text and never acted in Buzz answered only goose: a
+    // model that forgot `send`, or goose saying it cannot reach its provider.
+    const text = this.acted ? "" : this.written.trim();
+    const error = this.lastError;
+    this.settle({
+      ...(error ? { ok: false, error } : { ok: true }),
+      ...(text ? { text } : {}),
+    });
   }
   private settle(settled: Settled) {
     this.pending = 0;

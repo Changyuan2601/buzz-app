@@ -72,11 +72,12 @@ export class AgentSessions {
     return this.shown.get(key) ?? 0;
   }
   /** Conversations with a session, and whether each is working. */
-  snapshot() {
+  snapshot(): { key: string; busy: boolean; sessionId?: string }[] {
     return [
       ...[...this.live].map(([key, live]) => ({
         key,
         busy: live.session.busy,
+        sessionId: live.session.id,
       })),
       ...[...this.once.keys()].map((key) => ({ key, busy: true })),
     ];
@@ -336,7 +337,7 @@ export class AgentSessions {
 
 /** `workspace` as an absolute path, which ACP sessions need: the host
  * resolves `~/…` for the process it starts there. */
-async function absolute(spawn: Spawn, workspace: string) {
+export async function absolute(spawn: Spawn, workspace: string) {
   if (workspace.startsWith("/")) return workspace;
   let directory = "";
   const process = await spawn("workspace", {

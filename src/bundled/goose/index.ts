@@ -6,7 +6,9 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
-import { Create, SettingsTab } from "./tabs";
+import { GooseSetup } from "./setup";
+import { createTabs } from "./tabs";
+import { GooseHistory } from "./transcript";
 
 export const TYPE_ID = "goose";
 /** A turn's run returns once goose has it, so this bounds only the hand-over. */
@@ -20,6 +22,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
   const runtime = new GooseRuntime(host, agents.relay);
+  const spawn = host.spawn?.bind(host);
+  const { Create, CreateModelMenu, createModelLabel, SettingsTab } = createTabs(
+    {
+      setup: new GooseSetup(spawn),
+      runtime,
+      history: new GooseHistory(spawn),
+    },
+  );
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -39,9 +49,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Goose",
     icon: GooseLogoIcon,
     description:
-      "goose on this computer, with the provider in your goose config. Each thread it is mentioned in is one continuing session.",
+      "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
+    CreateModelMenu,
+    createModelLabel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

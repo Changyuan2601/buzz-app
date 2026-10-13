@@ -272,6 +272,9 @@ export class GooseRuntime {
       .then((result) => {
         if (!result.ok)
           return this.report(agent, channel, event, result.error ?? "");
+        // An answer goose wrote without `send` is posted for it, so the
+        // thread is not left waiting.
+        if (result.text) return this.post(agent, channel, event, result.text);
       })
       .catch((error) => console.warn("goose turn failed", error))
       .finally(() => this.notify());
@@ -383,19 +386,34 @@ export class GooseRuntime {
     event: EventData,
     error: string,
   ) {
+    return this.post(
+      agent,
+      channel,
+      event,
+      `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+      [["p", agent.owner]],
+    );
+  }
+
+  /** Replies in the event's thread as the agent. */
+  private post(
+    agent: AgentHandle,
+    channel: string,
+    event: EventData,
+    content: string,
+    tags: string[][] = [],
+  ) {
     return agent
       .publish({
         kind: 9,
-        content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+        content,
         tags: [
           ["h", channel],
           ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
-          ["p", agent.owner],
+          ...tags,
         ],
       })
-      .catch((failure) =>
-        console.warn("goose could not report a failed turn", failure),
-      );
+      .catch((failure) => console.warn("goose could not post", failure));
   }
 
   /** Where the event's turn goes, and what its prompt needs. */

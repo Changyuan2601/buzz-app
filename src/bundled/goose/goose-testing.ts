@@ -35,6 +35,9 @@ export type FakeGoose = {
   turns: FakeTurn[];
   closed: string[];
   cancelled: string[];
+  deleted: string[];
+  /** The environment it started with. */
+  env: Readonly<Record<string, string | null>>;
   /** When set, a turn stays open until it is finished. */
   hold: boolean;
   killed: boolean;
@@ -50,10 +53,34 @@ export type FakeGoose = {
   exit(code: number | null, stderr?: string): void;
 };
 
+/** A session goose saved, with its messages as goose exports them. */
+export type FakeSession = Readonly<{
+  sessionId: string;
+  title: string;
+  cwd: string;
+  updatedAt: string;
+  conversation: readonly Record<string, unknown>[];
+}>;
+
 /** A spawn whose `goose` processes answer like `goose-acp`, and whose
  * `workspace` process prints `home` for a `~/…` directory. */
 export function fakeSpawn(
-  options: Readonly<{ acp?: boolean; home?: string; hold?: boolean }> = {},
+  options: Readonly<{
+    acp?: boolean;
+    home?: string;
+    hold?: boolean;
+    /** What a turn writes before it ends. */
+    reply?: string;
+    /** `providers/list` entries, and goose's default provider and model. */
+    providers?: readonly Record<string, unknown>[];
+    defaults?: Readonly<{ providerId?: string; modelId?: string }>;
+    /** Provider fields saved, by provider; `config/save` adds to it. */
+    saved?: Map<string, Set<string>>;
+    /** What `supported-models/list` returns. */
+    supported?: readonly string[];
+    /** Saved sessions `session/list` and `session/export` read. */
+    history?: readonly FakeSession[];
+  }> = {},
 ) {
   const processes: FakeGoose[] = [];
   const spawn = async (
@@ -99,6 +126,8 @@ export function fakeSpawn(
       turns: [],
       closed: [],
       cancelled: [],
+      deleted: [],
+      env: process.env ?? {},
       hold: options.hold ?? false,
       killed: false,
       ask: (method, params) => {
@@ -181,6 +210,11 @@ export function fakeSpawn(
             sessionUpdate: "session_info_update",
             _meta: { goose: { activeRunId: runId } },
           });
+          if (options.reply)
+            fake.update(sessionId, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: options.reply },
+            });
           if (!fake.hold) queueMicrotask(() => turn.finish());
           return;
         }
@@ -203,6 +237,74 @@ export function fakeSpawn(
           fake.cancelled.push(sessionId);
           running.get(sessionId)?.finish("cancelled");
           return;
+        case "_goose/unstable/providers/list":
+          // Saving a provider's fields sets it up, as goose lists it after.
+          return reply(id, {
+            entries: (options.providers ?? []).map((entry) => ({
+              ...entry,
+              configured:
+                Boolean(entry.configured) ||
+                Boolean(options.saved?.get(String(entry.providerId))?.size),
+            })),
+          });
+        case "_goose/unstable/defaults/read":
+          return reply(id, options.defaults ?? {});
+        case "_goose/unstable/providers/config/read": {
+          const set = options.saved?.get(String(params.providerId));
+          return reply(id, {
+            fields: [...(set ?? [])].map((key) => ({ key, isSet: true })),
+          });
+        }
+        case "_goose/unstable/providers/config/save": {
+          const providerId = String(params.providerId);
+          const set = options.saved?.get(providerId) ?? new Set<string>();
+          for (const field of params.fields as { key: string }[])
+            set.add(field.key);
+          options.saved?.set(providerId, set);
+          return reply(id, { status: { providerId, isConfigured: true } });
+        }
+        case "_goose/unstable/providers/supported-models/list":
+          return reply(id, {
+            providerId: params.providerId,
+            models: options.supported ?? [],
+          });
+        case "session/list": {
+          const query = String(
+            (params._meta as { query?: string } | undefined)?.query ?? "",
+          );
+          const mentions = (session: FakeSession) =>
+            JSON.stringify(session.conversation).includes(query);
+          return reply(id, {
+            sessions: (options.history ?? [])
+              .filter(
+                (session) =>
+                  session.cwd === params.cwd && (!query || mentions(session)),
+              )
+              .map(({ sessionId, title, cwd, updatedAt }) => ({
+                sessionId,
+                title,
+                cwd,
+                updatedAt,
+              })),
+          });
+        }
+        case "_goose/unstable/session/export": {
+          const session = options.history?.find(
+            (item) => item.sessionId === params.sessionId,
+          );
+          if (!session)
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: "Session not found" },
+            });
+          return reply(id, {
+            data: JSON.stringify({ id: session.sessionId, ...session }),
+          });
+        }
+        case "session/delete":
+          fake.deleted.push(sessionId);
+          return reply(id, {});
         case "session/close":
           fake.closed.push(sessionId);
           return reply(id, {});

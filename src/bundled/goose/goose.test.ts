@@ -205,7 +205,7 @@ describe("GooseProcess", () => {
     process.turns[0]?.finish();
   });
 
-  it("fails work that only wrote text, with what goose wrote", async () => {
+  it("ends work that only wrote text with what goose wrote", async () => {
     const { goose, process } = await start();
     process.hold = true;
     const session = await goose.open({ cwd: "/work", systemPrompt: "" });
@@ -218,8 +218,8 @@ describe("GooseProcess", () => {
     await flush();
     process.turns[0]?.finish();
     await expect(settled).resolves.toEqual({
-      ok: false,
-      error: "Network error: no provider",
+      ok: true,
+      text: "Network error: no provider",
     });
   });
 

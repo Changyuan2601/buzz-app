@@ -4,13 +4,14 @@
 // them; their calls are recorded, not sent to a relay.
 import { spawn as spawnChild } from "node:child_process";
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { respond } from "../../buzz-mcp/rpc";
 import type { HostProcessOptions } from "../../features/host/service";
 import { systemPrompt } from "../claude-code/prompt";
 import { GooseProcess, type Spawn, type ToolServer } from "./goose";
+import { GooseSetup } from "./setup";
 
 const BIN = process.env.GOOSE_ACP_BIN;
 
@@ -181,5 +182,37 @@ describe.skipIf(!BIN)("goose-acp", () => {
     } finally {
       await goose.kill();
     }
+  });
+
+  it("lists goose's providers and tests its default one", {
+    timeout: 120_000,
+  }, async () => {
+    // goose resolves `~` with the workspace process, which prints the folder.
+    const setup = new GooseSetup(async (id, options = {}) => {
+      if (id !== "workspace") return spawn(id, options);
+      queueMicrotask(() =>
+        options.onStdout?.(`${String(options.cwd).replace(/^~/, homedir())}\n`),
+      );
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: Promise.resolve(0),
+      };
+    });
+    const { providers, defaults } = await setup.providers();
+    expect(providers.length).toBeGreaterThan(0);
+    expect(providers.some((item) => item.keys.length > 0)).toBe(true);
+    expect(await setup.test({ provider: "", model: "" })).toEqual({
+      ok: true,
+      message: "Connected",
+    });
+    if (defaults.provider)
+      expect(
+        await setup.test({
+          provider: defaults.provider,
+          model: "no-such-model-xyz",
+        }),
+      ).toMatchObject({ ok: false });
   });
 });
