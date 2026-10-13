@@ -248,7 +248,27 @@ it("does not make a second Bestie while this community's agent list is unread", 
   expect(h.bestie.snapshot()).toMatchObject({
     status: "error",
     message: expect.stringContaining("isn't listed in this community yet"),
+    unlisted: true,
   });
   expect(h.requests("register-agent")).toHaveLength(0);
   expect(h.events).toHaveLength(0);
+});
+
+it("creates a new Bestie when the owner asks despite an unlisted one", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.rows.push({
+    key: "elsewhere",
+    agent_id: "elsewhere",
+    agent_name: "Bestie",
+    agent_pubkey: "34".repeat(32),
+    status: 2,
+  });
+  await h.bestie.setup();
+  expect(h.bestie.snapshot().unlisted).toBe(true);
+  await h.bestie.setup(undefined, { createNew: true });
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    message: "Your Bestie is set up.",
+  });
+  expect(h.requests("register-agent")).toHaveLength(1);
 });
