@@ -227,13 +227,13 @@ async fn the_real_source_process_and_journal_deliver_a_new_event_once_after_rest
     let (store, mut journal) = Store::open(dir.path(), &route).unwrap();
     journal.sender = Some(sender);
     journal
-        .checkpoint(source_poll_at(&script, &route, None).await.unwrap())
+        .checkpoint(source_poll_at(&script, &route, None, true).await.unwrap())
         .unwrap();
     assert!(journal.pending.is_empty());
     store.save(&journal).unwrap();
     drop(store);
     let (store, mut journal) = Store::open(dir.path(), &route).unwrap();
-    let next = source_poll_at(&script, &route, journal.snapshot.as_ref())
+    let next = source_poll_at(&script, &route, journal.snapshot.as_ref(), false)
         .await
         .unwrap();
     journal.checkpoint(next).unwrap();

@@ -290,6 +290,7 @@ impl Subscriptions {
                 let subscriptions = self.clone();
                 let task_id = id.clone();
                 tauri::async_runtime::spawn(async move {
+                    let mut refresh_roster = true;
                     loop {
                         tokio::time::sleep(Duration::from_secs(60)).await;
                         if !host.claimed(&journal.target.pubkey)
@@ -297,11 +298,15 @@ impl Subscriptions {
                         {
                             break;
                         }
-                        if let Err(error) = tick(&host, &store, &mut journal, &sender_key).await {
+                        if let Err(error) =
+                            tick(&host, &store, &mut journal, &sender_key, refresh_roster).await
+                        {
                             journal.error = Some(error);
                             if store.save(&journal).is_err() {
                                 break;
                             }
+                        } else {
+                            refresh_roster = false;
                         }
                     }
                     if let Ok(mut active) = subscriptions.active.lock() {
@@ -413,7 +418,7 @@ impl Subscriptions {
         }
         // A profile is not parsed through the CLI. The owner attestation is native-verified.
         if journal.snapshot.is_none() {
-            journal.checkpoint(source_poll(&target, None).await?)?;
+            journal.checkpoint(source_poll(&target, None, true).await?)?;
             store.save(&journal)?;
         }
         deliver(&store, &mut journal, &sender_key).await?;
@@ -509,6 +514,7 @@ async fn tick(
     store: &Store,
     journal: &mut Journal,
     key: &Secret,
+    refresh_roster: bool,
 ) -> Result<(), String> {
     let (agent, target_key) = host
         .key(host.agent(journal.target.pubkey.clone()).await?)
@@ -521,7 +527,7 @@ async fn tick(
     if journal.terminal {
         return Ok(());
     }
-    let poll = source_poll(&journal.target, journal.snapshot.as_ref()).await?;
+    let poll = source_poll(&journal.target, journal.snapshot.as_ref(), refresh_roster).await?;
     journal.checkpoint(poll)?;
     store.save(journal)?;
     deliver(store, journal, key).await
@@ -644,16 +650,21 @@ async fn deliver_with(
     }
     Ok(())
 }
-async fn source_poll(target: &Target, snapshot: Option<&Value>) -> Result<Poll, String> {
+async fn source_poll(
+    target: &Target,
+    snapshot: Option<&Value>,
+    refresh_roster: bool,
+) -> Result<Poll, String> {
     let source = dirs::home_dir()
         .ok_or("No native home directory")?
         .join(".agents/skills/monitor-pr/scripts/pr-monitor-poll.py");
-    source_poll_at(&source, target, snapshot).await
+    source_poll_at(&source, target, snapshot, refresh_roster).await
 }
 async fn source_poll_at(
     source: &Path,
     target: &Target,
     snapshot: Option<&Value>,
+    refresh_roster: bool,
 ) -> Result<Poll, String> {
     if !source.is_file() {
         return Err("Checkpointed monitor-pr producer is not installed".into());
@@ -679,7 +690,7 @@ async fn source_poll_at(
         .map_err(|_| "Cannot start PR checkpoint producer")?;
     let mut stdin = child.stdin.take().ok_or("Producer input unavailable")?;
     let mut stdout = child.stdout.take().ok_or("Producer output unavailable")?;
-    let request = json!({"repo": target.repo, "pr": target.pr, "snapshot": snapshot});
+    let request = json!({"repo": target.repo, "pr": target.pr, "snapshot": snapshot, "refresh_roster": refresh_roster});
     let operation = async {
         stdin
             .write_all(request.to_string().as_bytes())
