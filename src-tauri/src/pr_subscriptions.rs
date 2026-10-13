@@ -257,6 +257,13 @@ impl Subscriptions {
         identity: Option<IdentityHost>,
     ) -> Result<Value, String> {
         target.validate()?;
+        if !host.claimed(&target.pubkey) {
+            return Err("This host does not own the agent".into());
+        }
+        let current = host.agent(target.pubkey.clone()).await?;
+        if current.owner != target.owner || current.relay != target.relay {
+            return Err("Agent ownership changed".into());
+        }
         let id = target.id();
         {
             let mut active = self

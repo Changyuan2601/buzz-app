@@ -258,3 +258,12 @@ async fn the_real_source_process_and_journal_deliver_a_new_event_once_after_rest
         .contains("new review"));
     assert_eq!(journal.receipts, vec![events[0]["id"].as_str().unwrap()]);
 }
+
+#[tokio::test]
+async fn an_active_registration_cannot_survive_the_loss_of_native_hosting_authority() {
+    let subscriptions = Subscriptions::new(Err("unused".into()));
+    let route = target();
+    subscriptions.active.lock().unwrap().insert(route.id());
+    let host = AppAgentHost::new(Err("unused".into()), Err("unused".into()), false);
+    assert!(subscriptions.start(host, route, None).await.is_err());
+}
