@@ -202,20 +202,27 @@ export class AcpClient {
     number,
     { resolve(value: unknown): void; reject(error: Error): void }
   >();
-  private readonly texts = new Map<string, string>();
+  /** Per session, the turn's text split at each tool call: the reply is the
+   * last message, not the narration between tool steps. */
+  private readonly texts = new Map<string, string[]>();
   private readonly collecting = new Set<string>();
 
   constructor(private readonly write: (line: string) => Promise<void>) {}
 
   collect(sessionId: string) {
-    this.texts.set(sessionId, "");
+    this.texts.set(sessionId, [""]);
     this.collecting.add(sessionId);
   }
-  take(sessionId: string): string {
+  /** The turn's reply text: what came after its last tool call, or else the
+   * last message before it; `trailing` says it came after the last call. */
+  take(sessionId: string): { text: string; trailing: boolean } {
     this.collecting.delete(sessionId);
-    const text = this.texts.get(sessionId) ?? "";
+    const parts = this.texts.get(sessionId) ?? [""];
     this.texts.delete(sessionId);
-    return text;
+    const last = (parts.at(-1) ?? "").trim();
+    if (last) return { text: last, trailing: true };
+    const earlier = [...parts].reverse().find((part) => part.trim()) ?? "";
+    return { text: earlier.trim(), trailing: false };
   }
 
   receive(chunk: string) {
@@ -256,15 +263,16 @@ export class AcpClient {
     if (message.method === "session/update") {
       const session = message.params?.sessionId ?? "";
       const update = message.params?.update;
+      const parts = this.collecting.has(session)
+        ? this.texts.get(session)
+        : undefined;
+      if (!parts) return;
       if (
-        this.collecting.has(session) &&
         update?.sessionUpdate === "agent_message_chunk" &&
         update.content?.type === "text"
       )
-        this.texts.set(
-          session,
-          (this.texts.get(session) ?? "") + (update.content.text ?? ""),
-        );
+        parts[parts.length - 1] += update.content.text ?? "";
+      else if (update?.sessionUpdate === "tool_call") parts.push("");
       return;
     }
     if (message.method && message.id !== undefined) {
@@ -784,9 +792,15 @@ export class MeshAgentRuntime {
         session.turn = undefined;
         session.remember(event.created_at);
       }
+      // Degrade gracefully for models that fumble the tools: a final `send`
+      // is the answer; after other sends, text that followed the last tool
+      // call is still posted; a tool call written as text is salvaged.
+      const taken = goose.client.take(session.id);
+      const text = salvageReply(taken.text);
+      const sent = tools?.sent() ?? false;
       return {
-        text: goose.client.take(session.id).trim(),
-        sent: tools?.sent() ?? false,
+        text,
+        sent: Boolean(tools?.finished()) || (sent && !(taken.trailing && text)),
       };
     } catch (error) {
       if (signal.aborted && goose.busy === 1) this.retire(agent.pubkey, goose);
@@ -1072,4 +1086,56 @@ function untilAborted<T>(
       .finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
+}
+
+const TOOL_CALL_BLOCK =
+  /<\|?tool_call\|?>[\s\S]*?(?:<\|?\/tool_call\|?>|$)|```(?:json)?\s*\{[\s\S]*?\}\s*```/g;
+
+/** A `send` call's text from a parsed tool call in the shapes small models
+ * write: `{name, arguments}`, OpenAI's `function`, or bare arguments. */
+function sendText(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const call = value as Record<string, unknown>;
+  const fn = call.function as Record<string, unknown> | undefined;
+  const name = call.name ?? fn?.name;
+  let args = call.arguments ?? call.parameters ?? call.input ?? fn?.arguments;
+  if (typeof args === "string")
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return undefined;
+    }
+  if (name !== undefined && name !== "send") return undefined;
+  const text = ((args ?? call) as Record<string, unknown>).text;
+  return typeof text === "string" && text.trim() ? text.trim() : undefined;
+}
+
+function parseLoose(text: string): unknown {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+}
+
+/** A reply rescued from a model that wrote its tool call as text instead of
+ * making it (common for small models): the text of any written `send`,
+ * otherwise the prose with written tool calls removed. */
+export function salvageReply(text: string): string {
+  const blocks = text.match(TOOL_CALL_BLOCK) ?? [];
+  const trimmed = text.trim();
+  const candidates = blocks.length
+    ? blocks
+    : trimmed.startsWith("{")
+      ? [trimmed]
+      : [];
+  const sends = candidates
+    .map((block) => sendText(parseLoose(block)))
+    .filter((item): item is string => Boolean(item));
+  if (sends.length) return sends.join("\n\n");
+  if (!blocks.length) return trimmed;
+  return text.replace(TOOL_CALL_BLOCK, "").trim();
 }

@@ -10,6 +10,7 @@ import {
   type MeshAgentDeps,
   MeshAgentRuntime,
   meshAgentConfig,
+  salvageReply,
   turnTools,
 } from "./meshAgent";
 
@@ -37,6 +38,9 @@ type Seen = {
   bridgeOut: string[];
   failLoad?: boolean;
   beforeRequest?: (method: string) => Promise<void>;
+  /** Replaces the prompt's one reply chunk: a string is a text chunk, null a
+   * tool call. */
+  updates?: (string | null)[];
 };
 function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
   let sessions = 0;
@@ -113,16 +117,20 @@ function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
           }
         }
         if (method === "session/prompt") {
-          out({
-            method: "session/update",
-            params: {
-              sessionId: params.sessionId,
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: reply },
+          for (const item of seen.updates ?? [reply])
+            out({
+              method: "session/update",
+              params: {
+                sessionId: params.sessionId,
+                update:
+                  item === null
+                    ? { sessionUpdate: "tool_call", toolCallId: "t" }
+                    : {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: item },
+                      },
               },
-            },
-          });
+            });
           out({ id, result: { stopReason: "end_turn" } });
         }
       },
@@ -190,6 +198,36 @@ const prompts = (seen: Seen) =>
     }));
 
 describe("Mesh agent runtime", () => {
+  it("posts only the message after the last tool call, not the narration", async () => {
+    const { delivery, publish, seen, runtime } = setup();
+    seen.updates = ["Let me check. ", null, "The answer is 4."];
+    await runtime.run(delivery());
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      content: "The answer is 4.",
+    });
+  });
+
+  it("posts the last message when the turn ends on a tool call", async () => {
+    const { delivery, publish, seen, runtime } = setup();
+    seen.updates = ["Here it is: 4.", null];
+    await runtime.run(delivery());
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      content: "Here it is: 4.",
+    });
+  });
+
+  it("posts a written-out send call's text instead of the raw call", async () => {
+    const { delivery, publish, seen, runtime } = setup();
+    seen.updates = [
+      '<tool_call>{"name": "send", "arguments": {"text": "Hello there"}}</tool_call>',
+    ];
+    await runtime.run(delivery());
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      content: "Hello there",
+    });
+  });
+
   it("publishes goose's reply as the agent, threaded to the mention", async () => {
     const { delivery, publish, seen, runtime } = setup();
     await runtime.run(delivery());
@@ -426,6 +464,23 @@ describe("Mesh agent runtime", () => {
     expect(publish.mock.calls[0]?.[0]).toMatchObject({
       content: "hi from mesh",
     });
+  });
+
+  it("salvages replies from tool calls written as text", () => {
+    expect(salvageReply("plain answer")).toBe("plain answer");
+    expect(
+      salvageReply('{"name":"send","arguments":{"text":"hi","final":true}}'),
+    ).toBe("hi");
+    expect(
+      salvageReply(
+        '```json\n{"function":{"name":"send","arguments":"{\\"text\\":\\"yo\\"}"}}\n```',
+      ),
+    ).toBe("yo");
+    expect(
+      salvageReply(
+        'Done.\n<tool_call>{"name":"react","arguments":{"emoji":"👍"}}</tool_call>',
+      ),
+    ).toBe("Done.");
   });
 
   it("keys conversations like Codex and Claude Code", () => {
@@ -690,6 +745,7 @@ describe("Mesh recovery contracts", () => {
       OWNER,
       { mode: "agent" },
     );
+    seen.updates = [null];
     seen.beforeRequest = async (method) => {
       if (method !== "session/prompt") return;
       seen.relay?.({
