@@ -15,7 +15,7 @@ it("launches a PR subscription through native custody with the bound owner and r
     owner: "b".repeat(64),
   } as AgentHandle;
   const context = {
-    channel: "34aeaccc-c83b-4422-beac-a4b8661f9f59",
+    channel: "00000000-0000-4000-8000-000000000001",
     root: "c".repeat(64),
   };
   native.invoke.mockResolvedValue({

@@ -4,7 +4,7 @@ fn target() -> Target {
         pubkey: "a".repeat(64),
         owner: "b".repeat(64),
         relay: "wss://example.test".into(),
-        channel: "34aeaccc-c83b-4422-beac-a4b8661f9f59".into(),
+        channel: "00000000-0000-4000-8000-000000000001".into(),
         root: "c".repeat(64),
         repo: "block/buzz-app".into(),
         pr: 677,
@@ -52,7 +52,7 @@ fn changing_any_route_component_changes_the_target() {
             1 => other.owner = "e".repeat(64),
             2 => other.relay = "wss://other.test".into(),
             3 => other.root = "f".repeat(64),
-            4 => other.channel = "44aeaccc-c83b-4422-beac-a4b8661f9f59".into(),
+            4 => other.channel = "00000000-0000-4000-8000-000000000002".into(),
             5 => other.repo = "block/other".into(),
             _ => other.pr = 815,
         }
