@@ -234,93 +234,25 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await page.screenshot({
     path: test.info().outputPath("todos-dark-narrow.png"),
   });
-  // The new-tab picker hosts the same registered tool after its drawer closes.
+  // Removing the tab picker leaves the ordinary tool launcher available.
   await page.setViewportSize({ width: 1440, height: 950 });
-  await page
-    .getByRole("button", { name: "Toggle tab pane", exact: true })
-    .click();
+  await launcher.click();
   await expect(drawer).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Toggle tab pane", exact: true })
-    .click();
-  const workspace = page.locator("[data-panel-workspace]");
-  const picker = workspace.getByRole("region", { name: "Choose a tab" });
-  await picker.getByRole("tab", { name: "Tools", exact: true }).click();
+  await launcher.click();
   await expect(
-    picker.getByRole("button", { name: "Terminal", exact: true }),
-  ).toHaveCount(0);
-  await picker.getByRole("button", { name: "Todos", exact: true }).click();
-  await expect(drawer).toHaveCount(0);
-  const tool = workspace.getByRole("tabpanel", { name: "Todos", exact: true });
-  await expect(
-    tool.getByRole("checkbox", { name: "Ship it", exact: true }),
+    drawer.getByRole("checkbox", { name: "Ship it", exact: true }),
   ).toBeChecked();
-  await tool.getByRole("textbox", { name: "New todo" }).fill("Tab draft");
-  await launcher.click();
-  await expect(workspace).toBeHidden();
-  await launcher.click();
-  await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
-    "Tab draft",
-  );
-  await expect(drawer).toHaveCount(0);
-  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
-  await expect(workspace).toHaveCount(0);
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-  await expect(tool).toBeVisible();
-  await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
-    "Tab draft",
-  );
-  await plugins();
-  await messages();
-  await expect(tool).toBeVisible();
-  await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
-    "Tab draft",
-  );
-  // Main-timeline navigation replaces details, not the channel's tool tabs.
-  const main = page.getByRole("article", { name: "Conversation", exact: true });
-  const row = main.locator("[data-message-id]").last();
-  await row.hover();
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
-  await expect(
-    workspace.getByRole("tab", { name: "Thread", exact: true }),
-  ).toBeVisible();
-  const expectToolDraft = async () => {
-    await workspace.getByRole("tab", { name: "Todos", exact: true }).click();
-    await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
-      "Tab draft",
-    );
-  };
-  await expectToolDraft();
-  await row
-    .getByRole("button", { name: /View .* profile/ })
-    .first()
-    .click();
-  await expect(
-    workspace.getByRole("complementary", { name: "Profile", exact: true }),
-  ).toBeVisible();
-  await expectToolDraft();
-  await sidebar
-    .getByRole("button", { name: "New message", exact: true })
-    .click();
-  await expect(
-    page.getByRole("region", { name: "New message", exact: true }),
-  ).toBeVisible();
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-  await expectToolDraft();
   await plugins();
   await enabled.click();
   await expect(enabled).not.toBeChecked();
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);
-  await main
-    .getByRole("button", { name: "Toggle channel canvas", exact: true })
+  await button("Channel actions").click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
     .click();
-  const canvasTab = workspace.getByRole("tabpanel", {
-    name: "Canvas",
-    exact: true,
-  });
-  const canvas = canvasTab.getByRole("textbox", {
+  const canvas = page.getByRole("textbox", {
     name: "Canvas Markdown",
     exact: true,
   });

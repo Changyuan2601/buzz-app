@@ -411,6 +411,15 @@ function Timeline({
         next.edgeHeight === measuredSize.edgeHeight
       )
         return;
+      // A growing composer shrinks the viewport. Pin a reader who was at the
+      // bottom before paint so history rises with it; the restore lands later.
+      if (
+        follow.current &&
+        settled.current &&
+        next.height < measuredSize.height &&
+        element.scrollHeight - measuredSize.height - element.scrollTop < 2
+      )
+        element.scrollTop = element.scrollHeight;
       measuredSize = next;
       settled.current = false;
       setSize(next);
@@ -769,7 +778,9 @@ function Timeline({
         <Virtualizer
           ref={handle}
           scrollRef={scroller}
-          shift={prepend}
+          // Before Virtua measures its viewport there is no reading position
+          // to preserve; shifting then can freeze its initial empty range.
+          shift={prepend && !!handle.current?.viewportSize}
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}

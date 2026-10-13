@@ -211,3 +211,52 @@ test("rich choices retain their names and selected state while disabled choices 
   expect(change).not.toHaveBeenCalled();
   expect(unavailable).toHaveAttribute("aria-disabled", "true");
 });
+
+test("highlight radio choices keep single-selection semantics without a check icon", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  function ViewMenu() {
+    const [value, setValue] = useState("all");
+    return (
+      <MenuRoot>
+        <MenuTrigger render={<Button>Views</Button>} />
+        <MenuPopup>
+          <MenuRadioGroup
+            value={value}
+            onValueChange={(next) => {
+              setValue(next);
+              change(next);
+            }}
+          >
+            <MenuRadioItem
+              value="all"
+              selection="highlight"
+              closeOnClick={false}
+            >
+              All
+            </MenuRadioItem>
+            <MenuRadioItem
+              value="threads"
+              selection="highlight"
+              closeOnClick={false}
+            >
+              Threads
+            </MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuPopup>
+      </MenuRoot>
+    );
+  }
+  render(<ViewMenu />);
+  await user.click(screen.getByRole("button", { name: "Views" }));
+  const all = await screen.findByRole("menuitemradio", { name: "All" });
+  const threads = screen.getByRole("menuitemradio", { name: "Threads" });
+  expect(all).toBeChecked();
+  expect(all).toHaveAttribute("data-selection", "highlight");
+  expect(all.querySelector("svg")).toBeNull();
+  expect(threads.querySelector("svg")).toBeNull();
+  await user.click(threads);
+  expect(threads).toBeChecked();
+  expect(all).not.toBeChecked();
+  expect(change).toHaveBeenLastCalledWith("threads");
+});

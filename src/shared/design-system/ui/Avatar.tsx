@@ -3,7 +3,7 @@ import "../styles/avatar-status.css";
 import { Avatar as BaseAvatar } from "@base-ui/react/avatar";
 import { useEffect, useState, type ReactNode } from "react";
 
-type AvatarSize = "small" | "default" | "large" | "fill";
+type AvatarSize = "compact" | "small" | "default" | "large" | "fill";
 type ImageStatus = "loading" | "loaded" | "failed";
 
 function AvatarArtwork({

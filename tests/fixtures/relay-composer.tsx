@@ -3,7 +3,6 @@ import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKe
 import { createRoot } from "react-dom/client";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
-import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { PanelsService } from "../../src/features/panels/service";
@@ -180,7 +179,6 @@ function Fixture() {
       <div style={{ height: "100vh" }}>
         <ChannelWorkspaceFixture
           host={navigationHost}
-          providers={new TemplateProvidersService(root)}
           relay={data}
           panels={new PanelsService(root)}
           pages={new PagesService(root)}

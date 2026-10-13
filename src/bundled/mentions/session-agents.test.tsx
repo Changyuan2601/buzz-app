@@ -11,8 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
-import { createAgentControl } from "../../features/agents/control";
-import { controlFixture } from "../../features/agents/control-testing";
+import { localAgentsFixture } from "../../features/agents/local-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
@@ -30,10 +29,7 @@ import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
-import type {
-  AgentControlState,
-  AgentView,
-} from "../../features/agents/control";
+import type { LocalAgentsSnapshot } from "../../features/agents/local";
 import {
   followupDraft,
   type MentionRecipient,
@@ -233,6 +229,50 @@ it("offers outside agents in the session mention picker while ordinary channel p
     pubkey: test.key,
     name: "Outside agent",
   });
+  view.unmount();
+  test.library.dispose();
+});
+function completionLabels(publish: ReturnType<typeof vi.fn>) {
+  return (
+    publish.mock.lastCall?.[0] as CompletionResult | undefined
+  )?.items.map((item) => item.label);
+}
+const emptyCompletion = {
+  scope: "test",
+  channelId: "parent",
+  observation: { revision: 1, text: "@", start: 1, end: 1 },
+  query: { start: 0, end: 1, query: "" },
+};
+it("offers the viewer's own unmanaged agent outside a stream before directory people", async () => {
+  const test = setup();
+  // Remote agent setup refreshes agent choices after creating the agent.
+  await test.library.queries.refresh();
+  const session = {
+    ...test.session,
+    viewer: "d".repeat(64),
+    outbox: { supports: () => true },
+    directMessages: {
+      people: vi.fn(async () => ({
+        people: [{ pubkey: "c".repeat(64), name: "Aaron", isAgent: true }],
+        hasMore: false,
+      })),
+    },
+  } as unknown as RelaySession;
+  const publish = vi.fn();
+  const view = render(
+    <MentionCompletion
+      session={session}
+      {...emptyCompletion}
+      publish={publish}
+    />,
+  );
+  await waitFor(() =>
+    expect(completionLabels(publish)).toEqual([
+      "Member",
+      "Outside agent",
+      "Aaron",
+    ]),
+  );
   view.unmount();
   test.library.dispose();
 });
@@ -600,7 +640,7 @@ it.each([
 
 // Exercise selection, wire text/p tags, and sent rendering, not an already-bound @name.
 it.each(["picker", "completion"] as const)(
-  "%s keeps native display labels out of serialized mentions",
+  "%s keeps local display labels out of serialized mentions",
   async (surface) => {
     const test = setup();
     const profiles = new Map([[test.key, { name: "Mic" }]]);
@@ -608,25 +648,20 @@ it.each(["picker", "completion"] as const)(
       definitions: [],
       identities: [{ pubkey: test.key, name: "Legacy Mic" }],
     }));
-    let state: AgentControlState = {
+    let state: LocalAgentsSnapshot = {
       status: "ready",
-      busy: false,
-      error: null,
-      data: {
-        runtimeAvailable: true,
-        agents: [
-          {
-            pubkey: test.key,
-            relayUrl: "wss://here.example",
-            name: "Native Mic",
-          } as AgentView,
-        ],
-      },
+      agents: [
+        {
+          pubkey: test.key,
+          relayUrl: "wss://here.example",
+          name: "Native Mic",
+          owner: "aa".repeat(32),
+        },
+      ],
     };
     const listeners = new Set<() => void>();
     const provider = createAgentDirectory({
       snapshot: () => state,
-      refresh: async () => {},
       subscribe(listener) {
         listeners.add(listener);
         return () => {
@@ -760,16 +795,9 @@ it.each(["picker", "completion"] as const)(
         name: "View Native Mic profile",
       });
       act(() => {
-        const data = state.data;
-        const agent = data?.agents[0];
-        if (!data || !agent) throw new Error("Missing native agent");
-        state = {
-          ...state,
-          data: {
-            ...data,
-            agents: [{ ...agent, name: "Renamed Mic" }],
-          },
-        };
+        const agent = state.agents[0];
+        if (!agent) throw new Error("Missing local agent");
+        state = { ...state, agents: [{ ...agent, name: "Renamed Mic" }] };
         for (const listener of listeners) listener();
       });
       expect(
@@ -792,8 +820,14 @@ it.each([false, true])(
   "completion remounts preserve warm evidence (invite=%s)",
   async (inviteAgents) => {
     const test = setup();
-    const f = controlFixture();
-    const native = createAgentControl(f.host);
+    const native = localAgentsFixture([
+      {
+        pubkey: "ab".repeat(32),
+        name: "Fixture agent",
+        relayUrl: "wss://relay.example.test",
+        owner: "aa".repeat(32),
+      },
+    ]);
     const read = vi.fn(async () => ({
       definitions: [],
       identities: [{ pubkey: test.key, name: "Outside agent" }],
@@ -829,7 +863,6 @@ it.each([false, true])(
     );
     const view = render(tree(0));
     try {
-      await waitFor(() => expect(native.snapshot().status).toBe("ready"));
       if (inviteAgents)
         await waitFor(() => expect(result?.items).toHaveLength(1));
       expect(read).toHaveBeenCalledTimes(inviteAgents ? 1 : 0);
@@ -839,9 +872,6 @@ it.each([false, true])(
         await act(async () => {});
         expect(session.agentChoices.snapshot()).toBe(warm);
         expect(read).toHaveBeenCalledTimes(inviteAgents ? 1 : 0);
-        expect(
-          f.calls.filter((call) => call.action === "snapshot"),
-        ).toHaveLength(1);
       }
       // An explicit library change still reaches an ordinary open completion.
       await act(async () => {
@@ -856,7 +886,6 @@ it.each([false, true])(
       lifetime.abort();
       library.dispose();
       test.library.dispose();
-      native.dispose();
     }
   },
 );
@@ -2313,12 +2342,6 @@ function teamFixture(
   const listeners = new Set<() => void>();
   const channelKit: NonNullable<RelaySession["channelKit"]> = {
     available: true,
-    loadTeam: vi.fn(async () => {
-      throw new Error("No portable fixture team");
-    }),
-    savePortable: vi.fn(async () => {
-      throw new Error("No portable fixture save");
-    }),
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);

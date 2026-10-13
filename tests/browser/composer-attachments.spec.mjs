@@ -383,7 +383,7 @@ test("paperclip follows mentions and recipients, before the remaining tools", as
       exact: true,
     });
     const emoji = page.getByRole("button", {
-      name: "Insert emoji",
+      name: "Emoji and GIFS",
       exact: true,
     });
     await expect(mention).toBeVisible();

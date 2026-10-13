@@ -79,7 +79,8 @@ Master/detail layouts preserve list selection, scroll, and drafts while inspecti
 an item. Follow the existing host's narrow overlay/navigation behavior rather than
 squeezing two unusable columns into a small viewport. Selection, hover, and focus
 remain distinct. Shared tabs connect related views of one object; route destinations
-retain navigation semantics. When replacing a focused page heading with shared
+retain navigation semantics except for the wide shell topbar described in
+[Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
@@ -626,10 +627,17 @@ use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
-extra-small capsule uses `text-caption`.
+extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
+the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
+horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
+for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
-IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
-sm/md/lg sizes. Existing names
+Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
+(32px square with 16px artwork) and a 10px rounded rectangle
+(`--radius-icon-button`). Choose `md` or `lg` explicitly when an icon action needs
+a larger control; community rail identities and the avatar edit badge retain their
+existing larger treatment. These defaults do not depend on pointer type or viewport
+width. Both controls use the same sm/md/lg scale. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
@@ -639,6 +647,11 @@ activate. Loading retains the label's geometry, accessible name, focus and varia
 colors while blocking activation; never swap in a differently sized loading label.
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
+
+IconButton's `bare` variant is for toggles whose glyph supplies the state:
+no resting, hover, pressed or selected background. The small control keeps its
+32px hit area with 20px artwork. The caller supplies outline/filled artwork,
+aria-pressed and the accessible name; focus behavior remains unchanged.
 
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
@@ -737,8 +750,12 @@ short forms, and Select/Combobox for form values. Both anchored surfaces reuse
 Features own their data, callbacks and save/cancel behavior; Base UI owns focus,
 keyboard navigation, positioning and dismissal.
 
-Menu group labels belong inside MenuGroup. Selection checks sit at the trailing
-edge; the pointer/keyboard highlight is independent of that persistent selection.
+Menu group labels belong inside MenuGroup. `emphasis="quiet"` uses metadata
+color for lower-emphasis group labels. Radio items may use `selection="highlight"`
+for a single-choice view: the checked item has a persistent selection fill and no
+check icon. Default radio and checkbox items retain their trailing checks.
+Trailing selection checks and persistent selection fills remain independent
+of the pointer/keyboard highlight.
 Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
 for destructive actions and MenuNote for explanatory or status copy outside the
 keyboard item list. Long lists scroll inside the popup.
@@ -961,11 +978,34 @@ duration (120ms). This designer-requested blur is a tooltip-specific exception.
 Base UI instant states and keyboard navigation skip transitions; reduced motion
 keeps only the fade.
 
-ToastProvider mounts once in the host. ToastNotice belongs to the source that
+ToastProvider mounts one headless [Sonner](https://sonner.emilkowal.ski) Toaster
+in the host, portaled outside the app layout to the bottom right. Features and
+plugins use the shared Toast API, never their own Toaster or direct Sonner calls.
+Toast cards reuse `floating-surface`, including its `--shadow-sm` elevation; the
+scrollable viewport leaves room for the shadow and keyboard focus.
+Buzz owns the floating surface, semantic colors, type roles, Button and IconButton;
+headless content inherits the host theme and text size without an OS-theme override.
+Group title and description with `space-1` (4px), then separate actions with
+`space-3` (12px). Use `space-3` padding on every card edge. The dismiss slot is
+independent of the text group so its 32px hit target cannot open a gap between
+title and description. It extends 8px toward the trailing edge and 4px vertically
+into the padding; title-only confirmations stay centered beside it. Descriptions
+use secondary text, and actions align with the message's leading edge.
+The pinned Sonner patch preserves intentional focus destinations when leaving a
+toast; fallback restoration still applies when focus is otherwise lost. Expiry
+pauses while the stack is hovered, focused or being dragged, independently of
+visual expansion, and resumes on exit. Escape dismisses the focused dismissible
+notice; persistent recovery remains. Cards allow vertical touch scrolling through
+the bounded stack and reserve swipe dismissal for horizontal gestures.
+
+Sonner is the toast behavior owner; other matching controls use Base UI. ToastNotice belongs to the source that
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
-blocked-page recovery inline.
+blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recovery:
+keep it in the conversation flow immediately above the composer, with bounded
+overflow, so Send and companion-panel controls remain usable. Its retry policy
+and diagnostics belong to Channels; it does not enter the floating toast stack.
 
 Use `useToastNotification` for completed-action feedback that must outlive its
 source row (such as copying profile metadata); the host stack owns its finite
@@ -973,14 +1013,16 @@ expiry. Keep source-owned recovery on ToastNotice.
 
 Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
-The bounded, scrollable stack keeps older actions available without covering the
-shell header or composer. F6 enters notifications, Tab reaches actions. Modals
+The expanded, bounded, scrollable stack keeps every recovery action available.
+It sits at the bottom right with safe-area insets, including narrow windows; do
+not add feature-specific top offsets. F6 enters notifications, Tab reaches actions. Modals
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
-Route navigation uses NavigationItem with aria-current instead. Tabs can also
+Route navigation uses NavigationItem with aria-current instead, except for the
+wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
+semantics, hug their contents up to a 12rem maximum with ellipsis, use 10px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
@@ -1089,6 +1131,10 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
+- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
+  default), matching Berd’s relaxed reply rhythm for both sent and received
+  messages. The message renderer uses `space-4` between prose blocks; labels,
+  controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
@@ -1124,6 +1170,22 @@ inside a group than between groups.
 Use motion to explain a change in state, position, or structure. Remove animation
 that adds no useful information.
 
+### Activity dots
+
+`TypingDots` owns the shared decorative activity motion. `state="waiting"`
+breathes all three dots together over 2.4 seconds for a received request waiting
+to start. `state="working"` (the default) preserves the 1.4-second staggered fade.
+Switching state keeps the same footprint. These named component rhythms are
+continuous status motion, not the short state-transition durations.
+
+The feature must supply reliable receipt/work evidence; rendering the waiting
+variant does not establish that an agent received a message. Keep visible or
+accessible state text with the owning surface. The dots are hidden from assistive
+technology and stay static under reduced motion, so motion alone must never be
+the only way to distinguish lifecycle states. The component viewer includes both
+states and an interactive transition. Agents2 waiting/working presentations reuse
+these states in messages, thread summaries and navigation.
+
 Direct manipulation follows the pointer without easing. Apply settling motion
 after release, and prevent a drag from selecting text it passes over.
 
@@ -1149,6 +1211,21 @@ and paired text. Do not generate unused role families from every palette hue.
 Existing palette utilities and older role names are compatibility APIs while
 callers migrate, not the default for new UI. Tailwind's stock palette is removed.
 
+`ShimmerText` gives a short live-work label (an agent's current step) a slow
+sheen between the subtle and standard text roles. Use it only while that work is
+live, never on finished, failed or waiting text. Reduced motion shows plain text.
+
+Activity indicators that appear while work is live (the message activity pill,
+thread-summary dots, sidebar working badge) use the `buzz-arrive` recipe.
+Inline indicators beside text get a quiet fade at `--duration-state`.
+Standalone pills add `data-arrive="grow"`: they open their space while fading
+in, with `--duration-settle` and `--easing-settle`, so content below moves
+instead of jumping. When work ends, the owner may set `data-leaving` and keep
+the pill mounted until its animation finishes; it fades and closes its space.
+Growing and closing resize the row for a few frames, so reserve them for
+indicators that start and end with work, never for revoked access. Reduced
+motion disables all of it.
+
 ### Changing a color
 
 Change a semantic mapping when one job needs a different value. Change a palette
@@ -1159,7 +1236,7 @@ because the lighter amber steps cannot identify a control against a light panel.
 
 Palette values are based on Radix Colors (MIT), with authored neutral ramps and
 documented adjustments in `tokens.css`. These are values, not a component or
-behavior dependency. Base UI remains the component behavior layer.
+behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
 
 ### Naming and usage
 
@@ -1297,7 +1374,7 @@ person’s size preference. Allow content to reflow before it clips.
 
 Reuse and compose existing components before adding another.
 
-- **Behavior:** inspect Base UI before building an interactive shared component. Use its matching primitive for focus, keyboard behavior, positioning, portals, and dismissal. Buzz owns appearance and product semantics. Use native elements where Base UI has no matching primitive or the component is static.
+- **Behavior:** inspect Base UI before building an interactive shared component. Use its matching primitive for focus, keyboard behavior, positioning, portals, and dismissal. Buzz owns appearance and product semantics. Toast uses Sonner as documented above. Use native elements where Base UI has no matching primitive or the component is static.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
@@ -1363,5 +1440,29 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The wide shell topbar is the deliberate exception: Me and Messages use
+`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+move focus without selecting; Enter, Space or pointer selection changes the page
+while focus stays on its tab. The host passes per-opening focus intent so page
+autofocus does not override that handoff. Explicit content openings, including
+New conversation, retain their destination focus. This is not a general route-tab
+recipe: toolbar destinations and More pages overflow retain button semantics.
+
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.
+
+### Artwork actions (proposed)
+
+`SurfaceButton` uses Base UI activation and the shared keyboard-only focus ring.
+Use it for artwork tiles whose content owns their geometry, such as new-agent
+and avatar choices. It adds no label wrapper, padding, or background; callers
+must supply an accessible name and keep state colors semantic. The Button
+viewer includes enabled and disabled examples.
+
+### Chip and title fields (proposed)
+
+`Combobox.Control appearance="chip"` drops the field's surface and browse
+button until the control is hovered or open, so a choice reads as a label, such
+as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+`Input appearance="title"` sets its value at title size with no field around it,
+for a name that is also the heading, such as the new agent's name.

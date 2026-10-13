@@ -283,6 +283,25 @@ async function opened(h: Awaited<ReturnType<typeof fixture>>) {
   expect(row).toHaveFocus();
   return { reader, editor, row };
 }
+it("opens the captured message from the channel heading", async () => {
+  const h = await fixture();
+  await opened(h);
+  const open = vi.spyOn(navigator, "open");
+  const heading = screen.getByRole("heading", { name: "Room" });
+  const link = within(heading).getByRole("button", { name: "Room" });
+  expect(link).toHaveAttribute("title", "Open in channel");
+  fireEvent.click(link);
+  await waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: h.scope,
+      channelId: "room",
+      messageId: h.root.id,
+    }),
+  );
+});
+
 it.each([false, true])(
   "retains the selected reader through reconnect closure (failure: %s), without replaying reveal",
   async (fail) => {
@@ -615,6 +634,8 @@ it.each(["outside", "blur", "other detail control", "away and back"])(
       expect(reader).toBeVisible();
       expect(editor).not.toHaveFocus();
       if (move === "outside") expect(sender).toHaveFocus();
+      else if (move === "other detail control") expect(other).toHaveFocus();
+      else if (move === "away and back") expect(close).toHaveFocus();
       else expect(document.body).toHaveFocus();
     } finally {
       gate.gate.resolve();
