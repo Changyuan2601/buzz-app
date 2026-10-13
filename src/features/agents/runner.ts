@@ -18,6 +18,7 @@ import { wake } from "../agent-harness/wakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
+import { LIVE_REPLAY_LIMIT } from "../relay/live";
 import {
   addressedTo,
   CHAT_KINDS,
@@ -67,9 +68,9 @@ const RATE_WINDOW_MS = 60_000;
 /** Classifier calls in flight per agent. */
 const CLASSIFY_LIMIT = 32;
 
-const bounded = (set: Set<string>, id: string) => {
+const bounded = (set: Set<string>, id: string, limit = SEEN_LIMIT) => {
   set.add(id);
-  if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
+  if (set.size > limit) set.delete(set.values().next().value as string);
 };
 
 /** The model and effort the triggering message asks of this agent. Only the
@@ -135,6 +136,9 @@ type Runner = {
   admitted: number;
   /** Events seen, and events it wrote (so reactions to them reach no watch). */
   readonly seen: Set<string>;
+  /** Events seen in each channel, as many as a reconnect replays of it, so
+   * other channels' traffic cannot push out one a replay sends again. */
+  readonly seenIn: Map<string, Set<string>>;
   readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
@@ -362,6 +366,7 @@ export class AgentRunners {
       windowStart: 0,
       admitted: 0,
       seen: new Set(),
+      seenIn: new Map(),
       wrote: new Set(),
       working: 0,
       typing: new Map(),
@@ -413,8 +418,15 @@ export class AgentRunners {
       if (!agent || !heard(agent) || !runner.type?.run) continue;
       for (const event of batch.events) {
         if (batch.replay && event.created_at < since) continue;
-        if (runner.seen.has(event.id)) continue;
+        const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+        const seenIn = channel ? runner.seenIn.get(channel) : undefined;
+        if (runner.seen.has(event.id) || seenIn?.has(event.id)) continue;
         bounded(runner.seen, event.id);
+        if (channel) {
+          const ids = seenIn ?? new Set<string>();
+          if (!seenIn) runner.seenIn.set(channel, ids);
+          bounded(ids, event.id, LIVE_REPLAY_LIMIT);
+        }
         // An agent never hears itself; its own events keep reactions to them
         // from its watches.
         if (event.pubkey === agent.pubkey) {
