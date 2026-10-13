@@ -5,7 +5,12 @@ import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { CopyIcon, FolderSimpleIcon } from "../../shared/design-system/icons";
+import { MessageSettings } from "./MessageSettings";
+import {
+  ChatCircleIcon,
+  CopyIcon,
+  FolderSimpleIcon,
+} from "../../shared/design-system/icons";
 export const inject = [
   "pages",
   "relay",
@@ -28,6 +33,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const pages = ctx.pages;
   const navigator = ctx.navigation;
   const agents = ctx.agents;
+  ctx.settingsCards.register({
+    id: "messages",
+    title: "Messages",
+    icon: ChatCircleIcon,
+    component: MessageSettings,
+  });
   ctx.settingsCards.register({
     id: "groups",
     title: "Personal groups",

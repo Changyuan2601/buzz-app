@@ -108,7 +108,9 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   const position = await thread(page).evaluate((element) => element.scrollTop);
   await openChannelDetails(page);
   await expect(threadElement).toBeHidden();
-  await expect(threadElement.locator("..")).toHaveAttribute("inert", "");
+  await expect(
+    threadElement.locator('xpath=ancestor::*[@role="tabpanel"][1]'),
+  ).toHaveAttribute("inert", "");
   // Hidden retained content cannot be focused even though its layout is kept.
   await threadElement
     .locator('[aria-label="Thread messages"]')
@@ -158,7 +160,9 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     .getByRole("button", { name: "Close Channel settings tab" })
     .click();
   await expect(
-    page.getByRole("tab", { name: "Thread", exact: true }),
+    page.locator(
+      '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+    ),
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: "Alice Fixture", exact: true }).click();
   await expect(profile).toBeVisible();
@@ -168,13 +172,17 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     ),
   ).toBe(true);
   await page
-    .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+    )
     .click();
   // Closing the profile returns to its retained thread tab.
   await expect(thread(page)).toBeVisible();
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
@@ -357,10 +365,9 @@ for (const nested of [false, true])
           const row = thread(page).locator(
             `[data-message-id="${app.exact.target.id}"]`,
           );
-          const close = page.getByRole("button", {
-            name: /^Close (?:thread|Thread tab)$/,
-            exact: true,
-          });
+          const close = page.locator(
+            '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+          );
           let originalRow;
           try {
             await page.evaluate((value) => {
@@ -592,10 +599,9 @@ test("post-success membership loss removes the thread and live updates do not sn
   await open(page, app);
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const region = thread(page);
-  const channelButton = page.getByRole("button", {
-    name: /^Close (?:thread|Thread tab)$/,
-    exact: true,
-  });
+  const channelButton = page.locator(
+    '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+  );
   await channelButton.focus();
   const before = await region.evaluate((element) => element.scrollTop);
   app.edit(
@@ -698,10 +704,9 @@ readingTest(
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page
-        .getByRole("button", {
-          name: /^Close (?:thread|Thread tab)$/,
-          exact: true,
-        })
+        .locator(
+          '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+        )
         .click();
       await expect(history).toBeVisible();
       await settle(page);
@@ -947,10 +952,9 @@ for (const movedFocus of [false, true])
       const row = region.locator(`[data-message-id="${parent.id}"]`);
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
       const original = await row.elementHandle();
-      const close = page.getByRole("button", {
-        name: /^Close (?:thread|Thread tab)$/,
-        exact: true,
-      });
+      const close = page.locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      );
       const focusTarget = movedFocus ? close : row;
       await focusTarget.focus();
       const child = app.append(
@@ -1092,7 +1096,9 @@ liveTest(
     ).toBeVisible();
     await expect(region).toHaveAttribute("tabindex", "0");
     await page
-      .getByRole("button", { name: "Close Thread tab", exact: true })
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+      )
       .focus();
     await page.keyboard.press("Tab");
     await expect(region).toBeFocused();

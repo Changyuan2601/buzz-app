@@ -1290,6 +1290,35 @@ it("a link into a different thread replaces the reader and its editor", async ()
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+it("a workspace diverts a wrong-root link without replacing its confirmed reader or editor", async () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const divert = vi.fn();
+  const mounted = render(
+    <ThreadPanel {...h.props} retainThread onDifferentThread={divert} />,
+  );
+  const editor = screen.getByRole("region", { name: "Composer" });
+  const previous = h.view;
+  previous.retarget.mockResolvedValue("different");
+  const next = { ...ordinaryNavigation(), entryId: "wrong-root" };
+  next.target.messageId = "d".repeat(64);
+  await act(async () =>
+    mounted.rerender(
+      <ThreadPanel
+        {...h.props}
+        retainThread
+        onDifferentThread={divert}
+        messageId={next.target.messageId}
+        navigation={next}
+      />,
+    ),
+  );
+  expect(divert).toHaveBeenCalledWith(next.target.messageId, h.props.messageId);
+  expect(previous.dispose).not.toHaveBeenCalled();
+  expect(h.thread).toHaveBeenCalledOnce();
+  expect(screen.getByRole("region", { name: "Composer" })).toBe(editor);
+  expect(next.complete).not.toHaveBeenCalled();
+});
+
 it("an unrouted retained opening retries allocation locally", () => {
   const h = messagesHarness();
   const navigationRetry = vi.fn();

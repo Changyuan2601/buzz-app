@@ -254,7 +254,9 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeFocused();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   await expect(
     row.getByRole("button", { name: "Reply", exact: true }),
@@ -278,14 +280,18 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     .click();
   await expect(replyBox).toBeFocused();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   await broadcastRow.getByRole("button", { name: /^View thread:/ }).click();
   await expect(
     panel.locator(`[data-message-id="${broadcast.id}"]`),
   ).toBeFocused();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
     .click();
   for (const width of [900, 603, 390]) {
     await page.setViewportSize({ width, height: 850 });

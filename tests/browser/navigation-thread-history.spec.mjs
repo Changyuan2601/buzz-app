@@ -90,14 +90,11 @@ test("Back restores each thread visit before the previous channel", async ({
 
   await page.goBack();
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
-  const threadPanel = await panel.elementHandle();
+  // Back switches to the earlier thread's tab; the later one stays open.
+  const laterThread = await panel.elementHandle();
   await page.goBack();
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  expect(
-    await threadPanel.evaluate(
-      (node) => node === document.querySelector('aside[aria-label="Thread"]'),
-    ),
-  ).toBe(true);
+  expect(await laterThread.evaluate((node) => node.isConnected)).toBe(true);
 });
 
 for (const reading of [false, true]) {
@@ -207,7 +204,9 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${last.id}"]`),
         ).toBeInViewport();
         await expect(
-          page.getByRole("tab", { name: "Thread", exact: true }),
+          page.locator(
+            '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+          ),
         ).toBeFocused();
       }
       const live = app.reply(root.id);
@@ -282,3 +281,60 @@ for (const reading of [false, true]) {
     }
   });
 }
+
+// A malformed root hint crosses real navigation/reader/store/portal wiring;
+// only the verified message ancestry may replace selection, never an old editor.
+test("a wrong link hint preserves both open thread editors and selects the verified destination", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  const target = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Broadcast reply");
+  const threadButton = (root) =>
+    page
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+  const side = page.locator("[data-panel-workspace]");
+  const main = page.locator("[data-main-workspace]");
+  const reply = (host) =>
+    host.getByRole("textbox", { name: "Reply to thread", exact: true });
+  await threadButton(roots[0]).click();
+  await reply(side).fill("Destination draft");
+  const destinationEditor = await reply(side).elementHandle();
+  await threadButton(roots[1]).click();
+  await reply(side).fill("Keep original draft");
+  const originalEditor = await reply(side).elementHandle();
+  await side.locator('[role="tab"][aria-selected="true"]').focus();
+  await page.keyboard.press("Alt+Shift+ArrowLeft");
+  await page.keyboard.press("Alt+Shift+ArrowLeft");
+  await expect(reply(main)).toHaveText("Keep original draft");
+  const linked = app.append(
+    "primary",
+    "alpha",
+    `Open <buzz://message?channel=alpha&id=${target.id}&thread=${roots[1].id}>.`,
+  );
+  await main.getByRole("tab", { name: "Alpha", exact: true }).click();
+  await page
+    .locator(`[data-channel-timeline="alpha"] [data-message-id="${linked.id}"]`)
+    .getByRole("link", { name: "Alpha", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect(
+    side.locator(`[data-message-id="${target.id}"]`),
+  ).toBeInViewport();
+  await expect(reply(side)).toHaveText("Destination draft");
+  await expect(
+    main.locator('[role="tab"][data-tab-value^="thread:"]'),
+  ).toHaveCount(1);
+  expect(await originalEditor.evaluate((el) => el.isConnected)).toBe(true);
+  expect(await destinationEditor.evaluate((el) => el.isConnected)).toBe(true);
+  await main.locator('[role="tab"][data-tab-value^="thread:"]').click();
+  await expect(reply(main)).toHaveText("Keep original draft");
+});

@@ -54,6 +54,12 @@ export type ThreadPanelProps = {
   messageId: string;
   /** Channel workspaces retain the editor across same-thread link navigation. */
   retainThread?: boolean | undefined;
+  /** The hosting tab strip owns the title, close and Escape. */
+  tabbed?: boolean | undefined;
+  /** Called with the reader's verified thread root once it is known. */
+  onResolvedRoot?: ((rootId: string) => void) | undefined;
+  /** Workspace identity is retained when a link's claimed root was wrong. */
+  onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
   /** Retry a failed routed opening with fresh navigation authority. */
   onRetryNavigation?: (() => void) | undefined;
   replyRequest?: number | undefined;
@@ -80,7 +86,8 @@ export type ThreadPanelProps = {
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   useMessageSelectionCopy();
-  const tabbed = !!usePanelTabHost();
+  const host = !!usePanelTabHost();
+  const tabbed = props.tabbed ?? host;
   const { close } = props;
   const viewKey = messageViewKey(
     props.session,
@@ -183,6 +190,8 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     },
     [],
   );
+  const differentThread = useRef(props.onDifferentThread);
+  differentThread.current = props.onDifferentThread;
   const { session, channelId, messageId, navigation, onRetryNavigation } =
     props;
   const retryNavigation = useCallback(() => {
@@ -230,6 +239,14 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           current.current = next;
           setOpening(next);
           settle();
+          return;
+        }
+        if (result === "different" && differentThread.current) {
+          settle();
+          const kept = { ...prior, navigation: undefined };
+          current.current = kept;
+          setOpening(kept);
+          differentThread.current(messageId, prior.messageId);
           return;
         }
         if (result !== "different") {
@@ -422,7 +439,9 @@ function ThreadMessages({
   requireReadyRoot,
   onDraftSaved,
   selectionFailure,
+  onResolvedRoot,
 }: {
+  onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
   sessionConversation?: boolean | undefined;
@@ -451,6 +470,12 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
+  const resolvedRoot = snapshot.root?.id;
+  const reportRoot = useRef(onResolvedRoot);
+  reportRoot.current = onResolvedRoot;
+  useEffect(() => {
+    if (resolvedRoot) reportRoot.current?.(resolvedRoot);
+  }, [resolvedRoot]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
     const current = view.snapshot();
@@ -657,6 +682,10 @@ function ThreadMessages({
     inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
+    focus: !(
+      navigation?.target.kind === "conversation" &&
+      navigation.target.panel === "members"
+    ),
     settled: positioned,
     messageId,
     signal: active ? revealSignal : undefined,

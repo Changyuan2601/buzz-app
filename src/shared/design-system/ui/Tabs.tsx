@@ -12,6 +12,8 @@ export type TabItem<Value extends string> = {
   /** Link a retained, externally owned tab panel. */
   panelId?: string;
   onClose?: (() => void) | undefined;
+  /** Option/Alt+Shift+Arrow moves this tab one position; the caller places it. */
+  onMove?: ((delta: -1 | 1) => void) | undefined;
 };
 
 /**
@@ -95,6 +97,19 @@ export function Tabs<Value extends string>({
                 if (item.onClose && event.key === "Delete") {
                   event.preventDefault();
                   item.onClose();
+                }
+                if (
+                  item.onMove &&
+                  event.altKey &&
+                  event.shiftKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  (event.key === "ArrowLeft" || event.key === "ArrowRight")
+                ) {
+                  // Keep Base UI's arrow navigation from also moving focus.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  item.onMove(event.key === "ArrowLeft" ? -1 : 1);
                 }
               }}
               className="buzz-tabs-tab"

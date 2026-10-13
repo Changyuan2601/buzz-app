@@ -121,7 +121,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
-    workspace.getByRole("tab", { name: "Thread · Beta", exact: true }),
+    workspace.locator('[role="tab"][data-tab-value^="thread:beta:"]'),
   ).toHaveAttribute("aria-selected", "true");
   await expect(reply).toHaveText("Beta reply draft");
   const alphaComposer = main.getByRole("textbox", {
@@ -137,7 +137,9 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await expect(reply).toBeFocused();
   await expect(reply).toHaveText("Beta reply draft");
   await workspace
-    .getByRole("button", { name: "Close Thread · Beta tab", exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:beta:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
     .click();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
   for (const theme of ["light", "dark"]) {

@@ -553,6 +553,7 @@ function SessionWork({
               className={channelStyles.retainedPanel}
               hidden={!!companion && !showingPanel}
             >
+              {secondary.hosts}
               <PanelWorkspace
                 value={secondary.selectedTab}
                 select={secondary.selectPanelTab}

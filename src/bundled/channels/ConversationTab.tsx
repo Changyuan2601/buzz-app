@@ -19,6 +19,7 @@ import {
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
+import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
 
 type ConversationTabProps = {
@@ -33,6 +34,11 @@ type ConversationTabProps = {
   canOpenLink(target: string): boolean;
   openThread(messageId: string, rootId: string, intent?: "reply"): void;
   close(): void;
+  /** The current route's request, only for the thread it addresses. */
+  navigation?: PageNavigation | undefined;
+  onRetryNavigation?: (() => void) | undefined;
+  onResolvedRoot?: ((rootId: string) => void) | undefined;
+  onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
 };
 /** Each secondary conversation retains its own editing and media-review scope. */
 export function ConversationTab({
@@ -47,6 +53,10 @@ export function ConversationTab({
   canOpenLink,
   openThread,
   close,
+  navigation,
+  onRetryNavigation,
+  onResolvedRoot,
+  onDifferentThread,
 }: ConversationTabProps) {
   // A saved reply intent belongs to the previous visit, not this restoration.
   const restoredTab = useRef(focusOnMount ? undefined : tab);
@@ -91,6 +101,12 @@ export function ConversationTab({
             channelId={channel.id}
             channelName={channel.name}
             messageId={tab.messageId}
+            navigation={navigation}
+            retainThread
+            tabbed
+            onRetryNavigation={onRetryNavigation}
+            onResolvedRoot={onResolvedRoot}
+            onDifferentThread={onDifferentThread}
             replyRequest={
               tab === restoredTab.current ? undefined : tab.replyRequest
             }

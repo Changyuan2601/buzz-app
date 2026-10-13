@@ -98,7 +98,11 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     "data-avatar-shape",
     "circle",
   );
-  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  await page
+    .locator(
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+    )
+    .click();
   await expect(mention).toBeFocused();
   await mention.press("Space");
   await expect(key).toHaveText(npubs.mic);
@@ -172,12 +176,20 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(
     "One",
   );
-  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  await page
+    .locator(
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+    )
+    .click();
   await expect(
-    page.getByRole("tab", { name: "Thread", exact: true }),
+    page.locator(
+      '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
+    ),
   ).toBeFocused();
   await page
-    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
     .click();
   const missingKey = await page.evaluate(
     () => window.profilesFixture.keys.missing,
@@ -279,7 +291,11 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   expect(await invoke()).toBe(true);
   // A second synchronous use of the old opening must not replace its successor.
   expect(await invoke()).toBe(false);
-  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  await page
+    .locator(
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+    )
+    .click();
   await capture();
   await page.locator('[data-channel-id="two"]').click();
   await expect(panel).toHaveCount(0);

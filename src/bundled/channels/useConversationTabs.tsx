@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ReactNode,
   type RefObject,
@@ -14,16 +15,27 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { Panels } from "../../features/panels/service";
 import { PanelCard } from "../../features/panels/PanelCard";
-import { BrowserIcon, InfoIcon } from "../../shared/design-system/icons";
+import {
+  BrowserIcon,
+  ChatCircleIcon,
+  InfoIcon,
+} from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
 import { ConversationTab } from "./ConversationTab";
+import { TabSlot, useTabNodes } from "./TabHosts";
+import { createPortal } from "react-dom";
+import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelPanels } from "./useChannelPanels";
 import {
   panelTabId,
+  tabPane,
+  type ConversationTab as Tab,
   type PanelOpening,
+  type TabPane,
   type useChannelTabState,
 } from "./useChannelTabState";
 import styles from "./Channels.module.css";
+import tabStyles from "./ChannelTabs.module.css";
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -44,6 +56,10 @@ export function useConversationTabs({
   eligible,
   threadId,
   onOpenDrawer,
+  mainPane = false,
+  routed,
+  onCloseThread,
+  onRetryNavigation,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -62,6 +78,14 @@ export function useConversationTabs({
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
   onOpenDrawer?(): void;
+  /** This page hosts thread tabs in its main pane too. */
+  mainPane?: boolean | undefined;
+  /** The route's thread request, handed only to the tab that matches it. */
+  routed?:
+    | { channelId: string; messageId: string; navigation: PageNavigation }
+    | undefined;
+  onCloseThread?(tab: Extract<Tab, { kind: "thread" }>): void;
+  onRetryNavigation?(): void;
 }) {
   const currentId = current?.id;
   const viewer = queries.viewer;
@@ -225,9 +249,13 @@ export function useConversationTabs({
     onOpenDrawer?.();
     tabState.setPaneOpen(true);
   });
+  const sideTabs = tabState.tabs.filter((tab) => tabPane(tab) === "side");
+  const mainTabs = mainPane
+    ? tabState.tabs.filter((tab) => tabPane(tab) === "main")
+    : [];
   const rootTabIds = [
     ...leadingIds,
-    ...tabState.tabs.map((tab) => tab.id),
+    ...sideTabs.map((tab) => tab.id),
     ...panelTabs.map(tabId),
   ];
   const selectedTab = rootTabIds.includes(tabState.selected)
@@ -251,10 +279,59 @@ export function useConversationTabs({
       });
   };
   const closeConversationTab = (id: string) => {
+    const closing = tabState.tabs.find((tab) => tab.id === id);
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
+    // The page's own focus return (to the opener) is the last word.
+    const notify = () => {
+      if (closing?.kind === "thread") onCloseThread?.(closing);
+    };
+    if (closing && tabPane(closing) === "main") {
+      // The conversation remains; neighbours keep their order.
+      const index = mainTabs.indexOf(closing);
+      const remaining = mainTabs.filter((tab) => tab !== closing);
+      if (tabState.mainSelected === id)
+        tabState.selectMain(
+          remaining[Math.min(index, remaining.length - 1)]?.id,
+        );
+      notify();
+      return;
+    }
     afterClose(id);
     if (rootTabIds.length === 1)
       splitTrigger.current?.focus({ preventScroll: true });
+    notify();
+  };
+  const [announcement, setAnnouncement] = useState("");
+  // One keyboard gesture both reorders and crosses panes at an edge.
+  const moveBy = (tab: Tab, delta: -1 | 1) => {
+    if (!currentVisit() || tab.kind !== "thread") return;
+    const pane = tabPane(tab);
+    const order = pane === "main" ? mainTabs : sideTabs;
+    const index = order.indexOf(tab);
+    const crossing =
+      mainPane &&
+      tab.channelId === currentId &&
+      ((pane === "main" && delta === 1 && index === order.length - 1) ||
+        (pane === "side" && delta === -1 && index === 0));
+    let target: TabPane = pane;
+    let position = index + delta;
+    if (crossing) {
+      target = pane === "main" ? "side" : "main";
+      position = target === "side" ? 0 : mainTabs.length;
+    } else if (position < 0 || position >= order.length) return;
+    tabState.moveTab(tab.id, target, position);
+    setAnnouncement(
+      crossing
+        ? `Moved to the ${target === "main" ? "main" : "side"} pane.`
+        : `Moved to position ${position + 1} of ${order.length}.`,
+    );
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>(
+          `[role="tab"][data-tab-value="${CSS.escape(tab.id)}"]`,
+        )
+        ?.focus({ preventScroll: true }),
+    );
   };
   const openConversationThread = (
     channelId: string,
@@ -263,25 +340,15 @@ export function useConversationTabs({
     intent?: "reply",
   ) => {
     if (!currentVisit()) return;
-    const id = `thread:${channelId}:${rootId}`;
-    tabState.setTabs((tabs) => {
-      const existing = tabs.find((tab) => tab.id === id);
-      const next = {
-        id,
-        kind: "thread" as const,
-        channelId,
-        messageId,
-        replyRequest:
-          intent === "reply"
-            ? ((existing?.kind === "thread" ? existing.replyRequest : 0) ?? 0) +
-              1
-            : undefined,
-      };
-      return existing
-        ? tabs.map((tab) => (tab.id === id ? next : tab))
-        : [...tabs, next];
-    });
-    selectPanelTab(id);
+    opening.current = undefined;
+    // Flat sessions keep their side-only host; channels support both panes.
+    tabState.openThreadTab(
+      channelId,
+      messageId,
+      rootId,
+      intent,
+      mainPane ? undefined : "side",
+    );
   };
   const openConversationLink = (channelId: string, url: string) => {
     const connection = relay.snapshot();
@@ -315,6 +382,88 @@ export function useConversationTabs({
     return openLink(url);
   };
 
+  const nodes = useTabNodes(
+    tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
+  );
+  function usableChannel(target: ChannelSummary) {
+    return (
+      !target.readOnly &&
+      !target.archived &&
+      !target.cached &&
+      (target.channelType !== "session" ||
+        !!target.members?.includes(queries.viewer ?? ""))
+    );
+  }
+  // The currently resolved channel can be a verified public/archived preview
+  // absent from the joined sidebar list. Reading its thread is not write access.
+  function tabChannel(tab: Exclude<Tab, { kind: "new" }>) {
+    if (tab.kind === "thread" && current?.id === tab.channelId)
+      return current.cached ? undefined : current;
+    const target = channels.find((item) => item.id === tab.channelId);
+    return target && usableChannel(target) ? target : undefined;
+  }
+  // Several open threads stay distinguishable by their original message.
+  function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
+    const rootId = tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
+    const root = queries.channels
+      .window(tab.channelId)
+      .rows.find((row) => row.id === rootId);
+    const text = root?.content
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[*_`~>#]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+    return text || (name ? `Thread · ${name}` : "Thread");
+  }
+  function tabItem(tab: Tab) {
+    const target = tabChannel(tab);
+    const usable = !!target;
+    return {
+      id: tab.id,
+      label:
+        tab.kind === "thread"
+          ? threadLabel(tab, target?.name)
+          : (target?.name ?? "Unavailable conversation"),
+      icon:
+        tab.kind === "thread" ? (
+          <ChatCircleIcon size="1rem" />
+        ) : target ? (
+          conversationIcon(target)
+        ) : (
+          <BrowserIcon size="1rem" />
+        ),
+      close: () => closeConversationTab(tab.id),
+      ...(tab.kind === "thread" && {
+        move: (delta: -1 | 1) => moveBy(tab, delta),
+      }),
+      content:
+        !usable || !target ? (
+          <p role="status" className={styles.empty}>
+            This conversation is no longer available.
+          </p>
+        ) : tab.kind === "thread" && nodes.get(tab.id) ? (
+          <TabSlot node={nodes.get(tab.id) as HTMLDivElement} />
+        ) : (
+          <ConversationTab
+            focusOnMount={continuingVisit}
+            active={tabState.paneOpen && selectedTab === tab.id}
+            tab={tab}
+            channel={target}
+            session={queries}
+            scope={scope}
+            extensions={extensions}
+            openLink={(url) => openConversationLink(target.id, url)}
+            canOpenLink={canOpenLink}
+            openThread={(id, root, intent) =>
+              openConversationThread(target.id, id, root, intent)
+            }
+            close={() => closeConversationTab(tab.id)}
+          />
+        ),
+    };
+  }
+
   return {
     open,
     opened,
@@ -331,33 +480,60 @@ export function useConversationTabs({
     panelTrigger,
     openConversationLink,
     openConversationThread,
-    items: [
-      ...tabState.tabs.map((tab) => {
-        const target = channels.find((item) => item.id === tab.channelId);
-        const usable =
-          target &&
-          !target.readOnly &&
-          !target.archived &&
-          !target.cached &&
-          (target.channelType !== "session" ||
-            target.members?.includes(queries.viewer ?? ""));
-        return {
-          id: tab.id,
-          label:
-            tab.kind === "thread"
-              ? `Thread · ${target?.name ?? "Unavailable"}`
-              : (target?.name ?? "Unavailable conversation"),
-          icon: target ? conversationIcon(target) : <BrowserIcon size="1rem" />,
-          close: () => closeConversationTab(tab.id),
-          content: usable ? (
+    announcement,
+    mainItems: mainTabs.map(tabItem),
+    selectedMain:
+      mainTabs.find((tab) => tab.id === tabState.mainSelected)?.id ??
+      "conversation",
+    // Thread content renders here once and is attached to whichever pane holds it.
+    hosts: tabState.tabs.flatMap((tab) => {
+      if (tab.kind !== "thread") return [];
+      const node = nodes.get(tab.id);
+      const target = tabChannel(tab);
+      if (!node || !target) return [];
+      const active =
+        tabPane(tab) === "main"
+          ? tabState.mainSelected === tab.id
+          : tabState.paneOpen && selectedTab === tab.id;
+      const route =
+        routed?.channelId === tab.channelId &&
+        routed.messageId === tab.messageId
+          ? routed.navigation
+          : undefined;
+      return [
+        createPortal(
+          // biome-ignore lint/a11y/noStaticElementInteractions: Escape from the hosted thread closes its tab, as in the tab host.
+          <div
+            className={tabStyles.tabSlot}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Escape" &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229 &&
+                !event.defaultPrevented &&
+                event.currentTarget.contains(event.target as Node)
+              ) {
+                event.stopPropagation();
+                closeConversationTab(tab.id);
+              }
+            }}
+          >
             <ConversationTab
               focusOnMount={continuingVisit}
-              active={tabState.paneOpen && selectedTab === tab.id}
+              active={active}
               tab={tab}
               channel={target}
               session={queries}
               scope={scope}
               extensions={extensions}
+              navigation={route}
+              onRetryNavigation={onRetryNavigation}
+              onResolvedRoot={(rootId) =>
+                tabState.resolveThreadRoot(tab.id, rootId)
+              }
+              onDifferentThread={(requested, kept) =>
+                tabState.divertThread(tab.id, requested, kept)
+              }
               openLink={(url) => openConversationLink(target.id, url)}
               canOpenLink={canOpenLink}
               openThread={(id, root, intent) =>
@@ -365,13 +541,14 @@ export function useConversationTabs({
               }
               close={() => closeConversationTab(tab.id)}
             />
-          ) : (
-            <p role="status" className={styles.empty}>
-              This conversation is no longer available.
-            </p>
-          ),
-        };
-      }),
+          </div>,
+          node,
+          tab.id,
+        ),
+      ];
+    }),
+    items: [
+      ...sideTabs.map(tabItem),
       ...panelTabs.map((entry) => ({
         id: tabId(entry),
         instance: entry,

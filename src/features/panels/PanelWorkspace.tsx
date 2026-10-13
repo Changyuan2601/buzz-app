@@ -25,7 +25,10 @@ type Item = {
   content: ReactNode;
   /** Stable for one opening, including retained exit content. */
   instance?: object;
-  close(): void;
+  /** Omit for a permanent tab such as a channel's own conversation. */
+  close?: (() => void) | undefined;
+  /** Keyboard placement: one position left or right, across panes at an edge. */
+  move?: ((delta: -1 | 1) => void) | undefined;
 };
 type Identity = { label: string; icon?: ReactNode };
 type Local = { id: string; label: string; owner: string; close(): void };
@@ -56,11 +59,22 @@ export function PanelWorkspace({
   items,
   value,
   select,
+  actions,
+  main = false,
+  label = "Panel tabs",
   focusOnMount = true,
 }: {
   items: Item[];
   value: string;
   select(id: string): void;
+  /** Header icon actions owned by the hosting page. */
+  actions?: ReactNode;
+  /**
+   * The page's main pane: a lone permanent tab reads as a title, and native
+   * Close acts here only while focus is inside (the side pane is the default).
+   */
+  main?: boolean;
+  label?: string;
   /** Restoring a channel visit leaves focus with its main conversation. */
   focusOnMount?: boolean;
 }) {
@@ -138,8 +152,12 @@ export function PanelWorkspace({
       const element = root.current;
       if (
         event.defaultPrevented ||
-        !active ||
+        !active?.close ||
         !element?.isConnected ||
+        // With two tab hosts, the one containing focus owns Close.
+        (document.activeElement?.closest(
+          "[data-panel-workspace], [data-main-workspace]",
+        ) ?? (main ? null : element)) !== element ||
         element.closest('[hidden], [inert], [aria-hidden="true"]') ||
         !element.getClientRects().length
       )
@@ -149,7 +167,7 @@ export function PanelWorkspace({
       // Commit before another native menu request can reuse this selection.
       flushSync(() => {
         closingTab.current = active.id;
-        active.close();
+        active.close?.();
       });
     };
     window.addEventListener("buzz:close-active-tab", close);
@@ -168,7 +186,10 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      tab?.focus({ preventScroll: true });
+      // Routed tab selection must not override a modal's focus owner.
+      const modal = document.querySelector('dialog[open], [aria-modal="true"]');
+      if (!modal || modal.contains(root.current))
+        tab?.focus({ preventScroll: true });
       tab?.parentElement?.scrollIntoView?.({
         block: "nearest",
         inline: "nearest",
@@ -182,7 +203,9 @@ export function PanelWorkspace({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Escape from descendant controls closes their active tab.
     <div
-      data-panel-workspace=""
+      {...(main
+        ? { "data-main-workspace": "" }
+        : { "data-panel-workspace": "" })}
       className={styles.workspace}
       ref={root}
       onKeyDown={(event) => {
@@ -191,28 +214,34 @@ export function PanelWorkspace({
           !event.nativeEvent.isComposing &&
           event.nativeEvent.keyCode !== 229 &&
           !event.defaultPrevented &&
+          active?.close &&
           event.currentTarget.contains(event.target as Node)
         ) {
           event.stopPropagation();
-          active?.close();
+          active.close();
         }
       }}
     >
       <PanelHeader
+        actions={actions}
         title={
           <Tabs
-            label="Panel tabs"
+            label={label}
             variant="navigation"
+            showSelection={!main || tabs.length > 1}
             value={selected}
             items={tabs.map((tab) => ({
               value: tab.id,
               label: tab.label,
               icon: tab.icon,
               panelId: panelId(tab.id),
-              onClose: () => {
-                closingTab.current = tab.id;
-                tab.close();
-              },
+              onMove: "move" in tab ? tab.move : undefined,
+              onClose: tab.close
+                ? () => {
+                    closingTab.current = tab.id;
+                    tab.close?.();
+                  }
+                : undefined,
             }))}
             onValueChange={(id) => {
               const local = owned.find((tab) => tab.id === id);
