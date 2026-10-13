@@ -634,9 +634,10 @@ type Job = {
   work?: ReturnType<LocalAgentActivity["begin"]>;
   trigger: Trigger;
   channelId?: string;
-  /** For a watch: the object and attention epoch it was matched under. It runs
-   * only while both are still current, so a watch edited, replaced or turned
-   * off and on again since then does not run it. */
+  /** For a watch or timer: the object and attention epoch it was matched or
+   * found due under. It runs only while both are still current, so a watch or
+   * timer edited, disabled, rearmed, replaced or turned off and on again since
+   * then does not run it. */
   matched?: { object: AttentionObject; epoch: number };
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
@@ -1948,8 +1949,17 @@ export class AgentsService extends Service implements Agents {
     const { trigger } = job;
     if (trigger.type === "mention") return true;
     if (trigger.type === "watch") return !!this.current(runner, agent, job);
-    const timer = agent.attention[trigger.slug]?.value;
-    return agent.attentionEnabled && timer?.type === "timer" && timer.enabled;
+    // A timer occurrence belongs to the object and epoch it fell due under:
+    // attention off and on again, or a disable and rearm, voids it.
+    const object = agent.attention[trigger.slug];
+    return (
+      agent.attentionEnabled &&
+      !!job.matched &&
+      job.matched.epoch === runner.epoch &&
+      object === job.matched.object &&
+      object.value.type === "timer" &&
+      object.value.enabled
+    );
   }
 
   // Spec schedule rules: occurrence k is due at armed_at + k × interval, at most one
@@ -1958,7 +1968,7 @@ export class AgentsService extends Service implements Agents {
   // run starts, so no timer has more than one occurrence waiting, and one removed,
   // disabled or expired meanwhile never runs. The longest-waiting timer runs first,
   // so one whose runs outlast its interval cannot hold back the others.
-  private dueTimer(agent: Agent): Job | undefined {
+  private dueTimer(runner: Runner, agent: Agent): Job | undefined {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
     const now = seconds();
@@ -1966,7 +1976,12 @@ export class AgentsService extends Service implements Agents {
     const prior = record.timers ?? EMPTY;
     let timers = prior;
     let next:
-      | { slug: string; timer: TimerWatch; state: TimerState }
+      | {
+          slug: string;
+          timer: TimerWatch;
+          object: AttentionObject;
+          state: TimerState;
+        }
       | undefined;
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
@@ -1976,7 +1991,7 @@ export class AgentsService extends Service implements Agents {
       if (state !== saved) timers = { ...timers, [object.slug]: state };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
       if (!next || state.nextDue < next.state.nextDue)
-        next = { slug: object.slug, timer, state };
+        next = { slug: object.slug, timer, object, state };
     }
     const ran = next && {
       ...next.state,
@@ -1993,7 +2008,7 @@ export class AgentsService extends Service implements Agents {
         return undefined;
       }
     if (!next || !ran) return undefined;
-    const { slug, timer } = next;
+    const { slug, timer, object } = next;
     const interest = agent.attention[`interest/${timer.interest_id}`]?.value;
     return {
       trigger: {
@@ -2003,6 +2018,7 @@ export class AgentsService extends Service implements Agents {
         ...(interest?.type === "interest" ? { interest } : {}),
         spent: timerSpent(timer, ran, ran.nextDue),
       },
+      matched: { object, epoch: runner.epoch },
     };
   }
 
@@ -2087,7 +2103,7 @@ export class AgentsService extends Service implements Agents {
       const queued = runner.queue.shift();
       const job = queued
         ? this.current(runner, agent, queued)
-        : this.dueTimer(agent);
+        : this.dueTimer(runner, agent);
       if (queued && !job) continue;
       if (!job) break;
       const lifetime = runner.controller.signal;
