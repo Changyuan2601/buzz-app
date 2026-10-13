@@ -30,7 +30,10 @@ workspace (default `~/.buzz`).
   An owner-configured event watch with exactly `author == "<64-character hex public key>"`
   may also follow that sender's messages, including thread replies. Set the watch's
   channels to where it should listen. Names and Interest instructions do not filter
-  senders. Broad or compound filters retain owner-only triggering. The agent never
+  senders. Chat receives the matched Interest's instructions for that turn, with
+  the watched message as its subject and earlier messages as context. Direct
+  mentions do not inherit a previous watch's instructions.
+  Broad or compound filters retain owner-only triggering. The agent never
   triggers itself; a one-way follower needs no timer. Keep the source agent's watch
   restricted to the human owner to avoid a reciprocal conversation.
 - **Agent (default):** lean goose with workspace tools and skills. With

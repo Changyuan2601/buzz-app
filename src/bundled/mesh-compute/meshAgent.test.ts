@@ -539,9 +539,17 @@ describe("Mesh agent runtime", () => {
 
   it("answers a selected sender's watched reply in Chat mode, in the same thread", async () => {
     const sender = "d".repeat(64);
-    const { delivery, publish, deps, seen, runtime } = setup({}, sender, {
-      mode: "chat",
-    });
+    const { delivery, publish, query, deps, seen, runtime } = setup(
+      {},
+      sender,
+      {
+        mode: "chat",
+        prompt: "You are Palmer. Be concise.",
+      },
+    );
+    query.mockResolvedValue([
+      { ...EVENT, id: "9".repeat(64), content: "Which MUD is best?" },
+    ]);
     const watch: EventWatch = {
       type: "event",
       interest_id: "follow",
@@ -551,7 +559,10 @@ describe("Mesh agent runtime", () => {
       kinds: [9],
       filter: `author == "${sender}"`,
     };
-    const reply = delivery(inThread("e".repeat(64), 2));
+    const reply = delivery({
+      ...inThread("e".repeat(64), 2),
+      content: "I recommend a time-travel MUD with branching histories.",
+    });
     if (reply.trigger.type !== "mention") throw new Error("Expected message");
     const filter = compileFilter(watch.filter ?? "");
     expect(
@@ -563,9 +574,33 @@ describe("Mesh agent runtime", () => {
     expect(watchMatches(watch, reply.trigger.event, filter)).toBe(true);
     await runtime.run({
       ...reply,
-      trigger: { ...reply.trigger, type: "watch", slug: "watch/follow", watch },
+      trigger: {
+        ...reply.trigger,
+        type: "watch",
+        slug: "watch/follow",
+        watch,
+        interest: {
+          type: "interest",
+          instructions:
+            "Respond to Moonpal's idea with one concrete improvement.",
+        },
+      },
     });
     expect(deps.chat).toHaveBeenCalledTimes(1);
+    const messages = vi.mocked(deps.chat).mock.calls[0]?.[1];
+    expect(messages?.[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining(
+        "Respond to Moonpal's idea with one concrete improvement.",
+      ),
+    });
+    expect(messages?.[0]?.content).toContain("You are Palmer. Be concise.");
+    expect(messages?.[0]?.content).toContain("earlier messages are context");
+    expect(messages?.at(-1)).toEqual({
+      role: "user",
+      content:
+        "[dddddddd] I recommend a time-travel MUD with branching histories.",
+    });
     expect(seen.agents).toBe(0);
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -578,6 +613,14 @@ describe("Mesh agent runtime", () => {
         ],
       }),
     );
+    // A later direct request must not inherit the previous watch's instructions.
+    await runtime.run(
+      delivery({ ...inThread("f".repeat(64), 3), pubkey: OWNER }),
+    );
+    expect(vi.mocked(deps.chat).mock.calls[1]?.[1]?.[0]).toEqual({
+      role: "system",
+      content: "You are Palmer. Be concise.",
+    });
   });
 
   it.each([
