@@ -133,10 +133,13 @@ export function useReading({
     }
     // One sample per frame: a burst of appended rows, scrolls and resizes reads
     // geometry once, and the current lease is held until that sample replaces it.
+    // Focus and visibility are discrete and sample at once, so dwell and
+    // viewing start with that change rather than the next frame.
     function schedule() {
       frame ??= requestAnimationFrame(sample);
     }
     function sample() {
+      if (frame !== undefined) cancelAnimationFrame(frame);
       frame = undefined;
       cancel();
       if (!active()) return;
@@ -200,14 +203,14 @@ export function useReading({
       element.addEventListener(event, schedule);
     const focus = (event: FocusEvent) =>
       focused(event.type === "focusin" ? event.target : event.relatedTarget)
-        ? schedule()
+        ? sample()
         : stop();
     document.addEventListener("focusin", focus);
     document.addEventListener("focusout", focus);
     window.addEventListener("blur", stop);
-    window.addEventListener("focus", schedule);
+    window.addEventListener("focus", sample);
     const visibility = () =>
-      document.visibilityState === "visible" ? schedule() : stop();
+      document.visibilityState === "visible" ? sample() : stop();
     document.addEventListener("visibilitychange", visibility);
     const mutation = new MutationObserver(schedule);
     mutation.observe(element, {
@@ -233,7 +236,7 @@ export function useReading({
       document.removeEventListener("focusin", focus);
       document.removeEventListener("focusout", focus);
       window.removeEventListener("blur", stop);
-      window.removeEventListener("focus", schedule);
+      window.removeEventListener("focus", sample);
       document.removeEventListener("visibilitychange", visibility);
     };
   }, [

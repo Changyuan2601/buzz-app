@@ -578,3 +578,34 @@ it("viewing validity, asked per incoming message by attention(), reads no geomet
   expect(rects).not.toHaveBeenCalled();
   expect(h.viewport).toHaveBeenCalledTimes(reads);
 });
+it.each(["focus", "window focus", "visible"] as const)(
+  "%s starts dwell and viewing at once, not on the next frame",
+  (change) => {
+    const h = setup({ focus: change === "focus" ? "outside" : "element" });
+    if (change === "window focus") window.dispatchEvent(new Event("blur"));
+    if (change === "visible") {
+      h.setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      h.setVisibility("visible");
+    }
+    // A real frame is up to 16ms away; Playwright's clock models it that way.
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      setTimeout(() => callback(performance.now()), 16),
+    );
+    // A pending content frame folds into the immediate sample, not a restart.
+    h.mutate();
+    const allocated = h.reading.mock.calls.length;
+    if (change === "focus") h.element.focus();
+    if (change === "window focus") window.dispatchEvent(new Event("focus"));
+    if (change === "visible")
+      document.dispatchEvent(new Event("visibilitychange"));
+    expect(h.reading).toHaveBeenCalledTimes(allocated + 1);
+    const lease = h.leases.at(-1);
+    expect(lease?.view).toHaveBeenCalledWith(["visible"], expect.any(Function));
+    vi.advanceTimersByTime(299);
+    expect(lease?.observe).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(lease?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+    expect(h.reading).toHaveBeenCalledTimes(allocated + 2); // + post-dwell viewing
+  },
+);
