@@ -39,6 +39,7 @@ pub(super) fn observe(
         eprintln!("IFC history audit skipped: audit capacity reached");
         return;
     };
+
     let history = response.body.clone();
     tauri::async_runtime::spawn(async move {
         let _permit = permit;
@@ -67,6 +68,7 @@ async fn audit(
         serde_json::from_value(context).map_err(|_| "Invalid IFC read context")?;
     let channel = message_channel(&context.trigger)?;
     admit_history_filter(filters, channel)?;
+
     let agent = agents.agent(context.agent).await?;
     ensure(
         Url::parse(&agent.query_url())
@@ -75,6 +77,7 @@ async fn audit(
             == url.origin(),
         "IFC history community does not match the agent",
     )?;
+
     // Resolve the community and relay identity from this HTTPS origin, never
     // from caller-provided keys or environment configuration.
     url.set_path("/");
@@ -96,6 +99,7 @@ async fn audit(
         )
         .map_err(|_| "Invalid IFC community identity")?,
     );
+
     url.set_path("/query");
     let policy = send(
         host,
@@ -111,6 +115,7 @@ async fn audit(
     )
     .await?;
     ensure(policy.status == 200, "IFC DM policy lookup failed")?;
+
     evaluate(
         &agent,
         community,
@@ -157,6 +162,7 @@ fn evaluate(
             "Duplicate IFC DM policy event",
         )?;
     }
+
     let metadata = metadata.ok_or("Missing IFC DM metadata")?;
     ensure(
         exact_tag(metadata, "t", "dm")
@@ -172,6 +178,7 @@ fn evaluate(
             }),
         "IFC channel is not an active private DM",
     )?;
+
     let members = membership
         .ok_or("Missing IFC DM membership")?
         .tags
@@ -182,6 +189,7 @@ fn evaluate(
                 .map_err(|error| error.to_string())
         })
         .collect::<Result<BTreeSet<_>>>()?;
+
     let label = ResourceLabel::from_conversation(
         community,
         channel,
@@ -189,6 +197,7 @@ fn evaluate(
         members.iter().copied(),
     )
     .map_err(|error| error.to_string())?;
+
     let capabilities = CapabilitySet::from_operations([(READ, OperationEffect::NonEgressing)]);
     let domain = derive_execution_domain(
         DomainFacts {
@@ -209,11 +218,13 @@ fn evaluate(
         &CapabilityPolicy::new(capabilities.clone(), capabilities),
     )
     .map_err(|error| error.to_string())?;
+
     // This is a check of one read, not a binding to Claude's retained state.
     let mut session = IfcSession::enter(domain);
     session.mark_unknown_input();
     session.call(READ).map_err(|error| error.to_string())?;
     session.read(&label).map_err(|error| error.to_string())?;
+
     let events: Vec<Event> = serde_json::from_str(history).map_err(|_| "Invalid IFC DM history")?;
     ensure(
         events.len() <= 13,
@@ -225,6 +236,7 @@ fn evaluate(
             "IFC history belongs to another DM",
         )?;
     }
+
     Ok(())
 }
 

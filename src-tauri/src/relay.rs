@@ -696,6 +696,7 @@ pub(crate) async fn relay_http(
             return Err("Invalid outgoing signature".into());
         }
     }
+
     let audit_filters = ifc.as_ref().and_then(|_| body.clone());
     let response = send(
         host.inner(),
@@ -706,6 +707,7 @@ pub(crate) async fn relay_http(
         MAX_RESPONSE,
     )
     .await?;
+
     if path == "/query" && response.status == 200 {
         if let (Some(context), Some(filters)) = (ifc, audit_filters) {
             ifc::observe(
@@ -718,6 +720,7 @@ pub(crate) async fn relay_http(
             );
         }
     }
+
     Ok(response)
 }
 
