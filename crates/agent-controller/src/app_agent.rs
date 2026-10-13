@@ -44,6 +44,15 @@ pub struct AppAgent {
     /// channels and was archived, which the owner signs, not the agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    /// Created or imported but not yet handed its instructions: never run or
+    /// listed until `confirm` with the same intent clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provisional: Option<Provisional>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Provisional {
+    pub intent_id: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -260,10 +269,24 @@ pub struct NewAppAgent {
     about: Option<String>,
     /// An earlier agent system's key, which may already be saved under this ID.
     adopted: bool,
+    intent_id: Option<String>,
 }
 impl NewAppAgent {
     pub fn pubkey(&self) -> &str {
         self.key.pubkey()
+    }
+    /// Commits the identity as provisional for the host's create or import intent.
+    pub fn provisional(mut self, intent_id: &str) -> Result<Self> {
+        if intent_id.is_empty()
+            || intent_id.len() > 128
+            || !intent_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Err("Invalid agent intent".into());
+        }
+        self.intent_id = Some(intent_id.into());
+        Ok(self)
     }
     pub fn owner(&self) -> &str {
         &self.owner
@@ -392,6 +415,7 @@ impl AppAgents {
             picture: picture.filter(|url| crate::port::public_picture(url)),
             about,
             adopted: true,
+            intent_id: None,
         })
     }
     /// Saves the identity, then the key, so a saved key always has an identity to
@@ -423,14 +447,28 @@ impl AppAgents {
             about: prepared.about,
             profile: None,
             deleted: false,
+            provisional: prepared
+                .intent_id
+                .map(|intent_id| Provisional { intent_id }),
         };
         let id = agent.credential_id();
         // A harness agent saved for the same community keeps this key under the
         // same ID. It is shared, never added again or deleted on failure here.
         let shared = prepared.adopted && credentials.read(&id, &agent.pubkey)?.is_some();
+        let mut repeated = false;
         self.update(|agents| {
             if prepared.adopted {
                 if let Some(saved) = agents.iter().find(|saved| saved.pubkey == agent.pubkey) {
+                    // An interrupted import of this same intent may finish again.
+                    if !saved.deleted
+                        && saved.provisional.is_some()
+                        && saved.provisional == agent.provisional
+                        && (&saved.owner, &saved.relay, &saved.agent_type)
+                            == (&agent.owner, &agent.relay, &agent.agent_type)
+                    {
+                        repeated = true;
+                        return Ok(());
+                    }
                     return Err(if saved.deleted {
                         "That agent is still being removed here; try again shortly".into()
                     } else {
@@ -442,7 +480,7 @@ impl AppAgents {
             agents.push(agent.clone());
             Ok(())
         })?;
-        if shared {
+        if shared || repeated {
             return Ok((agent, prepared.key));
         }
         let saved = credentials.add(&id, &prepared.key).and_then(|()| {
@@ -466,6 +504,23 @@ impl AppAgents {
             return Err(error);
         }
         Ok((agent, prepared.key))
+    }
+    /// Clears the provisional state, only for the intent that created it.
+    pub fn confirm(&self, pubkey: &str, intent_id: &str) -> Result<()> {
+        self.update(|agents| {
+            let agent = agents
+                .iter_mut()
+                .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            match &agent.provisional {
+                Some(p) if p.intent_id == intent_id => {
+                    agent.provisional = None;
+                    Ok(())
+                }
+                None => Ok(()),
+                Some(_) => Err("This agent belongs to another create or import".into()),
+            }
+        })
     }
     pub fn rename(&self, pubkey: &str, name: &str) -> Result<()> {
         let name = valid_name(name)?;

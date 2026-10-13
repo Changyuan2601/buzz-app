@@ -123,6 +123,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "app_agent_create",
         "app_agent_portable",
         "app_agent_port",
+        "app_agent_confirm",
         "app_agent_rename",
         "app_agent_set_picture",
         "app_agent_set_type",

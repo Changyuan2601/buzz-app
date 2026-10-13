@@ -475,6 +475,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_create,
         app_agents::app_agent_portable,
         app_agents::app_agent_port,
+        app_agents::app_agent_confirm,
         app_agents::app_agent_rename,
         app_agents::app_agent_set_picture,
         app_agents::app_agent_set_type,

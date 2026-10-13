@@ -616,3 +616,71 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         assert!(agents.list().is_err());
     }
 }
+
+#[test]
+fn a_provisional_import_repeats_only_for_its_own_intent_and_confirm_clears_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let agents = AppAgents::open(dir.path().join("agents/identities.json"));
+    let key = Secret::generate().unwrap();
+    let pubkey = key.pubkey().to_owned();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(&pubkey)).unwrap();
+    let adopt = |agent_type: &str, intent: &str| {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            agent_type,
+            Secret::parse(&key.hex(), &pubkey).unwrap(),
+            "Ada",
+            None,
+            None,
+        )
+        .unwrap()
+        .provisional(intent)
+        .unwrap()
+    };
+    let (agent, _) = agents
+        .commit(adopt("p/t", "intent-1"), &auth, &credentials)
+        .unwrap();
+    assert_eq!(agent.provisional.as_ref().unwrap().intent_id, "intent-1");
+    // Retrying the interrupted import of the same intent succeeds again.
+    agents
+        .commit(adopt("p/t", "intent-1"), &auth, &credentials)
+        .unwrap();
+    assert!(agents
+        .commit(adopt("p/t", "intent-2"), &auth, &credentials)
+        .is_err());
+    assert!(agents
+        .commit(adopt("q/u", "intent-1"), &auth, &credentials)
+        .is_err());
+    assert!(agents.confirm(&pubkey, "intent-2").is_err());
+    agents.confirm(&pubkey, "intent-1").unwrap();
+    assert_eq!(agents.get(&pubkey).unwrap().provisional, None);
+    // A confirmed duplicate is refused, and so is a deleted row's same intent.
+    assert!(agents
+        .commit(adopt("p/t", "intent-1"), &auth, &credentials)
+        .is_err());
+    agents
+        .edit(&pubkey, |agent| {
+            agent.deleted = true;
+            agent.provisional = Some(Provisional {
+                intent_id: "intent-1".into(),
+            });
+        })
+        .unwrap();
+    assert!(agents
+        .commit(adopt("p/t", "intent-1"), &auth, &credentials)
+        .is_err());
+    assert!(adopt("p/t", "ok").provisional("bad id").is_err());
+}
+
+#[test]
+fn rows_saved_before_provisional_load_as_ordinary_agents() {
+    let row = serde_json::json!({
+        "pubkey": "a".repeat(64), "relay": "wss://relay.example", "owner": "b".repeat(64),
+        "auth": "[]", "type": "p/t", "name": "Ada"
+    });
+    let agent: AppAgent = serde_json::from_value(row).unwrap();
+    assert_eq!(agent.provisional, None);
+}

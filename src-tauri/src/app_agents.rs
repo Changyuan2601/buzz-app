@@ -240,6 +240,9 @@ pub(crate) struct AppAgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<String>,
     deleted: bool,
+    /// The create or import intent this identity still waits on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intent_id: Option<String>,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -251,6 +254,7 @@ impl From<AppAgent> for AppAgentSummary {
             name: agent.name,
             picture: agent.picture,
             deleted: agent.deleted,
+            intent_id: agent.provisional.map(|p| p.intent_id),
         }
     }
 }
@@ -280,9 +284,11 @@ pub(crate) async fn app_agent_create(
     owner: String,
     agent_type: String,
     name: String,
+    intent_id: String,
 ) -> Result<AppAgentSummary, String> {
     let agents = state.agents.clone()?;
-    let prepared = AppAgents::prepare(&destination, &owner, &agent_type, &name)?;
+    let prepared =
+        AppAgents::prepare(&destination, &owner, &agent_type, &name)?.provisional(&intent_id)?;
     let auth = identity
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
@@ -321,6 +327,7 @@ pub(crate) async fn app_agent_port(
     destination: String,
     owner: String,
     agent_type: String,
+    intent_id: String,
 ) -> Result<Ported, String> {
     let agents = state.agents.clone()?;
     let old = state.old.clone()?;
@@ -347,7 +354,8 @@ pub(crate) async fn app_agent_port(
         &found.name,
         found.picture,
         found.about,
-    )?;
+    )?
+    .provisional(&intent_id)?;
     let auth = identity
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
@@ -363,6 +371,17 @@ pub(crate) async fn app_agent_port(
         })
     })
     .await
+}
+
+/// Ends a create or import once its instructions are staged; only its own intent may.
+#[tauri::command]
+pub(crate) async fn app_agent_confirm(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    intent_id: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.confirm(&pubkey, &intent_id)).await
 }
 
 #[tauri::command]
@@ -756,6 +775,7 @@ mod tests {
             profile: None,
             about: None,
             deleted: false,
+            provisional: None,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());

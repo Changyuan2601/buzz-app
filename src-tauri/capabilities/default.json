@@ -76,6 +76,7 @@
     "allow-app-agent-create",
     "allow-app-agent-portable",
     "allow-app-agent-port",
+    "allow-app-agent-confirm",
     "allow-app-agent-rename",
     "allow-app-agent-set-picture",
     "allow-app-agent-set-type",
