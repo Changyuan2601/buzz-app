@@ -143,7 +143,7 @@ const memoryStorage = () => {
 function setup(
   over: Partial<MeshAgentDeps> = {},
   from = OWNER,
-  config: object = { prompt: "be brief", mode: "workspace" },
+  config: object = { prompt: "be brief", mode: "agent", buzz: false },
 ) {
   const seen: Seen = { calls: [], agents: 0, bridges: 0, bridgeOut: [] };
   const publish = vi.fn(async (event: object) => event);
@@ -272,7 +272,8 @@ describe("Mesh agent runtime", () => {
 
   it("uses one session for the whole channel in channel scope", async () => {
     const { delivery, seen, runtime } = setup({}, OWNER, {
-      mode: "workspace",
+      mode: "agent",
+      buzz: false,
       scope: "channel",
     });
     await runtime.run(delivery());
@@ -387,7 +388,7 @@ describe("Mesh agent runtime", () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it("keeps the Buzz bridge for the session in full mode, answering discovery but refusing calls between turns", async () => {
+  it("keeps the Buzz bridge for the session with Buzz access, answering discovery but refusing calls between turns", async () => {
     const { delivery, publish, seen, runtime } = setup({}, OWNER, {
       prompt: "be brief",
     });
@@ -439,28 +440,29 @@ describe("Mesh agent runtime", () => {
     expect(conversationKey("chan", reply, true, "thread")).toBe("chan");
   });
 
-  it("defaults to full mode, thread sessions and a ~/.buzz workspace, and migrates direct replies", () => {
+  it("defaults to an agent with Buzz access, thread sessions and a ~/.buzz workspace", () => {
     expect(meshAgentConfig({})).toMatchObject({
-      mode: "full",
+      mode: "agent",
+      buzz: true,
       scope: "thread",
       workspace: "~/.buzz",
     });
     expect(meshAgentConfig({ workspace: "relative" }).workspace).toBe(
       "~/.buzz",
     );
-    expect(meshAgentConfig({ reply: "direct" }).mode).toBe("workspace");
+    expect(meshAgentConfig({ buzz: false }).buzz).toBe(false);
     expect(meshAgentConfig({ mode: "chat" }).mode).toBe("chat");
     expect(meshAgentConfig({ preset: "nope" }).preset).toBeUndefined();
   });
 
-  it("gives full mode the shared Buzz prompt and other modes only their own", () => {
+  it("gives Buzz access the shared Buzz prompt and other modes only their own", () => {
     const tools = instructions(meshAgentConfig({ prompt: "be brief" }));
     expect(tools).toContain("## Posting Conventions");
     expect(tools).toContain(
       "<agent-instructions>\nbe brief\n</agent-instructions>",
     );
     expect(
-      instructions(meshAgentConfig({ prompt: "be brief", mode: "workspace" })),
+      instructions(meshAgentConfig({ prompt: "be brief", buzz: false })),
     ).toBe("be brief");
   });
 
@@ -682,11 +684,11 @@ describe("Mesh recovery contracts", () => {
     }
   });
 
-  it("routes Full-mode MCP send directly in a DM", async () => {
+  it("routes Buzz-access MCP send directly in a DM", async () => {
     const { runtime, delivery, seen, publish } = setup(
       { dm: () => true },
       OWNER,
-      { mode: "full" },
+      { mode: "agent" },
     );
     seen.beforeRequest = async (method) => {
       if (method !== "session/prompt") return;
@@ -720,11 +722,12 @@ describe("Mesh recovery contracts", () => {
     }
   });
 
-  it.each(["chat", "workspace"])(
+  it.each(["chat", "agent"])(
     "%s posts directly in DMs without thread tags",
     async (mode) => {
       const { runtime, delivery, publish } = setup({ dm: () => true }, OWNER, {
         mode,
+        buzz: false,
       });
       try {
         await runtime.run(delivery());
@@ -740,13 +743,13 @@ describe("Mesh recovery contracts", () => {
     },
   );
 
-  it.each(["chat", "workspace"])(
+  it.each(["chat", "agent"])(
     "%s aborts held history and the next turn recovers",
     async (mode) => {
       const { runtime, delivery, query, seen, deps, publish } = setup(
         {},
         OWNER,
-        { mode },
+        { mode, buzz: false },
       );
       let release!: (value: object[]) => void;
       let started!: () => void;

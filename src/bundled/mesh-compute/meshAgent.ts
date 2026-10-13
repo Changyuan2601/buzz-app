@@ -4,11 +4,11 @@
 // Modes, per agent (`mode`):
 // - "chat": no harness. One chat completion (`mesh_compute_chat`) over the
 //   injected conversation; the answer is posted. For small models.
-// - "workspace": lean upstream goose (`goose-acp`, bundled as
+// - "agent": lean upstream goose (`goose-acp`, bundled as
 //   `buzz-mesh-goose`) over ACP with its `developer` tools and skills; the
 //   plugin posts goose's final text.
-// - "full": workspace plus the shared Buzz tools (`buzz-mcp/tools.ts`), the
-//   same tools and handler as Codex and Claude Code, executed here through
+// - "agent" with `buzz` access: also the shared Buzz tools
+//   (`buzz-mcp/tools.ts`), the same tools and handler as Codex and Claude Code, executed here through
 //   `appClient` so Agents' host signer signs as the agent; goose never holds a
 //   key. A turn that never calls `send` still has its text posted.
 //
@@ -42,13 +42,16 @@ import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
 import { MESH_AGENT_PRESETS } from "./meshAgentPresets";
 
-export type MeshMode = "chat" | "workspace" | "full";
+export type MeshMode = "chat" | "agent";
 export type MeshScope = "thread" | "channel";
 export type MeshAgentConfig = Readonly<{
   prompt: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   mode: MeshMode;
+  /** Agent mode only: whether goose gets the Buzz tools (read Buzz, post as
+   * it works) or just has its final answer posted. */
+  buzz: boolean;
   /** Whether each thread is its own conversation, or the whole channel is one. */
   scope: MeshScope;
   /** The preset it started from, if any; informational. */
@@ -60,25 +63,23 @@ export const DEFAULT_WORKSPACE = "~/.buzz";
 export const DEFAULT_MESH_AGENT_CONFIG: MeshAgentConfig = Object.freeze({
   prompt: DEFAULT_PROMPT,
   workspace: DEFAULT_WORKSPACE,
-  mode: "full",
+  mode: "agent",
+  buzz: true,
   scope: "thread",
 });
 export const absoluteWorkspace = (path: string) =>
   path.trim().startsWith("/") || /^[A-Za-z]:[\\/]/.test(path.trim());
 export const validWorkspace = (path: string) =>
   path.trim() === DEFAULT_WORKSPACE || absoluteWorkspace(path);
-const MODES: readonly MeshMode[] = ["chat", "workspace", "full"];
+/** Whether this agent runs goose with the Buzz tools. */
+export const buzzAccess = (config: MeshAgentConfig) =>
+  config.mode === "agent" && config.buzz;
 export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
   const raw =
     value && typeof value === "object"
       ? (value as Record<string, unknown>)
       : {};
-  // Earlier configs: `reply: "direct"` was today's workspace mode.
-  const mode = MODES.includes(raw.mode as MeshMode)
-    ? (raw.mode as MeshMode)
-    : raw.reply === "direct"
-      ? "workspace"
-      : "full";
+  const mode: MeshMode = raw.mode === "chat" ? "chat" : "agent";
   const preset =
     typeof raw.preset === "string" &&
     MESH_AGENT_PRESETS.some((item) => item.id === raw.preset)
@@ -91,6 +92,7 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
         ? raw.workspace.trim()
         : DEFAULT_WORKSPACE,
     mode,
+    buzz: raw.buzz !== false,
     scope: raw.scope === "channel" ? "channel" : "thread",
     ...(preset ? { preset } : {}),
   };
@@ -488,11 +490,11 @@ async function openBridge(
   }
 }
 
-/** The appended system prompt: Buzz's shared guidance in full mode, then the
+/** The appended system prompt: Buzz's shared guidance with Buzz access, then the
  * agent's own prompt. */
 export function instructions(config: MeshAgentConfig): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
-  if (config.mode !== "full") return prompt;
+  if (!buzzAccess(config)) return prompt;
   return `${BUZZ_PROMPT}
 
 Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
@@ -754,10 +756,9 @@ export class MeshAgentRuntime {
           (item.created_at > session.seen && item.pubkey !== agent.pubkey),
       );
       signal.throwIfAborted();
-      const tools =
-        config.mode === "full"
-          ? turnTools(delivery, this.deps, cwd, context)
-          : undefined;
+      const tools = buzzAccess(config)
+        ? turnTools(delivery, this.deps, cwd, context)
+        : undefined;
       session.turn = tools;
       const cancel = () =>
         void goose.client
@@ -948,7 +949,7 @@ export class MeshAgentRuntime {
       remember: () => {},
     };
     const mcpServers: object[] = [];
-    if (config.mode === "full") {
+    if (buzzAccess(config)) {
       session.bridge = await openBridge(
         this.deps,
         () => session.turn,

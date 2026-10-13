@@ -25,14 +25,15 @@ workspace (default `~/.buzz`).
 
 - **Chat:** no goose harness or tools. One mesh chat completion is posted as
   a direct reply; intended for small models.
-- **Workspace:** lean goose with workspace tools and skills. Its final text
-  is posted through the same direct-reply path as Chat.
-- **Full (default):** Workspace plus the shared Buzz MCP tools
+- **Agent (default):** lean goose with workspace tools and skills. With
+  **Buzz access** off, its final text is posted through the same direct-reply
+  path as Chat.
+- **Agent with Buzz access (default on):** also the shared Buzz MCP tools
   (`src/buzz-mcp/tools.ts`), executed in the plugin via `appClient` and signed
   by Agents' host signer; goose never holds a key. A `send` with `final: true`
   ends the turn. If the turn never calls `send`, its text is posted as the reply.
 
-Full mode uses the app's native relay (`src-tauri/src/tool_relay.rs`) as its
+Buzz access uses the app's native relay (`src-tauri/src/tool_relay.rs`) as its
 sole Buzz-tool transport. The plugin starts the app with `--tool-listen`;
 lean goose starts that same executable with `--tool-relay` as a stdio MCP
 server. A private Unix socket and one-time token connect them. The plugin

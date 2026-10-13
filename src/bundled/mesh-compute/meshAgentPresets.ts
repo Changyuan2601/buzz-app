@@ -9,6 +9,8 @@ export type MeshAgentPreset = Readonly<{
   name: string;
   summary: string;
   mode: MeshMode;
+  /** Agent mode: whether it gets the Buzz tools. */
+  buzz?: boolean;
   /** The smallest model class the preset suits. Room for recommending a
    * preset (or warning) from the community's models; not used yet. */
   fits: "small" | "medium" | "large";
@@ -21,7 +23,7 @@ export const MESH_AGENT_PRESETS: readonly MeshAgentPreset[] = [
     name: "Emoji maker",
     summary:
       "Turns an attached image, GIF or short video into a custom emoji for the community palette. Needs ffmpeg on this machine.",
-    mode: "full",
+    mode: "agent",
     fits: "large",
     prompt: `You make custom emoji from attachments for this community.
 1. Ask for a shortcode if missing. Use lowercase letters, digits, underscores and hyphens, at most 64 characters.
@@ -62,7 +64,7 @@ Translate the message before the one that mentions you (or the text quoted in it
     name: "Media converter",
     summary:
       "Shrinks, converts or clips attached media: HEIC to JPG, big videos to shareable MP4, a clip to a GIF. Needs ffmpeg on this machine.",
-    mode: "full",
+    mode: "agent",
     fits: "large",
     prompt: `You convert media that community members attach.
 

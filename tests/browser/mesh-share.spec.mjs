@@ -126,8 +126,9 @@ test("main Shared compute helpers open an editable owner-reviewed creation flow"
     await dialog.getByLabel("Instructions").fill("Translate into French.");
     await dialog.getByRole("combobox", { name: "Mode" }).click();
     await page
-      .getByRole("option", { name: "Workspace — shell and files" })
+      .getByRole("option", { name: "Agent — goose with shell and files" })
       .click();
+    await dialog.getByRole("checkbox", { name: /Buzz access/ }).click();
     await dialog.getByLabel("Workspace", { exact: true }).fill("/tmp/helpers");
     for (const width of [390, 1200])
       for (const mode of ["light", "dark"]) {
@@ -158,7 +159,8 @@ test("main Shared compute helpers open an editable owner-reviewed creation flow"
       name: "Translator",
       config: {
         prompt: "Translate into French.",
-        mode: "workspace",
+        mode: "agent",
+        buzz: false,
         workspace: "/tmp/helpers",
       },
     });

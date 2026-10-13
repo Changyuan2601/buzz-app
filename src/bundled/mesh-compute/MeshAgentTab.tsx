@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -19,14 +20,11 @@ const options = (choices: readonly (readonly [string, string])[]) => [
 ];
 const MODES = options([
   ["chat", "Chat"],
-  ["workspace", "Workspace"],
-  ["full", "Full"],
+  ["agent", "Agent"],
 ]);
 const MODE_DESCRIPTIONS: Record<MeshMode, string> = {
   chat: "Answers from the conversation alone, with no tools. Suits small models.",
-  workspace:
-    "goose with shell, file and skill tools; its final answer is posted as one reply.",
-  full: "goose with shell, file and skill tools plus Buzz tools, as Codex and Claude Code agents have: it can read Buzz and post as it works.",
+  agent: "goose with shell, file and skill tools in its workspace.",
 };
 const SCOPES = options([
   ["thread", "One session per thread"],
@@ -50,6 +48,7 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
     draft.prompt !== saved.prompt ||
     draft.workspace.trim() !== saved.workspace ||
     draft.mode !== saved.mode ||
+    draft.buzz !== saved.buzz ||
     draft.scope !== saved.scope ||
     draft.preset !== saved.preset;
   const preset = MESH_AGENT_PRESETS.find((item) => item.id === draft.preset);
@@ -94,6 +93,7 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
             preset: picked.id,
             prompt: picked.prompt,
             mode: picked.mode,
+            buzz: picked.buzz ?? true,
           });
         }}
       />
@@ -118,10 +118,17 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
         onValueChange={(value) =>
           setDraft({
             ...draft,
-            mode: value === "chat" || value === "workspace" ? value : "full",
+            mode: value === "chat" ? "chat" : "agent",
           })
         }
       />
+      {draft.mode === "agent" && (
+        <Checkbox
+          label="Buzz access: read Buzz and post as it works, as Codex and Claude Code agents do. Off posts only its final answer."
+          checked={draft.buzz}
+          onCheckedChange={(buzz) => setDraft({ ...draft, buzz })}
+        />
+      )}
       <Select
         label="Sessions"
         variant="field"

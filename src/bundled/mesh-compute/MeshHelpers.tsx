@@ -2,6 +2,7 @@ import { useId, useState, useSyncExternalStore } from "react";
 import type { Agents, AgentCreateProps } from "../../features/agents/service";
 import { AgentCreateDialog } from "../agents/AgentCreateDialog";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
@@ -88,6 +89,7 @@ export function MeshHelpers({
                     preset: chosen.id,
                     prompt: chosen.prompt,
                     mode: chosen.mode,
+                    buzz: chosen.buzz ?? true,
                   }
                 : {}),
             },
@@ -117,18 +119,25 @@ function MeshHelperCreate({ config, onChange, disabled }: AgentCreateProps) {
             label: "",
             options: [
               { value: "chat", label: "Chat — no tools" },
-              { value: "workspace", label: "Workspace — shell and files" },
-              { value: "full", label: "Full — shell, files and Buzz" },
+              { value: "agent", label: "Agent — goose with shell and files" },
             ],
           },
         ]}
         onValueChange={(value) =>
           onChange({
             ...draft,
-            mode: value === "chat" || value === "workspace" ? value : "full",
+            mode: value === "chat" ? "chat" : "agent",
           })
         }
       />
+      {draft.mode === "agent" && (
+        <Checkbox
+          label="Buzz access: read Buzz and post as it works"
+          checked={draft.buzz}
+          disabled={disabled}
+          onCheckedChange={(buzz) => onChange({ ...draft, buzz })}
+        />
+      )}
       {draft.mode !== "chat" && (
         <Field label="Workspace" description="An absolute path, or ~/.buzz.">
           <Input

@@ -74,7 +74,12 @@ it("reviews and customises a helper's instructions, mode, workspace and session 
   });
   await user.click(within(dialog).getByRole("combobox", { name: "Mode" }));
   await user.click(
-    await screen.findByRole("option", { name: "Workspace — shell and files" }),
+    await screen.findByRole("option", {
+      name: "Agent — goose with shell and files",
+    }),
+  );
+  await user.click(
+    within(dialog).getByRole("checkbox", { name: /Buzz access/ }),
   );
   fireEvent.change(within(dialog).getByLabelText("Workspace"), {
     target: { value: "/tmp/helper" },
@@ -92,7 +97,8 @@ it("reviews and customises a helper's instructions, mode, workspace and session 
       name: "Thomas's helper",
       config: expect.objectContaining({
         prompt: "Custom task",
-        mode: "workspace",
+        mode: "agent",
+        buzz: false,
         workspace: "/tmp/helper",
         scope: "channel",
       }),
