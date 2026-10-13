@@ -513,7 +513,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     "Most capable for your hardest tasks",
   );
   await user.click(fable);
-  await user.click(screen.getByRole("button", { name: "Save defaults" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(onClose).toHaveBeenCalledOnce();
   cleanup();
 
