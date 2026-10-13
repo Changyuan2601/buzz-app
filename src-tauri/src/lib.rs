@@ -30,6 +30,7 @@ mod host_process;
 mod host_request;
 mod identity;
 mod image_clipboard;
+mod pr_subscriptions;
 
 mod notifications;
 mod os_idle;
@@ -467,6 +468,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        pr_subscriptions::app_agent_subscribe_pr,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
         app_agents::app_agent_portable,

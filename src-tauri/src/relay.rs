@@ -704,6 +704,25 @@ pub(crate) async fn relay_http(
     .await
 }
 
+pub(crate) async fn publish_owned_event(
+    host: &IdentityHost,
+    community: &str,
+    event: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    verify_owned_event(host, event).await?;
+    let url = request_url(community, "/events", "POST")?;
+    let response = send(host, url, "POST", Some(event.to_string()), true, 16 * 1024).await?;
+    let receipt: serde_json::Value =
+        serde_json::from_str(&response.body).map_err(|_| "Unconfirmed native publication")?;
+    if response.status / 100 != 2
+        || receipt["accepted"] != true
+        || receipt["event_id"] != event["id"]
+    {
+        return Err("Unconfirmed native publication".into());
+    }
+    Ok(receipt)
+}
+
 async fn send(
     host: &IdentityHost,
     url: Url,

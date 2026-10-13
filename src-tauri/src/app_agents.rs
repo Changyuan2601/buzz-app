@@ -43,6 +43,7 @@ pub(crate) struct AppAgentHost {
     /// last; Delete takes it too, so no publication outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     hosting: Arc<Hosting>,
+    pub(crate) subscriptions: crate::pr_subscriptions::Subscriptions,
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
@@ -55,7 +56,15 @@ impl AppAgentHost {
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
+        let subscriptions = crate::pr_subscriptions::Subscriptions::new(
+            path.as_ref().map_err(Clone::clone).and_then(|p| {
+                Ok(p.parent()
+                    .ok_or("Invalid agent storage")?
+                    .join("pr-subscriptions"))
+            }),
+        );
         Self {
+            subscriptions,
             agents: path.map(AppAgents::open),
             old,
             credentials: Arc::new(PlatformCredentials::default()),
@@ -67,6 +76,9 @@ impl AppAgentHost {
                 held: Mutex::default(),
             }),
         }
+    }
+    pub(crate) fn claimed(&self, pubkey: &str) -> bool {
+        self.hosting.held().contains_key(pubkey)
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
@@ -84,7 +96,7 @@ impl AppAgentHost {
     /// The agent's key; read from the credential store only on first use. A
     /// busy store (a harness start or another app holding it) is waited out for
     /// a few seconds, without holding up agents whose keys are already read.
-    async fn key(&self, agent: AppAgent) -> Result<(AppAgent, Arc<Secret>), String> {
+    pub(crate) async fn key(&self, agent: AppAgent) -> Result<(AppAgent, Arc<Secret>), String> {
         let host = self.clone();
         blocking(move || {
             let mut waits = 0;
@@ -129,7 +141,7 @@ impl AppAgentHost {
         .await
     }
     /// The agent, if it still has its key. One deleted elsewhere loses its cached key.
-    async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
+    pub(crate) async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
         let host = self.clone();
         blocking(move || {
             let agent = host.agents.clone()?.get(&pubkey);
@@ -409,7 +421,12 @@ pub(crate) async fn app_agent_claim(
     pubkey: String,
 ) -> Result<bool, String> {
     let hosting = state.hosting.clone();
-    blocking(move || hosting.claim(&pubkey)).await
+    let agent = pubkey.clone();
+    let claimed = blocking(move || hosting.claim(&pubkey)).await?;
+    if claimed {
+        state.subscriptions.resume(state.inner().clone(), agent);
+    }
+    Ok(claimed)
 }
 
 /// Lets another copy of the app run the agent, as when this one cannot.
@@ -488,7 +505,11 @@ pub(crate) async fn app_agent_query(
     read(&agent, &key, &filters).await
 }
 
-async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value, String> {
+pub(crate) async fn read(
+    agent: &AppAgent,
+    key: &Secret,
+    filters: &[Value],
+) -> Result<Value, String> {
     let bytes = serde_json::to_vec(filters).map_err(|_| "Could not encode agent read")?;
     let response = client(20)?
         .post(agent.query_url())
@@ -659,7 +680,7 @@ fn reason(status: reqwest::StatusCode, body: &[u8]) -> String {
         .unwrap_or_else(|| format!("status {}", status.as_u16()))
 }
 
-async fn post(agent: &AppAgent, key: &Secret, signed: Value) -> Result<Value, String> {
+pub(crate) async fn post(agent: &AppAgent, key: &Secret, signed: Value) -> Result<Value, String> {
     let event_id = signed
         .get("id")
         .and_then(Value::as_str)
@@ -728,6 +749,7 @@ mod tests {
     async fn a_first_key_read_waits_out_a_busy_store() {
         let key = Secret::generate().unwrap();
         let host = AppAgentHost {
+            subscriptions: crate::pr_subscriptions::Subscriptions::new(Err("unused".into())),
             agents: Err("unused".into()),
             old: Err("unused".into()),
             credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),

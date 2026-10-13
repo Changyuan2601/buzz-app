@@ -308,7 +308,10 @@ it("lists its tools before it can call them", async () => {
       method: "tools/list",
     },
   )) as { result: { tools: unknown[] } };
-  expect(list.result.tools).toHaveLength(12);
+  expect(list.result.tools).toHaveLength(13);
+  expect(list.result.tools).toContainEqual(
+    expect.objectContaining({ name: "subscribe_pr" }),
+  );
   await expect(
     respond(
       undefined,

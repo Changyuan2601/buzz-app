@@ -36,6 +36,7 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  subscribePr?(repo: string, pr: number, context: Context): Promise<unknown>;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
   /** Signs `event` as the agent and posts it. */

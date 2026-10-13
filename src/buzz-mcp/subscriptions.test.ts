@@ -55,3 +55,52 @@ it("launches a PR subscription through native custody with the bound owner and r
     },
   );
 });
+
+it.each(["pubkey", "owner", "channel", "root", "producer"])(
+  "rejects a supplied %s override before native startup",
+  async (override) => {
+    native.invoke.mockClear();
+    const client = appClient(
+      { pubkey: "a".repeat(64), owner: "b".repeat(64) } as AgentHandle,
+      { cwd: "/workspace", spawn: vi.fn(), memories: vi.fn() },
+    );
+    const response = await respond(
+      client,
+      { channel: "bound", root: "c".repeat(64) },
+      {
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "subscribe_pr",
+          arguments: { repo: "block/buzz-app", pr: 677, [override]: "wrong" },
+        },
+      },
+    );
+    expect(response).toMatchObject({ result: { isError: true } });
+    expect(native.invoke).not.toHaveBeenCalled();
+  },
+);
+
+it("does not start an undeliverable producer when native transport is unavailable", async () => {
+  const client = {
+    pubkey: "a".repeat(64),
+  } as unknown as import("./client").BuzzClient;
+  const response = await respond(
+    client,
+    { channel: "bound", root: "c".repeat(64) },
+    {
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "subscribe_pr",
+        arguments: { repo: "block/buzz-app", pr: 677 },
+      },
+    },
+  );
+  expect(response).toMatchObject({
+    result: {
+      isError: true,
+      content: [{ text: "Native PR subscription transport unavailable" }],
+    },
+  });
+});

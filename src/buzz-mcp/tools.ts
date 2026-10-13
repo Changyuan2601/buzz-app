@@ -26,6 +26,12 @@ const tool = (
 export type Tool = ReturnType<typeof tool>;
 export const TOOLS: readonly Tool[] = [
   tool(
+    "subscribe_pr",
+    "Monitor a PR in this owning conversation through the native host.",
+    { repo: str, pr: int },
+    ["repo", "pr"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -103,6 +109,27 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async subscribe_pr({ client, context }, args) {
+    if (Object.keys(args).some((key) => key !== "repo" && key !== "pr"))
+      throw new Error("Only repo and pr are accepted");
+    const repo = required(args, "repo");
+    const pr = args.pr;
+    if (
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+      typeof pr !== "number" ||
+      !Number.isSafeInteger(pr) ||
+      pr <= 0 ||
+      pr >= 2 ** 31
+    )
+      throw new Error("Invalid repository or PR");
+    if (!context.channel || !context.root)
+      throw new Error("PR subscriptions require an owning channel and thread");
+    if (!client.subscribePr)
+      throw new Error("Native PR subscription transport unavailable");
+    return JSON.stringify(
+      await client.subscribePr(repo.toLowerCase(), pr, context),
+    );
+  },
   async send(tools, args) {
     const { client, context } = tools;
     const reply =
