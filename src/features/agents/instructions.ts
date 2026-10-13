@@ -135,6 +135,13 @@ export class InstructionStore {
   scanned(owner: string, community: string) {
     return this.scans.get(`${owner}:${community}`);
   }
+  /** Agents with an entry under this owner and community. */
+  agents(owner: string, community: string) {
+    const prefix = `${owner}:${community}:`;
+    return [...this.entries.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+  }
   hadVersion(key: string) {
     return this.had.has(key);
   }
@@ -516,6 +523,7 @@ export class InstructionSync {
       for (const agent of new Set([
         ...scanned.keys(),
         ...this.subjects.keys(),
+        ...this.ports.store.agents(this.ports.owner, this.ports.community),
       ])) {
         if (!this.eligible(agent)) continue;
         const s = this.subject(agent);
