@@ -52,9 +52,10 @@
   background-clip: padding-box;
 }
 /* Part of the final measured item, so end alignment includes breathing room.
-   The spacer scrolls away with history instead of shortening its viewport. */
+   The spacer scrolls away with history instead of shortening its viewport.
+   It also clears the floating activity lane (TypingIndicator.module.css). */
 .timelineEnd {
-  height: var(--space-3);
+  height: calc(var(--size-control-sm) + 2 * var(--space-2));
 }
 .feed ol {
   list-style: none;
@@ -647,8 +648,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-panel-inset);
-  /* Scrollable end padding, not a fixed strip above the composer. */
-  padding-bottom: var(--space-3);
+  /* Scrollable end padding, not a fixed strip above the composer. It clears
+     the floating activity lane (TypingIndicator.module.css). */
+  padding-bottom: calc(var(--size-control-sm) + 2 * var(--space-2));
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;

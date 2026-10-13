@@ -182,7 +182,8 @@ for (const scope of ["channel", "thread"]) {
     // The viewport meets the composer, but the final message has scrollable
     // breathing room. It must disappear with content, not remain a fixed strip.
     expect(Math.abs(idle.y + idle.height - idleComposer.y)).toBeLessThan(1);
-    const endPadding = 12; // Default interface size: the shared space-3 token.
+    // Default interface size: size-control-sm + 2 * space-2, clearing the activity lane.
+    const endPadding = 48;
     const tailGap = async () => {
       const tail = await history
         .locator("[data-message-id]")
@@ -238,6 +239,12 @@ for (const scope of ["channel", "thread"]) {
     // changing either viewport or the user's bottom-reading position.
     expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y);
     expect(typingBounds.y + typingBounds.height).toBeLessThan(idleComposer.y);
+    // At the bottom, the floating activity must not cover the final message.
+    const tail = await history
+      .locator("[data-message-id]")
+      .last()
+      .boundingBox();
+    expect(tail.y + tail.height).toBeLessThanOrEqual(typingBounds.y);
     await stable();
     app.activity({ ...target, kind: 9 });
     await expect(indicator).toHaveCount(0);
