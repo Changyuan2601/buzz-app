@@ -31,10 +31,12 @@ type Seen = {
   calls: { method: string; params: Record<string, unknown> }[];
   agents: number;
   bridges: number;
+  kills?: number;
   /** Sends a line from goose's relay into the plugin's bridge end. */
   relay?: (message: object) => void;
   bridgeOut: string[];
   failLoad?: boolean;
+  beforeRequest?: (method: string) => Promise<void>;
 };
 function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
   let sessions = 0;
@@ -80,10 +82,14 @@ function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
     return {
       exited,
       end: async () => {},
-      kill: async () => resolveExit(null),
+      kill: async () => {
+        seen.kills = (seen.kills ?? 0) + 1;
+        resolveExit(null);
+      },
       write: async (line: string) => {
         const { id, method, params } = JSON.parse(line);
         seen.calls.push({ method, params });
+        await seen.beforeRequest?.(method);
         if (method === "initialize") out({ id, result: {} });
         if (method === "_goose/unstable/session/system-prompt/set")
           out({ id, result: {} });
@@ -518,5 +524,292 @@ describe("Mesh agent Buzz tools", () => {
     expect(publish).toHaveBeenCalled();
     expect(tools.sent()).toBe(true);
     expect(tools.finished()).toBe(true);
+  });
+});
+
+describe("Mesh recovery contracts", () => {
+  it("keeps shared startup alive when another conversation still needs it", async () => {
+    const { runtime, delivery, seen, publish } = setup();
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    seen.beforeRequest = async (method) => {
+      if (method === "initialize") {
+        started();
+        await gate;
+      }
+    };
+    const controller = new AbortController();
+    const first = runtime.run({ ...delivery(), signal: controller.signal });
+    try {
+      await entered;
+      const second = runtime.run(
+        delivery({ id: "d".repeat(64), created_at: 2 }),
+      );
+      // Both turns have crossed preparation/workspace before aborting the first.
+      await vi.waitFor(() =>
+        expect(
+          (
+            runtime as unknown as { starters: Map<string, number> }
+          ).starters.get(AGENT),
+        ).toBe(2),
+      );
+      controller.abort();
+      await first;
+      release();
+      await second;
+      expect(seen.agents).toBe(1);
+      expect(publish).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      runtime.dispose();
+    }
+  });
+
+  it.each(["abort", "dispose"])(
+    "does not resurrect shared startup after both waiters %s",
+    async (action) => {
+      const { runtime, delivery, seen, publish } = setup();
+      let started!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      seen.beforeRequest = async (method) => {
+        if (method === "initialize") {
+          started();
+          await new Promise<void>(() => {});
+        }
+      };
+      const a = new AbortController();
+      const b = new AbortController();
+      const first = runtime.run({ ...delivery(), signal: a.signal });
+      try {
+        await entered;
+        const second = runtime.run({
+          ...delivery({ id: "d".repeat(64) }),
+          signal: b.signal,
+        });
+        await vi.waitFor(() =>
+          expect(
+            (
+              runtime as unknown as { starters: Map<string, number> }
+            ).starters.get(AGENT),
+          ).toBe(2),
+        );
+        if (action === "dispose") runtime.dispose();
+        else {
+          a.abort();
+          b.abort();
+        }
+        await Promise.all([first, second]);
+        await vi.waitFor(() => expect(seen.kills).toBe(1));
+        expect(seen.agents).toBe(1);
+        delete seen.beforeRequest;
+        await runtime.run(delivery({ created_at: 2 }));
+        expect(seen.agents).toBe(action === "dispose" ? 1 : 2);
+        if (action === "abort") expect(publish).toHaveBeenCalledTimes(1);
+      } finally {
+        runtime.dispose();
+      }
+    },
+  );
+
+  it("retires an unresponsive initialize without waiting for its response", async () => {
+    const { runtime, delivery, seen, publish } = setup();
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    seen.beforeRequest = async (method) => {
+      if (method === "initialize") {
+        started();
+        await new Promise<void>(() => {});
+      }
+    };
+    const controller = new AbortController();
+    const turn = runtime.run({ ...delivery(), signal: controller.signal });
+    try {
+      await entered;
+      controller.abort();
+      await turn;
+      expect(publish).not.toHaveBeenCalled();
+      delete seen.beforeRequest;
+      await runtime.run(delivery({ created_at: 2 }));
+      expect(seen.agents).toBe(2);
+      expect(publish).toHaveBeenCalledTimes(1);
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("does not prompt after cancellation during session creation and recovers", async () => {
+    const { runtime, delivery, seen, publish } = setup();
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    seen.beforeRequest = async (method) => {
+      if (method === "session/new") {
+        started();
+        await gate;
+      }
+    };
+    const controller = new AbortController();
+    const turn = runtime.run({ ...delivery(), signal: controller.signal });
+    try {
+      await entered;
+      controller.abort();
+      await turn;
+      expect(prompts(seen)).toHaveLength(0);
+      expect(publish).not.toHaveBeenCalled();
+      release();
+      delete seen.beforeRequest;
+      await runtime.run(delivery({ created_at: 2 }));
+      expect(prompts(seen)).toHaveLength(1);
+      expect(publish).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      runtime.dispose();
+    }
+  });
+
+  it("routes Full-mode MCP send directly in a DM", async () => {
+    const { runtime, delivery, seen, publish } = setup(
+      { dm: () => true },
+      OWNER,
+      { mode: "full" },
+    );
+    seen.beforeRequest = async (method) => {
+      if (method !== "session/prompt") return;
+      seen.relay?.({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: {
+          name: "send",
+          arguments: { text: "DM answer", audience: "everyone" },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(seen.bridgeOut.some((line) => JSON.parse(line).id === 42)).toBe(
+          true,
+        ),
+      );
+    };
+    try {
+      await runtime.run(delivery());
+      expect(publish).toHaveBeenCalledTimes(1);
+      const posted = publish.mock.calls[0]?.[0] as {
+        content: string;
+        tags: string[][];
+      };
+      expect(posted.content).toBe("DM answer");
+      expect(posted.tags).toContainEqual(["h", "chan"]);
+      expect(posted.tags.some((tag) => tag[0] === "e")).toBe(false);
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it.each(["chat", "workspace"])(
+    "%s posts directly in DMs without thread tags",
+    async (mode) => {
+      const { runtime, delivery, publish } = setup({ dm: () => true }, OWNER, {
+        mode,
+      });
+      try {
+        await runtime.run(delivery());
+        expect(publish.mock.calls[0]?.[0]).toMatchObject({
+          tags: [
+            ["h", "chan"],
+            ["p", OWNER],
+          ],
+        });
+      } finally {
+        runtime.dispose();
+      }
+    },
+  );
+
+  it.each(["chat", "workspace"])(
+    "%s aborts held history and the next turn recovers",
+    async (mode) => {
+      const { runtime, delivery, query, seen, deps, publish } = setup(
+        {},
+        OWNER,
+        { mode },
+      );
+      let release!: (value: object[]) => void;
+      let started!: () => void;
+      const reading = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      query.mockImplementationOnce(() => {
+        started();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      });
+      const controller = new AbortController();
+      const turn = runtime.run({
+        ...delivery(inThread("d".repeat(64), 2)),
+        signal: controller.signal,
+      });
+      try {
+        await reading;
+        controller.abort();
+        await turn;
+        expect(prompts(seen)).toHaveLength(0);
+        expect(deps.chat).not.toHaveBeenCalled();
+        expect(publish).not.toHaveBeenCalled();
+        release([]);
+        await runtime.run(delivery(inThread("e".repeat(64), 3)));
+        expect(publish).toHaveBeenCalledTimes(1);
+      } finally {
+        release([]);
+        runtime.dispose();
+      }
+    },
+  );
+
+  it("serves memory set/get/overwrite through MCP", async () => {
+    let entries: { slug: string; body: string; createdAt: number }[] = [];
+    const remember = vi.fn(
+      async (slug: string, body: string, after: number) => {
+        entries = [{ slug, body, createdAt: after + 1 }];
+        return EVENT as never;
+      },
+    );
+    const base = setup();
+    const tools = turnTools(
+      { ...base.delivery(), agent: { ...base.delivery().agent, remember } },
+      { spawn: base.deps.spawn, memories: async () => entries },
+      "/w",
+      { channel: "chan" },
+    );
+    const call = (name: string, args: object) =>
+      tools.serve({
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      });
+    await call("mem_set", { slug: "note", text: "first" });
+    expect(JSON.stringify(await call("mem_get", { slug: "note" }))).toContain(
+      "first",
+    );
+    await call("mem_set", { slug: "note", text: "second" });
+    expect(remember.mock.calls[1]?.[2]).toBe(1);
+    expect(JSON.stringify(await call("mem_get", { slug: "note" }))).toContain(
+      "second",
+    );
   });
 });

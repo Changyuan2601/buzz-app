@@ -40,7 +40,7 @@ import type {
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import { appClient } from "../../buzz-mcp/app-client";
-import type { Context } from "../../buzz-mcp/client";
+import type { Context, Memory } from "../../buzz-mcp/client";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
 import { MESH_AGENT_PRESETS } from "./meshAgentPresets";
@@ -126,6 +126,7 @@ export type MeshAgentDeps = Readonly<{
   origin(): string | undefined;
   /** Whether the channel is a DM, so the whole DM is one conversation. */
   dm?(agent: string, channelId: string): boolean;
+  memories?(agent: string, signal: AbortSignal): Promise<readonly Memory[]>;
   /** Where goose session ids are kept across restarts. */
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 }>;
@@ -357,7 +358,7 @@ export type TurnTools = Readonly<{
 /** The Buzz tools for one turn, as an MCP server: the same tools and handler as Codex and Claude Code. */
 export function turnTools(
   delivery: Delivery<MeshAgentConfig>,
-  deps: Pick<MeshAgentDeps, "spawn">,
+  deps: Pick<MeshAgentDeps, "spawn" | "memories">,
   cwd: string,
   context: Context,
 ): TurnTools {
@@ -366,7 +367,10 @@ export function turnTools(
   const client = appClient(delivery.agent, {
     spawn: deps.spawn,
     cwd,
-    memories: async () => [],
+    memories: () => {
+      if (!deps.memories) throw new Error("Memory reader unavailable");
+      return deps.memories(delivery.agent.pubkey, delivery.signal);
+    },
     signal: delivery.signal,
   });
   return {
@@ -569,10 +573,14 @@ const STORAGE_PREFIX = "buzz.mesh-agent.session:";
 export class MeshAgentRuntime {
   private readonly geese = new Map<string, Promise<Goose>>();
   private readonly lanes = new Map<string, Promise<unknown>>();
+  private readonly starters = new Map<string, number>();
+  private readonly startup = new Map<string, AbortController>();
+  private disposed = false;
 
   constructor(private readonly deps: MeshAgentDeps) {}
 
   run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     const { trigger, agent, channelId } = delivery;
     if (trigger.type === "timer" || !channelId) return Promise.resolve();
     const event = trigger.event;
@@ -590,14 +598,22 @@ export class MeshAgentRuntime {
         this.turn(delivery, event, channelId, config, dm, conversation),
       );
     this.lanes.set(lane, next);
-    void next.finally(() => {
-      if (this.lanes.get(lane) === next) this.lanes.delete(lane);
-    });
+    void next.then(
+      () => {
+        if (this.lanes.get(lane) === next) this.lanes.delete(lane);
+      },
+      () => {
+        if (this.lanes.get(lane) === next) this.lanes.delete(lane);
+      },
+    );
     return next;
   }
 
   /** Stops every goose process. */
   dispose() {
+    this.disposed = true;
+    for (const controller of this.startup.values()) controller.abort();
+    this.startup.clear();
     for (const goose of this.geese.values())
       void goose.then((item) => this.stop(item)).catch(() => {});
     this.geese.clear();
@@ -615,8 +631,12 @@ export class MeshAgentRuntime {
     const root = threadReference(event)?.rootId ?? event.id;
     const tags = [
       ["h", channelId],
-      ...(root === event.id ? [] : [["e", root, "", "root"]]),
-      ["e", event.id, "", "reply"],
+      ...(dm
+        ? []
+        : [
+            ...(root === event.id ? [] : [["e", root, "", "root"]]),
+            ["e", event.id, "", "reply"],
+          ]),
       ["p", event.pubkey],
     ];
     let content: string;
@@ -624,7 +644,7 @@ export class MeshAgentRuntime {
       if (signal.aborted) return;
       const origin = this.deps.origin();
       if (!origin) throw new Error("No community is connected");
-      const inference = await this.deps.prepare(origin);
+      const inference = await untilAborted(this.deps.prepare(origin), signal);
       const wholeChannel = dm || config.scope === "channel";
       const read = () =>
         conversationMessages(delivery, event, channelId, wholeChannel).catch(
@@ -633,9 +653,14 @@ export class MeshAgentRuntime {
       let reply: string;
       let sent = false;
       if (config.mode === "chat") {
-        reply = await this.deps.chat(
-          inference,
-          chatMessages(config, agent.pubkey, await read(), event),
+        const earlier = await untilAborted(read(), signal);
+        signal.throwIfAborted();
+        reply = await untilAborted(
+          this.deps.chat(
+            inference,
+            chatMessages(config, agent.pubkey, earlier, event),
+          ),
+          signal,
         );
       } else {
         const result = await this.goose(
@@ -643,7 +668,7 @@ export class MeshAgentRuntime {
           inference,
           config,
           event,
-          { channel: channelId, root },
+          { channel: channelId, ...(dm ? {} : { root }) },
           `${agent.pubkey}\n${config.mode}\n${conversation}`,
           read,
         );
@@ -661,7 +686,7 @@ export class MeshAgentRuntime {
       }
       content = reply;
     } catch (error) {
-      if (signal.aborted) return;
+      if (signal.aborted || this.disposed) return;
       const reason = error instanceof Error ? error.message : String(error);
       content = `⚠️ Mesh agent couldn't answer: ${reason.slice(0, 500)}`;
     }
@@ -679,32 +704,59 @@ export class MeshAgentRuntime {
     read: () => Promise<EventData[]>,
   ): Promise<{ text: string; sent: boolean }> {
     const { agent, signal } = delivery;
-    const cwd = await resolveWorkspace(this.deps, config.workspace);
-    const goose = await this.process(agent.pubkey, inference, cwd);
-    goose.busy++;
+    const cwd = await untilAborted(
+      resolveWorkspace(this.deps, config.workspace),
+      signal,
+    );
+    signal.throwIfAborted();
+    this.starters.set(agent.pubkey, (this.starters.get(agent.pubkey) ?? 0) + 1);
+    const starting = this.process(agent.pubkey, inference, cwd, signal);
+    let goose: Goose;
+    try {
+      goose = await untilAborted(starting, signal);
+      goose.busy++;
+    } finally {
+      const waiting = (this.starters.get(agent.pubkey) ?? 1) - 1;
+      if (waiting) this.starters.set(agent.pubkey, waiting);
+      else {
+        this.starters.delete(agent.pubkey);
+        if (signal.aborted) {
+          this.startup.get(agent.pubkey)?.abort();
+          void starting
+            .then((late) => {
+              if (!late.busy && !late.dead) this.retire(agent.pubkey, late);
+            })
+            .catch(() => {});
+        }
+      }
+    }
     if (goose.idle) clearTimeout(goose.idle);
     try {
-      const session = await this.session(
-        delivery,
-        context,
-        goose,
-        sessionKey,
-        cwd,
-        config,
-        instructions(config),
+      const session = await untilAborted(
+        this.session(
+          delivery,
+          context,
+          goose,
+          sessionKey,
+          cwd,
+          config,
+          instructions(config),
+        ),
+        signal,
       );
       const prompt = instructions(config);
       if (session.prompt !== prompt) {
-        await setPrompt(goose.client, session.id, prompt);
+        await untilAborted(setPrompt(goose.client, session.id, prompt), signal);
         session.prompt = prompt;
       }
-      const earlier = (await read()).filter(
+      const earlier = (await untilAborted(read(), signal)).filter(
         // A fresh session needs the whole conversation; a live one remembers
         // its own replies and earlier messages.
         (item) =>
           session.seen === 0 ||
           (item.created_at > session.seen && item.pubkey !== agent.pubkey),
       );
+      signal.throwIfAborted();
       const tools =
         config.mode === "full"
           ? turnTools(delivery, this.deps, cwd, context)
@@ -738,6 +790,9 @@ export class MeshAgentRuntime {
         text: goose.client.take(session.id).trim(),
         sent: tools?.sent() ?? false,
       };
+    } catch (error) {
+      if (signal.aborted && goose.busy === 1) this.retire(agent.pubkey, goose);
+      throw error;
     } finally {
       goose.busy--;
       if (!goose.busy && !goose.dead)
@@ -753,22 +808,38 @@ export class MeshAgentRuntime {
     agent: string,
     inference: PreparedInference,
     cwd: string,
+    signal: AbortSignal,
   ): Promise<Goose> {
+    signal.throwIfAborted();
+    if (this.disposed) throw new Error("Mesh agent runtime disposed");
     const key = JSON.stringify([inference.baseUrl, inference.model, cwd]);
     const existing = this.geese.get(agent);
     if (existing) {
-      const goose = await existing.catch(() => undefined);
+      const goose = await untilAborted(
+        existing.catch(() => undefined),
+        signal,
+      );
+      signal.throwIfAborted();
+      if (this.disposed) throw new Error("Mesh agent runtime disposed");
       if (goose && !goose.dead && goose.key === key) return goose;
       if (goose && this.geese.get(agent) === existing) {
         // Turns in flight on the old target finish there; new ones restart.
-        if (goose.busy) await waitIdle(goose);
+        if (goose.busy) await untilAborted(waitIdle(goose), signal);
+        signal.throwIfAborted();
+        if (this.disposed) throw new Error("Mesh agent runtime disposed");
         this.retire(agent, goose);
       }
       const again = this.geese.get(agent);
       if (again && again !== existing)
-        return this.process(agent, inference, cwd);
+        return this.process(agent, inference, cwd, signal);
     }
-    const started = this.start(key, inference, cwd);
+    const controller = new AbortController();
+    this.startup.set(agent, controller);
+    const started = this.start(key, inference, cwd, controller.signal);
+    const clearStartup = () => {
+      if (this.startup.get(agent) === controller) this.startup.delete(agent);
+    };
+    void started.then(clearStartup, clearStartup);
     this.geese.set(agent, started);
     started.catch(() => {
       if (this.geese.get(agent) === started) this.geese.delete(agent);
@@ -784,8 +855,13 @@ export class MeshAgentRuntime {
     key: string,
     inference: PreparedInference,
     cwd: string,
+    signal: AbortSignal,
   ): Promise<Goose> {
-    const root = await resolveWorkspace(this.deps, GOOSE_ROOT);
+    const root = await untilAborted(
+      resolveWorkspace(this.deps, GOOSE_ROOT),
+      signal,
+    );
+    signal.throwIfAborted();
     let client: AcpClient | undefined;
     let stderr = "";
     const process = await this.deps.spawn("agent", {
@@ -816,10 +892,14 @@ export class MeshAgentRuntime {
       this.closeBridges(goose);
     });
     try {
-      await client.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-      });
+      signal.throwIfAborted();
+      await untilAborted(
+        client.request("initialize", {
+          protocolVersion: 1,
+          clientCapabilities: {},
+        }),
+        signal,
+      );
     } catch (error) {
       void process.kill();
       throw error;
@@ -979,4 +1059,19 @@ export function chatMessages(
     ),
     { role: "user", content: `[${label(event)}] ${event.content}` },
   ];
+}
+
+/** Stop waiting without abandoning the underlying operation's rejection. */
+function untilAborted<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    operation
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+  });
 }

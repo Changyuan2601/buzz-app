@@ -21,18 +21,23 @@ workspace (default `~/.buzz`).
 - **Prompt:** appended under goose's "Additional Instructions"
   (`_goose/unstable/session/system-prompt/set`, mode `append`).
 
-## Replies (per agent, Settings → "Reply with Buzz tools")
+## Modes (per agent, Settings)
 
-- **On (default):** like Codex and Claude Code, the model gets the shared Buzz
-  tools `send` and `read` (`src/buzz-mcp/tools.ts`), executed in the plugin via
-  `appClient`, signed by Agents' host signer; goose never holds a key. A
-  `send` with `final: true` ends the turn. If the turn never calls `send`, its
-  text is posted as the reply.
-- **Off:** goose's final text is posted as one reply (suits small models).
+- **Chat:** no goose harness or tools. One mesh chat completion is posted as
+  a direct reply; intended for small models.
+- **Workspace:** lean goose with workspace tools and skills. Its final text
+  is posted through the same direct-reply path as Chat.
+- **Full (default):** Workspace plus the shared Buzz MCP tools
+  (`src/buzz-mcp/tools.ts`), executed in the plugin via `appClient` and signed
+  by Agents' host signer; goose never holds a key. A `send` with `final: true`
+  ends the turn. If the turn never calls `send`, its text is posted as the reply.
 
-Bridge: goose only spawns stdio MCP servers, so the plugin declares
-`nc -U /tmp/buzz-mesh-<random>.sock` as the `buzz` server and holds the other
-end through a declared `nc -lU` process. macOS only for now.
+Full mode uses the app's native relay (`src-tauri/src/tool_relay.rs`) as its
+sole Buzz-tool transport. The plugin starts the app with `--tool-listen`;
+lean goose starts that same executable with `--tool-relay` as a stdio MCP
+server. A private Unix socket and one-time token connect them. The plugin
+answers tool calls for the active turn; calls between turns are refused.
+No external socket utility or transport fallback is used.
 
 ## Build and package
 
@@ -47,5 +52,10 @@ bin/pnpm tauri build --features mesh --bundles app \
 - Community switch is not isolated: the lease is re-checked before the
   fallback post, but a switch can restart compute mid-turn, and `send` calls
   made before it are not undone.
-- Windows/Linux: not bundled; the `nc` bridge is macOS-only.
+- Native relay: Unix only; Windows is unsupported. The build command above
+  stages a sidecar for the current Rust host target, not a cross-platform release.
+- Release packaging: the sidecar build and mesh Tauri config are explicit steps;
+  the current `.github/workflows` do not invoke them. Packaged real-mesh
+  acceptance remains required before declaring this path validated.
+- Turns are queued per conversation, not steered into an active turn.
 - Triggering verified only for explicit owner mentions.

@@ -185,6 +185,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
             .channels.find((row) => row.id === channelId)?.channelType === "dm"
         );
       },
+      memories: async (agent, signal) => {
+        signal.throwIfAborted();
+        const snapshot = agents.relay(agent)?.snapshot();
+        if (snapshot?.status !== "ready")
+          throw new Error("Buzz is not connected to this community");
+        const view = snapshot.session.agentMemories.open(agent);
+        const abort = () => view.dispose();
+        signal.addEventListener("abort", abort, { once: true });
+        try {
+          await view.refresh();
+          signal.throwIfAborted();
+          if (agents.relay(agent)?.snapshot() !== snapshot)
+            throw new Error("Community changed during memory read");
+          const { status, listing } = view.snapshot();
+          if (status !== "ready" || !listing)
+            throw new Error(`Memory unavailable (${status})`);
+          return listing.entries;
+        } finally {
+          signal.removeEventListener("abort", abort);
+          view.dispose();
+        }
+      },
       storage: localStorage,
     });
     ctx.effect(() => () => runtime.dispose());
