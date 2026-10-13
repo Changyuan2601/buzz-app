@@ -151,6 +151,44 @@ it("finishes an unfinished hosted Bestie on retry instead of registering another
   expect(kinds(h, 9007)[0]?.tags).toContainEqual(["h", HOME]);
 });
 
+it("says why Builderlab refused to set up Bestie", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.reply("attest-agent", 200, {
+    status: "ATTEST_AGENT_STATUS_NO_OWNER_IDENTITY_BOUND",
+  });
+  await h.bestie.setup();
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "error",
+    message: expect.stringContaining("Link your Buzz identity"),
+  });
+  expect(h.agents.find(h.agent)?.unfinished).toBe(true);
+});
+
+it("offers a new Bestie when the saved one left this Builderlab account", async () => {
+  const h = await bestieFixture(native.invoke);
+  h.reply("attest-agent", 500, {});
+  await h.bestie.setup();
+  h.reply("attest-agent", 500, {});
+  await h.bestie.setup();
+  expect(h.agents.find(h.agent)?.unfinished).toBe(true);
+  // Revoked outside this app, e.g. from another device.
+  for (const row of h.rows) row.status = 3;
+  await h.bestie.setup();
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "error",
+    message: expect.stringContaining("isn't in this Builderlab account"),
+    canCreateNew: true,
+  });
+  expect(h.requests("register-agent")).toHaveLength(1);
+  await h.bestie.setup(undefined, { createNew: true });
+  expect(h.bestie.snapshot()).toMatchObject({
+    status: "ready",
+    message: "Your Bestie is set up.",
+  });
+  expect(h.requests("register-agent")).toHaveLength(2);
+  expect(h.bestie.snapshot().record?.agent).not.toBe(h.agent);
+});
+
 it("explains a canceled Builderlab sign-in and creates nothing until retried", async () => {
   const h = await bestieFixture(native.invoke);
   h.cancelNextSignIn();
@@ -248,7 +286,7 @@ it("does not make a second Bestie while this community's agent list is unread", 
   expect(h.bestie.snapshot()).toMatchObject({
     status: "error",
     message: expect.stringContaining("isn't listed in this community yet"),
-    unlisted: true,
+    canCreateNew: true,
   });
   expect(h.requests("register-agent")).toHaveLength(0);
   expect(h.events).toHaveLength(0);
@@ -264,7 +302,7 @@ it("creates a new Bestie when the owner asks despite an unlisted one", async () 
     status: 2,
   });
   await h.bestie.setup();
-  expect(h.bestie.snapshot().unlisted).toBe(true);
+  expect(h.bestie.snapshot().canCreateNew).toBe(true);
   await h.bestie.setup(undefined, { createNew: true });
   expect(h.bestie.snapshot()).toMatchObject({
     status: "ready",

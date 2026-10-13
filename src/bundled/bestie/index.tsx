@@ -278,7 +278,7 @@ function Setup({
                     ? "Retry Bestie setup"
                     : "Set up Bestie"}
                 </Button>
-                {state.status === "error" && state.unlisted && (
+                {state.status === "error" && state.canCreateNew && (
                   <Button
                     variant="outline"
                     onClick={() =>

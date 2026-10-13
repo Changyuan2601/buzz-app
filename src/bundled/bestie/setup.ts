@@ -32,13 +32,14 @@ type State = Readonly<{
   status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
   message: string;
   candidates?: readonly Agent[];
-  /** An active Builderlab Bestie exists that this community doesn't list. */
-  unlisted?: boolean;
+  /** Setup stopped short of making a new Bestie; the owner may ask for one. */
+  canCreateNew?: boolean;
   record?: Record | undefined;
   connection?: RelaySnapshot;
 }>;
 type SetupOptions = Readonly<{ createNew?: boolean }>;
-class UnlistedBestieError extends Error {}
+/** Setup won't make a Bestie on its own here, but the owner may ask for one. */
+class CreateNewError extends Error {}
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -217,15 +218,24 @@ export function createRemoteBestie(
     // this community, and may still be reading that list after a reconnect.
     let remote = await remoteAgents();
     let agent: Agent | undefined;
+    // Agents may list a Bestie this Builderlab account doesn't have: one
+    // made by another account, revoked, or unfinished past its expiry.
+    const inAccount = (pubkey: string) =>
+      remote.some((row) => row.pubkey === pubkey && row.status !== "Revoked");
+    if (record.agent && options.createNew && !inAccount(record.agent)) {
+      record.agent = undefined;
+      save();
+    }
     if (record.agent) {
       const chosen = record.agent;
       agent = agents.find(chosen);
-      if (
-        (agent && agent.place !== "hosted") ||
-        !remote.some((row) => row.pubkey === chosen && row.status !== "Revoked")
-      )
+      if (agent && agent.place !== "hosted")
         throw new Error(
-          "Your saved Bestie is no longer one of your Builderlab agents. Review Agents before retrying.",
+          "Your saved Bestie no longer runs on Builderlab. Review Agents before retrying.",
+        );
+      if (!inAccount(chosen))
+        throw new CreateNewError(
+          "Your saved Bestie isn't in this Builderlab account. Sign in to the account that created it and retry, or create a new Bestie.",
         );
     } else {
       const candidates = agents
@@ -235,7 +245,8 @@ export function createRemoteBestie(
             row.type === BUILDERLAB_TYPE &&
             row.name === NAME &&
             row.owner === owner &&
-            row.place === "hosted",
+            row.place === "hosted" &&
+            (!options.createNew || inAccount(row.pubkey)),
         );
       if (selected && !candidates.some((row) => row.pubkey === selected))
         throw new Error("That Bestie is no longer available. Retry setup.");
@@ -264,7 +275,7 @@ export function createRemoteBestie(
               !agents.find(row.pubkey),
           )
         )
-          throw new UnlistedBestieError(
+          throw new CreateNewError(
             "Your Builderlab account already has a Bestie that isn't listed in this community yet. Wait for your agents to load, then retry, or create a new Bestie for this community.",
           );
         progress("Creating Bestie…");
@@ -482,7 +493,7 @@ export function createRemoteBestie(
           ...state,
           status: "error",
           message: explain(error),
-          unlisted: error instanceof UnlistedBestieError,
+          canCreateNew: error instanceof CreateNewError,
         });
       })
       .finally(() => {
