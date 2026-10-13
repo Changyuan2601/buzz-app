@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { nativeAgents } from "../features/agents/native";
 import { appClient } from "./app-client";
 import { respond } from "./rpc";
 import type { AgentHandle } from "../features/agents/service";
@@ -13,6 +14,15 @@ it("launches a PR subscription through native custody with the bound owner and r
   const agent = {
     pubkey: "a".repeat(64),
     owner: "b".repeat(64),
+    subscribePr: (channel: string, root: string, repo: string, pr: number) =>
+      nativeAgents()?.subscribePr?.(
+        "a".repeat(64),
+        "b".repeat(64),
+        channel,
+        root,
+        repo,
+        pr,
+      ),
   } as AgentHandle;
   const context = {
     channel: "00000000-0000-4000-8000-000000000001",

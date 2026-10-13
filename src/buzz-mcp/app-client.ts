@@ -1,4 +1,3 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
 // The Buzz tools' client inside the app: the agent's native-held key signs and
 // reads through its Agents handle, files are read by a declared process, and
 // memory is read back through the owner's own session, to whom it is
@@ -32,15 +31,11 @@ export function appClient(
     pubkey: agent.pubkey,
     subscribePr: async (repo, pr, context) => {
       check();
-      if (!isTauri())
-        throw new Error("PR subscriptions require the native host");
-      return invoke("app_agent_subscribe_pr", {
-        pubkey: agent.pubkey,
-        owner: agent.owner,
-        ...context,
-        repo,
-        pr,
-      });
+      if (!agent.subscribePr)
+        throw new Error("Native PR subscription transport unavailable");
+      if (!context.channel || !context.root)
+        throw new Error("PR subscriptions require an owning channel thread");
+      return agent.subscribePr(context.channel, context.root, repo, pr);
     },
     query: (filters) => {
       check();

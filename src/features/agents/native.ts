@@ -57,6 +57,14 @@ export type AgentUpload = Readonly<{
   duration?: number;
 }>;
 export type AgentsNative = {
+  subscribePr?(
+    pubkey: string,
+    owner: string,
+    channel: string,
+    root: string,
+    repo: string,
+    pr: number,
+  ): Promise<unknown>;
   list(): Promise<readonly AgentIdentity[]>;
   /** Generates a key, has the signed-in owner attest it, and saves both. */
   create(
@@ -113,6 +121,15 @@ export type AgentsNative = {
 export const nativeAgents = (): AgentsNative | undefined =>
   isTauri()
     ? {
+        subscribePr: (pubkey, owner, channel, root, repo, pr) =>
+          invoke("app_agent_subscribe_pr", {
+            pubkey,
+            owner,
+            channel,
+            root,
+            repo,
+            pr,
+          }),
         list: () => invoke("app_agent_list"),
         create: (destination, owner, agentType, name) =>
           invoke("app_agent_create", { destination, owner, agentType, name }),

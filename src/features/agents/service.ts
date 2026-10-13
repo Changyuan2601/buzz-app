@@ -172,6 +172,12 @@ export type AgentTab<Config = unknown> = Readonly<{
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
 export type AgentHandle = Readonly<{
+  subscribePr?(
+    channel: string,
+    root: string,
+    repo: string,
+    pr: number,
+  ): Promise<unknown>;
   pubkey: string;
   name: string;
   owner: string;
@@ -2175,6 +2181,24 @@ export class AgentsService extends Service implements Agents {
         pubkey: agent.pubkey,
         name: agent.name,
         owner: agent.owner,
+        subscribePr: (
+          channel: string,
+          root: string,
+          repo: string,
+          pr: number,
+        ) => {
+          const native = this.require();
+          if (!native.subscribePr)
+            throw new Error("Native PR subscription transport unavailable");
+          return native.subscribePr(
+            agent.pubkey,
+            agent.owner,
+            channel,
+            root,
+            repo,
+            pr,
+          );
+        },
         publish: (event: AgentEventTemplate) => this.publish(runner, event),
         query: (filters: readonly object[]) =>
           this.require().query(agent.pubkey, filters),
