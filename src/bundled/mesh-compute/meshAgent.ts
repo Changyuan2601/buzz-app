@@ -26,12 +26,9 @@
 // `--tool-relay`, the socket and a one-time token, and keeps it for the
 // session. Calls act for the session's current turn. Unix only for now.
 //
-// LIMITATION (not isolation): the lease returned with the inference target is
-// checked again before publishing so a reply produced across a community switch
-// is dropped. That is stale-result mitigation only. A switch can restart
-// compute on the same port mid-turn, so the prompt may already have reached the
-// newly selected community's mesh, and check→publish is not atomic. Tool calls
-// (`send`) made before such a switch are not undone.
+// Native ingress binds every inference request to its selection lease and
+// holds replacement through the response. The final freshness check also drops
+// replies after a switch; already-published tool sends are not undone.
 import type { Delivery } from "../../features/agents/service";
 import type {
   HostProcess,
@@ -122,8 +119,8 @@ export type MeshAgentDeps = Readonly<{
     inference: PreparedInference,
     messages: readonly ChatMessage[],
   ): Promise<string>;
-  /** The foreground community origin; the turn's inference is prepared for it. */
-  origin(): string | undefined;
+  /** Resolve the delivering agent's bound community, never the foreground. */
+  origin(agent: string): string | undefined;
   /** Whether the channel is a DM, so the whole DM is one conversation. */
   dm?(agent: string, channelId: string): boolean;
   memories?(agent: string, signal: AbortSignal): Promise<readonly Memory[]>;
@@ -642,7 +639,7 @@ export class MeshAgentRuntime {
     let content: string;
     try {
       if (signal.aborted) return;
-      const origin = this.deps.origin();
+      const origin = this.deps.origin(agent.pubkey);
       if (!origin) throw new Error("No community is connected");
       const inference = await untilAborted(this.deps.prepare(origin), signal);
       const wholeChannel = dm || config.scope === "channel";

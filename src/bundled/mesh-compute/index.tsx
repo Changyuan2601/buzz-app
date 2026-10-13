@@ -15,6 +15,7 @@ import styles from "./Compute.module.css";
 
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
+import { MeshHelpers } from "./MeshHelpers";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
   type MeshAgentConfig,
@@ -162,7 +163,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const agents = ctx.agents;
     const runtime = new MeshAgentRuntime({
       spawn,
-      origin: () => ctx.relay.snapshot().origin,
+      origin: (agent) => agents.relay(agent)?.snapshot().origin,
       prepare: (relay) =>
         invoke<PreparedInference>("mesh_compute_prepare_inference", {
           relay,
@@ -642,6 +643,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
             </ShareModelPicker>
           </section>
         )}
+        {isTauri() &&
+          status?.available &&
+          community &&
+          ctx.agents &&
+          snapshot.status === "ready" &&
+          snapshot.origin && (
+            <MeshHelpers
+              key={`${snapshot.origin}:${snapshot.viewer}`}
+              agents={ctx.agents}
+              community={snapshot.origin}
+            />
+          )}
         {isTauri() && status?.available && community && (
           <details className={styles.options} open>
             <summary className="text-body-sm">Community devices</summary>

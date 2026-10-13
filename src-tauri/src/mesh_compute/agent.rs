@@ -23,7 +23,6 @@ pub(crate) fn community_origin(raw: &str) -> Result<String, String> {
 #[cfg(feature = "mesh")]
 struct Ready {
     lease: String,
-    port: u16,
     model: String,
 }
 
@@ -52,6 +51,10 @@ async fn ready_inference(
     let mut last = "Shared compute is starting".to_owned();
     let ready = async {
         loop {
+            let (guard, cancel) = host.preparing.request(&lease).await;
+            if cancel.is_cancelled() {
+                return Err("Mesh request retired".into());
+            }
             host.lease.community(&lease)?;
             match host.lifecycle.phase() {
                 Phase::Failed(reason) => return Err(reason),
@@ -59,7 +62,11 @@ async fn ready_inference(
                     return Err("Shared compute stopped before agent launch".into())
                 }
                 Phase::Starting => {}
-                Phase::Ready => match probe(&client, port, model).await {
+                Phase::Ready => match tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err("Mesh request retired".into()),
+                    result = probe(&client, port, model) => result,
+                } {
                     Ok(model) => {
                         buzz_mesh_compute::startup_log::stage("first_probe_ok", "");
                         return Ok(model);
@@ -67,6 +74,7 @@ async fn ready_inference(
                     Err(error) => last = error,
                 },
             }
+            drop(guard);
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     };
@@ -77,18 +85,11 @@ async fn ready_inference(
             format!("Shared compute inference did not become ready: {last}")
         })??;
     host.lease.community(&lease)?;
-    Ok(Ready { lease, port, model })
+    Ok(Ready { lease, model })
 }
 
-/// Loopback inference target for a plugin-owned helper (Agents2 Mesh type).
-/// `lease` is evidence only: pass it to `mesh_compute_inference_current` before
-/// publishing so a reply produced across a community switch is discarded.
-///
-/// LIMITATION: this is stale-result mitigation, NOT in-flight isolation. The
-/// lease is a UI-intent token, not a hold on the port. A community switch can
-/// restart compute on the same port mid-request, so a prompt may reach the newly
-/// selected community; and check→publish is not atomic. Real isolation needs the
-/// request bound to its lease at the native request boundary or a lifecycle hold.
+/// Lease-bound gateway target for a plugin-owned helper. Each request is checked
+/// after taking the native replacement lock, held through the upstream body.
 #[cfg(feature = "mesh")]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,12 +108,28 @@ pub async fn mesh_compute_prepare_inference(
 ) -> Result<PreparedInference, String> {
     let ready = ready_inference(&app, &relay, &model).await?;
     let host = app.state::<super::MeshHost>();
+    let mut gateway = host.inference.lock().await;
+    if gateway.is_none() {
+        let lease = host.lease.clone();
+        let lifecycle = host.lifecycle.clone();
+        *gateway = Some(
+            super::inference::Gateway::start(
+                host.preparing.clone(),
+                std::sync::Arc::new(move |id| {
+                    lease.with_current(id, |_| {
+                        if lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
+                            return Err("Shared compute is not ready".into());
+                        }
+                        super::mesh_port("BUZZ_MESH_API_PORT", 19337)
+                    })
+                }),
+            )
+            .await?,
+        );
+    }
     host.lease.with_current(&ready.lease, |_| {
-        if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
-            return Err("Shared compute stopped before agent launch".into());
-        }
         Ok(PreparedInference {
-            base_url: format!("http://127.0.0.1:{}/v1", ready.port),
+            base_url: gateway.as_ref().unwrap().base_url(&ready.lease),
             model: ready.model,
             lease: ready.lease.clone(),
         })
@@ -121,8 +138,8 @@ pub async fn mesh_compute_prepare_inference(
 
 /// True only while the lease from `mesh_compute_prepare_inference` is still the
 /// current selection and compute is Ready. Check before publishing a reply.
-/// Stale-result mitigation only (see `PreparedInference`); does not isolate an
-/// in-flight request, and a same-community lease rotation also returns false.
+/// Output freshness only; the gateway separately isolates inference requests.
+/// A same-community lease rotation also returns false.
 #[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_inference_current(
@@ -141,7 +158,7 @@ pub async fn mesh_compute_inference_current(
 /// One non-streaming chat completion on the leased loopback route, for the Mesh
 /// agent's "Chat" mode (no harness). Native so the WebView CSP stays closed to
 /// loopback HTTP. Refuses unless `lease` is still current and compute is Ready;
-/// the same stale-result limitation as `mesh_compute_prepare_inference` applies.
+/// holds the replacement lock through the complete HTTP operation.
 #[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_chat(
@@ -150,8 +167,12 @@ pub async fn mesh_compute_chat(
     model: String,
     messages: Vec<serde_json::Value>,
 ) -> Result<String, String> {
+    let host = app.state::<super::MeshHost>();
+    let (_guard, cancel) = host.preparing.request(&lease).await;
+    if cancel.is_cancelled() {
+        return Err("Mesh request retired".into());
+    }
     let port = {
-        let host = app.state::<super::MeshHost>();
         host.lease.with_current(&lease, |_| {
             if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
                 return Err("Shared compute is not ready".into());
@@ -164,7 +185,11 @@ pub async fn mesh_compute_chat(
         .timeout(std::time::Duration::from_secs(240))
         .build()
         .map_err(|e| e.to_string())?;
-    chat_completion(&client, port, &model, messages).await
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err("Mesh request retired".into()),
+        result = chat_completion(&client, port, &model, messages) => result,
+    }
 }
 
 #[cfg(feature = "mesh")]

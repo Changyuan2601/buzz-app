@@ -84,8 +84,26 @@ async fn reconcile(
             });
         }
     };
+    let admitted_at = admitted_evidence
+        .iter()
+        .filter(|event| event.kind.as_u16() == 13534)
+        .map(|event| event.created_at)
+        .max();
+    let observed_at = membership.iter().map(|event| event.created_at).max();
+    if observed_at < admitted_at {
+        return Err("Ignoring older Mesh membership snapshot".into());
+    }
+    let removed = !current_member_pubkeys(&membership).contains(&viewer);
+    let retained_records = retained_evidence(&admitted_evidence, &membership);
+    let mut retained = owner_ids_from_events(&retained_records);
+    retained.push(owner.clone());
     // Serialize admission against Share, Stop, selection, and agent startup.
-    let _guard = host.preparing.lock().await;
+    let shrinking = removed || owners.iter().any(|id| !retained.contains(id));
+    let _guard = if shrinking {
+        host.preparing.interrupt(Some(&lease)).await
+    } else {
+        host.preparing.lock().await
+    };
     host.lease.community(&lease)?;
     if identity.viewer().await? != viewer {
         return Err("Identity changed during Mesh reconciliation".into());
@@ -103,19 +121,6 @@ async fn reconcile(
     if !matches!(host.lifecycle.phase(), Phase::Starting | Phase::Ready) {
         return Ok(());
     }
-    let admitted_at = admitted_evidence
-        .iter()
-        .filter(|event| event.kind.as_u16() == 13534)
-        .map(|event| event.created_at)
-        .max();
-    let observed_at = membership.iter().map(|event| event.created_at).max();
-    if observed_at < admitted_at {
-        return Err("Ignoring older Mesh membership snapshot".into());
-    }
-    let removed = !current_member_pubkeys(&membership).contains(&viewer);
-    let retained_records = retained_evidence(&admitted_evidence, &membership);
-    let mut retained = owner_ids_from_events(&retained_records);
-    retained.push(owner.clone());
     if !removed && owners.iter().any(|id| !retained.contains(id)) {
         // Authoritative removal is not a liveness short-read. Stop the old admission
         // before trying optional discovery; a failed restart remains safely stopped.

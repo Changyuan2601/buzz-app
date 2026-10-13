@@ -11,9 +11,9 @@ use std::path::PathBuf;
 
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
 /// (9), an edit of its own message (40003), a
-/// channel canvas (40100) or a request to open a DM (41010). Its profile (0)
+/// custom emoji set (30030), channel canvas (40100) or a request to open a DM (41010). Its profile (0)
 /// is the app's, and its memory (30174) is written by `memory`.
-const KINDS: [u16; 6] = [5, 7, 9, 40003, 40100, 41010];
+const KINDS: [u16; 7] = [5, 7, 9, 30030, 40003, 40100, 41010];
 
 /// One saved identity. The key itself stays in the OS credential store.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,6 +139,25 @@ impl AppAgent {
                 .any(|tag| tag.is_empty() || tag.iter().map(String::len).sum::<usize>() > 4096)
         {
             return Err("Agent event is too large".into());
+        }
+        if kind == 30030 {
+            let mut codes = std::collections::HashSet::new();
+            if !content.is_empty()
+                || tags.first() != Some(&vec!["d".to_owned(), "buzz:custom-emoji".to_owned()])
+                || tags.iter().skip(1).any(|tag| {
+                    tag.len() != 3
+                        || tag[0] != "emoji"
+                        || tag[1].is_empty()
+                        || tag[1].len() > 64
+                        || !tag[1].bytes().all(|c| {
+                            c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-'
+                        })
+                        || !codes.insert(tag[1].clone())
+                        || !(tag[2].starts_with("https://") && tag[2].len() <= 2048)
+                })
+            {
+                return Err("Invalid custom emoji set".into());
+            }
         }
         let tags = self.attested(key, tags)?;
         key.signed(kind, content, tags)

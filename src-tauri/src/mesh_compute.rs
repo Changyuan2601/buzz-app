@@ -11,6 +11,8 @@ mod coordinator;
 #[cfg(feature = "mesh")]
 mod discovery;
 #[cfg(feature = "mesh")]
+mod inference;
+#[cfg(feature = "mesh")]
 mod lease;
 #[cfg(feature = "mesh")]
 mod preferences;
@@ -26,15 +28,17 @@ type Admission = (String, String, Vec<String>, Vec<nostr::event::Event>);
 #[derive(Default)]
 pub struct MeshHost {
     #[cfg(feature = "mesh")]
-    preparing: tokio::sync::Mutex<()>,
+    preparing: std::sync::Arc<inference::Fence>,
+    #[cfg(feature = "mesh")]
+    inference: tokio::sync::Mutex<Option<inference::Gateway>>,
     #[cfg(feature = "mesh")]
     sharing: std::sync::Mutex<Option<sharing::Share>>,
     #[cfg(feature = "mesh")]
     preferences: std::sync::Mutex<preferences::Preferences>,
     #[cfg(feature = "mesh")]
-    lifecycle: buzz_mesh_compute::lifecycle::Lifecycle,
+    lifecycle: std::sync::Arc<buzz_mesh_compute::lifecycle::Lifecycle>,
     #[cfg(feature = "mesh")]
-    lease: lease::Lease,
+    lease: std::sync::Arc<lease::Lease>,
     #[cfg(feature = "mesh")]
     publisher: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     #[cfg(feature = "mesh")]
@@ -127,30 +131,35 @@ pub async fn mesh_compute_status(
 pub async fn mesh_compute_stop(host: tauri::State<'_, MeshHost>) -> Result<(), String> {
     #[cfg(feature = "mesh")]
     {
-        let _guard = host.preparing.lock().await;
-        {
-            let mut sharing = host
-                .sharing
-                .lock()
-                .map_err(|_| "Mesh sharing unavailable")?;
-            *sharing = None;
-        }
-        host.lease.clear();
-        *host
-            .admission
-            .lock()
-            .map_err(|_| "Mesh admission unavailable")? = None;
-        host.lifecycle.stop();
-        host.lifecycle
-            .stop_and_wait()
-            .await
-            .map_err(|error| error.to_string())
+        stop_compute(&host).await
     }
     #[cfg(not(feature = "mesh"))]
     {
         let _ = host;
         Err("Mesh native runtime is not included in this build".into())
     }
+}
+
+#[cfg(feature = "mesh")]
+async fn stop_compute(host: &MeshHost) -> Result<(), String> {
+    let _guard = host.preparing.interrupt(None).await;
+    {
+        let mut sharing = host
+            .sharing
+            .lock()
+            .map_err(|_| "Mesh sharing unavailable")?;
+        *sharing = None;
+    }
+    host.lease.clear();
+    *host
+        .admission
+        .lock()
+        .map_err(|_| "Mesh admission unavailable")? = None;
+    host.lifecycle.stop();
+    host.lifecycle
+        .stop_and_wait()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(all(test, feature = "mesh"))]
@@ -374,7 +383,6 @@ pub async fn mesh_compute_select(
 ) -> Result<String, String> {
     let community = agent::community_origin(&community)?;
     let viewer = identity.viewer().await?;
-    let _guard = host.preparing.lock().await;
     let viewer_changed = host
         .preferences
         .lock()
@@ -386,6 +394,7 @@ pub async fn mesh_compute_select(
             return Ok(lease);
         }
     }
+    let _guard = host.preparing.interrupt(None).await;
     retire_selection(&host, &community, &viewer).await?;
     let lease = host
         .lease
@@ -461,7 +470,10 @@ pub async fn mesh_compute_release<R: tauri::Runtime>(
     host: tauri::State<'_, MeshHost>,
     lease: String,
 ) -> Result<(), String> {
-    let _guard = host.preparing.lock().await;
+    if host.lease.community(&lease).is_err() {
+        return Ok(());
+    }
+    let _guard = host.preparing.interrupt(Some(&lease)).await;
     if host.lease.community(&lease).is_ok() {
         host.lease.with_current(&lease, |_| {
             let mut sharing = host

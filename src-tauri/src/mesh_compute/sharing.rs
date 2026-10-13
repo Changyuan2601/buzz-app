@@ -83,7 +83,19 @@ pub async fn mesh_compute_share(
     let viewer = identity.viewer().await?;
     let member = viewer.clone();
     {
-        let _guard = host.preparing.lock().await;
+        host.lease.community(&lease)?;
+        let persistence_only = resetting
+            || (stopping
+                && host
+                    .sharing
+                    .lock()
+                    .map_err(|_| "Mesh sharing unavailable")?
+                    .is_none());
+        let _guard = if persistence_only {
+            host.preparing.lock().await
+        } else {
+            host.preparing.interrupt(Some(&lease)).await
+        };
         let community = host.lease.community(&lease)?;
         let needs_reset_model = resetting
             && host
@@ -310,7 +322,10 @@ pub(super) async fn finish_off(fx: &impl OffEffects) -> Result<(), String> {
 /// Validate the captured lease inside the acquired `preparing` guard before the
 /// destructive stop, so a delayed Off can never stop a replacement's node.
 async fn stop_if_current(host: &super::MeshHost, lease: &str) -> Result<bool, String> {
-    let _guard = host.preparing.lock().await;
+    if host.lease.community(lease).is_err() {
+        return Ok(false);
+    }
+    let _guard = host.preparing.interrupt(Some(&lease)).await;
     if host.lease.community(lease).is_err() {
         return Ok(false);
     }

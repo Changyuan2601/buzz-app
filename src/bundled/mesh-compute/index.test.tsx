@@ -38,6 +38,20 @@ vi.mock("@tauri-apps/api/core", () => ({
         })
       : native.invoke(command, args),
 }));
+/** Static UI cases only; lifecycle tests retain their controlled source/effects. */
+function staticPage(snapshot: object) {
+  let Component!: React.ComponentType;
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  return Component;
+}
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -314,17 +328,7 @@ it("starts sharing the selected model through the existing community lease", asy
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
-  const ctx = {
-    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    effect: () => {},
-    settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
-        Component = card.component;
-      },
-    },
-  } as unknown as Parameters<PluginModule["apply"]>[0];
-  apply(ctx);
+  const Component = staticPage(snapshot);
   render(<Component />);
   await screen.findByRole("switch", { name: "Share compute" });
   expect(
@@ -378,17 +382,7 @@ it.each([
       viewer: "viewer",
       scope: "https://fixture.example:viewer",
     };
-    let Component!: React.ComponentType;
-    const ctx = {
-      relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-      effect: () => {},
-      settingsCards: {
-        register: (card: { component: React.ComponentType }) => {
-          Component = card.component;
-        },
-      },
-    } as unknown as Parameters<PluginModule["apply"]>[0];
-    apply(ctx);
+    const Component = staticPage(snapshot);
     render(<Component />);
     expect(
       await screen.findByText((text) => text.startsWith(label)),
@@ -453,17 +447,7 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
-  const ctx = {
-    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    effect: () => {},
-    settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
-        Component = card.component;
-      },
-    },
-  } as unknown as Parameters<PluginModule["apply"]>[0];
-  apply(ctx);
+  const Component = staticPage(snapshot);
   render(<Component />);
   fireEvent.click(await screen.findByRole("switch", { name: "Share compute" }));
   await screen.findByText("Shutdown not confirmed");
@@ -496,17 +480,7 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
-  const ctx = {
-    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    effect: () => {},
-    settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
-        Component = card.component;
-      },
-    },
-  } as unknown as Parameters<PluginModule["apply"]>[0];
-  apply(ctx);
+  const Component = staticPage(snapshot);
   render(<Component />);
   const resume = await screen.findByRole("switch", {
     name: "Share compute",
@@ -646,17 +620,7 @@ it("persists Reset to Auto without restarting an active share, then starts Auto 
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
-  const ctx = {
-    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    effect: () => {},
-    settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
-        Component = card.component;
-      },
-    },
-  } as unknown as Parameters<PluginModule["apply"]>[0];
-  apply(ctx);
+  const Component = staticPage(snapshot);
   render(<Component />);
   fireEvent.click(
     await screen.findByRole("combobox", { name: "Model to share" }),
@@ -721,17 +685,7 @@ it("shows the failure and native cause in Auto mode without presenting it as an 
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
-  const ctx = {
-    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
-    effect: () => {},
-    settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
-        Component = card.component;
-      },
-    },
-  } as unknown as Parameters<PluginModule["apply"]>[0];
-  apply(ctx);
+  const Component = staticPage(snapshot);
   render(<Component />);
   await screen.findByText(/Native model startup failed: fixture cause/);
   expect(screen.getByText(/Mesh needs recovery\./)).toHaveTextContent(
@@ -1586,3 +1540,87 @@ for (const nextViewer of [undefined, "other"] as const) {
     }
   });
 }
+
+it("prepares a background agent against its own community, not the foreground", async () => {
+  const owner = "a".repeat(64);
+  const agent = "b".repeat(64);
+  const snapshot = {
+    status: "ready",
+    origin: "https://b.example",
+    viewer: owner,
+    scope: `https://b.example:${owner}`,
+  };
+  let run!: (
+    delivery: import("../../features/agents/service").Delivery,
+  ) => Promise<void>;
+  const cleanups: (() => void)[] = [];
+  const publish = vi.fn(async () => ({}));
+  native.invoke.mockImplementation(async (command) => {
+    if (command === "mesh_compute_prepare_inference")
+      return { baseUrl: "http://127.0.0.1:1/A/v1", model: "mesh", lease: "A" };
+    if (command === "mesh_compute_chat") return "A answer";
+    if (command === "mesh_compute_inference_current") return true;
+    return { available: true, lifecycle: { state: "stopped" } };
+  });
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    host: { spawn: vi.fn() },
+    agents: {
+      relay: (pubkey: string) => {
+        expect(pubkey).toBe(agent);
+        return {
+          snapshot: () => ({
+            origin: "https://a.example",
+            status: "ready",
+            session: { channels: { list: () => ({ channels: [] }) } },
+          }),
+        };
+      },
+      register: (type: { run: typeof run }) => {
+        run = type.run;
+      },
+    },
+    effect: (setup: () => () => void) => {
+      cleanups.push(setup());
+    },
+    settingsCards: { register: () => {} },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  try {
+    await run({
+      channelId: "channel-a",
+      config: { mode: "chat", prompt: "Be brief" },
+      signal: new AbortController().signal,
+      trigger: {
+        type: "mention",
+        event: {
+          id: "c".repeat(64),
+          pubkey: owner,
+          kind: 9,
+          created_at: 1,
+          tags: [["h", "channel-a"]],
+          content: "A private question",
+          sig: "",
+        },
+      },
+      agent: {
+        pubkey: agent,
+        owner,
+        name: "A helper",
+        publish,
+        query: async () => [],
+      },
+    } as unknown as import("../../features/agents/service").Delivery);
+    expect(native.invoke).toHaveBeenCalledWith(
+      "mesh_compute_prepare_inference",
+      {
+        relay: "https://a.example",
+        model: "auto",
+      },
+    );
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "A answer" }),
+    );
+  } finally {
+    for (const cleanup of cleanups.reverse()) cleanup();
+  }
+});

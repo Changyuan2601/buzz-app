@@ -114,6 +114,7 @@
     "allow-mesh-compute-disarm",
     "allow-mesh-compute-prepare-inference",
     "allow-mesh-compute-inference-current",
+    "allow-mesh-compute-chat",
     "allow-browser-attach",
     "allow-browser-set-bounds",
     "allow-browser-detach",

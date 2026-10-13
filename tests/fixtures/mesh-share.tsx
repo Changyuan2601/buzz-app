@@ -20,10 +20,19 @@ let activity = {
   otherNodes: 1,
   sharingNodes: 1,
 };
+const profiles = new Map();
 const snapshot = {
+  origin: "https://fixture.example",
   status: "ready",
   viewer: "fixture",
   scope: "https://fixture.example:fixture",
+  session: {
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+  },
 };
 const calls: { command: string; args: unknown }[] = [];
 Object.assign(window, {
@@ -115,6 +124,10 @@ Object.assign(window, {
     },
   },
 });
+const agentState = { status: "ready", agents: [], running: [], teams: [] };
+const agentTypes: object[] = [];
+const created: object[] = [];
+Object.assign(window, { meshHelperFixture: { created } });
 let Page: ComponentType<{ community?: { id: string; name: string } }> = () =>
   null;
 apply({
@@ -124,6 +137,27 @@ apply({
     subscribe: () => () => {},
   },
   effect: () => {},
+  host: {
+    spawn: () => {
+      throw new Error("No runtime in UI fixture");
+    },
+  },
+  agents: {
+    register: (type: object) =>
+      agentTypes.push({
+        ...type,
+        key: "buzz.mesh-compute/mesh",
+        pluginId: "buzz.mesh-compute",
+        revision: "fixture",
+      }),
+    types: () => agentTypes,
+    snapshot: () => agentState,
+    subscribe: () => () => {},
+    create: async (input: object) => {
+      created.push(input);
+      return { ...input, pubkey: "a".repeat(64) };
+    },
+  },
   settingsCards: {
     register: (card: { component: typeof Page }) => {
       Page = card.component;
@@ -134,6 +168,6 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <main data-buzz-ui="" className="p-6 bg-surface text-primary">
-    <Page />
+    <Page community={{ id: "https://fixture.example", name: "Fixture" }} />
   </main>,
 );
