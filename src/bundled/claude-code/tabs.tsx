@@ -447,6 +447,9 @@ export function createTabs({
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );
+    const stale = new Set(
+      sessions.filter((session) => session.stale).map((session) => session.key),
+    );
     const workspace = readConfig(agent.config).workspace;
     const {
       session: here,
@@ -493,6 +496,17 @@ export function createTabs({
                         .join(" · ")}
                     </span>
                   </span>
+                  {stale.has(item.key) && (
+                    <Button
+                      type="button"
+                      variant="subtle"
+                      disabled={busy.get(item.key)}
+                      title="Its instructions changed on another device"
+                      onClick={() => runtime.restart(agent.pubkey, item.key)}
+                    >
+                      Needs restart · Restart to apply
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     variant="ghost"

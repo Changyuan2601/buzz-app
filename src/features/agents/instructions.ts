@@ -57,6 +57,9 @@ type Entry = Readonly<{
   migration: Migration;
   /** Local text kept for the user to save, never a launch source. */
   draft?: string;
+  /** When this device last saved a version (ms): sessions started before it
+   * restart (§5.1). Survives app restarts, so a pinned Codex thread sees it. */
+  localSave?: number;
 }>;
 
 type CleanupEntry = Readonly<{
@@ -186,6 +189,16 @@ export class InstructionStore {
     this.write(key, {
       ...(entry ?? { head: { unknown: true } }),
       migration: { state: "staged", text, sourceRevision },
+    });
+  }
+  markLocalSave(key: string, at: number) {
+    const entry = this.entries.get(key) ?? {
+      head: { unknown: true },
+      migration: { state: "never" },
+    };
+    this.write(key, {
+      ...entry,
+      localSave: Math.max(at, (entry.localSave ?? 0) + 1),
     });
   }
   completeScan(owner: string, community: string, scanId: number) {

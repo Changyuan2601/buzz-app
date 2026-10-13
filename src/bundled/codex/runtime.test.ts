@@ -324,7 +324,11 @@ function fixture(
         model: "test-model",
         effort: "low",
       },
-      instructions: { source: "version", text: "TEST_INSTRUCTIONS" },
+      instructions: {
+        source: "version",
+        text: "TEST_INSTRUCTIONS",
+        localRestart: 0,
+      },
       signal: new AbortController().signal,
       workingUntil,
       current: () => true,
@@ -2388,4 +2392,45 @@ describe("programs", () => {
     expect(programs("a; b; c; d; e")).toBe("a, b, c and 2 more");
     expect(programs("")).toBeUndefined();
   });
+});
+
+it("T20 a thread keeps its pinned instructions until a local save", async () => {
+  const f = fixture();
+  const at = (
+    text: string,
+    versionId: string,
+    localRestart: number,
+  ): Delivery => ({
+    ...f.delivery("@Codex again"),
+    instructions: { source: "version", versionId, text, localRestart },
+  });
+  const sent = (index: number) =>
+    JSON.stringify(f.starts()[index]?.params ?? null);
+  await f.runtime.run(at("PINNED_V1", "v1", 0));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.complete(0, "ONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // A remote edit: same thread, no new local save.
+  await f.runtime.run(at("REMOTE_V2", "v2", 0));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(sent(1)).toContain("PINNED_V1");
+  expect(sent(1)).not.toContain("REMOTE_V2");
+  f.complete(1, "TWO");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  // A local save on this device moves the pin.
+  await f.runtime.run(at("LOCAL_V3", "v3", 1));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(sent(2)).toContain("LOCAL_V3");
+  // A new thread uses the current text.
+  await f.runtime.run({
+    ...f.delivery("@Codex fresh", "e".repeat(64)),
+    instructions: {
+      source: "version",
+      versionId: "v4",
+      text: "REMOTE_V4",
+      localRestart: 1,
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
+  expect(sent(3)).toContain("REMOTE_V4");
 });

@@ -11,9 +11,11 @@ import {
   fromOwner,
   type Agent,
   type AgentHandle,
+  type AgentInstructions,
   type Delivery,
   type Effort,
   type Models,
+  needsRestart,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -89,6 +91,10 @@ type Entry = {
   /** Whether the owner has attention on: new sessions get its tools, its
    * guidance and the end-of-turn review. */
   attention: boolean;
+  /** The app's instructions for it; each session keeps what it launched
+   * with, and a local save (a new `localRestart`) restarts older ones. */
+  instructions?: AgentInstructions;
+  localRestart: number;
   /** Watch and timer turns, one lane per Interest. */
   lanes: Lanes;
   memory?: { value: string | null | undefined; at: number };
@@ -112,7 +118,7 @@ export class ClaudeRuntime {
    * reading it gets the same array back. */
   private readonly views = new Map<
     string,
-    ReturnType<AgentSessions["snapshot"]>
+    readonly { key: string; busy: boolean; stale: boolean }[]
   >();
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
@@ -150,13 +156,20 @@ export class ClaudeRuntime {
     for (const agent of agents) {
       const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry)
-        this.entry(agent.pubkey, next, agent.attentionEnabled).name =
-          agent.name;
-      else if (
+      const localRestart = agent.liveInstructions?.localRestart() ?? 0;
+      if (!entry) {
+        const added = this.entry(agent.pubkey, next, agent.attentionEnabled);
+        added.name = agent.name;
+        if (agent.liveInstructions) added.instructions = agent.liveInstructions;
+        added.localRestart = localRestart;
+        continue;
+      }
+      if (agent.liveInstructions) entry.instructions = agent.liveInstructions;
+      if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
         entry.name !== agent.name ||
-        entry.attention !== agent.attentionEnabled
+        entry.attention !== agent.attentionEnabled ||
+        entry.localRestart !== localRestart
       ) {
         // Attention changes what a new session is told and offered. Turned
         // off, its waiting watch and timer turns are dropped too.
@@ -164,6 +177,7 @@ export class ClaudeRuntime {
         entry.config = next;
         entry.name = agent.name;
         entry.attention = agent.attentionEnabled;
+        entry.localRestart = localRestart;
         entry.sessions.reconfigure();
       }
     }
@@ -230,10 +244,33 @@ export class ClaudeRuntime {
   sessions(pubkey: string) {
     let view = this.views.get(pubkey);
     if (!view) {
-      view = this.agents.get(pubkey)?.sessions.snapshot() ?? [];
+      const entry = this.agents.get(pubkey);
+      let current: ReturnType<AgentInstructions["capture"]> | undefined;
+      try {
+        current = entry?.instructions?.capture();
+      } catch {}
+      view = (entry?.sessions.snapshot() ?? []).map(
+        ({ instructions, ...session }) => ({
+          ...session,
+          // Started with other instructions than the current ones: a remote
+          // edit waits for Restart to apply.
+          stale: !!(
+            instructions &&
+            current &&
+            needsRestart(instructions, current)
+          ),
+        }),
+      );
       this.views.set(pubkey, view);
     }
     return view;
+  }
+  /** Restart to apply: the conversation's next message starts a session with
+   * the current instructions. False while it is working. */
+  restart(pubkey: string, key: string) {
+    const restarted = !!this.agents.get(pubkey)?.sessions.restart(key);
+    if (restarted) this.notify();
+    return restarted;
   }
   /** The agent's saved sessions, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
@@ -341,10 +378,7 @@ export class ClaudeRuntime {
   }: Delivery) {
     // The app owns the agent's instructions; a session keeps the text it
     // launched with until its fingerprint changes.
-    const settings = {
-      ...this.resolveConfig(raw),
-      instructions: instructions.text,
-    };
+    const settings = this.resolveConfig(raw);
     // Claude runs commands as you; mentions need owner or delegated authority.
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.
@@ -369,6 +403,11 @@ export class ClaudeRuntime {
       signal.throwIfAborted();
     }
     const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
+    // Until the agent list brings the live accessor, sessions get this run's.
+    entry.instructions ??= Object.freeze({
+      localRestart: () => instructions.localRestart,
+      capture: () => instructions,
+    });
     entry.handle = agent;
     entry.team = team ?? "";
     // Read while the turn's prompt is built, not after: a new session's prompt
@@ -647,6 +686,7 @@ export class ClaudeRuntime {
       config: initial,
       team: "",
       attention,
+      localRestart: 0,
       lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
@@ -684,14 +724,17 @@ export class ClaudeRuntime {
         JSON.stringify([
           entry.config.model,
           entry.config.workspace,
-          entry.config.instructions,
+          entry.localRestart,
           entry.config.scope,
           entry.team,
           entry.name,
           entry.attention,
         ]),
-      launch: async () => {
-        const { workspace, instructions, scope } = entry.config;
+      // Only model discovery runs before a delivery brings instructions.
+      capture: () => entry.instructions?.capture(),
+      launch: async (captured) => {
+        const { workspace, scope } = entry.config;
+        const instructions = captured?.text ?? "";
         const { attention } = entry;
         const memory = await this.memory(pubkey, entry);
         return {

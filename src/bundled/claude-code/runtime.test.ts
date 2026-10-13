@@ -137,7 +137,7 @@ function setup(
       channelId: channel,
       agent,
       config: DEFAULT_CONFIG,
-      instructions: { source: "none", text: "" },
+      instructions: { source: "none", text: "", localRestart: 0 },
       signal: options.signal ?? new AbortController().signal,
       workingUntil,
       // The host's answer, as it is when asked.
@@ -275,7 +275,7 @@ it("runs a mention on the model and effort its delivery picked", async () => {
     channelId: channel,
     agent,
     config: DEFAULT_CONFIG,
-    instructions: { source: "none", text: "" },
+    instructions: { source: "none", text: "", localRestart: 0 },
     model: "haiku",
     effort: "low",
     signal: new AbortController().signal,
@@ -311,7 +311,7 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
       channelId: channel,
       agent,
       config: DEFAULT_CONFIG,
-      instructions: { source: "none", text: "" },
+      instructions: { source: "none", text: "", localRestart: 0 },
       ...(team ? { team } : {}),
       signal: new AbortController().signal,
       workingUntil: () => undefined,
@@ -363,7 +363,7 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
       channelId: channel,
       agent: { ...agent, name },
       config: DEFAULT_CONFIG,
-      instructions: { source: "none", text: "" },
+      instructions: { source: "none", text: "", localRestart: 0 },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
     } as unknown as Delivery);
@@ -625,7 +625,7 @@ it("acts only on messages from its owner and the owner's agents", async () => {
         publish: async (template: object) => ({ ...event, ...template }),
       },
       config: DEFAULT_CONFIG,
-      instructions: { source: "none", text: "" },
+      instructions: { source: "none", text: "", localRestart: 0 },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
     } as unknown as Delivery);
@@ -1004,7 +1004,7 @@ it("offers attention tools and guidance only while attention is on", async () =>
   const agent = {
     pubkey: self,
     config: DEFAULT_CONFIG,
-    instructions: { source: "none", text: "" },
+    instructions: { source: "none", text: "", localRestart: 0 },
     attentionEnabled: true,
   };
   const mention = (id: string) =>
@@ -1105,7 +1105,7 @@ it("tells the owner, not the asking sibling, when a sibling's turn fails", async
     channelId: channel,
     agent: { ...agent, owner },
     config: DEFAULT_CONFIG,
-    instructions: { source: "none", text: "" },
+    instructions: { source: "none", text: "", localRestart: 0 },
     signal: new AbortController().signal,
     workingUntil: () => undefined,
   } as unknown as Delivery);

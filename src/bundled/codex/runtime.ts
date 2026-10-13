@@ -4,6 +4,7 @@ import {
   type Agent,
   type AgentHandle,
   type Delivery,
+  type InstructionSnapshot,
   type Models,
 } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
@@ -43,6 +44,8 @@ type Request = {
   event: EventData;
   agent: AgentHandle;
   settings: Config;
+  /** The app's instructions now; a resumed thread may keep its pin. */
+  instructions: InstructionSnapshot;
   conversation: Conversation;
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
@@ -62,7 +65,14 @@ type Request = {
 };
 /** `at` is when the binding last started a turn; bindings saved before it
  * existed have none. */
-type Saved = { threadId: string; workspace: string; at?: number };
+type Saved = {
+  threadId: string;
+  workspace: string;
+  at?: number;
+  /** The instructions its last accepted turn carried (§5.1): the thread keeps
+   * them until a local save, never taking a remote edit mid-thread. */
+  instructions?: InstructionSnapshot;
+};
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -510,6 +520,7 @@ export class CodexRuntime {
       event: trigger.event,
       agent,
       settings,
+      instructions: delivery.instructions,
       ...(toolRoot ? { toolRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
@@ -1024,6 +1035,14 @@ export class CodexRuntime {
       }
       active.threadId = started.thread.id;
       server.threads.set(active.threadId, agent.pubkey);
+      const pinned =
+        started.thread.id === existing?.threadId
+          ? existing.instructions
+          : undefined;
+      const applied =
+        pinned && pinned.localRestart >= request.instructions.localRestart
+          ? pinned
+          : request.instructions;
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
         threadId: active.threadId,
@@ -1045,17 +1064,24 @@ export class CodexRuntime {
         additionalContext: {
           "buzz.instructions": {
             kind: "application",
-            value: developerInstructions(agent, settings, request.team, memory),
+            value: developerInstructions(
+              agent,
+              { ...settings, instructions: applied.text },
+              request.team,
+              memory,
+            ),
           },
         },
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
-      // Empty threads have no resumable rollout until a user turn is accepted.
+      // Empty threads have no resumable rollout until a user turn is accepted;
+      // the pin moves only with an accepted turn.
       this.save(request, entry, key, {
         threadId: started.thread.id,
         workspace,
         at: Date.now(),
+        instructions: applied,
       });
       ready();
       this.status(agent.pubkey, key, "Working");

@@ -145,7 +145,30 @@ export type Agent<Config = unknown> = Readonly<{
   /** Whether its watches and timers wake it. Off keeps every object. */
   attentionEnabled: boolean;
   config: Config;
+  /** The agent's instructions as the app owns them (§5.1). Absent for a hosted agent. */
+  liveInstructions?: AgentInstructions;
 }>;
+/** What a session was started with: captured synchronously just before its
+ * launch, and kept for as long as the session lives. */
+export type InstructionSnapshot = Readonly<{
+  source: Extract<Resolved, { text: string }>["source"];
+  versionId?: string;
+  text: string;
+  localRestart: number;
+}>;
+export type AgentInstructions = Readonly<{
+  /** Counts this device's saves. A session started before the latest one
+   * restarts; a remote edit changes nothing here and waits for Restart. */
+  localRestart(): number;
+  /** The current instructions, read from the store now. Throws when they are
+   * blocked, so nothing starts without them. */
+  capture(): InstructionSnapshot;
+}>;
+/** Whether a session runs with other instructions than `current` now. */
+export const needsRestart = (
+  session: InstructionSnapshot,
+  current: InstructionSnapshot,
+) => session.text !== current.text || session.versionId !== current.versionId;
 export type AgentChange<Config = unknown> = Readonly<{
   name?: string;
   /** An HTTPS image URL; `null` or empty removes the picture. */
@@ -301,7 +324,7 @@ export type Delivery<Config = unknown> = Readonly<{
   team?: string;
   /** The agent's own instructions for this run, resolved by the app (NIP-AP
    * kind 44300 history, then the record's fallbacks). Never a plugin setting. */
-  instructions: Extract<Resolved, { text: string }>;
+  instructions: InstructionSnapshot;
   /** Aborts on the run's deadline, or when the agent is removed or its type is
    * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
@@ -865,6 +888,7 @@ export class AgentsService extends Service implements Agents {
   private readonly instructionStore: InstructionStore;
   /** Created or imported identities not yet confirmed: "Finish importing". */
   private provisional: readonly AgentIdentity[] = [];
+  private accessors = new Map<string, AgentInstructions>();
   private records: Record<string, AgentRecord>;
   private teamList: readonly Team[];
   private state: AgentsSnapshot;
@@ -1327,6 +1351,8 @@ export class AgentsService extends Service implements Agents {
     const sync = identity && this.bindingOf(identity)?.instructions;
     if (!sync) throw new Error("This community can't save instructions yet");
     await sync.save(pubkey, text, base);
+    // A local save restarts sessions started before it (§5.1).
+    this.instructionStore.markLocalSave(this.subjectOf(identity), Date.now());
     this.notify();
   }
 
@@ -1971,7 +1997,43 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
+      liveInstructions: this.instructionsLive(identity.pubkey),
     });
+  }
+  private subjectOf(
+    identity: Pick<AgentIdentity, "owner" | "relay" | "pubkey">,
+  ) {
+    return subjectKey(
+      identity.owner,
+      relayOrigin(identity.relay),
+      identity.pubkey,
+    );
+  }
+  /** One accessor per agent, so its views compare equal across reads. */
+  private instructionsLive(pubkey: string): AgentInstructions {
+    const cached = this.accessors.get(pubkey);
+    if (cached) return cached;
+    const localRestart = () => {
+      const identity = this.live(pubkey);
+      return identity
+        ? (this.instructionStore.entry(this.subjectOf(identity))?.localSave ??
+            0)
+        : 0;
+    };
+    const accessor: AgentInstructions = Object.freeze({
+      localRestart,
+      capture: () => {
+        const identity = this.live(pubkey);
+        const config = this.find(pubkey)?.config;
+        const resolved = identity
+          ? this.instructionsFor(identity, config)
+          : { blocked: "The agent is gone" };
+        if ("blocked" in resolved) throw new Error(resolved.blocked);
+        return Object.freeze({ ...resolved, localRestart: localRestart() });
+      },
+    });
+    this.accessors.set(pubkey, accessor);
+    return accessor;
   }
   /** The live binding of the agent's community, if it has one now. */
   private bindingOf({ relay, owner }: Pick<AgentIdentity, "relay" | "owner">) {
@@ -2845,7 +2907,12 @@ export class AgentsService extends Service implements Agents {
             config: agent.config,
             ...pick,
             ...(team ? { team } : {}),
-            instructions,
+            instructions: Object.freeze({
+              ...instructions,
+              localRestart:
+                this.instructionStore.entry(this.subjectOf(agent))?.localSave ??
+                0,
+            }),
             signal,
             workingUntil: working.hold,
             ignored: () => job.work?.remove(),

@@ -15,6 +15,7 @@ import {
   type ToolServer,
   type TurnPick,
 } from "./claude";
+import type { InstructionSnapshot } from "../../features/agents/service";
 
 /** A conversation's process stops after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -42,8 +43,14 @@ export type SessionsOptions = Readonly<{
   /** Where a new conversation looks for a process already started. */
   spare?: Spare;
   store: SessionStore;
-  /** How to start a process with the agent's current settings. */
-  launch(): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
+  /** The agent's instructions now, read synchronously just before a launch
+   * so the launch uses exactly what the session records (§5.1). */
+  capture?(): InstructionSnapshot | undefined;
+  /** How to start a process with the agent's current settings and the
+   * instructions captured for it. */
+  launch(
+    instructions?: InstructionSnapshot,
+  ): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
   /** Changes when a setting that a running process fixed has changed. */
   fingerprint(): string;
   now?(): number;
@@ -55,6 +62,8 @@ export type SessionsOptions = Readonly<{
 type Live = {
   process: ClaudeProcess;
   fingerprint: string;
+  /** What it was started with; set only once the process started. */
+  instructions?: InstructionSnapshot;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
 };
@@ -90,11 +99,16 @@ export class AgentSessions {
     return this.options.store.get(key)?.seen ?? 0;
   }
   /** Conversations with a running process, and whether each is working. */
-  snapshot() {
+  snapshot(): {
+    key: string;
+    busy: boolean;
+    instructions?: InstructionSnapshot;
+  }[] {
     return [
       ...[...this.live].map(([key, live]) => ({
         key,
         busy: live.process.busy,
+        ...(live.instructions ? { instructions: live.instructions } : {}),
       })),
       ...[...this.once.keys()].map((key) => ({ key, busy: true })),
     ];
@@ -128,7 +142,8 @@ export class AgentSessions {
     const discovery: NonNullable<AgentSessions["discovery"]> = {
       fingerprint,
       result: Promise.resolve().then(async () => {
-        const launch = await this.options.launch();
+        // Captured as a launch would, then discarded with the process.
+        const launch = await this.options.launch(this.options.capture?.());
         if (this.disposed || this.discovery !== discovery)
           throw new Error("Claude was stopped");
         const process = await ClaudeProcess.start(this.options.spawn, {
@@ -304,6 +319,15 @@ export class AgentSessions {
         this.drop(key, live);
   }
 
+  /** Restart to apply: stops the conversation's idle process, so its next
+   * message starts one with the current instructions. False while busy. */
+  restart(key: string) {
+    const live = this.live.get(key);
+    if (!live || live.process.busy) return false;
+    this.drop(key, live);
+    return true;
+  }
+
   dispose() {
     this.disposed = true;
     this.clearDiscovery();
@@ -314,12 +338,19 @@ export class AgentSessions {
   private async start(resume: string | undefined): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
-    const launch = await this.options.launch();
+    const instructions = this.options.capture?.();
+    const launch = await this.options.launch(instructions);
     const process = resume
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
       : await this.fresh(launch);
+    // Recorded only once it started; a retry below captures anew.
     if (fingerprint === this.options.fingerprint() || this.disposed)
-      return { process, fingerprint, used: this.now() };
+      return {
+        process,
+        fingerprint,
+        used: this.now(),
+        ...(instructions ? { instructions } : {}),
+      };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
     return this.start(resume);

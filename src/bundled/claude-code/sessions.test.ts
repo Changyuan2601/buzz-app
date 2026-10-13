@@ -9,6 +9,7 @@ import {
   Spare,
   type SessionStore,
 } from "./sessions";
+import type { InstructionSnapshot } from "../../features/agents/service";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -35,11 +36,19 @@ function sessions(
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
+    /** Sessions capture the app's instructions, as the runtime's do. */
+    instructions: boolean;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
   const store = options.store ?? memoryStore();
   let model = "opus";
+  let current: InstructionSnapshot = {
+    source: "version",
+    versionId: "v1",
+    text: "V1",
+    localRestart: 0,
+  };
   let ids = 0;
   const spawn = (id: string, spawnOptions?: object) => {
     // The fake records each process as the call begins.
@@ -52,17 +61,18 @@ function sessions(
     spawn,
     ...(options.spare ? { spare: options.spare } : {}),
     store,
-    launch: async () => {
-      const current = model;
+    ...(options.instructions ? { capture: () => current } : {}),
+    launch: async (captured) => {
+      const chosen = model;
       await options.launched;
       return {
         cwd: "/work",
-        systemPrompt: "prompt",
-        model: current,
+        systemPrompt: captured?.text ?? "prompt",
+        model: chosen,
         ...(options.tools ? { tools: options.tools } : {}),
       };
     },
-    fingerprint: () => model,
+    fingerprint: () => `${model}:${current.localRestart}`,
     newId: () => `new-${++ids}`,
   });
   const claudes = () =>
@@ -75,6 +85,15 @@ function sessions(
     live: () => claudes().filter((process) => !process.killed),
     setModel: (next: string) => {
       model = next;
+    },
+    /** A new head; a local save also counts as one more local restart. */
+    setInstructions: (versionId: string, text: string, local: boolean) => {
+      current = {
+        source: "version",
+        versionId,
+        text,
+        localRestart: current.localRestart + (local ? 1 : 0),
+      };
     },
   };
 }
@@ -511,4 +530,103 @@ it("does not start metadata discovery after its agent is disposed during launch"
   release();
   await stopped;
   expect(claudes()).toHaveLength(0);
+});
+
+const prompted = (
+  process: { received: Record<string, unknown>[] } | undefined,
+) =>
+  process?.received
+    .map(
+      (message) =>
+        (message.request as { appendSystemPrompt?: string } | undefined)
+          ?.appendSystemPrompt,
+    )
+    .find(Boolean);
+const versionOf = (pool: AgentSessions, key: string) =>
+  pool.snapshot().find((session) => session.key === key)?.instructions
+    ?.versionId;
+
+it("T20 a remote edit keeps the running session and Restart applies it", async () => {
+  const { pool, claudes, setInstructions } = sessions({ instructions: true });
+  await pool.deliver("c/a", "hi", 1);
+  await flush();
+  const [first] = claudes();
+  setInstructions("v2", "V2", false);
+  pool.reconfigure();
+  await flush();
+  expect(first?.killed).toBe(false);
+  expect(versionOf(pool, "c/a")).toBe("v1");
+  expect(pool.restart("c/a")).toBe(true);
+  await pool.deliver("c/a", "again", 2);
+  expect(prompted(claudes().at(-1))).toBe("V2");
+  expect(versionOf(pool, "c/a")).toBe("v2");
+});
+
+it("T20 a local save restarts an idle session and a new one uses the current text", async () => {
+  const { pool, claudes, setInstructions } = sessions({ instructions: true });
+  await pool.deliver("c/a", "hi", 1);
+  await flush();
+  const [first] = claudes();
+  setInstructions("v2", "V2", true);
+  pool.reconfigure();
+  await flush();
+  expect(first?.killed).toBe(true);
+  await pool.deliver("c/b", "hi", 2);
+  expect(versionOf(pool, "c/b")).toBe("v2");
+});
+
+it("T28 concurrent sessions keep their own snapshots", async () => {
+  const { pool, live, setInstructions } = sessions({ instructions: true });
+  await pool.deliver("c/a", "hi", 1);
+  setInstructions("v2", "V2", false);
+  await pool.deliver("c/b", "hi", 2);
+  await flush();
+  expect(live()).toHaveLength(2);
+  expect(versionOf(pool, "c/a")).toBe("v1");
+  expect(versionOf(pool, "c/b")).toBe("v2");
+});
+
+it("T28 a save during a busy turn restarts the session once it falls idle", async () => {
+  const { pool, claudes, setInstructions } = sessions({
+    instructions: true,
+    hold: true,
+  });
+  const done = pool.deliver("c/a", "hi", 1);
+  await flush();
+  const [busy] = claudes();
+  setInstructions("v2", "V2", true);
+  pool.reconfigure();
+  await flush();
+  expect(busy?.killed).toBe(false);
+  expect(pool.restart("c/a")).toBe(false);
+  busy?.finish();
+  await expect(done).resolves.toEqual({ ok: true });
+  await flush();
+  expect(busy?.killed).toBe(true);
+  const next = pool.deliver("c/a", "again", 2);
+  await flush();
+  expect(versionOf(pool, "c/a")).toBe("v2");
+  claudes().at(-1)?.finish();
+  await next;
+});
+
+it("T28 a save while a session starts records only the retry's snapshot", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes, setInstructions } = sessions({
+    instructions: true,
+    launched,
+  });
+  const done = pool.deliver("c/a", "hi", 1);
+  await flush();
+  setInstructions("v2", "V2", true);
+  pool.reconfigure();
+  release();
+  await expect(done).resolves.toEqual({ ok: true });
+  const used = claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  expect(prompted(used[0])).toBe("V2");
+  expect(versionOf(pool, "c/a")).toBe("v2");
 });
