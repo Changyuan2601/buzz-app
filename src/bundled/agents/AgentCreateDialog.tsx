@@ -56,21 +56,29 @@ export function AgentCreateDialog({
   agents,
   types,
   community,
+  initial,
+  detailsLayout = "card",
   onClose,
   onCreated,
 }: {
   agents: Agents;
   types: readonly RegisteredAgentType[];
   community?: string | undefined;
+  /** Owner-reviewed starting values supplied by a helper entry point. */
+  initial?: { name: string; config: unknown } | undefined;
+  /** Longer creation forms belong below the identity card, not over its artwork. */
+  detailsLayout?: "card" | "form";
   onClose(): void;
   onCreated(agent: Agent): void;
 }) {
   const [open, setOpen] = useState(true);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initial?.name ?? "");
   const [picture, setPicture] = useState(() => randomAgentAvatar().url);
   const [typeKey, setTypeKey] = useState(types[0]?.key ?? "");
   const type = types.find((item) => item.key === typeKey) ?? types[0];
-  const [config, setConfig] = useState(() => startingConfig(type));
+  const [config, setConfig] = useState(
+    () => initial?.config ?? startingConfig(type),
+  );
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -108,6 +116,23 @@ export function AgentCreateDialog({
       setPending(false);
     }
   };
+  const createView = Create ? (
+    <Create
+      key={type.key}
+      config={config}
+      disabled={pending}
+      onChange={(next) => {
+        setConfig(next);
+        setDirty(true);
+      }}
+    />
+  ) : (
+    <p className="m-0 text-center text-body-sm text-secondary">
+      {type?.remote
+        ? "Its provider keeps its key and runs it, whether or not this app is open."
+        : "Set it up after it is made."}
+    </p>
+  );
   const back = editing
     ? editing.back
     : avatarActive
@@ -234,30 +259,13 @@ export function AgentCreateDialog({
                 </span>
               )
             }
-            details={
-              Create ? (
-                <Create
-                  key={type.key}
-                  config={config}
-                  disabled={pending}
-                  onChange={(next) => {
-                    setConfig(next);
-                    setDirty(true);
-                  }}
-                />
-              ) : (
-                <p className="m-0 text-center text-body-sm text-secondary">
-                  {type?.remote
-                    ? "Its provider keeps its key and runs it, whether or not this app is open."
-                    : "Set it up after it is made."}
-                </p>
-              )
-            }
+            details={detailsLayout === "card" ? createView : null}
             editing={!!editing}
             avatarNavigationRef={avatarNavigation}
             avatarActionTarget={avatarAction}
             onAvatarActiveChange={setAvatarActive}
           />
+          {detailsLayout === "form" && createView}
         </CreateCardContext.Provider>
         {error && (
           <p role="alert" className="m-0 text-body-sm text-danger">

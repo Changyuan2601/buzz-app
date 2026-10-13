@@ -12,6 +12,8 @@ import {
   GlobeIcon,
 } from "../shared/design-system/icons";
 
+import { CpuIcon, ChatCircleIcon } from "../shared/design-system/icons";
+
 afterEach(cleanup);
 
 it("keeps Administration separate and uses each card's navigation icon", () => {
@@ -133,3 +135,66 @@ it.each([null, "primary"])(
     expect(onSection).toHaveBeenCalledWith("profile");
   },
 );
+
+it("uses a contributed icon and preserves the chat fallback", () => {
+  const client = {
+    selected: "primary",
+    memberships: [{ id: "primary", name: "Primary" }],
+  };
+  const connection = { scope: "icon-test" };
+  const entries = [
+    {
+      id: "compute",
+      key: "mesh/compute",
+      pluginId: "mesh",
+      revision: "one",
+      title: "Compute",
+      component: () => null,
+      icon: CpuIcon,
+    },
+    {
+      id: "other",
+      key: "other/card",
+      pluginId: "other",
+      revision: "one",
+      title: "Other",
+      component: () => null,
+    },
+  ];
+  render(
+    <SettingsSidebar
+      communities={
+        {
+          snapshot: () => client,
+          subscribe: () => () => {},
+          relay: { snapshot: () => connection, subscribe: () => () => {} },
+        } as unknown as Communities
+      }
+      cards={
+        {
+          snapshot: () => entries,
+          subscribe: () => () => {},
+        } as unknown as SettingsCards
+      }
+      onBack={() => {}}
+      onSection={() => {}}
+    />,
+  );
+  const reference = render(
+    <>
+      <CpuIcon data-testid="cpu-reference" />
+      <ChatCircleIcon data-testid="chat-reference" />
+    </>,
+  );
+  expect(
+    screen.getByRole("button", { name: "Compute" }).querySelector("svg")
+      ?.innerHTML,
+  ).toBe(reference.getByTestId("cpu-reference").innerHTML);
+  expect(
+    screen.getByRole("button", { name: "Other" }).querySelector("svg")
+      ?.innerHTML,
+  ).toBe(reference.getByTestId("chat-reference").innerHTML);
+  expect(
+    screen.getByRole("button", { name: "Compute" }).closest("section"),
+  ).toHaveTextContent("Primary");
+});

@@ -166,6 +166,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ..HostGrants::default()
     });
     vec![
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/mesh-compute/manifest.json"
+        ))
+        .expect("mesh manifest"),
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),

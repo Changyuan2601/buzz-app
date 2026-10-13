@@ -1,5 +1,8 @@
+import meshManifest from "./mesh-compute/manifest.json";
+import * as mesh from "./mesh-compute";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
+
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -57,6 +60,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...meshManifest, apiVersion: 1 },
+    module: mesh,
+    enabledByDefault: false,
+  },
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,

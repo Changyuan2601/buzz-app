@@ -597,3 +597,39 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         assert!(agents.list().is_err());
     }
 }
+
+#[test]
+fn signs_only_canonical_agent_emoji_sets() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let tags = vec![
+        vec!["d".into(), "buzz:custom-emoji".into()],
+        vec![
+            "emoji".into(),
+            "party".into(),
+            "https://relay.example/media/x.png".into(),
+        ],
+    ];
+    let event = agent
+        .sign(&key, 30030, String::new(), tags.clone())
+        .unwrap();
+    assert_eq!(event["pubkey"], agent.pubkey);
+    assert_eq!(event["kind"], 30030);
+    assert!(agent
+        .sign(&key, 30030, "not empty".into(), tags.clone())
+        .is_err());
+    assert!(agent.sign(&key, 30030, String::new(), vec![]).is_err());
+    let mut duplicate = tags.clone();
+    duplicate.push(tags[1].clone());
+    assert!(agent.sign(&key, 30030, String::new(), duplicate).is_err());
+    for code in ["Party", "bad code", ""] {
+        let mut invalid = tags.clone();
+        invalid[1][1] = code.into();
+        assert!(agent.sign(&key, 30030, String::new(), invalid).is_err());
+    }
+    let mut invalid = tags;
+    invalid[1][2] = "file:///tmp/a.png".into();
+    assert!(agent.sign(&key, 30030, String::new(), invalid).is_err());
+}

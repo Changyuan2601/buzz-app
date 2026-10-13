@@ -1,6 +1,12 @@
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
+import {
+  EMOJI_SET,
+  EMOJI_SET_KIND,
+  emojiTags,
+  normalizeShortcode,
+} from "../features/relay/emoji";
 import { decode } from "nostr-tools/nip19";
 import type { BuzzClient, BuzzEvent, Context, Upload } from "./client";
 
@@ -48,6 +54,11 @@ export const TOOLS: readonly Tool[] = [
     },
     ["audience"],
   ),
+  tool(
+    "emoji",
+    "List community custom emoji, or add a local image to your own set with shortcode and path. Refuses names found in the community catalog.",
+    { shortcode: str, path: str },
+  ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
   tool(
     "react",
@@ -91,7 +102,9 @@ type Handler = (tools: Tools, args: Args) => Promise<Reply>;
 
 /** Runs tool `name` for an agent working in `context`. A throw is a tool
  * error for the agent to correct. */
-export function callTool(
+const emojiWrites = new Set<string>();
+
+export async function callTool(
   client: BuzzClient,
   context: Context,
   name: string,
@@ -99,10 +112,84 @@ export function callTool(
 ) {
   const handler = HANDLERS[name];
   if (!handler) throw new Error(`No tool ${name}`);
-  return handler(new Tools(client, context), args);
+  const writingEmoji =
+    name === "emoji" &&
+    (args.path !== undefined || args.shortcode !== undefined);
+  // Reject overlapping replacements, including separate conversation clients
+  // for the same signing identity. Different communities may retry independently.
+  if (writingEmoji && emojiWrites.has(client.pubkey))
+    throw new Error(
+      "An emoji addition is already in progress. Retry when it finishes.",
+    );
+  if (writingEmoji) emojiWrites.add(client.pubkey);
+  try {
+    return await handler(new Tools(client, context), args);
+  } finally {
+    if (writingEmoji) emojiWrites.delete(client.pubkey);
+  }
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async emoji({ client }, args) {
+    const sets = await client.query([
+      { kinds: [EMOJI_SET_KIND], "#d": [EMOJI_SET], limit: 500 },
+    ]);
+    if (sets.length >= 500)
+      throw new Error(
+        "Community emoji catalog may be incomplete (500-set read limit).",
+      );
+    const entries = sets.flatMap((set) =>
+      emojiTags({ tags: set.tags.map((tag) => [...tag]) }),
+    );
+    if (args.shortcode === undefined && args.path === undefined)
+      return JSON.stringify(entries);
+    const shortcode = normalizeShortcode(required(args, "shortcode"));
+    if (!shortcode)
+      throw new Error(
+        "Use a shortcode of 1–64 letters, digits, underscores or hyphens.",
+      );
+    if (entries.some((entry) => entry.shortcode === shortcode))
+      throw new Error("That shortcode already exists. Choose another name.");
+    const own = await client.query([
+      {
+        kinds: [EMOJI_SET_KIND],
+        authors: [client.pubkey],
+        "#d": [EMOJI_SET],
+        limit: 1,
+      },
+    ]);
+    const current = [...own].sort(
+      (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+    )[0];
+    // The native signer owns timestamps. Never risk a same-second replacement
+    // losing to the previous event's ID tie-break. The caller may retry later.
+    if (current && current.created_at >= Math.floor(Date.now() / 1000))
+      throw new Error("The emoji set just changed. Retry after this second.");
+    const existing = emojiTags({
+      tags: current?.tags.map((tag) => [...tag]) ?? [],
+    });
+    if (existing.some((entry) => entry.shortcode === shortcode))
+      throw new Error("That shortcode already exists. Choose another name.");
+    if (existing.length >= 250)
+      throw new Error("This agent's emoji set is full.");
+    const data = await client.read(required(args, "path"));
+    const mime = sniff(data);
+    if (!mime?.startsWith("image/") || data.length > 256 * 1024)
+      throw new Error(
+        "Emoji must be a PNG, GIF, JPEG or WebP image of at most 256 KB.",
+      );
+    const upload = await client.upload(data, mime);
+    const event = await client.publish({
+      kind: EMOJI_SET_KIND,
+      content: "",
+      tags: [
+        ["d", EMOJI_SET],
+        ...existing.map((entry) => ["emoji", entry.shortcode, entry.url]),
+        ["emoji", shortcode, upload.url],
+      ],
+    });
+    return JSON.stringify({ shortcode, url: upload.url, id: event.id });
+  },
   async send(tools, args) {
     const { client, context } = tools;
     const reply =

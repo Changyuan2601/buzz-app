@@ -1,4 +1,5 @@
 mod archive;
+pub mod tool_relay;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
@@ -28,6 +29,11 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_process;
 mod host_request;
+mod mesh_compute;
+use mesh_compute::widget::{
+    mesh_compute_widget_close, mesh_compute_widget_open, mesh_compute_widget_status,
+};
+use mesh_compute::{mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, MeshHost};
 mod identity;
 mod image_clipboard;
 
@@ -403,6 +409,12 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        mesh_compute_inventory,
+        mesh_compute_status,
+        mesh_compute_stop,
+        mesh_compute_widget_open,
+        mesh_compute_widget_close,
+        mesh_compute_widget_status,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
@@ -507,6 +519,23 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Donor parity: model/download futures require upstream's 8 MiB worker stacks.
+    // Keep the runtime owned for the complete app lifetime, not a second Mesh node.
+    #[cfg(feature = "mesh")]
+    let _mesh_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(8 * 1024 * 1024)
+        .build()
+    {
+        Ok(runtime) => {
+            tauri::async_runtime::set(runtime.handle().clone());
+            Some(runtime)
+        }
+        Err(error) => {
+            eprintln!("Mesh async runtime unavailable: {error}");
+            return;
+        }
+    };
     let context = app_context();
     // A pending Sign out finishes before any window, webview storage, service or
     // identity read; if it can't, Buzz explains and exits without opening.
@@ -564,6 +593,13 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             deep_links::setup(app.handle());
+            #[cfg(feature = "mesh")]
+            app.state::<MeshHost>().initialize_preferences(
+                app.path()
+                    .app_data_dir()
+                    .map(|root| root.join("mesh-sharing.json"))
+                    .map_err(|error| error.to_string()),
+            );
             app.manage(relay::Spools::new(
                 app.path()
                     .app_cache_dir()
@@ -588,6 +624,7 @@ pub fn run() {
                 }
                 Err(error) => eprintln!("Could not start the media listener: {error}"),
             }
+
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -641,6 +678,8 @@ pub fn run() {
     builder
         .manage(image_clipboard::ImageClipboard::default())
         .manage(identity)
+        .manage(MeshHost::default())
+
         .manage(archive::ArchiveHost::default())
         .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
@@ -662,8 +701,14 @@ pub fn run() {
                 browser_action,
                 browser_status
             ];
+            #[cfg(feature = "mesh")]
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm, mesh_compute::agent::mesh_compute_prepare_inference, mesh_compute::agent::mesh_compute_inference_current, mesh_compute::agent::mesh_compute_chat];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                #[cfg(feature = "mesh")]
+                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release" | "mesh_compute_disarm" | "mesh_compute_prepare_inference" | "mesh_compute_inference_current" | "mesh_compute_chat") {
+                    return mesh_commands(request);
+                }
                 if request.message.command().starts_with("browser_") {
                     browser_commands(request)
                 } else {
@@ -711,12 +756,14 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 shut_down(app);
+
             }
         });
 }
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<MeshHost>().shutdown();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();

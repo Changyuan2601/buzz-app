@@ -1,0 +1,27 @@
+{
+  "id": "buzz.mesh-compute",
+  "name": "Shared compute",
+  "apiVersion": 1,
+  "host": {
+    "processes": [
+      {
+        "id": "agent",
+        "program": "buzz-mesh-goose"
+      },
+      {
+        "id": "bridge",
+        "program": "buzz-foundation",
+        "args": ["--tool-listen"]
+      },
+      {
+        "id": "workspace",
+        "program": "pwd"
+      },
+      {
+        "id": "read",
+        "program": "base64",
+        "args": ["-i"]
+      }
+    ]
+  }
+}

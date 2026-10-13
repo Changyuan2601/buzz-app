@@ -74,6 +74,11 @@ export default defineConfig(async ({ command, mode }) => {
         openRelay ? defaultOrigin : "",
       ),
     },
+    build: {
+      rollupOptions: {
+        input: { main: "index.html", compute: "compute-widget.html" },
+      },
+    },
     clearScreen: false,
     // Keep build artifacts and coverage pages out of dependency discovery.
     optimizeDeps: {

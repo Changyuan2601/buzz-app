@@ -407,6 +407,12 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   intendedSizes: [{ width: 16, height: 16 }],
 });
 
+import TablerCpuIcon from "@tabler/icons-react/dist/esm/icons/IconCpu.mjs";
+export const CpuIcon = defineIcon("tabler", TablerCpuIcon);
+import TablerHexagonIcon from "@tabler/icons-react/dist/esm/icons/IconHexagon.mjs";
+export const HexagonIcon = defineIcon("tabler", TablerHexagonIcon);
+import TablerHexagonFilledIcon from "@tabler/icons-react/dist/esm/icons/IconHexagonFilled.mjs";
+export const HexagonFilledIcon = defineIcon("tabler", TablerHexagonFilledIcon);
 export const ClaudeLogoIcon = defineIcon("custom", ClaudeLogoArtwork, {
   meaning: "Claude harness",
   category: "Custom brand mark",

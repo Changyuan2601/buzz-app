@@ -308,7 +308,7 @@ it("lists its tools before it can call them", async () => {
       method: "tools/list",
     },
   )) as { result: { tools: unknown[] } };
-  expect(list.result.tools).toHaveLength(12);
+  expect(list.result.tools).toHaveLength(13);
   await expect(
     respond(
       undefined,
@@ -346,4 +346,146 @@ it("shows a media image to the agent, and nothing else", async () => {
   await expect(
     callTool(client, {}, "media_get", { url: "abc.txt" }),
   ).rejects.toThrow("Only JPEG, PNG, GIF and WebP");
+});
+
+it("adds an uploaded emoji to the agent's own set without erasing older entries", async () => {
+  const { client, published } = fake([
+    event({
+      kind: 30030,
+      pubkey: me,
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "old", "https://relay/media/old.png"],
+      ],
+    }),
+  ]);
+  const result = await callTool(client, {}, "emoji", {
+    shortcode: ":Party:",
+    path: "/tmp/party.png",
+  });
+  expect(JSON.parse(result as string)).toMatchObject({
+    shortcode: "party",
+    url: "https://relay/media/x.png",
+  });
+  expect(published).toEqual([
+    {
+      kind: 30030,
+      content: "",
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "old", "https://relay/media/old.png"],
+        ["emoji", "party", "https://relay/media/x.png"],
+      ],
+    },
+  ]);
+});
+it("refuses conflicting names, invalid images and same-second emoji replacement", async () => {
+  const existing = event({
+    kind: 30030,
+    pubkey: me,
+    tags: [
+      ["d", "buzz:custom-emoji"],
+      ["emoji", "party", "https://relay/media/old.png"],
+    ],
+  });
+  const conflict = fake([existing]);
+  await expect(
+    callTool(conflict.client, {}, "emoji", {
+      shortcode: "party",
+      path: "/tmp/party.png",
+    }),
+  ).rejects.toThrow("already exists");
+  expect(conflict.client.upload).not.toHaveBeenCalled();
+  const recent = fake([
+    { ...existing, created_at: Math.floor(Date.now() / 1000) },
+  ]);
+  await expect(
+    callTool(recent.client, {}, "emoji", {
+      shortcode: "new",
+      path: "/tmp/party.png",
+    }),
+  ).rejects.toThrow("just changed");
+  expect(recent.client.publish).not.toHaveBeenCalled();
+  const bad = fake();
+  await expect(
+    callTool(bad.client, {}, "emoji", {
+      shortcode: "bad name",
+      path: "/tmp/party.png",
+    }),
+  ).rejects.toThrow("shortcode");
+  await expect(
+    callTool(bad.client, {}, "emoji", {
+      shortcode: "party",
+      path: "/tmp/not-image",
+    }),
+  ).rejects.toThrow("image");
+  expect(bad.client.publish).not.toHaveBeenCalled();
+});
+
+it("rejects overlapping emoji writes for the same identity and releases after completion", async () => {
+  const { client, published } = fake();
+  let release!: () => void;
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const upload = client.upload;
+  client.upload = async (...args) => {
+    started();
+    await gate;
+    return upload(...args);
+  };
+  const first = callTool(client, {}, "emoji", {
+    shortcode: "first",
+    path: "/tmp/a.png",
+  });
+  try {
+    await entered;
+    await expect(
+      callTool({ ...client }, {}, "emoji", {
+        shortcode: "second",
+        path: "/tmp/b.png",
+      }),
+    ).rejects.toThrow("already in progress");
+    expect(published).toEqual([]);
+  } finally {
+    release();
+  }
+  await first;
+  expect(published).toHaveLength(1);
+  client.query = async () => [
+    event({ ...published[0], pubkey: me, created_at: 1 }),
+  ];
+  await callTool(client, {}, "emoji", {
+    shortcode: "second",
+    path: "/tmp/b.png",
+  });
+  expect(published[1]?.tags).toContainEqual([
+    "emoji",
+    "first",
+    "https://relay/media/x.png",
+  ]);
+  expect(published[1]?.tags).toContainEqual([
+    "emoji",
+    "second",
+    "https://relay/media/x.png",
+  ]);
+});
+it("refuses to add through a capped emoji catalog", async () => {
+  const { client } = fake(
+    Array.from({ length: 500 }, () =>
+      event({ kind: 30030, tags: [["d", "buzz:custom-emoji"]] }),
+    ),
+  );
+  await expect(
+    callTool(client, {}, "emoji", { shortcode: "new", path: "/tmp/a.png" }),
+  ).rejects.toThrow("incomplete");
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [30030], "#d": ["buzz:custom-emoji"], limit: 500 },
+  ]);
+  expect(client.upload).not.toHaveBeenCalled();
+  expect(client.publish).not.toHaveBeenCalled();
 });

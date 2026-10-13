@@ -1788,3 +1788,58 @@ fn media_type(value: Option<&str>) -> (String, bool) {
 }
 #[cfg(test)]
 mod tests;
+
+/// Mesh uses the same bounded, authenticated HTTP client as other native relay reads.
+#[cfg(feature = "mesh")]
+pub(crate) async fn mesh_read(
+    host: &IdentityHost,
+    community: &str,
+    filter: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    let (path, method) = if filter.is_some() {
+        ("/query", "POST")
+    } else {
+        ("/", "GET")
+    };
+    let url = request_url(community, path, method)?;
+    let body = filter.map(|filter| serde_json::json!([filter]).to_string());
+    let response = send(host, url, method, body, method == "POST", MAX_RESPONSE).await?;
+    if !(200..300).contains(&response.status) {
+        return Err("Mesh relay read failed".into());
+    }
+    serde_json::from_str(&response.body).map_err(|_| "Invalid Mesh relay response".into())
+}
+
+#[cfg(feature = "mesh")]
+pub(crate) fn mesh_origin(community: &str) -> Result<()> {
+    origin(community).map(|_| ())
+}
+
+/// Native Mesh coordinator only; never exposes arbitrary signing/publication to plugins.
+#[cfg(feature = "mesh")]
+pub(crate) async fn mesh_publish(
+    host: &IdentityHost,
+    community: &str,
+    event: serde_json::Value,
+) -> Result<()> {
+    verify_owned_event(host, &event).await?;
+    let url = request_url(community, "/events", "POST")?;
+    let response = send(
+        host,
+        url,
+        "POST",
+        Some(event.to_string()),
+        true,
+        MAX_RESPONSE,
+    )
+    .await?;
+    let receipt: serde_json::Value =
+        serde_json::from_str(&response.body).map_err(|_| "Invalid Mesh publication receipt")?;
+    if !(200..300).contains(&response.status)
+        || receipt["accepted"] != true
+        || receipt["event_id"] != event["id"]
+    {
+        return Err("Mesh status publication was not accepted".into());
+    }
+    Ok(())
+}
