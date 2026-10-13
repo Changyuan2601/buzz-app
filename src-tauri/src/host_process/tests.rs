@@ -58,14 +58,21 @@ async fn streams_stdin_to_stdout_until_input_closes() {
     let processes = HostProcesses::default();
     let (channel, mut events) = channel();
     let handle = processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), channel)
+        .start(
+            0,
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            channel,
+            false,
+        )
         .unwrap();
     processes
-        .write("a.plugin", handle, "one\n".into(), false)
+        .write("a.plugin", handle, "one\n".into(), false, None)
         .await
         .unwrap();
     processes
-        .write("a.plugin", handle, "two\n".into(), true)
+        .write("a.plugin", handle, "two\n".into(), true, None)
         .await
         .unwrap();
     let (stdout, _, exit) = until_exit(&mut events).await;
@@ -74,7 +81,7 @@ async fn streams_stdin_to_stdout_until_input_closes() {
     assert!(processes.registry().entries.is_empty());
     assert_eq!(
         processes
-            .write("a.plugin", handle, "late".into(), false)
+            .write("a.plugin", handle, "late".into(), false, None)
             .await,
         Err("No such process".into())
     );
@@ -92,6 +99,7 @@ async fn reports_stderr_and_exit_code() {
             "sh",
             command("sh", &["-c", "echo oops >&2; exit 3"]),
             channel,
+            false,
         )
         .unwrap();
     let (_, stderr, exit) = until_exit(&mut events).await;
@@ -105,10 +113,17 @@ async fn only_the_owning_plugin_can_write_or_kill() {
     let processes = HostProcesses::default();
     let (channel, mut events) = channel();
     let handle = processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), channel)
+        .start(
+            0,
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            channel,
+            false,
+        )
         .unwrap();
     assert!(processes
-        .write("b.plugin", handle, "x".into(), false)
+        .write("b.plugin", handle, "x".into(), false, None)
         .await
         .is_err());
     assert!(processes.kill("b.plugin", handle).is_err());
@@ -130,6 +145,7 @@ async fn kill_ends_the_process_and_its_descendants() {
             "sh",
             command("sh", &["-c", "trap '' TERM; sleep 30 & echo $!; wait"]),
             channel,
+            false,
         )
         .unwrap();
     let child: i32 = loop {
@@ -151,10 +167,24 @@ async fn stop_all_ends_every_process() {
     let (first, mut first_events) = channel();
     let (second, mut second_events) = channel();
     processes
-        .start(0, "a.plugin".into(), "cat", command("cat", &[]), first)
+        .start(
+            0,
+            "a.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            first,
+            false,
+        )
         .unwrap();
     processes
-        .start(0, "b.plugin".into(), "cat", command("cat", &[]), second)
+        .start(
+            0,
+            "b.plugin".into(),
+            "cat",
+            command("cat", &[]),
+            second,
+            false,
+        )
         .unwrap();
     processes.stop_all();
     until_exit(&mut first_events).await;
@@ -174,6 +204,7 @@ async fn a_page_that_stops_listening_stops_the_process() {
             "sh",
             command("sh", &["-c", "echo hi; sleep 30"]),
             channel,
+            false,
         )
         .unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -192,7 +223,14 @@ async fn a_spawn_from_before_a_reload_is_refused() {
     let page = processes.page();
     processes.stop_all();
     let (channel, _events) = channel();
-    let refused = processes.start(page, "a.plugin".into(), "cat", command("cat", &[]), channel);
+    let refused = processes.start(
+        page,
+        "a.plugin".into(),
+        "cat",
+        command("cat", &[]),
+        channel,
+        false,
+    );
     assert_eq!(refused.err().as_deref(), Some("The page reloaded"));
     assert!(processes.registry().entries.is_empty());
 }
@@ -209,6 +247,7 @@ async fn a_process_may_close_its_output_and_carry_on() {
             "sh",
             command("sh", &["-c", "exec >&- 2>&-; sleep 1; exit 4"]),
             channel,
+            false,
         )
         .unwrap();
     let (_, _, exit) = until_exit(&mut events).await;
@@ -227,6 +266,7 @@ async fn shutdown_kills_every_group_without_waiting() {
             "sh",
             command("sh", &["-c", "trap '' TERM; sleep 30 & echo $!; wait"]),
             channel,
+            false,
         )
         .unwrap();
     let child: i32 = loop {
@@ -276,4 +316,84 @@ async fn assert_dead(pid: i32) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(dead(), "descendant survived");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_turn_evidence_is_captured_before_renderer_delivery() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let processes = HostProcesses::default();
+    let observer = processes.observer.clone();
+    let captured = Arc::new(AtomicBool::new(false));
+    let saw = captured.clone();
+    let (sender, mut events) = mpsc::unbounded_channel();
+    let delivered = Arc::new(Mutex::new(String::new()));
+    let channel = Channel::new(move |body: InvokeResponseBody| {
+        if let InvokeResponseBody::Json(json) = body {
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            if value["type"] == "stdout" {
+                let mut buffer = delivered.lock().unwrap();
+                buffer.push_str(value["data"].as_str().unwrap());
+                while let Some(end) = buffer.find('\n') {
+                    let line: String = buffer.drain(..=end).collect();
+                    let wire: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    if wire["id"] == 1 && wire.get("result").is_some() {
+                        saw.store(
+                            !observer.snapshot()["sessions"]
+                                .as_array()
+                                .unwrap()
+                                .is_empty(),
+                            Ordering::SeqCst,
+                        );
+                    }
+                }
+            }
+            let _ = sender.send(value);
+        }
+        Ok(())
+    });
+    let script = r#"import sys,json
+for line in sys.stdin:
+ request=json.loads(line)
+ thread=request['params']['threadId']
+ print(json.dumps({'id':request['id'],'result':{'turn':{'id':'native-turn'}}}))
+ print(json.dumps({'method':'turn/started','params':{'threadId':thread,'turn':{'id':'native-turn'}}}))
+ print(json.dumps({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':'native-turn','status':'completed'}}}))
+ sys.stdout.flush()
+"#;
+    let handle = processes
+        .start(
+            0,
+            "buzz.codex".into(),
+            "python3",
+            command("python3", &["-c", script]),
+            channel,
+            true,
+        )
+        .unwrap();
+    let route = crate::plugin_observer::Route {
+        relay: "wss://fixture.test".into(),
+        owner: "a".repeat(64),
+        agent: "b".repeat(64),
+        channel_id: "fixture-channel".into(),
+        root_id: "c".repeat(64),
+        trigger_id: "d".repeat(64),
+    };
+    processes
+        .write(
+            "buzz.codex",
+            handle,
+            "{\"id\":1,\"method\":\"turn/start\",\"params\":{\"threadId\":\"native-thread\"}}\n"
+                .into(),
+            true,
+            Some(route),
+        )
+        .await
+        .unwrap();
+    until_exit(&mut events).await;
+    assert!(captured.load(Ordering::SeqCst));
+    let snapshot = processes.observer.snapshot();
+    assert_eq!(snapshot["sessions"][0]["codex_thread_id"], "native-thread");
+    assert_eq!(snapshot["sessions"][0]["state"], "completed");
+    assert_eq!(snapshot["sessions"][0]["trigger_ids"][0], "d".repeat(64));
 }

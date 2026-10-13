@@ -52,7 +52,10 @@ function fixture(
   const exits = deferred<number | null>();
   const storage = new Map<string, string>();
   const process = {
-    write: async (data: string) => {
+    write: async (
+      data: string,
+      _observation?: { pubkey: string; event: unknown },
+    ) => {
       const request: Wire = JSON.parse(data);
       sent.push(request);
       if (request.id != null && !request.method) {
@@ -1892,4 +1895,30 @@ describe("programs", () => {
     expect(programs("a; b; c; d; e")).toBe("a, b, c and 2 more");
     expect(programs("")).toBeUndefined();
   });
+});
+
+it("binds original Buzz intake to native Codex before submitting a turn", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex a differently rendered native ask");
+  const writes = vi.spyOn(f.process, "write");
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const call = writes.mock.calls.find(
+    ([wire]) => JSON.parse(wire).method === "turn/start",
+  );
+  if (!call) throw new Error("No native turn request");
+  expect(call[1]?.pubkey).toBe(delivery.agent.pubkey);
+  expect(call[1]?.event).toBe(
+    delivery.trigger.type === "timer" ? undefined : delivery.trigger.event,
+  );
+  expect(JSON.parse(call[0]).params).not.toHaveProperty("observation");
+  f.complete();
+  await vi.waitFor(() =>
+    expect(
+      f.runtime
+        .sessions(delivery.agent.pubkey)
+        .some((row) => row.status === "Idle"),
+    ).toBe(true),
+  );
+  f.runtime.dispose();
 });

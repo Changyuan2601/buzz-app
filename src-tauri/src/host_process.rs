@@ -43,6 +43,7 @@ pub(crate) enum ProcessEvent {
 
 struct Entry {
     plugin: String,
+    observed: bool,
     /// Its process group, which is its own pid.
     #[cfg_attr(not(unix), allow(dead_code))]
     group: Option<u32>,
@@ -53,6 +54,7 @@ struct Entry {
 #[derive(Clone, Default)]
 pub(crate) struct HostProcesses {
     inner: Arc<Mutex<Registry>>,
+    pub(crate) observer: crate::plugin_observer::PluginObserver,
 }
 #[derive(Default)]
 struct Registry {
@@ -93,6 +95,7 @@ impl HostProcesses {
         program: &str,
         mut command: Command,
         on_event: Channel<ProcessEvent>,
+        observed: bool,
     ) -> Result<u64, String> {
         let state = self.clone();
         let mut registry = self.registry();
@@ -121,6 +124,7 @@ impl HostProcesses {
             handle,
             Entry {
                 plugin,
+                observed,
                 group: child.id(),
                 stdin: child
                     .stdin
@@ -130,18 +134,26 @@ impl HostProcesses {
             },
         );
         drop(registry);
+        if observed {
+            self.observer.open(handle);
+        }
 
         let (gone, reader_gone) = oneshot::channel::<()>();
         let gone = Arc::new(Mutex::new(Some(gone)));
         let readers = [
-            child
-                .stdout
-                .take()
-                .map(|out| forward(out, Stream::Stdout, on_event.clone(), gone.clone())),
+            child.stdout.take().map(|out| {
+                forward(
+                    out,
+                    Stream::Stdout,
+                    on_event.clone(),
+                    gone.clone(),
+                    observed.then(|| (state.observer.clone(), handle)),
+                )
+            }),
             child
                 .stderr
                 .take()
-                .map(|err| forward(err, Stream::Stderr, on_event.clone(), gone.clone())),
+                .map(|err| forward(err, Stream::Stderr, on_event.clone(), gone.clone(), None)),
         ];
         #[cfg(unix)]
         let group = child.id().map(|pid| pid as i32);
@@ -185,6 +197,9 @@ impl HostProcesses {
                 let _ = reader.await;
             }
             state.registry().entries.remove(&handle);
+            if observed {
+                state.observer.outage(Some(handle));
+            }
             let _ = on_event.send(ProcessEvent::Exit {
                 code: status.and_then(|status| status.code()),
             });
@@ -197,19 +212,29 @@ impl HostProcesses {
         handle: u64,
         data: String,
         close: bool,
+        observation: Option<crate::plugin_observer::Route>,
     ) -> Result<(), String> {
         if data.len() > MAX_WRITE_BYTES {
             return Err("Write is too large".into());
         }
-        let stdin = self.owned(plugin, handle, |entry| {
-            if close {
-                entry.stdin.take()
-            } else {
-                entry.stdin.clone()
-            }
+        let (stdin, observed) = self.owned(plugin, handle, |entry| {
+            (
+                if close {
+                    entry.stdin.take()
+                } else {
+                    entry.stdin.clone()
+                },
+                entry.observed,
+            )
         })?;
         let stdin = stdin.ok_or("The process input is closed")?;
         let mut stdin = stdin.lock().await;
+        if observed {
+            if let Some(route) = observation {
+                self.observer.bind(handle, route);
+            }
+            self.observer.bytes(handle, true, &data);
+        }
         let written = async {
             stdin.write_all(data.as_bytes()).await?;
             stdin.flush().await
@@ -231,6 +256,7 @@ impl HostProcesses {
     pub(crate) fn stop_all(&self) {
         let mut registry = self.registry();
         registry.page += 1;
+        self.observer.outage(None);
         for entry in registry.entries.values_mut() {
             entry.stdin = None;
             if let Some(stop) = entry.stop.take() {
@@ -326,19 +352,45 @@ pub(crate) async fn plugin_host_process_spawn(
     #[cfg(unix)]
     command.as_std_mut().process_group(0);
 
-    processes.start(page, plugin, &declared.program, command, on_event)
+    let observed = plugin == "buzz.codex" && declared.id == "app-server";
+    processes.start(page, plugin, &declared.program, command, on_event, observed)
 }
 
 /// Writes `data` to the process's stdin; `close` then ends its input.
 #[tauri::command]
 pub(crate) async fn plugin_host_process_write(
     processes: tauri::State<'_, HostProcesses>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
     id: String,
     handle: u64,
     data: String,
     close: bool,
+    observation: Option<ProcessObservation>,
 ) -> Result<(), String> {
-    processes.write(&id, handle, data, close).await
+    let observed = processes.owned(&id, handle, |entry| entry.observed)?;
+    let route = if let Some(observation) = observation {
+        if !observed {
+            return Err("No native Codex observer for this process".into());
+        }
+        // Observation failure does not stop authorized work.
+        agents
+            .agent(observation.pubkey)
+            .await
+            .and_then(|agent| {
+                crate::plugin_observer::verified_route(&agent, &id, observation.event)
+            })
+            .ok()
+    } else {
+        None
+    };
+    processes.write(&id, handle, data, close, route).await
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProcessObservation {
+    pubkey: String,
+    event: serde_json::Value,
 }
 
 /// Asks the process to stop, then kills it and its descendants. Its `exit`
@@ -359,6 +411,7 @@ fn forward(
     stream: Stream,
     channel: Channel<ProcessEvent>,
     gone: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    observer: Option<(crate::plugin_observer::PluginObserver, u64)>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut buffer = vec![0; READ_BYTES];
@@ -372,6 +425,9 @@ fn forward(
             let data = take_text(&mut pending);
             if data.is_empty() {
                 continue;
+            }
+            if let Some((observer, handle)) = &observer {
+                observer.bytes(*handle, false, &data);
             }
             let event = match stream {
                 Stream::Stdout => ProcessEvent::Stdout { data },

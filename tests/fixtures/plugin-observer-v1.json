@@ -1,0 +1,22 @@
+{
+  "events": [
+    {
+      "content": "{\"agent\":\"9d8c5b064ba78bf241893c673aa64bf77a1187829ee43ace6a0bf494c0201a3d\",\"complete\":true,\"diagnostic\":null,\"generated_at_ms\":1791907714906,\"generation\":\"d7f4f312-4e58-4b8c-9780-5c6c9bedb6c2\",\"owner\":\"989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f\",\"producer\":\"buzz.codex/native\",\"relay\":\"wss://fixture.test\",\"sequence\":1,\"sessions\":[{\"agent\":\"9d8c5b064ba78bf241893c673aa64bf77a1187829ee43ace6a0bf494c0201a3d\",\"channel_id\":\"3347a5f0-2f32-4132-bf3b-9ccfae31c4cf\",\"codex_thread_id\":\"native-fixture-thread\",\"observed_at_ms\":1791907714906,\"owner\":\"989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f\",\"relay\":\"wss://fixture.test\",\"root_id\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"state\":\"accepted\",\"trigger_id\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"trigger_ids\":[\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"],\"turn_id\":\"native-fixture-turn\"}],\"version\":1}",
+      "created_at": 1791907714,
+      "id": "0e42ef1e294e094380ab583ca4e6714dbd1097e406f3dac5a53e0ad652c7d78d",
+      "kind": 9,
+      "pubkey": "9d8c5b064ba78bf241893c673aa64bf77a1187829ee43ace6a0bf494c0201a3d",
+      "sig": "434e10b922a81049d33c271c8a67857c420d0869a084e28b35badf8b65ddabba29d32d2fc9261ff0f8451c752ac6485eefb38149bae6fb63085902205ada3eb7",
+      "tags": [
+        ["t", "buzz-plugin-observer-v1"],
+        [
+          "auth",
+          "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+          "",
+          "99b3a0320fe4b3c37081e1357820300bc763a7553ef805b10c8976f0f258f828c40a85d6a8a31f23cb9d42a3e53c7f2ceb2440457374461cb98fcb3ace97fd08"
+        ]
+      ]
+    }
+  ],
+  "version": 1
+}

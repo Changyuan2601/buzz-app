@@ -31,8 +31,9 @@ export type HostProcessOptions = Readonly<{
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
+export type HostObservation = Readonly<{ pubkey: string; event: unknown }>;
 export type HostProcess = Readonly<{
-  write(data: string): Promise<void>;
+  write(data: string, observation?: HostObservation): Promise<void>;
   /** Writes any final `data`, then closes stdin. */
   end(data?: string): Promise<void>;
   /** Asks it to stop, then kills it and its descendants. */
@@ -185,7 +186,11 @@ export class HostService extends Service implements Host {
     // The host takes at most 1 MiB a write, so a longer one goes in pieces,
     // queued so no other write lands between them.
     let queue: Promise<unknown> = Promise.resolve();
-    const write = (data: string, close: boolean) => {
+    const write = (
+      data: string,
+      close: boolean,
+      observation?: HostObservation,
+    ) => {
       const written = queue.then(async () => {
         let at = 0;
         do {
@@ -198,6 +203,7 @@ export class HostService extends Service implements Host {
             handle,
             data: data.slice(at, end),
             close: close && end === data.length,
+            observation: at === 0 ? (observation ?? null) : null,
           });
           at = end;
         } while (at < data.length);
@@ -221,7 +227,8 @@ export class HostService extends Service implements Host {
     }
     void exited.then(() => release());
     return Object.freeze({
-      write: (data: string) => write(data, false),
+      write: (data: string, observation?: HostObservation) =>
+        write(data, false, observation),
       end: (data = "") => write(data, true),
       kill,
       exited,

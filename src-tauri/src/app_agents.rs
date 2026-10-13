@@ -129,7 +129,43 @@ impl AppAgentHost {
         .await
     }
     /// The agent, if it still has its key. One deleted elsewhere loses its cached key.
-    async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
+    /// Native observer-only purpose. No IPC exposes this signing operation.
+    pub(crate) async fn observer_events(&self, snapshot: Value) -> Result<Vec<Value>, String> {
+        let rows = self.agents.clone()?.list()?;
+        let mut events = vec![];
+        for agent in rows {
+            if agent.deleted
+                || !agent.agent_type.starts_with("buzz.codex/")
+                || !self.hosting.held().contains_key(&agent.pubkey)
+            {
+                continue;
+            }
+            let mut payload = snapshot.clone();
+            payload["sessions"] = Value::Array(
+                snapshot["sessions"]
+                    .as_array()
+                    .ok_or("Invalid observer snapshot")?
+                    .iter()
+                    .filter(|row| row["agent"] == agent.pubkey)
+                    .cloned()
+                    .collect(),
+            );
+            payload["agent"] = Value::String(agent.pubkey.clone());
+            payload["owner"] = Value::String(agent.owner.clone());
+            payload["relay"] = Value::String(agent.relay.clone());
+            let content =
+                serde_json::to_string(&payload).map_err(|_| "Invalid observer snapshot")?;
+            let (agent, key) = self.key(agent).await?;
+            events.push(agent.sign(
+                &key,
+                9,
+                content,
+                vec![vec!["t".into(), "buzz-plugin-observer-v1".into()]],
+            )?);
+        }
+        Ok(events)
+    }
+    pub(crate) async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
         let host = self.clone();
         blocking(move || {
             let agent = host.agents.clone()?.get(&pubkey);
@@ -427,6 +463,18 @@ pub(crate) struct AppAgentEvent {
     tags: Vec<Vec<String>>,
 }
 
+fn validate_publication(event: &AppAgentEvent) -> Result<(), String> {
+    if event.tags.iter().any(|tag| {
+        tag.first().is_some_and(|key| key == "t")
+            && tag
+                .get(1)
+                .is_some_and(|value| value == "buzz-plugin-observer-v1")
+    }) {
+        return Err("Observer publication is native-owned".into());
+    }
+    Ok(())
+}
+
 /// Signs one event as the agent and posts it to the agent's own community.
 #[tauri::command]
 pub(crate) async fn app_agent_publish(
@@ -434,6 +482,7 @@ pub(crate) async fn app_agent_publish(
     pubkey: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
+    validate_publication(&event)?;
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
     post(&agent, &key, signed).await
@@ -820,5 +869,107 @@ mod tests {
         packaged.held().remove(&agent);
         assert!(dev.claim(&agent).unwrap());
         assert!(!another.claim(&agent).unwrap());
+    }
+    #[test]
+    fn ordinary_publication_cannot_claim_native_observer_authority() {
+        let mut event = AppAgentEvent {
+            kind: 9,
+            content: "{}".into(),
+            tags: vec![vec!["t".into(), "buzz-plugin-observer-v1".into()]],
+        };
+        assert!(validate_publication(&event).is_err());
+        event.tags.clear();
+        assert!(validate_publication(&event).is_ok());
+    }
+    #[tokio::test]
+    async fn observer_export_is_signed_scoped_and_atomic() {
+        use secp256k1::{Keypair, Secp256k1, SecretKey};
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let key = Secret::generate().unwrap();
+        // Deliberately synthetic test owner, unrelated to any installed identity.
+        let secp = Secp256k1::new();
+        let pair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array([7; 32]).unwrap());
+        let owner = pair.x_only_public_key().0.to_string();
+        let proof = secp
+            .sign_schnorr_no_aux_rand(
+                &Sha256::digest(format!("nostr:agent-auth:{}:", key.pubkey())),
+                &pair,
+            )
+            .to_string();
+        let agent = AppAgent {
+            pubkey: key.pubkey().into(),
+            relay: "wss://fixture.test".into(),
+            owner: owner.clone(),
+            auth: serde_json::to_string(&vec!["auth", &owner, "", &proof]).unwrap(),
+            agent_type: "buzz.codex/codex".into(),
+            name: "Fixture".into(),
+            picture: None,
+            profile: None,
+            about: None,
+            deleted: false,
+        };
+        let identities = dir.path().join("identities.json");
+        std::fs::write(
+            &identities,
+            serde_json::to_vec(&vec![agent.clone()]).unwrap(),
+        )
+        .unwrap();
+        let host = AppAgentHost::new(Ok(identities), Err("unused".into()), true);
+        host.keys().insert(agent.pubkey.clone(), Arc::new(key));
+        assert!(host.hosting.claim(&agent.pubkey).unwrap());
+        let observer = crate::plugin_observer::PluginObserver::default();
+        observer.open(1);
+        observer.bind(
+            1,
+            crate::plugin_observer::Route {
+                relay: agent.relay.clone(),
+                owner: owner.clone(),
+                agent: agent.pubkey.clone(),
+                channel_id: "3347a5f0-2f32-4132-bf3b-9ccfae31c4cf".into(),
+                root_id: "c".repeat(64),
+                trigger_id: "d".repeat(64),
+            },
+        );
+        observer.bytes(1, true, "{\"id\":1,\"method\":\"turn/start\",\"params\":{\"threadId\":\"native-fixture-thread\"}}\n");
+        observer.bytes(
+            1,
+            false,
+            "{\"id\":1,\"result\":{\"turn\":{\"id\":\"native-fixture-turn\"}}}\n",
+        );
+        let path = dir.path().join("observer/runtime.json");
+        observer.flush(path.clone(), &host).await.unwrap();
+        let first: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let signed: nostr::event::Event =
+            serde_json::from_value(first["events"][0].clone()).unwrap();
+        signed.verify().unwrap();
+        assert_eq!(first["events"][0]["pubkey"], agent.pubkey);
+        assert!(first["events"][0]["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tag| tag == &serde_json::json!(["t", "buzz-plugin-observer-v1"])));
+        let payload: Value =
+            serde_json::from_str(first["events"][0]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["owner"], owner);
+        assert_eq!(payload["sessions"][0]["state"], "accepted");
+        assert_eq!(
+            payload["sessions"][0]["codex_thread_id"],
+            "native-fixture-thread"
+        );
+        if let Ok(output) = std::env::var("BUZZ_TEST_PLUGIN_OBSERVER_FIXTURE") {
+            std::fs::write(output, serde_json::to_vec_pretty(&first).unwrap()).unwrap();
+        }
+        observer.flush(path.clone(), &host).await.unwrap();
+        let second: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_ne!(first["events"][0]["id"], second["events"][0]["id"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 }

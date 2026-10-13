@@ -30,6 +30,7 @@ mod host_process;
 mod host_request;
 mod identity;
 mod image_clipboard;
+mod plugin_observer;
 
 mod notifications;
 mod os_idle;
@@ -620,6 +621,12 @@ pub fn run() {
                 // `just desktop` builds step aside for a packaged app.
                 !tauri::is_dev(),
             ));
+            if let Ok(root) = app.path().app_data_dir() {
+                app.state::<HostProcesses>().observer.export(
+                    root.join("plugin-observer/v1/runtime.json"),
+                    app.state::<app_agents::AppAgentHost>().inner().clone(),
+                );
+            }
             Ok(())
         });
     #[cfg(target_os = "macos")]

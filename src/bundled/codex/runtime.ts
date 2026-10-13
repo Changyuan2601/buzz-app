@@ -436,13 +436,17 @@ export class CodexRuntime {
             this.start(request, text, key, lane, entry);
             return;
           }
-          await active.rpc.request("turn/steer", {
-            threadId: active.threadId,
-            expectedTurnId: active.turnId,
-            input: input(
-              `${context}${turnInput(request.event, request.conversation, text, request.interest, true)}`,
-            ),
-          });
+          await active.rpc.request(
+            "turn/steer",
+            {
+              threadId: active.threadId,
+              expectedTurnId: active.turnId,
+              input: input(
+                `${context}${turnInput(request.event, request.conversation, text, request.interest, true)}`,
+              ),
+            },
+            { pubkey: request.agent.pubkey, event: request.event },
+          );
           active.reply = request;
           active.requests.push(request);
           active.version++;
@@ -839,21 +843,25 @@ export class CodexRuntime {
       });
       const context = await this.history(request, signal);
       signal.throwIfAborted();
-      const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
-        threadId: active.threadId,
-        input: input(
-          `${context}${turnInput(request.event, request.conversation, text, request.interest)}`,
-        ),
-        model,
-        effort,
-        // Application context is a developer message that updates on each turn.
-        additionalContext: {
-          "buzz.instructions": {
-            kind: "application",
-            value: developerInstructions(agent, settings, request.team),
+      const turn = await rpc.request<{ turn: { id: string } }>(
+        "turn/start",
+        {
+          threadId: active.threadId,
+          input: input(
+            `${context}${turnInput(request.event, request.conversation, text, request.interest)}`,
+          ),
+          model,
+          effort,
+          // Application context is a developer message that updates on each turn.
+          additionalContext: {
+            "buzz.instructions": {
+              kind: "application",
+              value: developerInstructions(agent, settings, request.team),
+            },
           },
         },
-      });
+        { pubkey: agent.pubkey, event: request.event },
+      );
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
       // Empty threads have no resumable rollout until a user turn is accepted.

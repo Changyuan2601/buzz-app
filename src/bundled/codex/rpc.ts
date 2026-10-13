@@ -1,6 +1,7 @@
 import type { Model } from "./config";
 import type {
   HostProcess,
+  HostObservation,
   HostProcessOptions,
 } from "../../features/host/service";
 export type Spawn = (
@@ -187,13 +188,17 @@ export class AppServer {
       params: { message: error.message },
     });
   }
-  send(message: Wire) {
+  send(message: Wire, observation?: HostObservation) {
     if (this.failure) return Promise.reject(this.failure);
     if (!this.process)
       return Promise.reject(new Error("Codex is not connected"));
-    return this.process.write(`${JSON.stringify(message)}\n`);
+    return this.process.write(`${JSON.stringify(message)}\n`, observation);
   }
-  request<T = unknown>(method: string, params: unknown = {}): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params: unknown = {},
+    observation?: HostObservation,
+  ): Promise<T> {
     if (this.failure) return Promise.reject(this.failure);
     const id = ++this.next;
     return new Promise((resolve, reject) => {
@@ -206,7 +211,7 @@ export class AppServer {
         reject,
         timer,
       });
-      void this.send({ id, method, params }).catch((error) => {
+      void this.send({ id, method, params }, observation).catch((error) => {
         clearTimeout(timer);
         this.pending.delete(id);
         reject(error);
