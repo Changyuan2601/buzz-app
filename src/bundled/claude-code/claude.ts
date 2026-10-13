@@ -88,8 +88,9 @@ export const ENV: Readonly<Record<string, string | null>> = {
 };
 
 export class ClaudeProcess {
-  /** Its session, known once the first turn starts (or at once when resuming). */
+  /** Mutable CLI-reported ID, initially set to the host's selected history. */
   sessionId: string | undefined;
+  private historyDrifted = false;
   /** The conversation it serves, set when a spare is put to use. */
   conversation: string | undefined;
   /** Messages sent and not yet answered. */
@@ -121,12 +122,15 @@ export class ClaudeProcess {
 
   private constructor(
     private readonly process: HostProcess,
-    resume: string | undefined,
+    /** Immutable host selection, including a spare's fresh ID or a resume ID. */
+    readonly selectedSession:
+      | Readonly<{ id: string; fresh: boolean }>
+      | undefined,
     private tools: ToolServer | undefined,
     /** The session's own model, as launched; undefined is Claude's default. */
     private readonly ownModel: string | undefined,
   ) {
-    this.sessionId = resume;
+    this.sessionId = selectedSession?.id;
     this.exited = process.exited.then((code) => {
       this.alive = false;
       for (const resolve of this.calls.values())
@@ -150,6 +154,11 @@ export class ClaudeProcess {
   /** Starts `claude` without its prompt. This is most of what a start costs,
    * and fixes nothing about the agent it serves but its folder and model. */
   static async spawn(spawn: Spawn, launch: Omit<ClaudeLaunch, "systemPrompt">) {
+    const selectedSession = launch.resume
+      ? { id: launch.resume, fresh: false }
+      : launch.sessionId
+        ? { id: launch.sessionId, fresh: true }
+        : undefined;
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
@@ -192,7 +201,7 @@ export class ClaudeProcess {
     });
     claude = new ClaudeProcess(
       process,
-      launch.resume ?? launch.sessionId,
+      selectedSession,
       launch.tools,
       launch.model,
     );
@@ -238,6 +247,14 @@ export class ClaudeProcess {
   }
   get started() {
     return this.began;
+  }
+  /** A reported mismatch permanently invalidates IFC binding eligibility. */
+  get historyMatchesSelection() {
+    return (
+      !!this.selectedSession &&
+      !this.historyDrifted &&
+      this.sessionId === this.selectedSession.id
+    );
   }
   get model() {
     return this.reported;
@@ -410,8 +427,19 @@ export class ClaudeProcess {
   private readonly receipts = new Map<string, ActivityReceipt>();
   private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
-    if (typeof message.session_id === "string" && message.session_id)
+    if (typeof message.session_id === "string" && message.session_id) {
+      if (
+        this.selectedSession &&
+        message.session_id !== this.selectedSession.id &&
+        !this.historyDrifted
+      ) {
+        this.historyDrifted = true;
+        console.warn(
+          "IFC Claude reported an unexpected history ID; history remains unknown",
+        );
+      }
       this.sessionId = message.session_id;
+    }
     if (message.type === "system" && message.subtype === "init") {
       this.began = true;
       // A picked model is not the session's own.

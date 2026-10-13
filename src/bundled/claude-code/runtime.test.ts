@@ -1194,3 +1194,67 @@ it("tags the existing DM history read for audit and keeps the model session", as
   ).toEqual(original);
   expect(f.agent.query).not.toHaveBeenCalled();
 });
+
+it("delivers successful DM history after an observation timeout and ignores a late binding", async () => {
+  const earlier = message("1", "Earlier DM context");
+  const trigger = message("2", "@Claude hello", { created_at: 110 });
+  const f = setup([earlier], { dm: true });
+  vi.useFakeTimers();
+  const timers = vi.spyOn(globalThis, "setTimeout");
+  let late: ((binding: IfcBinding | null) => void) | undefined;
+  let id = "";
+  f.read.mockImplementation(async (_filters, options) => {
+    late = options?.ifc?.onBinding;
+    id = options?.ifc?.history?.id ?? "";
+    return [earlier];
+  });
+  try {
+    await f.deliver({ type: "mention", event: trigger });
+    await vi.waitFor(() =>
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 3_000),
+    );
+    expect(f.claudes().every((process) => !process.prompts.length)).toBe(true);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.waitFor(() =>
+      expect(
+        f
+          .claudes()
+          .some((process) =>
+            process.prompts[0]?.includes("Earlier DM context"),
+          ),
+      ).toBe(true),
+    );
+    const saved = () =>
+      JSON.parse(f.data.get("buzz.claude-code.sessions.v1") ?? "{}")[self][
+        channel
+      ];
+    expect(saved().ifc).toBeUndefined();
+    late?.({
+      version: 1,
+      sessionId: id,
+      community: "community",
+      channel,
+      agent: self,
+      owner: alice,
+      requester: alice,
+      relay: "relay",
+      members: [self, alice],
+    });
+    expect(saved().ifc).toBeUndefined();
+    await f.deliver({
+      type: "mention",
+      event: message("3", "@Claude later", { created_at: 120 }),
+    });
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
+    expect(f.read.mock.calls[1]?.[1]?.ifc?.history).toMatchObject({
+      id,
+      fresh: false,
+      binding: null,
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+  } finally {
+    f.runtime.dispose();
+    timers.mockRestore();
+    vi.useRealTimers();
+  }
+});

@@ -29,15 +29,21 @@ DM history. The shared `IfcContext` carries the agent and signed triggering even
 through the existing scheduler, transport and `relay_http` command. There is no
 opt-in flag, alternate history command, or change to the history result.
 
-For native non-thread DMs, the harness selects the actual Claude `sessionId`
-before building the prompt. Its existing recent-history read carries that ID,
+For native non-thread DMs, the harness selects the Claude history ID before
+spawn/initialization, including warmed spares and saved resumes. The immutable
+host selection is separate from the mutable reported `sessionId`; a reported
+mismatch permanently leaves that process unknown, even if it later reports the
+selected ID again. Existing binding facts keep their original ID and are never
+relabelled to a reported replacement. Preparation rechecks identity before
+delivering the prompt. Its existing recent-history read carries that ID,
 the saved binding (if any), and whether the history is new. After the ordinary
 authorized `/query` succeeds, Rust resolves the saved agent and owner, community
 identity and relay key from the same HTTPS origin, and current relay-signed DM
 metadata and membership. It derives the execution domain and independent resource
 label, checks `IfcSession::call/read`, and verifies history signatures and channel.
 
-Rust returns versioned verified facts alongside the unchanged HTTP response.
+Rust returns the unchanged HTTP response immediately and sends versioned
+verified facts through a separate native IPC Channel receipt.
 The trusted app stores those facts in the existing saved Claude session record,
 under its actual ID, before sending the first prompt. The first binding remains
 stable across idle process eviction, reconfiguration, saved resume and app restart.
@@ -55,12 +61,15 @@ so this association does not attest clean provenance. The audit covers the raw
 unaudited, as do other model inputs and tools.
 
 Policy work admits at most two simultaneous lookups, without a queue, and has a
-three-second deadline. The eligible read now waits for that bounded observation
+three-second deadline. The ordinary read releases its scheduler slot without
+waiting for policy. Only the eligible turn waits separately for the receipt
 before prompt delivery. Errors, timeouts, capacity exhaustion and incompatible
 reuse are diagnostic: they never deny the ordinary authorized read, replace its
-history with an empty batch, rotate history, or prevent model delivery. The
-harness's eligible-read timeout includes the added three-second budget. Existing
-read authorization, network failures and model-session reuse retain their behavior.
+history with an empty batch, rotate history, or prevent model delivery. Late
+receipts after that three-second wait, read failure or generation change cannot
+retrospectively bind delivered history. The ordinary foreground read keeps its
+original deadline and cancellation behavior. Existing read authorization, network
+failures and model-session reuse retain their behavior.
 Audited reads do not share a scheduler job with another caller. Browser/dev broker
 reads have no native binding, and thread history and other adapters are unchanged.
 

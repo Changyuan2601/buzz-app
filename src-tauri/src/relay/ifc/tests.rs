@@ -143,18 +143,36 @@ async fn production_observer_preserves_history_on_failure_and_capacity_exhaustio
     let host = IdentityHost::fixture();
     let agents = AppAgentHost::new(Err("unused".into()), Err("unused".into()), false);
     let url = Url::parse("https://relay.test/query").unwrap();
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let receipt = tauri::ipc::Channel::new(move |body| {
+        sent.send(body.deserialize::<Option<Value>>().unwrap())
+            .unwrap();
+        Ok(())
+    });
     let held = AUDITS.acquire_many(2).await.unwrap();
-    assert!(
-        observe(&host, &agents, url.clone(), Value::Null, "[]", &response,)
-            .await
-            .is_none()
+    observe(
+        host.clone(),
+        agents.clone(),
+        url.clone(),
+        Value::Null,
+        "[]".into(),
+        &response,
+        Some(receipt.clone()),
     );
+    assert_eq!(received.recv().await, Some(None));
     assert_eq!(response.body, "original history");
     drop(held);
-    // Malformed context fails inside the same bounded audit used by relay_http.
-    assert!(observe(&host, &agents, url, Value::Null, "[]", &response)
-        .await
-        .is_none());
+    // Malformed context settles the same background receipt used by relay_http.
+    observe(
+        host,
+        agents,
+        url,
+        Value::Null,
+        "[]".into(),
+        &response,
+        Some(receipt),
+    );
+    assert_eq!(received.recv().await, Some(None));
     let _finished = tokio::time::timeout(Duration::from_secs(1), AUDITS.acquire_many(2))
         .await
         .unwrap()

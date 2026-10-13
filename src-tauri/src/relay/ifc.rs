@@ -80,35 +80,49 @@ impl Binding {
     }
 }
 
-pub(super) async fn observe(
-    host: &IdentityHost,
-    agents: &AppAgentHost,
+pub(super) fn observe(
+    host: IdentityHost,
+    agents: AppAgentHost,
     url: Url,
     context: Value,
-    filters: &str,
+    filters: String,
     response: &RelayResponse,
-) -> Option<Binding> {
-    let Ok(_permit) = AUDITS.try_acquire() else {
+    receipt: Option<tauri::ipc::Channel<Option<Binding>>>,
+) {
+    let report = move |binding| {
+        if let Some(receipt) = &receipt {
+            if receipt.send(binding).is_err() {
+                eprintln!("IFC history audit failed: binding receipt unavailable");
+            }
+        }
+    };
+    let Ok(permit) = AUDITS.try_acquire() else {
         eprintln!("IFC history audit skipped: audit capacity reached");
-        return None;
+        report(None);
+        return;
     };
 
-    match tokio::time::timeout(
-        Duration::from_secs(3),
-        audit(host, agents, url, context, filters, &response.body),
-    )
-    .await
-    {
-        Ok(Ok(binding)) => Some(binding),
-        Ok(Err(error)) => {
-            eprintln!("IFC history audit failed: {error}");
-            None
-        }
-        Err(_) => {
-            eprintln!("IFC history audit failed: policy lookup timed out");
-            None
-        }
-    }
+    let history = response.body.clone();
+    tauri::async_runtime::spawn(async move {
+        let _permit = permit;
+        let binding = match tokio::time::timeout(
+            Duration::from_secs(3),
+            audit(&host, &agents, url, context, &filters, &history),
+        )
+        .await
+        {
+            Ok(Ok(binding)) => Some(binding),
+            Ok(Err(error)) => {
+                eprintln!("IFC history audit failed: {error}");
+                None
+            }
+            Err(_) => {
+                eprintln!("IFC history audit failed: policy lookup timed out");
+                None
+            }
+        };
+        report(binding);
+    });
 }
 
 async fn audit(

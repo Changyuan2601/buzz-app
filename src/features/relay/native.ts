@@ -108,36 +108,47 @@ export async function nativeRelayRequest(
     AbortSignal.timeout(30_000),
   ]);
   bounded.throwIfAborted();
-  const result = await invoke<{
-    status: number;
-    headers: Record<string, string>;
-    body: string;
-    ifc?: IfcBinding;
-  }>("relay_http", {
-    community: communityDestination(community).url,
-    path,
-    method: body === undefined ? "GET" : "POST",
-    body: body === undefined ? null : JSON.stringify(body),
-    ...(ifc
-      ? {
-          ifc: {
-            agent: ifc.agent,
-            trigger: ifc.trigger,
-            ...(ifc.history ? { history: ifc.history } : {}),
-          },
-        }
-      : {}),
-  });
-  // IPC cannot abort reqwest. Retain the shared admission slot until native work
-  // settles (bounded by its timeout), then reject any obsolete result.
-  bounded.throwIfAborted();
-  if (result.ifc)
+  let settled = false;
+  const settle = (binding: IfcBinding | null) => {
+    if (settled) return;
+    settled = true;
     try {
-      ifc?.onBinding?.(result.ifc);
+      ifc?.onBinding?.(binding);
     } catch (error) {
       console.warn("IFC binding receipt failed", error);
     }
-  return nativeResponse(result);
+  };
+  const receipt = ifc ? new Channel<IfcBinding | null>(settle) : undefined;
+  try {
+    const result = await invoke<{
+      status: number;
+      headers: Record<string, string>;
+      body: string;
+    }>("relay_http", {
+      community: communityDestination(community).url,
+      path,
+      method: body === undefined ? "GET" : "POST",
+      body: body === undefined ? null : JSON.stringify(body),
+      ...(ifc
+        ? {
+            ifc: {
+              agent: ifc.agent,
+              trigger: ifc.trigger,
+              ...(ifc.history ? { history: ifc.history } : {}),
+            },
+            ifcReceipt: receipt,
+          }
+        : {}),
+    });
+    // IPC cannot abort reqwest. Release ordinary read admission when it settles;
+    // policy receipts have their own bounded lifetime outside this read signal.
+    bounded.throwIfAborted();
+    if (path !== "/query" || result.status !== 200) settle(null);
+    return nativeResponse(result);
+  } catch (error) {
+    settle(null);
+    throw error;
+  }
 }
 
 function nativeResponse(result: {

@@ -27,6 +27,6 @@ export type IfcContext = Readonly<{
   /** Signed event that caused the turn. */
   trigger: RelayEvent;
   history?: IfcHistory;
-  /** App-only receipt; never serialized to the host or exposed to the model. */
-  onBinding?: (binding: IfcBinding) => void;
+  /** App-only receipt; null settles a diagnostic failure. Never exposed to the model. */
+  onBinding?: (binding: IfcBinding | null) => void;
 }>;

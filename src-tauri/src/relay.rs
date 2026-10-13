@@ -568,14 +568,6 @@ pub(crate) struct RelayResponse {
     body: String,
 }
 
-#[derive(Serialize)]
-pub(crate) struct AuditedResponse {
-    #[serde(flatten)]
-    response: RelayResponse,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ifc: Option<ifc::Binding>,
-}
-
 async fn verify_owned_event(host: &IdentityHost, event: &serde_json::Value) -> Result<()> {
     if event.get("pubkey").and_then(serde_json::Value::as_str)
         != Some(host.viewer().await?.as_str())
@@ -660,15 +652,19 @@ fn client() -> Result<&'static reqwest::Client> {
 }
 
 #[tauri::command]
-pub(crate) async fn relay_http(
-    host: tauri::State<'_, IdentityHost>,
-    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+pub(crate) async fn relay_http<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     community: String,
     path: String,
     method: String,
     body: Option<String>,
     ifc: Option<serde_json::Value>,
-) -> Result<AuditedResponse> {
+    ifc_receipt: Option<tauri::ipc::JavaScriptChannelId>,
+) -> Result<RelayResponse> {
+    use tauri::Manager as _;
+    let host = webview.state::<IdentityHost>();
+    let agents = webview.state::<crate::app_agents::AppAgentHost>();
+    let ifc_receipt = ifc_receipt.map(|id| id.channel_on(webview.clone()));
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
         || (method == "GET" && body.is_some())
@@ -716,28 +712,25 @@ pub(crate) async fn relay_http(
     )
     .await?;
 
-    let binding = if path == "/query" && response.status == 200 {
+    if path == "/query" && response.status == 200 {
         if let (Some(context), Some(filters)) = (ifc, audit_filters) {
             ifc::observe(
-                host.inner(),
-                agents.inner(),
+                host.inner().clone(),
+                agents.inner().clone(),
                 url,
                 context,
-                &filters,
+                filters,
                 &response,
-            )
-            .await
-        } else {
-            None
+                ifc_receipt,
+            );
+        } else if let Some(receipt) = ifc_receipt {
+            let _ = receipt.send(None);
         }
-    } else {
-        None
-    };
+    } else if let Some(receipt) = ifc_receipt {
+        let _ = receipt.send(None);
+    }
 
-    Ok(AuditedResponse {
-        response,
-        ifc: binding,
-    })
+    Ok(response)
 }
 
 async fn send(

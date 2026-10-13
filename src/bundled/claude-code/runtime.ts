@@ -33,7 +33,7 @@ import {
   watchPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
-import type { IfcContext } from "../../features/ifc/context";
+import type { IfcBinding, IfcContext } from "../../features/ifc/context";
 import { readTranscript, type Conversation } from "./transcript";
 
 /** What a session can switch to between turns. Claude runs `max` as
@@ -417,7 +417,9 @@ export class ClaudeRuntime {
                   agent: agent.pubkey,
                   trigger: event,
                   history,
-                  onBinding,
+                  onBinding: (binding) => {
+                    if (binding) onBinding(binding);
+                  },
                 }),
             }
           : {
@@ -613,7 +615,13 @@ export class ClaudeRuntime {
       this.conversation(entry, self, event, channelId);
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm))
+    if (session && (thread || dm)) {
+      let accepting = true;
+      let receive!: (binding: IfcBinding | null) => void;
+      const observation = new Promise<IfcBinding | null>((resolve) => {
+        receive = resolve;
+      });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         const events = await session.read(
           thread
@@ -623,10 +631,17 @@ export class ClaudeRuntime {
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
           {
-            signal: AbortSignal.timeout(
-              NAMES_TIMEOUT_MS * 2 + (dm && !thread ? 3_000 : 0),
-            ),
-            ...(dm && !thread && ifc ? { ifc } : {}),
+            signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
+            ...(dm && !thread && ifc
+              ? {
+                  ifc: {
+                    ...ifc,
+                    onBinding: (binding: IfcBinding | null) => {
+                      if (accepting) receive(binding);
+                    },
+                  },
+                }
+              : {}),
           },
         );
         earlier = events
@@ -637,9 +652,30 @@ export class ClaudeRuntime {
               item.created_at <= event.created_at,
           )
           .sort((a, b) => a.created_at - b.created_at);
+        // Ordinary history has completed and released its scheduler slot.
+        // Only this eligible prompt waits for the separate native observation.
+        if (dm && !thread && ifc) {
+          timeout = setTimeout(() => {
+            console.warn(
+              "IFC history observation timed out; history remains unknown",
+            );
+            receive(null);
+          }, 3_000);
+          const binding = await observation;
+          if (binding)
+            try {
+              ifc.onBinding?.(binding);
+            } catch (error) {
+              console.warn("IFC binding receipt failed", error);
+            }
+        }
       } catch (error) {
         console.warn("Claude could not read the conversation", error);
+      } finally {
+        accepting = false;
+        clearTimeout(timeout);
       }
+    }
     // A session already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
       (item) => item.created_at > seen && (!seen || item.pubkey !== self),

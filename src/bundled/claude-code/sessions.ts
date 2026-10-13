@@ -359,7 +359,12 @@ export class AgentSessions {
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
       : await this.fresh(launch);
     if (fingerprint === this.options.fingerprint() || this.disposed)
-      return { process, fingerprint, used: this.now(), fresh: !resume };
+      return {
+        process,
+        fingerprint,
+        used: this.now(),
+        fresh: process.selectedSession?.fresh ?? false,
+      };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
     return this.start(resume);
@@ -404,40 +409,63 @@ export class AgentSessions {
     return settled;
   }
 
-  private prepareTurn(key: string, live: Live, prepare: PrepareTurn) {
+  private async prepareTurn(key: string, live: Live, prepare: PrepareTurn) {
     const id = live.process.sessionId ?? "";
     const prior = this.options.store.get(key);
-    const fresh = live.fresh;
+    const fresh = live.fresh && live.process.historyMatchesSelection;
     live.fresh = false;
-    return prepare(
-      { id, fresh, binding: prior?.id === id ? (prior.ifc ?? null) : null },
-      (binding) => {
-        // Only the first turn of this actual history may install its binding.
-        if (
-          !fresh ||
-          this.disposed ||
-          this.live.get(key) !== live ||
-          live.process.sessionId !== id
-        )
-          return;
-        try {
-          const saved = this.options.store.get(key);
+    let accepting = true;
+    try {
+      const built = await prepare(
+        {
+          id,
+          fresh,
+          binding:
+            live.process.historyMatchesSelection && prior?.id === id
+              ? (prior.ifc ?? null)
+              : null,
+        },
+        (binding) => {
+          // Only the first turn of this actual history may install its binding.
           if (
-            binding.sessionId !== id ||
-            saved?.id !== id ||
-            saved.ifc !== undefined
+            !fresh ||
+            !accepting ||
+            !live.process.historyMatchesSelection ||
+            this.disposed ||
+            this.live.get(key) !== live ||
+            live.process.sessionId !== id
           )
             return;
-          if (this.options.store.set(key, { ...saved, ifc: binding }) === false)
-            console.warn("IFC binding was not saved; history remains unknown");
-        } catch (error) {
-          console.warn(
-            "IFC binding was not saved; history remains unknown",
-            error,
-          );
-        }
-      },
-    );
+          try {
+            const saved = this.options.store.get(key);
+            if (
+              binding.sessionId !== id ||
+              saved?.id !== id ||
+              saved.ifc !== undefined
+            )
+              return;
+            if (
+              this.options.store.set(key, { ...saved, ifc: binding }) === false
+            )
+              console.warn(
+                "IFC binding was not saved; history remains unknown",
+              );
+          } catch (error) {
+            console.warn(
+              "IFC binding was not saved; history remains unknown",
+              error,
+            );
+          }
+        },
+      );
+      if (!live.process.historyMatchesSelection)
+        console.warn(
+          "IFC prepared turn has an unverified history ID; delivering with unknown history",
+        );
+      return built;
+    } finally {
+      accepting = false;
+    }
   }
   /** Saves the session and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
@@ -454,9 +482,9 @@ export class AgentSessions {
       id,
       seen: Math.max(seen ?? 0, prior?.id === id ? prior.seen : 0),
       at: live.used,
-      ...(prior?.id === id && prior.ifc !== undefined
-        ? { ifc: prior.ifc }
-        : {}),
+      // Facts carry their original ID. Preserve them on reported drift; Rust
+      // rejects another ID, and explicit failed-resume recovery deletes them.
+      ...(prior?.ifc !== undefined ? { ifc: prior.ifc } : {}),
     });
   }
   private drop(key: string, live: Live) {

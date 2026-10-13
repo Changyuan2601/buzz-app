@@ -36,6 +36,8 @@ function sessions(
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
+    /** Reports a different retained ID during buffered CLI startup output. */
+    reportedId: string;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
@@ -47,6 +49,12 @@ function sessions(
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    if (options.reportedId)
+      started?.emit({
+        type: "system",
+        subtype: "init",
+        session_id: options.reportedId,
+      });
     return process;
   };
   const pool = new AgentSessions({
@@ -719,6 +727,96 @@ it("delivers ordinary prompts after binding persistence fails and keeps later hi
       "IFC binding was not saved; history remains unknown",
     );
   } finally {
+    pool.dispose();
+    warn.mockRestore();
+  }
+});
+
+it("keeps a warmed spare's unexpected startup ID unknown and preserves a resumed binding", async () => {
+  const store = memoryStore();
+  const original = nativeBinding("selected-A");
+  store.set("retained", { id: "selected-A", seen: 1, at: 1, ifc: original });
+  const f = withSpare({
+    store,
+    known: new Set(["selected-A"]),
+    reportedId: "retained-B",
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const observed: IfcHistory[] = [];
+  const prepare = async (
+    history: IfcHistory,
+    receipt: (binding: IfcBinding) => void,
+  ) => {
+    observed.push(history);
+    expect(history.fresh).toBe(false);
+    expect(history.binding).toBeNull();
+    receipt(nativeBinding(history.id));
+    return preparedTurn("ordinary");
+  };
+  try {
+    f.spare.warm({ cwd: "/work", model: "opus" });
+    await vi.waitFor(() => expect(f.claudes().length).toBeGreaterThan(0));
+    await f.pool.deliver("dm", "", 2, { prepare });
+    expect(f.claudes()[0]?.options.args).toContain("spare-1");
+    expect(observed[0]?.id).toBe("retained-B");
+    expect(store.get("dm")?.ifc).toBeUndefined();
+    // Even after the fake reports the selected ID again, drift stays unknown.
+    await f.pool.deliver("dm", "", 3, { prepare });
+    expect(observed[1]?.id).toBe("spare-1");
+    await f.pool.deliver("retained", "", 2, { prepare });
+    expect(store.get("retained")?.ifc).toEqual(original);
+    expect(
+      f.claudes().find((process) => process.options.args?.includes("--resume"))
+        ?.prompts,
+    ).toEqual(["ordinary"]);
+    expect(warn).toHaveBeenCalledWith(
+      "IFC Claude reported an unexpected history ID; history remains unknown",
+    );
+  } finally {
+    f.pool.dispose();
+    f.spare.warm();
+    warn.mockRestore();
+  }
+});
+
+it("rechecks reported ID drift during preparation without binding or stopping delivery", async () => {
+  const { pool, store, claudes } = sessions();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let receipt: ((binding: IfcBinding) => void) | undefined;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const done = pool.deliver("dm", "", 1, {
+    prepare: async (history, received) => {
+      expect(history).toEqual({ id: "new-1", fresh: true, binding: null });
+      receipt = received;
+      await gate;
+      return preparedTurn("ordinary");
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(receipt).toBeDefined());
+    claudes()[0]?.emit({
+      type: "system",
+      subtype: "init",
+      session_id: "retained-B",
+    });
+    receipt?.(nativeBinding("new-1"));
+    expect(store.get("dm")?.ifc).toBeUndefined();
+    release();
+    await expect(done).resolves.toEqual({ ok: true });
+    // A receipt after prompt preparation cannot retrospectively bind history.
+    receipt?.(nativeBinding("new-1"));
+    expect(store.get("dm")?.ifc).toBeUndefined();
+    expect(claudes()[0]?.prompts).toEqual(["ordinary"]);
+    expect(claudes()[0]?.killed).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      "IFC prepared turn has an unverified history ID; delivering with unknown history",
+    );
+  } finally {
+    release();
+    await done;
     pool.dispose();
     warn.mockRestore();
   }
