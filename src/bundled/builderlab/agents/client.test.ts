@@ -376,6 +376,32 @@ it.each([
     h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
   ).rejects.toThrow(error);
 });
+it("names the Buzz identity a refused account is linked to", async () => {
+  const h = await fixture();
+  const npub = `npub1${"q".repeat(58)}`;
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(
+      response({ status: "ATTEST_AGENT_STATUS_INVALID_AUTHORIZATION" }),
+    )
+    .mockResolvedValueOnce(response({ identity: { npub } }));
+  await expect(
+    h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
+  ).rejects.toThrow(`This account is linked to ${npub}.`);
+  expect(h.host.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
+    }),
+  );
+});
+it("says when a refused account has no linked Buzz identity", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(response({ status: 10 }))
+    .mockResolvedValueOnce(response({}));
+  await expect(
+    h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
+  ).rejects.toThrow("isn't linked to any Buzz identity");
+});
 it.each(["network", "server", "malformed", "cancel"])(
   "retains the registration UUID after an uncertain %s result",
   async (failure) => {
