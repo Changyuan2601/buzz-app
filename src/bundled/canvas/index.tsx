@@ -3,7 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { CanvasEditor } from "../channels/CanvasEditor";
+import { CanvasEditor } from "./CanvasEditor";
 
 export function eligible(channel: ChannelSummary, session: RelaySession) {
   return (

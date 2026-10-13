@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { CanvasHistory } from "./CanvasHistory";
+import { CanvasHistory } from "../channels/CanvasHistory";
 import type { RelayEvent } from "../../features/relay/events";
 import {
   readView,
@@ -13,8 +13,8 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-import styles from "./ChannelTemplates.module.css";
-import panelStyles from "../canvas/Canvas.module.css";
+import styles from "../channels/ChannelTemplates.module.css";
+import panelStyles from "./Canvas.module.css";
 
 type Draft = { content: string; base: string | null };
 export function CanvasEditor({
