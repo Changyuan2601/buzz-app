@@ -2,11 +2,6 @@
 @import "./tab-drag.css";
 
 @layer components {
-  /* Optical alignment: lift Robot face artwork without moving its layout box. */
-  .tabler-icon-robot-face {
-    translate: 0 -1px;
-  }
-
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -1440,6 +1435,20 @@
   .buzz-select-option {
     justify-content: space-between;
     gap: var(--space-4);
+  }
+  .buzz-select-option-main {
+    display: flex;
+    align-items: start;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-row-gap);
+  }
+  .buzz-select-option-content {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: var(--space-half);
+    overflow-wrap: anywhere;
   }
   .buzz-select-option[data-highlighted] {
     outline: none;

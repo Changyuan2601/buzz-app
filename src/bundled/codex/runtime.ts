@@ -33,6 +33,7 @@ import {
   type ToolCall,
   type ToolReply,
 } from "./rpc";
+import { findConversation } from "./transcript";
 
 type Request = {
   /** The agent's community and owner, as `origin:viewer`. */
@@ -69,6 +70,9 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  /** What the turn runs on, once resolved; a differing pick queues a turn. */
+  model?: string;
+  effort?: string;
   workspace: string;
   signal: AbortSignal;
   version: number;
@@ -80,6 +84,8 @@ type Active = {
 };
 type Lane = {
   tail: Promise<void>;
+  /** Turns waiting on `tail` to start; steering past them would reorder. */
+  queued: number;
   active?: Active;
 };
 type Entry = {
@@ -107,8 +113,6 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
-/** Bindings listed for the owner. */
-const CONVERSATION_LIMIT = 30;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -135,6 +139,7 @@ export class CodexRuntime {
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -145,7 +150,7 @@ export class CodexRuntime {
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
-    const settings = config(agent.config);
+    const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([
       settings.workspace,
       settings.model,
@@ -211,7 +216,7 @@ export class CodexRuntime {
     const code = await process.exited;
     const workspace = directory.trim();
     if (code !== 0 || !absoluteWorkspace(workspace))
-      throw new Error("Could not resolve the default Codex workspace.");
+      throw new Error(`Could not resolve the Codex workspace ${path}.`);
     return workspace;
   }
   private status(pubkey: string, key: string, status: string, detail = "") {
@@ -253,10 +258,16 @@ export class CodexRuntime {
       );
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
+          if (this.server !== server) return;
           server.threads.delete(threadId);
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
-            .catch(() => undefined);
+            .catch((error) =>
+              console.error(
+                "Codex could not clean a stopped agent's terminals",
+                error,
+              ),
+            );
         }
     })();
     this.stopping.set(pubkey, stopped);
@@ -331,7 +342,7 @@ export class CodexRuntime {
     }
     return {};
   }
-  /** The agent's most recently used bindings in this community. */
+  /** The agent's bindings in this community, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
     const snapshot = this.relay(pubkey)?.snapshot();
     const ready = snapshot?.status === "ready" ? snapshot : undefined;
@@ -362,8 +373,44 @@ export class CodexRuntime {
           return [];
         }
       })
-      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-      .slice(0, CONVERSATION_LIMIT);
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** A display name for a pubkey in the agent's community, if known. */
+  name(agentPubkey: string, pubkey: string) {
+    const snapshot = this.relay(agentPubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? (snapshot.session.names.resolve(pubkey) ??
+          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
+          undefined)
+      : undefined;
+  }
+  /** The agent's latest thread for a conversation that another build of the
+   * app started, found by the name the agent gave it. */
+  async find(
+    agent: Readonly<{ pubkey: string; name: string }>,
+    place: Readonly<{ channelId: string; root?: string }>,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    const name =
+      snapshot?.status === "ready"
+        ? snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === place.channelId)?.name
+        : undefined;
+    const found = await findConversation(
+      this.spawn,
+      { agent, ...place, ...(name ? { name } : {}) },
+      signal,
+    );
+    return (
+      found && {
+        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        ...place,
+        ...(name ? { name } : {}),
+        ...found,
+      }
+    );
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
@@ -414,7 +461,7 @@ export class CodexRuntime {
       throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = config(delivery.config);
+    const settings = this.resolveConfig(delivery.config);
     const channel = snapshot.session.channels
       .list()
       .channels.find((row) => row.id === channelId);
@@ -465,7 +512,7 @@ export class CodexRuntime {
       );
       await this.publish(
         request,
-        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+        "Choose an absolute or ~/… workspace path in Codex settings first.",
       );
       return;
     }
@@ -474,7 +521,7 @@ export class CodexRuntime {
     const entry = this.entry(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
-      lane = { tail: entry.after };
+      lane = { tail: entry.after, queued: 0 };
       entry.lanes.set(key, lane);
     }
     if (lane.active) {
@@ -487,7 +534,16 @@ export class CodexRuntime {
             request.failActivity("Codex was stopped");
             return;
           }
-          if (active.finished) {
+          // Steering cannot carry a model or effort, so a differing pick
+          // waits for this turn and runs as the next one. Everything after
+          // it queues too until the lane drains: steering would run later
+          // messages first.
+          if (
+            active.finished ||
+            lane.queued ||
+            (request.model && request.model !== active.model) ||
+            (request.effort && request.effort !== active.effort)
+          ) {
             this.start(request, text, key, lane, entry);
             return;
           }
@@ -559,9 +615,11 @@ export class CodexRuntime {
     entry: Entry,
   ) {
     const current = lane;
+    current.queued++;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
+        current.queued--;
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;
@@ -807,7 +865,7 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
-      // The process host expands ~/.buzz and creates it; Codex's RPC needs
+      // The process host expands ~/… and creates the directory; Codex's RPC needs
       // an absolute path rather than shell-style home notation.
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
@@ -840,6 +898,8 @@ export class CodexRuntime {
         [request.effort, settings.effort].find(
           (level) => level && supported.includes(level),
         ) ?? selected.defaultReasoningEffort;
+      active.model = model;
+      active.effort = effort;
       const mcp = Object.fromEntries(
         Object.entries(normalized.config.mcp_servers ?? {}).map(
           ([name, server]) => [

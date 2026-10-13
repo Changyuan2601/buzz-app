@@ -189,6 +189,17 @@
     text-align: start;
     cursor: pointer;
   }
+  .buzz-select-value-content {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1;
+    gap: var(--space-row-gap);
+  }
+  .buzz-select-leading {
+    display: flex;
+    flex: none;
+  }
   .buzz-select-value {
     min-width: 0;
     overflow-wrap: anywhere;
@@ -197,12 +208,13 @@
     display: flex;
     flex-shrink: 0;
   }
-  /* Row choices retain a visible boundary; full labels stay in the popup and hint. */
+  /* The value and caret identify row choices; their boundary stays quiet. */
   .buzz-select[data-variant="compact"] {
     display: grid;
     min-width: 0;
   }
   .buzz-select[data-variant="compact"] .buzz-button {
+    --interaction-border: var(--border-standard);
     min-width: 0;
     max-width: 100%;
     color: var(--text-standard);
@@ -219,7 +231,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .buzz-select[data-variant="compact"] .buzz-select-value + span {
+  .buzz-select[data-variant="compact"] .buzz-select-value-content + span {
     display: flex;
     flex-shrink: 0;
   }
@@ -281,6 +293,9 @@
   .buzz-select-option[data-disabled] {
     color: var(--text-unavailable);
     cursor: not-allowed;
+  }
+  .buzz-select-option[data-disabled] .buzz-select-option-description {
+    color: inherit;
   }
   .buzz-select-value[data-placeholder] {
     color: var(--text-metadata);

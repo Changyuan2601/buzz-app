@@ -13,11 +13,13 @@ import { pagePresentation } from "./presentation";
 export function PageNavigation({
   pages,
   selected,
+  currentPage = selected,
   onSelect,
   placement = "sidebar",
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
+  currentPage?: string;
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
@@ -28,6 +30,9 @@ export function PageNavigation({
         variant="chrome"
         value={pages.some((page) => page.key === selected) ? selected : null}
         onValueChange={(key) => onSelect(key, { focus: "preserve" })}
+        onReselect={(key) => {
+          if (key !== currentPage) onSelect(key, { focus: "preserve" });
+        }}
         items={pages.map((page) => {
           const Badge = page.badge;
           return {
@@ -82,6 +87,9 @@ export function PageNavigation({
         key={page.key}
         onClick={select}
         selected={selected === page.key}
+        aria-current={
+          selected === page.key && currentPage !== selected ? true : undefined
+        }
         label={label}
         title={label}
         variant="row"

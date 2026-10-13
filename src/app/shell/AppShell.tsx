@@ -19,7 +19,7 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
-import { orderPages } from "./presentation";
+import { headerPageSelection, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
@@ -96,7 +96,15 @@ export function AppShell({
   }, []);
   const meNavigation = selected === "buzz.me/me";
   const collapsibleSidebar =
-    channelsNavigation || meNavigation || selected === "settings";
+    channelsNavigation ||
+    meNavigation ||
+    selected === "settings" ||
+    pages.some((page) => page.key === selected && page.primary);
+  const sidebarLabel = meNavigation
+    ? "Me sidebar"
+    : channelsNavigation
+      ? "Channel sidebar"
+      : "sidebar";
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
@@ -105,9 +113,7 @@ export function AppShell({
     ? navigationOpen
       ? "Hide navigation"
       : "Show navigation"
-    : sidebarOpen
-      ? `Hide ${meNavigation ? "Me" : "Channel"} sidebar`
-      : `Show ${meNavigation ? "Me" : "Channel"} sidebar`;
+    : `${sidebarOpen ? "Hide" : "Show"} ${sidebarLabel}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Only a navigation attempt closes the drawer.
   useEffect(() => {
     if (navigationOpen && navigationToggle.current?.getClientRects().length) {
@@ -157,7 +163,11 @@ export function AppShell({
     [pages],
   );
   const topbarPages = headerPages.filter((page) => page.placement === "topbar");
-  const selectedTopbarPage = topbarPages.some((page) => page.key === selected);
+  const selectedHeader = headerPageSelection(pages, selected);
+  const selectedTopbarPage = topbarPages.some(
+    (page) => page.key === selectedHeader,
+  );
+  const panelKey = selectedTopbarPage ? selectedHeader : selected;
   const toolbarPages = headerPages.filter(
     (page) => page.placement === "toolbar",
   );
@@ -292,7 +302,8 @@ export function AppShell({
           >
             <PageNavigation
               pages={topbarPages}
-              selected={selected}
+              selected={selectedHeader}
+              currentPage={selected}
               onSelect={onSelect}
               placement="topbar"
             />
@@ -357,7 +368,8 @@ export function AppShell({
                 >
                   <PageNavigation
                     pages={headerPages}
-                    selected={selected}
+                    selected={selectedHeader}
+                    currentPage={selected}
                     onSelect={(key) => {
                       setOverflowOpen(false);
                       onSelect(key);
@@ -430,11 +442,11 @@ export function AppShell({
               >
                 <PanelFrame companion={companion}>
                   <div
-                    id={`shell-page-${selected}`}
+                    id={`shell-page-${panelKey}`}
                     {...(!compactPages && selectedTopbarPage
                       ? {
                           role: "tabpanel",
-                          "aria-labelledby": `shell-page-${selected}-tab`,
+                          "aria-labelledby": `shell-page-${panelKey}-tab`,
                           tabIndex: 0,
                           "data-focus-inset": "",
                         }

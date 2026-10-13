@@ -31,6 +31,7 @@ it("scopes local agent names to the session community and follows edits and disp
         listeners.delete(listener);
       };
     },
+    refresh: async () => {},
   });
   const source: NameSource = {
     relayUrl: "https://here.example",
@@ -165,6 +166,7 @@ it("recomputes collisions for local agent edits, community scope, and profile fa
         listeners.delete(listener);
       };
     },
+    refresh: async () => {},
   });
   const names = bindNames(source, {
     snapshot: () => [provider],
@@ -233,6 +235,7 @@ it("includes local-only identities but ignores other-community and unready local
   const provider = createAgentDirectory({
     snapshot: () => native,
     subscribe: () => () => {},
+    refresh: async () => {},
   });
   for (const key of [a, b])
     expect(provider.scope(source)(key)?.name).toBe(

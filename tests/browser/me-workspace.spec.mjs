@@ -155,8 +155,17 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
     .getByRole("button", { name: "Close Agent Activity tab", exact: true })
     .click();
   await expect(alpha).toBeFocused();
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  // Cross the closed trigger, then reopen by keyboard before hover dismissal.
+  await alpha.hover();
   await page.mouse.move(0, 0);
   await alpha.press("Enter");
+  await expect(alpha).toHaveAttribute("aria-expanded", "true");
+  await expect(popup).toBeVisible();
+  // Run past the 150ms hover-close deadline, not a wall-clock wait.
+  await page.clock.runFor(200);
+  await page.clock.resume();
   await expect(popup).toBeVisible();
   const activityAction = popup.getByRole("button", {
     name: /View .+ activity/,

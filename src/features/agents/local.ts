@@ -15,6 +15,8 @@ export type LocalAgentsSnapshot = Readonly<{
 export type LocalAgents = {
   snapshot(): LocalAgentsSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Reads the list again, as Retry asks; the producer owns the read. */
+  refresh(): Promise<void>;
 };
 
 const unavailable: LocalAgentsSnapshot = Object.freeze({
@@ -32,6 +34,7 @@ export function createLocalAgents() {
   };
   const agents: LocalAgents = {
     snapshot: () => source?.snapshot() ?? unavailable,
+    refresh: () => source?.refresh() ?? Promise.resolve(),
     subscribe(listener) {
       listeners.add(listener);
       return () => {

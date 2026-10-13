@@ -86,6 +86,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
       await page.keyboard.press(activation);
       await expect(messages).toHaveAttribute("aria-selected", "true");
       await expect(composer).toHaveText("Keep this draft");
+      await expect(messages).toBeFocused();
     }
     await me.click();
     const newComposer = page.getByRole("textbox", {
@@ -173,6 +174,68 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
   await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
   ).toBeVisible();
+  // The real sidebar changes the route, not the containing Messages area.
+  const inbox = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Inbox", exact: true });
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    for (const activation of ["pointer", "Enter", "Space"]) {
+      await inbox.click();
+      await expect(inbox).toHaveAttribute("aria-current", "page");
+      await expect(messages).toHaveAttribute("aria-selected", "true");
+      await expect(
+        page.getByRole("tabpanel", { name: "Messages", exact: true }),
+      ).toHaveAttribute("id", await messages.getAttribute("aria-controls"));
+      await expect(page.locator("#main-content")).toBeFocused();
+      if (activation === "pointer") await messages.click();
+      else {
+        await messages.focus();
+        await messages.press(activation);
+      }
+      await expect(composer).toHaveText("Keep this draft");
+      await expect(messages).toBeFocused();
+    }
+  }
+  await inbox.click();
+  await page.reload();
+  await expect(inbox).toHaveAttribute("aria-current", "page");
+  await expect(messages).toHaveAttribute("aria-selected", "true");
+  await me.click();
+  await expect(me).toHaveAttribute("aria-selected", "true");
+  await page.goBack();
+  await expect(inbox).toHaveAttribute("aria-current", "page");
+  await expect(messages).toHaveAttribute("aria-selected", "true");
+  await page.goForward();
+  await expect(me).toHaveAttribute("aria-selected", "true");
+  await page.goBack();
+  await expect(inbox).toHaveAttribute("aria-current", "page");
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await page.setViewportSize({ width: 390, height: 950 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    await page.getByRole("button", { name: "More pages", exact: true }).click();
+    const overflow = page.getByRole("navigation", { name: "Header pages" });
+    const area = overflow.getByRole("button", {
+      name: "Messages",
+      exact: true,
+    });
+    await expect(area).toHaveAttribute("aria-current", "true");
+    await expect(area).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "";
+    });
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await expect(messages).toHaveAttribute("aria-selected", "true");
+    await page.screenshot({
+      path: test.info().outputPath(`messages-inbox-${mode}.png`),
+    });
+  }
+  await messages.click();
+  await expect(composer).toHaveText("Keep this draft");
   await openPage(page, "Settings");
   await expect(topbar.locator('[aria-selected="true"]')).toHaveCount(0);
 });

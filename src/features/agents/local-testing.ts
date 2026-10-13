@@ -7,6 +7,8 @@ export function localAgentsFixture(
 ) {
   let state: LocalAgentsSnapshot = { status, agents };
   const listeners = new Set<() => void>();
+  let reads = 0;
+  let read: () => void | Promise<void> = () => {};
   return {
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -14,6 +16,15 @@ export function localAgentsFixture(
       return () => {
         listeners.delete(listener);
       };
+    },
+    /** Counts reload demand; `onRefresh` scripts what each read reports. */
+    async refresh() {
+      reads++;
+      await read();
+    },
+    reads: () => reads,
+    onRefresh(next: () => void | Promise<void>) {
+      read = next;
     },
     /** An error lasts only as long as the update that reports it. */
     set(next: Partial<LocalAgentsSnapshot>) {

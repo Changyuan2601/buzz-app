@@ -9,6 +9,28 @@ const composer = (page, name) =>
 const entry = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry);
 
+test("a collapsible sidebar yields to narrow drawer styles during resize", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const navigation = page.locator("#shell-navigation");
+  await expect(navigation).toHaveAttribute("data-sidebar-collapsible", "true");
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  // Model the desktop marker remaining for a frame until React observes the
+  // media-query change; narrow drawer CSS must still win during that interval.
+  await navigation.evaluate((element) => {
+    element.setAttribute("data-sidebar-collapsible", "true");
+  });
+  await expect(navigation).toHaveCSS("display", "none");
+
+  await button(page, "Show navigation").click();
+  await expect(navigation).toHaveAttribute("data-expanded", "true");
+  await expect(navigation).toHaveCSS("display", "flex");
+  await expect(navigation).toBeVisible();
+});
+
 test("a retired contributed Settings destination fails promptly on Back", async ({
   page,
   app,

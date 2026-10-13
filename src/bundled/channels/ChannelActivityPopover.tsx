@@ -201,6 +201,7 @@ export function ChannelActivityPopover({
     useRef<
       NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
     >(null);
+  const pressedOpen = useRef(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!open || !activeAgents.length) return;
@@ -243,8 +244,8 @@ export function ChannelActivityPopover({
   const keyLabels = publicKeyLabels(activeAgents);
   const hasActivity = items.length > 0 || activeAgents.length > 0;
   useEffect(() => {
-    if (!hasActivity) setOpen(false);
-  }, [hasActivity]);
+    if (!hasActivity && open) actions.current?.close();
+  }, [hasActivity, open]);
   const stale = items.length > 0 && snapshot.freshness === "stale";
   // Row actions close through Base UI so its hover/press state resets; the
   // sidebar trigger stays mounted after the navigation they start.
@@ -270,6 +271,16 @@ export function ChannelActivityPopover({
             return;
           }
         }
+        // A queued hover dismissal must not close a newer keyboard/touch opening.
+        if (
+          !next &&
+          details.reason === "trigger-hover" &&
+          pressedOpen.current
+        ) {
+          details.cancel();
+          return;
+        }
+        pressedOpen.current = next && details.reason === "trigger-press";
         setOpen(next);
         if (next) setNow(Date.now());
         if (next && items.length)

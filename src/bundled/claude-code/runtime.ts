@@ -67,12 +67,11 @@ export const config = (value: unknown): Config => ({
 /** A saved session, for the owner's transcript list. */
 export type SavedConversation = Conversation & {
   key: string;
+  sessionId: string;
   /** The channel's name, when this community lists it. */
   name?: string;
   at: number;
 };
-/** Saved sessions listed for the owner. */
-const CONVERSATION_LIMIT = 30;
 
 /** How long a read of the agent's core memory is reused. */
 const MEMORY_TTL_MS = 5 * 60_000;
@@ -126,6 +125,7 @@ export class ClaudeRuntime {
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
     private readonly storage: Storage = globalThis.localStorage,
+    private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
 
   private get spawn(): Spawn {
@@ -148,7 +148,7 @@ export class ClaudeRuntime {
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
-      const next = config(agent.config);
+      const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.pubkey);
       if (!entry)
         this.entry(agent.pubkey, next, agent.attentionEnabled).name =
@@ -167,7 +167,9 @@ export class ClaudeRuntime {
         entry.sessions.reconfigure();
       }
     }
-    this.spare.warm(...agents.map((agent) => where(config(agent.config))));
+    this.spare.warm(
+      ...agents.map((agent) => where(this.resolveConfig(agent.config))),
+    );
     this.notify();
   }
 
@@ -233,7 +235,7 @@ export class ClaudeRuntime {
     }
     return view;
   }
-  /** The agent's most recently used saved sessions. */
+  /** The agent's saved sessions, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
     const snapshot = this.relay(pubkey)?.snapshot();
     const channels =
@@ -242,12 +244,12 @@ export class ClaudeRuntime {
         : [];
     return localSessions(this.storage, pubkey)
       .list()
-      .slice(0, CONVERSATION_LIMIT)
       .map(([key, saved]) => {
         const [channelId = key, root] = key.split("/");
         const name = channels.find((row) => row.id === channelId)?.name;
         return {
           key,
+          agent: pubkey,
           sessionId: saved.id,
           channelId,
           ...(root ? { root } : {}),
@@ -256,14 +258,49 @@ export class ClaudeRuntime {
         };
       });
   }
-  /** A saved session's transcript, found from the workspace it ran in. */
+  /** A conversation's transcript, found from the workspace it ran in. */
   transcript(
-    conversation: SavedConversation,
+    conversation: Conversation,
     workspace: string,
     working: boolean,
     signal: AbortSignal,
   ) {
     return readTranscript(this.spawn, workspace, conversation, working, signal);
+  }
+  /** The agent's latest session for a conversation that another build of the
+   * app started, found in the workspace's Claude Code history. */
+  async find(
+    pubkey: string,
+    place: Readonly<{ channelId: string; root?: string }>,
+    workspace: string,
+    signal: AbortSignal,
+  ): Promise<SavedConversation | undefined> {
+    const transcript = await readTranscript(
+      this.spawn,
+      workspace,
+      { agent: pubkey, ...place },
+      false,
+      signal,
+    );
+    const last = transcript?.turns.at(-1);
+    if (!last?.sessionId) return undefined;
+    const name = this.channelName(pubkey, place.channelId);
+    return {
+      key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
+      agent: pubkey,
+      sessionId: last.sessionId,
+      ...place,
+      ...(name ? { name } : {}),
+      at: last.endedAt ?? last.startedAt,
+    };
+  }
+  private channelName(pubkey: string, channelId: string) {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    return snapshot?.status === "ready"
+      ? snapshot.session.channels
+          .list()
+          .channels.find((row) => row.id === channelId)?.name
+      : undefined;
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -301,7 +338,7 @@ export class ClaudeRuntime {
     superseded,
     current,
   }: Delivery) {
-    const settings = config(raw);
+    const settings = this.resolveConfig(raw);
     // Claude runs commands as you; mentions need owner or delegated authority.
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.
@@ -344,7 +381,10 @@ export class ClaudeRuntime {
       const turn = await this.turn(entry, agent.pubkey, event, channel, fresh);
       return {
         key: turn.key,
-        text: this.review(entry, turnPrompt({ ...turn, label: "@mention" })),
+        text: this.review(
+          entry,
+          turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
+        ),
       };
     };
     const { key, text } = await prompt(false);

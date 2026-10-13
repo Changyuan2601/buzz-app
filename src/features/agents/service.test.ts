@@ -5,8 +5,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { RelayEvent } from "../relay/events";
-import { eventDto } from "../relay/events";
+import { eventDto, type RelayEvent } from "../relay/events";
 import { keypair, signed } from "../relay/testing";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
 import type { RelayData, RelaySnapshot } from "../relay/service";
@@ -257,6 +256,9 @@ function fakeNative(identities: AgentIdentity[] = []) {
       const { picture: _, ...identity } = identities[index] as AgentIdentity;
       identities[index] = picture ? { ...identity, picture } : identity;
     }),
+    setType: vi.fn(async (pubkey: string, type: string) => {
+      change(pubkey, { type });
+    }),
     remove: vi.fn(async (pubkey: string) => {
       steps.push("key");
       change(pubkey, { deleted: true });
@@ -327,6 +329,24 @@ async function setup({
     timeoutMs,
     ...(allowAgentWatch ? { allowAgentWatch } : {}),
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
+    carry: ({ reply }) => ({ instructions: reply, workspace: "~/echo" }),
+    describeMigration: () => [
+      { id: "model", label: "Model", isOverride: true },
+      { id: "thinking", label: "Thinking", isOverride: true },
+      {
+        id: "sessions",
+        label: "Sessions",
+        isOverride: true,
+        unchangedKey: "channel",
+      },
+      {
+        id: "equivalent",
+        label: "Equivalent setting",
+        isOverride: true,
+        unchangedKey: "same",
+      },
+      { id: "default", label: "Default setting", isOverride: false },
+    ],
     defaults: () => ({
       config: { reply: "ok" },
       attention: {
@@ -1128,6 +1148,146 @@ it("accepts relay workflow delegation only from this agent's owner", async () =>
   expect(await fromOwner(prompt, viewer)).toBe(false);
 });
 
+it("changes an agent's type between turns, carrying what the new type adopts", async () => {
+  const { service, native, run, emit, ctx, storage } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const attention = service.find(bot)?.attention;
+  await service.save(bot, { config: { reply: "Triage." } });
+  const other = vi.fn<(delivery: Delivery<{ prompt: string }>) => void>();
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string; model: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "", model: "small" } }),
+      adopt: (carry, saved) => ({
+        ...saved,
+        prompt: carry.instructions ?? saved.prompt,
+      }),
+      carry: ({ prompt }) => ({ instructions: prompt }),
+      describeMigration: () => [
+        { id: "model", label: "Model", isOverride: false },
+        {
+          id: "sessions",
+          label: "Sessions",
+          isOverride: false,
+          unchangedKey: "thread",
+        },
+        {
+          id: "equivalent",
+          label: "Equivalent setting",
+          isOverride: false,
+          unchangedKey: "same",
+        },
+        { id: "destination", label: "Destination only", isOverride: false },
+      ],
+      run: other,
+    });
+  // Not while a turn, or the work it handed off, is still going.
+  let finish = () => {};
+  run.mockImplementationOnce(async ({ workingUntil }) =>
+    workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+  );
+  const mention = (id: string) =>
+    event(id, {
+      tags: [
+        ["h", channel],
+        ["p", bot],
+      ],
+    });
+  emit({ events: [mention("m1")], channelId: channel });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(service.previewRetype(bot, "other/relay")).toEqual({
+    config: { prompt: "Triage.", model: "small" },
+    moved: ["instructions"],
+    dropped: ["workspace"],
+    settings: [
+      { id: "model", label: "Model", outcome: "reset" },
+      { id: "thinking", label: "Thinking", outcome: "dropped" },
+      { id: "sessions", label: "Sessions", outcome: "reset" },
+    ],
+  });
+  expect(native.setType).not.toHaveBeenCalled();
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "Echo is answering",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  finish();
+  await settle();
+  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
+    throw new Error("QuotaExceededError");
+  });
+  await expect(
+    service.retype(bot, "other/relay", {
+      config: { prompt: "Reviewed target", model: "large" },
+    }),
+  ).rejects.toThrow("QuotaExceededError");
+  expect(native.setType.mock.calls).toEqual([
+    [bot, "other/relay"],
+    [bot, "example/echo"],
+  ]);
+  expect(service.find(bot)).toMatchObject({
+    type: "example/echo",
+    config: { reply: "Triage." },
+  });
+  native.setType.mockClear();
+  native.claim.mockResolvedValueOnce(false);
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "device that runs it",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  native.claim.mockRejectedValueOnce(new Error("claim unavailable"));
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "claim unavailable",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  let continueType = () => {};
+  const typeGate = new Promise<void>((resolve) => (continueType = resolve));
+  const persistType = native.setType.getMockImplementation();
+  native.setType.mockImplementationOnce(async (...args) => {
+    await typeGate;
+    return persistType?.(...args);
+  });
+  // The workspace has no place in the new type, so it stays behind.
+  const changing = service.retype(bot, "other/relay", {
+    config: { prompt: "Reviewed target", model: "large" },
+  });
+  await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
+  await expect(service.retype(bot, "other/relay")).rejects.toThrow(
+    "provider is already changing",
+  );
+  await expect(
+    service.save(bot, { config: { reply: "Lost edit" } }),
+  ).rejects.toThrow("provider is already changing");
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [mention("m2")], channelId: channel });
+  await settle();
+  expect(other).not.toHaveBeenCalled();
+  expect(run).toHaveBeenCalledOnce();
+  continueType();
+  await expect(changing).resolves.toEqual(["workspace"]);
+  expect(native.setType).toHaveBeenCalledWith(bot, "other/relay");
+  expect(service.find(bot)).toMatchObject({
+    type: "other/relay",
+    config: { prompt: "Reviewed target", model: "large" },
+    attention,
+    attentionEnabled: true,
+  });
+  // The new type answers from now on.
+  await vi.waitFor(() => expect(other).toHaveBeenCalledOnce());
+  expect(other.mock.calls[0]?.[0].config).toEqual({
+    prompt: "Reviewed target",
+    model: "large",
+  });
+  expect(run).toHaveBeenCalledOnce();
+  // Its own type, or one not available, changes nothing.
+  expect(await service.retype(bot, "other/relay")).toEqual([]);
+  await expect(service.retype(bot, "missing/type")).rejects.toThrow(
+    "not available",
+  );
+  expect(native.setType).toHaveBeenCalledOnce();
+});
+
 it("sets and clears a picture through native, and publishes it", async () => {
   const { service, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -1382,6 +1542,53 @@ it("keeps an agent created while identities are still loading", async () => {
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   expect(service.find(bot)?.name).toBe("Echo");
   expect(storage.getItem("buzz.agents.v1")).toContain(bot);
+});
+
+it("reads the list again on refresh and clears the error a failed read left", async () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const identity = {
+    pubkey: bot,
+    relay: "wss://relay.example.test",
+    owner: viewer,
+    type: "example/echo",
+    name: "Echo",
+    deleted: false,
+  };
+  const native = fakeNative([identity]);
+  native.list.mockRejectedValueOnce(
+    new Error("Could not read saved agent identities"),
+  );
+  const service = new AgentsService(
+    ctx,
+    fakeCommunities(fakeRelay()).communities,
+    native,
+    memoryStorage(),
+  );
+  await vi.waitFor(() =>
+    expect(service.local()).toEqual({
+      status: "error",
+      agents: [],
+      error: "Could not read saved agent identities",
+    }),
+  );
+  await service.refresh();
+  expect(native.list).toHaveBeenCalledTimes(2);
+  expect(service.local()).toEqual({
+    status: "ready",
+    agents: [
+      {
+        pubkey: bot,
+        name: "Echo",
+        relayUrl: "wss://relay.example.test",
+        owner: viewer,
+      },
+    ],
+  });
+  expect(service.snapshot().error).toBeUndefined();
 });
 
 it("fires a due timer once, then again an interval after it ran", async () => {
