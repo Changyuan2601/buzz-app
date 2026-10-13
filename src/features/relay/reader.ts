@@ -158,7 +158,7 @@ export function createRelayReader(
                 job.controller.signal,
                 job.id,
                 job.priority,
-                job.ifc,
+                ...(job.ifc ? [job.ifc] : []),
               );
         void query
           .then(async (events) => {
