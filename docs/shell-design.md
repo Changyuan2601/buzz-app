@@ -81,7 +81,10 @@ semantic tokens, UI authoring rules and the local component reference.
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout
   owners add one-pixel semantic dividers. Document pages scroll inside the
-  remaining viewport.
+  remaining viewport. Chromium waits for the main thread to start any scroll
+  beneath a rounded clip, so the joined Panel clips its content to a rectangle
+  and a click-through cap on each corner redraws the backdrop, edge, and shadow
+  there.
 - `SettingsSidebar.tsx` presents community and app sections in the shell's
   replacement sidebar. `Settings.tsx` renders the selected detail pane and retains
   drafts across section changes. The detail pane scrolls independently and keeps

@@ -288,6 +288,48 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     return value;
   });
   expect(background).toBe(gradient);
+  // The Panel draws its own edge. Its content clips to a rectangle, so a cap
+  // on each corner redraws the backdrop outside the arc and the edge on top.
+  const edges = await page
+    .locator(".shell-body > [data-joined]")
+    .evaluate((panel) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--border-standard)";
+      panel.append(probe);
+      const standard = getComputedStyle(probe).color;
+      probe.remove();
+      const edge = (style) => [
+        style.borderTopWidth,
+        style.borderTopColor === standard,
+        style.boxShadow !== "none",
+      ];
+      const outer = panel.getBoundingClientRect();
+      const caps = panel.querySelectorAll(":scope > .shell-corner");
+      return {
+        panel: edge(getComputedStyle(panel)),
+        caps: [...caps].map((cap) => {
+          const sides = cap.dataset.corner.split("-");
+          const inner = cap.getBoundingClientRect();
+          const backdrop = getComputedStyle(cap, "::before");
+          return {
+            onCorner: sides.every((s) => Math.abs(inner[s] - outer[s]) < 0.5),
+            backdrop: backdrop.backgroundImage,
+            mask: backdrop.maskImage.includes("radial-gradient"),
+            edge: edge(getComputedStyle(cap, "::after")),
+          };
+        }),
+      };
+    });
+  const cap = {
+    onCorner: true,
+    backdrop: gradient,
+    mask: true,
+    edge: ["1px", true, true],
+  };
+  expect(edges).toEqual({
+    panel: ["1px", true, true],
+    caps: [cap, cap, cap, cap],
+  });
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -449,6 +491,74 @@ test("joined surface, sidebar pages, real link panel and compact community navig
   await expect(projects).toHaveAttribute("aria-checked", "true");
   await expectProjectsChoice(1);
 });
+
+// Chromium hit-tests a scroll start on the main thread when a rounded clip
+// encloses the scroller, so one busy task would hold every shell scroll start.
+// Both scrollers overflow so the compositor owns their scrolling. At 2x
+// Chromium composites every scroller whatever the runner's LCD-text setting, so
+// only the shell can send a scroll start to the main thread.
+const scrollStart = scroll.extend({ largeSidebar: true, deviceScaleFactor: 2 });
+scrollStart(
+  "Chromium starts shell scrolls without a main-thread hit test",
+  async ({ page, app, browserName }) => {
+    test.skip(
+      browserName !== "chromium",
+      "WebKit hit-tests scroll starts off the main thread under rounded clips",
+    );
+    await open(page, app);
+    await settle(page);
+    // The timeline opens at its newest row and the channel list at its top.
+    const scrollers = {
+      timeline: [
+        page.getByRole("region", { name: "Channel message history" }),
+        200,
+      ],
+      channels: [
+        page.getByRole("navigation", {
+          name: "Subscribed channels",
+          exact: true,
+        }),
+        -200,
+      ],
+    };
+    const cdp = await page.context().newCDPSession(page);
+    const mainThreadHitTests = {};
+    for (const [name, [scroller, yDistance]] of Object.entries(scrollers)) {
+      const events = [];
+      const collect = ({ value }) => events.push(...value);
+      cdp.on("Tracing.dataCollected", collect);
+      const traced = new Promise((resolve) =>
+        cdp.once("Tracing.tracingComplete", resolve),
+      );
+      await cdp.send("Tracing.start", {
+        categories: "-*,input",
+        transferMode: "ReportEvents",
+      });
+      const { x, y, width, height } = await box(scroller);
+      const offset = await scroller.evaluate((el) => el.scrollTop);
+      // Resolves after the browser has delivered the whole gesture.
+      await cdp.send("Input.synthesizeScrollGesture", {
+        x: x + width / 2,
+        y: y + height / 2,
+        yDistance,
+        gestureSourceType: "mouse",
+      });
+      await expect
+        .poll(() => scroller.evaluate((el) => el.scrollTop))
+        .not.toBe(offset);
+      await cdp.send("Tracing.end");
+      await traced;
+      cdp.off("Tracing.dataCollected", collect);
+      const count = (event) => events.filter((e) => e.name === event).length;
+      expect(
+        count("InputHandlerProxy::HandleGestureScrollBegin"),
+        `the compositor traced the ${name} scroll start`,
+      ).toBeGreaterThan(0);
+      mainThreadHitTests[name] = count("PostingHitTestToMainThread");
+    }
+    expect(mainThreadHitTests).toEqual({ timeline: 0, channels: 0 });
+  },
+);
 
 test("narrow link panels begin after the rendered sidebar", async ({
   page,

@@ -33,6 +33,13 @@ import { WindowControls } from "./WindowControls";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
+// Each corner of the joined Panel gets a cap that redraws it (globals.css).
+const SHELL_CORNERS = [
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+] as const;
 
 export function AppShell({
   pages,
@@ -458,6 +465,14 @@ export function AppShell({
                 </PanelFrame>
               </main>
             </div>
+            {SHELL_CORNERS.map((corner) => (
+              <span
+                key={corner}
+                aria-hidden
+                className="shell-corner"
+                data-corner={corner}
+              />
+            ))}
           </Panel>
         </div>
       </div>

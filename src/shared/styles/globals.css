@@ -293,12 +293,105 @@
     display: flex;
     min-width: 0;
   }
+  /* Corner caps. Chromium hit-tests the start of a scroll on the main thread
+     whenever a rounded clip encloses the scroller, so one busy task would hold
+     every shell scroll until it ends. The joined Panel therefore clips its
+     content to a rectangle, and a corner-sized cap after the content redraws
+     each rounded corner: ::before repaints the backdrop outside the arc and
+     ::after the Panel's own edge. They ignore pointers and keep their own
+     small compositor layers. Every engine draws them, though only Chromium
+     gains speed, so all hosts share one shell. */
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1;
+    --shell-gutter: var(--space-2);
+    padding: 0 var(--shell-gutter) var(--shell-gutter) 0;
+    /* Its content box is the Panel's border box, which the caps measure.
+       Only the caps should query it. */
+    container-type: size;
+  }
+  @media (min-width: 40rem) {
+    .shell-body {
+      --shell-gutter: var(--space-4);
+    }
+  }
+  .shell-body > .panel {
+    overflow: visible;
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0;
     container-type: inline-size;
+    /* Not `clip`, which stops lazy images loading ahead of the viewport. */
+    overflow: hidden;
+    /* Keeps the narrow navigation and dock beneath the caps. */
+    isolation: isolate;
+  }
+  .shell-corner {
+    --r: var(--panel-radius);
+    position: absolute;
+    width: calc(var(--r) + 2px);
+    height: calc(var(--r) + 2px);
+    overflow: hidden;
+    pointer-events: none;
+    /* Not `transform`: a transform layer snaps to whole pixels, which would
+       part the caps from the Panel at fractional Interface sizes. */
+    will-change: opacity;
+  }
+  /* Each cap sits on a Panel corner, and its backdrop lines up with the
+     viewport-sized .shell-background. The offsets are calc() lengths, not
+     `right <offset> bottom <offset>`: Chromium places a repeated edge offset
+     from the left and top on the fourth and later background layers. */
+  .shell-corner[data-corner^="top"] {
+    top: 0;
+    --cy: var(--r);
+    --by: calc(var(--shell-gutter) + 100cqh - 100dvh);
+  }
+  .shell-corner[data-corner^="bottom"] {
+    bottom: var(--shell-gutter);
+    --cy: calc(100% - var(--r));
+    --by: calc(100% + var(--shell-gutter));
+  }
+  .shell-corner[data-corner$="left"] {
+    left: 0;
+    --cx: var(--r);
+    --bx: calc(var(--shell-gutter) + 100cqw - 100vw);
+  }
+  .shell-corner[data-corner$="right"] {
+    right: var(--shell-gutter);
+    --cx: calc(100% - var(--r));
+    --bx: calc(100% + var(--shell-gutter));
+  }
+  .shell-corner::before,
+  .shell-corner::after {
+    content: "";
+    position: absolute;
+  }
+  .shell-corner::before {
+    inset: 0;
+    background-color: var(--color-shell);
+    background-image: var(--bg-app);
+    background-position: var(--bx) var(--by);
+    background-size: 100vw 100dvh;
+    background-repeat: no-repeat;
+    /* A longhand, so the build adds the prefix Chromium < 120 needs. */
+    mask-image: radial-gradient(
+      circle var(--r) at var(--cx) var(--cy),
+      transparent calc(var(--r) - 0.5px),
+      black 0
+    );
+  }
+  /* The Panel's own border box, so the arc matches its edge exactly. */
+  .shell-corner::after {
+    width: 100cqw;
+    height: 100cqh;
+    border: var(--panel-border);
+    border-radius: var(--r);
+    box-shadow: var(--panel-shadow);
+  }
+  .shell-corner[data-corner$="right"]::after {
+    right: 0;
+  }
+  .shell-corner[data-corner^="bottom"]::after {
+    bottom: 0;
   }
   .shell-sidebar,
   .shell-sidebar-default {
