@@ -3,6 +3,11 @@
   "name": "Shared compute",
   "apiVersion": 1,
   "host": {
-    "processes": [{ "id": "agent", "program": "buzz-mesh-agent" }]
+    "processes": [
+      { "id": "agent", "program": "buzz-mesh-goose" },
+      { "id": "bridge", "program": "nc", "args": ["-lU"] },
+      { "id": "workspace", "program": "pwd" },
+      { "id": "read", "program": "base64", "args": ["-i"] }
+    ]
   }
 }

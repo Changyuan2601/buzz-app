@@ -1,5 +1,5 @@
 {
   "bundle": {
-    "externalBin": ["binaries/buzz-mesh-agent"]
+    "externalBin": ["binaries/buzz-mesh-goose"]
   }
 }

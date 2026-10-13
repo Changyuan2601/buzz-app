@@ -35,5 +35,5 @@ dist-plugins/
 src-tauri/resources/agent-runtime/*
 dist-buzz-mcp/
 
-# Built by scripts/mesh-helper/build.sh; never committed.
+# Built by scripts/mesh-goose/build.sh; never committed.
 src-tauri/binaries/

@@ -1,43 +1,51 @@
 # Agents "Mesh" type (draft)
 
-Agents → New agent → **Mesh**. Its only setting is the prompt. A mention
-from the agent's owner runs one inference-only turn: the plugin prepares the
-shared-compute target natively (`mesh_compute_prepare_inference`), spawns the
-GDK `buzz-agent` helper as host process `buzz-mesh-agent`, speaks ACP over
-stdio with no MCP servers, and publishes the reply through Agents
-(`agent.publish`). No tools, no provider fallback.
+Agents → New agent → **Mesh**. A mention from the agent's owner runs one turn
+of lean upstream goose on this community's shared compute, in the agent's
+workspace (default `~/.buzz`).
 
-## Helper (pinned, bundled)
+## Runtime
 
-The helper is a separate pin from the app's bundled `buzz-agent` CLI/ACP: the
-goose-core `buzz-agent` (`block/buzz` `micn/buzz-agent-goose-core` at
-`6a7c51a5a9367c9e868c6a2cff5706c8a061cf28`) plus
-`scripts/mesh-helper/acp-session-id.patch` (ACP session id on every wire
-update; not yet on a remote branch). Build and package:
+- **Binary:** goose's ACP-only `goose-acp` (goose #11961), bundled as
+  `Contents/MacOS/buzz-mesh-goose`. Spoken to over ACP on stdio.
+- **Inference:** `mesh_compute_prepare_inference` returns the local
+  OpenAI-compatible endpoint; goose's `openai` provider is pointed at it
+  (`OPENAI_HOST`/`OPENAI_BASE_PATH`/`GOOSE_MODEL`). No provider fallback.
+- **goose state:** `GOOSE_PATH_ROOT=~/.local/share/buzz-mesh-goose`, so the
+  user's own goose config, extensions and sessions are not used. Session
+  naming is off (one model call per turn, not two).
+- **Tools:** goose `developer` (`shell`, `write`, `edit`, `tree`,
+  `read_image`) and skills (`load_skill`). `extensionmanager` and `summon` are
+  switched off. `GOOSE_MODE=auto`: tools run without asking. goose reads
+  `AGENTS.md`/hints as it normally does.
+- **Prompt:** appended under goose's "Additional Instructions"
+  (`_goose/unstable/session/system-prompt/set`, mode `append`).
+
+## Replies (per agent, Settings → "Reply with Buzz tools")
+
+- **On (default):** like Codex and Claude Code, the model gets the shared Buzz
+  tools `send` and `read` (`src/buzz-mcp/tools.ts`), executed in the plugin via
+  `appClient`, signed by Agents' host signer; goose never holds a key. A
+  `send` with `final: true` ends the turn. If the turn never calls `send`, its
+  text is posted as the reply.
+- **Off:** goose's final text is posted as one reply (suits small models).
+
+Bridge: goose only spawns stdio MCP servers, so the plugin declares
+`nc -U /tmp/buzz-mesh-<random>.sock` as the `buzz` server and holds the other
+end through a declared `nc -lU` process. macOS only for now.
+
+## Build and package
 
 ```sh
-scripts/mesh-helper/build.sh /path/to/block/buzz   # stages src-tauri/binaries/
+scripts/mesh-goose/build.sh [/path/to/goose/checkout]   # stages src-tauri/binaries/
 bin/pnpm tauri build --features mesh --bundles app \
   --config src-tauri/tauri.mesh.conf.json
 ```
 
-On aarch64-apple-darwin the helper builds to sha256
-`92ab64496b85d28fa163045860e9d65ae8398594f19ca8e5c3e71e89e982e0df`.
-The overlay bundles it as `Contents/MacOS/buzz-mesh-agent`; on macOS host
-processes look in the app bundle first, then `~/.local/bin`, then PATH.
-Windows/Linux: not bundled yet; put `buzz-mesh-agent` on the app's PATH.
+## Known limitations
 
-## Triggering
-
-Verified (unit tests only): an explicit `@mention` of the agent by its owner
-in a channel or thread. Plain DMs without a mention have not been exercised;
-whether Agents delivers them as a mention is unverified. Test with explicit
-owner mentions, non-sensitive prompts, and a single fixed community.
-
-## Known limitation: community switch is NOT isolated
-
-The lease is re-checked before publishing, so a reply produced across a
-community switch is dropped. That is stale-result mitigation only: a switch
-can restart compute on the same port mid-turn, so the prompt may already have
-reached the newly selected community's mesh, and check→publish is not atomic.
-Real isolation needs the request bound to its lease natively.
+- Community switch is not isolated: the lease is re-checked before the
+  fallback post, but a switch can restart compute mid-turn, and `send` calls
+  made before it are not undone.
+- Windows/Linux: not bundled; the `nc` bridge is macOS-only.
+- Triggering verified only for explicit owner mentions.
