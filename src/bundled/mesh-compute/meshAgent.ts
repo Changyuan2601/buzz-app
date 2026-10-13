@@ -40,6 +40,7 @@ import { appClient } from "../../buzz-mcp/app-client";
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
+import { TOOLS } from "../../buzz-mcp/tools";
 import { MESH_AGENT_PRESETS } from "./meshAgentPresets";
 
 export type MeshMode = "chat" | "agent";
@@ -920,7 +921,7 @@ export class MeshAgentRuntime {
   }
 
   /** The conversation's goose session: live, resumed by id, or new. */
-  private session(
+  private async session(
     delivery: Delivery<MeshAgentConfig>,
     context: Context,
     goose: Goose,
@@ -930,7 +931,15 @@ export class MeshAgentRuntime {
     prompt: string,
   ): Promise<Session> {
     const live = goose.sessions.get(key);
-    if (live) return live;
+    if (live) {
+      const session = await live;
+      if (Boolean(session.bridge) === buzzAccess(config)) return session;
+      // MCP servers are fixed when the session opens. Retire its bridge and
+      // saved id so changed access takes effect in a fresh conversation session.
+      session.bridge?.close();
+      goose.sessions.delete(key);
+      this.deps.storage?.removeItem(STORAGE_PREFIX + key);
+    }
     const opened = this.open(
       delivery,
       context,
@@ -977,7 +986,14 @@ export class MeshAgentRuntime {
       let resumed = false;
       if (stored) {
         try {
-          const saved = JSON.parse(stored) as { id: string; seen: number };
+          const saved = JSON.parse(stored) as {
+            id: string;
+            seen: number;
+            buzz?: boolean;
+          };
+          // Older records do not prove which tools were installed; recreate once.
+          if (saved.buzz !== buzzAccess(config))
+            throw new Error("Buzz access changed");
           await goose.client.request("session/load", {
             sessionId: saved.id,
             cwd,
@@ -1003,7 +1019,7 @@ export class MeshAgentRuntime {
         session.seen = seen;
         storage?.setItem(
           STORAGE_PREFIX + key,
-          JSON.stringify({ id: session.id, seen }),
+          JSON.stringify({ id: session.id, seen, buzz: buzzAccess(config) }),
         );
       };
       session.remember(session.seen);
@@ -1121,15 +1137,30 @@ function parseLoose(text: string): unknown {
   }
 }
 
+/** JSON examples are replies, unless they identify an actual Buzz tool call. */
+function writtenToolCall(text: string): boolean {
+  if (text.startsWith("<")) return true;
+  const value = parseLoose(text);
+  if (!value || typeof value !== "object") return false;
+  const call = value as Record<string, unknown>;
+  const fn = call.function as Record<string, unknown> | undefined;
+  const name = call.name ?? fn?.name;
+  return (
+    TOOLS.some((tool) => tool.name === name) &&
+    (call.arguments ?? call.parameters ?? call.input ?? fn?.arguments) !==
+      undefined
+  );
+}
+
 /** A reply rescued from a model that wrote its tool call as text instead of
  * making it (common for small models): the text of any written `send`,
  * otherwise the prose with written tool calls removed. */
 export function salvageReply(text: string): string {
-  const blocks = text.match(TOOL_CALL_BLOCK) ?? [];
+  const blocks = (text.match(TOOL_CALL_BLOCK) ?? []).filter(writtenToolCall);
   const trimmed = text.trim();
   const candidates = blocks.length
     ? blocks
-    : trimmed.startsWith("{")
+    : trimmed.startsWith("{") && writtenToolCall(trimmed)
       ? [trimmed]
       : [];
   const sends = candidates
@@ -1137,5 +1168,7 @@ export function salvageReply(text: string): string {
     .filter((item): item is string => Boolean(item));
   if (sends.length) return sends.join("\n\n");
   if (!blocks.length) return trimmed;
-  return text.replace(TOOL_CALL_BLOCK, "").trim();
+  return text
+    .replace(TOOL_CALL_BLOCK, (block) => (writtenToolCall(block) ? "" : block))
+    .trim();
 }

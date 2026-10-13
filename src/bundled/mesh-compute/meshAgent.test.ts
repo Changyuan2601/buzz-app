@@ -33,6 +33,7 @@ type Seen = {
   agents: number;
   bridges: number;
   kills?: number;
+  bridgeKills?: number;
   /** Sends a line from goose's relay into the plugin's bridge end. */
   relay?: (message: object) => void;
   bridgeOut: string[];
@@ -69,7 +70,9 @@ function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
             ? Promise.resolve(0)
             : new Promise<number | null>(() => {}),
         end: async () => {},
-        kill: async () => {},
+        kill: async () => {
+          if (id === "bridge") seen.bridgeKills = (seen.bridgeKills ?? 0) + 1;
+        },
         write: async (line: string) => {
           seen.bridgeOut.push(line);
         },
@@ -308,6 +311,79 @@ describe("Mesh agent runtime", () => {
     expect(new Set(prompts(seen).map((p) => p.session)).size).toBe(2);
   });
 
+  it.each([false, true])(
+    "recreates the conversation when Buzz access changes from %s",
+    async (buzz) => {
+      const config = { mode: "agent", buzz };
+      const { delivery, query, seen, runtime } = setup({}, OWNER, config);
+      const root = {
+        ...EVENT,
+        id: "9".repeat(64),
+        content: "Earlier question",
+      };
+      try {
+        await runtime.run(delivery(inThread("first", 2)));
+        config.buzz = !buzz;
+        query.mockResolvedValueOnce([root]);
+        await runtime.run(delivery(inThread("second", 3)));
+        const sessions = seen.calls.filter(
+          (call) => call.method === "session/new",
+        );
+        expect(sessions).toHaveLength(2);
+        expect(sessions[1]?.params.mcpServers).toHaveLength(buzz ? 0 : 1);
+        expect(seen.bridgeKills ?? 0).toBe(buzz ? 1 : 0);
+        expect(seen.agents).toBe(1);
+        expect(prompts(seen)[1]?.text).toContain("Earlier question");
+        await runtime.run(delivery(inThread("third", 4)));
+        expect(
+          seen.calls.filter((call) => call.method === "session/new"),
+        ).toHaveLength(2);
+      } finally {
+        runtime.dispose();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "does not resume a saved session after Buzz access changes from %s",
+    async (buzz) => {
+      const storage = memoryStorage();
+      const first = setup({ storage }, OWNER, { mode: "agent", buzz });
+      await first.runtime.run(first.delivery());
+      first.runtime.dispose();
+      const second = setup({ storage }, OWNER, { mode: "agent", buzz: !buzz });
+      try {
+        await second.runtime.run(second.delivery());
+        expect(
+          second.seen.calls.some((call) => call.method === "session/load"),
+        ).toBe(false);
+        expect(
+          second.seen.calls.find((call) => call.method === "session/new")
+            ?.params.mcpServers,
+        ).toHaveLength(buzz ? 0 : 1);
+      } finally {
+        second.runtime.dispose();
+      }
+    },
+  );
+
+  it.each([
+    '```json\n{"answer":42}\n```',
+    'Here is the configuration:\n```json\n{"name":"example","arguments":{}}\n```',
+    '{"text":"keep this JSON"}',
+    '```json\n{"text":"keep this JSON"}\n```',
+    '```\n{"answer":42}\n```',
+  ])("publishes an ordinary JSON answer intact: %s", async (answer) => {
+    const { delivery, seen, publish, runtime } = setup();
+    seen.updates = [answer];
+    try {
+      await runtime.run(delivery({ content: "Give me JSON" }));
+      expect(publish.mock.calls[0]?.[0]).toMatchObject({ content: answer });
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   it("uses one session for the whole channel in channel scope", async () => {
     const { delivery, seen, runtime } = setup({}, OWNER, {
       mode: "agent",
@@ -344,15 +420,45 @@ describe("Mesh agent runtime", () => {
   it("starts fresh when the saved session can't be loaded", async () => {
     const storage = memoryStorage();
     storage.setItem(
-      `buzz.mesh-agent.session:${AGENT}\nworkspace\nchan/${EVENT.id}`,
-      JSON.stringify({ id: "gone", seen: 0 }),
+      `buzz.mesh-agent.session:${AGENT}\nagent\nchan/${EVENT.id}`,
+      JSON.stringify({ id: "gone", seen: 0, buzz: false }),
     );
     const { delivery, seen, runtime, publish } = setup({ storage });
     seen.failLoad = true;
     await runtime.run(delivery());
+    expect(seen.calls.some((c) => c.method === "session/load")).toBe(true);
     expect(seen.calls.some((c) => c.method === "session/new")).toBe(true);
     expect(publish).toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "recreates a legacy saved session whose Buzz access is unknown (%s)",
+    async (buzz) => {
+      const storage = memoryStorage();
+      const key = `buzz.mesh-agent.session:${AGENT}\nagent\nchan/${EVENT.id}`;
+      storage.setItem(key, JSON.stringify({ id: "legacy", seen: 10 }));
+      const { delivery, seen, runtime } = setup({ storage }, OWNER, {
+        mode: "agent",
+        buzz,
+      });
+      try {
+        await runtime.run(delivery());
+        expect(seen.calls.some((call) => call.method === "session/load")).toBe(
+          false,
+        );
+        expect(
+          seen.calls.find((call) => call.method === "session/new")?.params
+            .mcpServers,
+        ).toHaveLength(buzz ? 1 : 0);
+        expect(JSON.parse(storage.getItem(key) ?? "null")).toMatchObject({
+          buzz,
+          seen: 1,
+        });
+      } finally {
+        runtime.dispose();
+      }
+    },
+  );
 
   it("runs a conversation's turns one at a time", async () => {
     const { delivery, seen, runtime } = setup();
