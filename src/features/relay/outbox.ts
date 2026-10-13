@@ -17,6 +17,7 @@ import {
   INSTRUCTIONS_CONTENT_MAX_BYTES,
   INSTRUCTIONS_EVENT_MAX_BYTES,
   INSTRUCTIONS_KIND,
+  instructionsDeletionTargets,
   instructionsSubject,
   uncertainRefusal,
 } from "../agents/instructions-envelope";
@@ -725,7 +726,12 @@ export function createOutbox(
         !Number.isInteger(input.kind) ||
         input.kind < 0 ||
         input.kind > 65535 ||
-        !outbox.supports(input.kind)
+        !(
+          outbox.supports(input.kind) ||
+          // An instructions writer also deletes its own versions.
+          (instructionsDeletionTargets(input) &&
+            outbox.supports(INSTRUCTIONS_KIND))
+        )
       )
         throw new Error("This relay connection cannot publish that event kind");
       const catalog = isCatalogKind(input.kind);

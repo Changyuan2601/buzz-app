@@ -62,6 +62,10 @@ import {
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
 import { readApiFailure } from "./http-admission";
+import {
+  INSTRUCTIONS_KIND,
+  instructionsDeletionTargets,
+} from "../agents/instructions-envelope";
 
 async function nativeReadInvoke<T>(
   command: string,
@@ -91,6 +95,7 @@ export const nativeWriteKinds = [
   40100,
   42000,
   45010,
+  INSTRUCTIONS_KIND,
   ...WORKFLOW_KINDS,
 ] as const;
 
@@ -277,6 +282,14 @@ async function nativeAttachmentUpload(
   return validateUploadResult(body, origin, size, name);
 }
 
+/** Kind 44300 and its deletions are signed only by the bounded instructions signer. */
+const signCommand = (event: EventTemplate) =>
+  event.kind === INSTRUCTIONS_KIND || instructionsDeletionTargets(event)
+    ? "relay_instructions_sign"
+    : event.kind === 30078
+      ? "relay_kit_sign"
+      : "relay_sign";
+
 export function nativeRelaySigner(community: string): Signer {
   const origin = communityDestination(community).url;
   return {
@@ -289,7 +302,7 @@ export function nativeRelaySigner(community: string): Signer {
     async signEvent(event: EventTemplate) {
       const { kind, created_at, tags, content } = event;
       return eventDto(
-        await invoke(kind === 30078 ? "relay_kit_sign" : "relay_sign", {
+        await invoke(signCommand(event), {
           community: origin,
           event: { kind, created_at, tags, content },
         }),
@@ -627,6 +640,8 @@ export async function connectNativeTransport(
         },
       });
       if (!traffic) throw new Error("Native relay stream is unavailable");
+      // Only the native writer signs instructions versions.
+      traffic.watchInstructions?.();
       const stopArchive = archive.subscribe((settings) => {
         if (!active) return;
         // Readable preferences alone cannot hide a write failure. Recovery
@@ -849,6 +864,9 @@ export async function connectNativeTransport(
             signal,
           );
           if (found.some((value) => value.id === event.id)) return "";
+          // A missing 44300 may still be landing; never report it as refused.
+          if (event.kind === INSTRUCTIONS_KIND)
+            throw new Error("Couldn't confirm this change saved");
           throw new PublishRejected(
             "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
           );

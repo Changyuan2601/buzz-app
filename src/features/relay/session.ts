@@ -1,6 +1,7 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createMePreferences, meGroups } from "./me-preferences";
+import { instructionsDeletionTargets } from "../agents/instructions-envelope";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
@@ -323,7 +324,20 @@ export function createRelaySession(
   }
   const canReadRemote = (id: string) =>
     !options.cachedOnly && canAccess(id) && !channels.queries.get?.(id)?.cached;
+  /** Host predicate: is this id a 44300 the instructions store holds? */
+  let holdsInstructionsVersion: (id: string) => boolean = () => false;
   function visibility(events: readonly EventData[] = [], remote = false) {
+    const visible = referenceVisibility(events, remote);
+    // The viewer's own `k=44300` deletion of a version the instructions store
+    // holds, whose target is outside session retention. Nothing else widens.
+    return (event: EventData) =>
+      visible(event) ||
+      (event.pubkey === transport?.viewer &&
+        !!instructionsDeletionTargets(event)?.every((id) =>
+          holdsInstructionsVersion(id),
+        ));
+  }
+  function referenceVisibility(events: readonly EventData[], remote: boolean) {
     const evidence = new Map(
       [...rawLocal().map((item) => item.event), ...events].map((event) => [
         event.id,
@@ -1560,6 +1574,15 @@ export function createRelaySession(
       incomingListeners.add(listener);
       return () => {
         incomingListeners.delete(listener);
+      };
+    },
+    /** Admit the viewer's own deletions of held instructions versions (kind 44300). */
+    admitInstructionsDeletions(holds: (id: string) => boolean) {
+      if (closed) return () => {};
+      holdsInstructionsVersion = holds;
+      return () => {
+        if (holdsInstructionsVersion === holds)
+          holdsInstructionsVersion = () => false;
       };
     },
     /** Verified, access-filtered live-phase events of any kind, after reconciliation.

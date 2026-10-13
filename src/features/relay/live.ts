@@ -143,6 +143,8 @@ export type LiveSubscription = {
     signal: AbortSignal,
   ): Promise<boolean | null | { retryAfterMs: number }>;
   watchPresence?(authors: readonly string[]): void;
+  /** Own kind 44300 versions and their `k=44300` deletions, for writers that sign them. */
+  watchInstructions?(): void;
   retry(): void;
   dispose(): void;
 };
@@ -245,6 +247,7 @@ export function subscribeRelayTraffic(
       ]),
     ].sort();
   let presenceAuthors: readonly string[] = [];
+  let instructions = false;
   let presenceReceipt:
     | { id: string; finish(accepted: boolean): void }
     | undefined;
@@ -391,6 +394,7 @@ export function subscribeRelayTraffic(
     const globals = new Set([
       "profiles",
       "membership",
+      ...(instructions ? ["instructions"] : []),
       ...(observer !== null || archiveKinds.length ? ["observer"] : []),
       ...(presenceAuthors.length ? ["presence"] : []),
     ]);
@@ -579,18 +583,23 @@ export function subscribeRelayTraffic(
             ? [scope(route)]
             : scope(route).map((id) => [id])
           ).map((ids) => ({ kinds: CHANNEL_KINDS, "#h": ids }))
-        : [
-            route.id === "presence"
-              ? { kinds: [20001], authors: presenceAuthors }
-              : route.id === "profiles"
-                ? { kinds: [0, 10100, 30177] }
-                : route.id === "observer"
-                  ? {
-                      kinds: telemetryKinds(),
-                      "#p": [viewer],
-                    }
-                  : { kinds: [44100, 44101], "#p": [viewer] },
-          ];
+        : route.id === "instructions"
+          ? [
+              { kinds: [44300], authors: [viewer] },
+              { kinds: [5], authors: [viewer], "#k": ["44300"] },
+            ]
+          : [
+              route.id === "presence"
+                ? { kinds: [20001], authors: presenceAuthors }
+                : route.id === "profiles"
+                  ? { kinds: [0, 10100, 30177] }
+                  : route.id === "observer"
+                    ? {
+                        kinds: telemetryKinds(),
+                        "#p": [viewer],
+                      }
+                    : { kinds: [44100, 44101], "#p": [viewer] },
+            ];
       send([
         "REQ",
         wire,
@@ -888,6 +897,8 @@ export function subscribeRelayTraffic(
         delete route.metricsSince;
         delete route.error;
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
+        // A stale socket or replaced wire must never publish a transient `live`.
+        if (!valid() || wires.get(route.wire ?? "") !== route) return;
         notify();
         if (!valid() || wires.get(route.wire ?? "") !== route) return;
         if (route.id !== "observer" && route.id !== "presence")
@@ -910,6 +921,11 @@ export function subscribeRelayTraffic(
   }
   connect();
   return {
+    watchInstructions() {
+      if (closed || instructions) return;
+      instructions = true;
+      sync();
+    },
     watchPresence(authors) {
       const next = livePresenceAuthors(authors);
       if (closed || JSON.stringify(next) === JSON.stringify(presenceAuthors))
