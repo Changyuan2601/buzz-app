@@ -2,7 +2,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import type { Transcript } from "../../features/agents/activity-transcript";
-import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
@@ -11,7 +10,6 @@ import {
 } from "../../features/agents/OpenedConversation";
 import type {
   AgentCreateModelMenuProps,
-  AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
@@ -124,18 +122,6 @@ export function createTabs({
         void setup.loadModels();
     }, [state.status, state.models.length]);
     return state;
-  }
-
-  /** The instructions a new agent starts with. */
-  function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
-    return (
-      <AgentInstructions
-        value={current.instructions}
-        disabled={disabled}
-        onChange={(instructions) => onChange({ ...current, instructions })}
-      />
-    );
   }
 
   /** Claude's model choices inside the New agent provider submenu. */
@@ -617,12 +603,6 @@ export function createTabs({
             })
           }
         />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={false}
-          description="Added to every session's system prompt, after Buzz's own."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
           <p role="alert" className="buzz-field-error">
             {error}
@@ -651,7 +631,6 @@ export function createTabs({
   }
 
   return {
-    Create,
     CreateModelMenu,
     createModelLabel,
     ProviderDialogBody,

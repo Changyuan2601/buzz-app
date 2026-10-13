@@ -46,7 +46,6 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(type).toMatchObject({
     id: "codex",
     title: "Codex",
-    Create: expect.any(Function),
     icon: CodexLogoIcon,
   });
   expect(type?.provider).toBeDefined();

@@ -655,12 +655,10 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it("starts a new agent from a model and instructions, keeping the rest", async () => {
+it("starts a new agent from a model, keeping the rest", async () => {
   const installedType = installed().type;
-  const Create = installedType.Create;
   const CreateModelMenu = installedType.CreateModelMenu;
-  if (!Create || !CreateModelMenu) throw new Error("no create choices");
-  const CreateView = Create;
+  if (!CreateModelMenu) throw new Error("no create choices");
   const ModelMenu = CreateModelMenu;
   const config = {
     ...DEFAULT_CONFIG,
@@ -675,7 +673,6 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
     } | null>(null);
     return (
       <>
-        <CreateView config={config} onChange={onChange} disabled={false} />
         <MenuRoot>
           <MenuTrigger render={<Button>Models</Button>} />
           <MenuPopup>
@@ -714,21 +711,12 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   expect(installedType.createModelLabel?.({ ...config, model: "opus" })).toBe(
     "Opus 5.5",
   );
-  fireEvent.change(screen.getByLabelText("Instructions"), {
-    target: { value: "Triage." },
-  });
-  expect(onChange).toHaveBeenLastCalledWith({
-    ...config,
-    instructions: "Triage.",
-  });
 });
 
 it("shows a new agent's starting config, and accepts a custom model", async () => {
   const installedType = installed().type;
-  const Create = installedType.Create;
   const CreateModelMenu = installedType.CreateModelMenu;
-  if (!Create || !CreateModelMenu) throw new Error("no create choices");
-  const CreateView = Create;
+  if (!CreateModelMenu) throw new Error("no create choices");
   const ModelMenu = CreateModelMenu;
   const config = {
     ...DEFAULT_CONFIG,
@@ -743,7 +731,6 @@ it("shows a new agent's starting config, and accepts a custom model", async () =
     } | null>(null);
     return (
       <>
-        <CreateView config={config} onChange={onChange} disabled={false} />
         <MenuRoot>
           <MenuTrigger render={<Button>Models</Button>} />
           <MenuPopup>
@@ -771,7 +758,6 @@ it("shows a new agent's starting config, and accepts a custom model", async () =
     );
   }
   render(<CreateChoices />);
-  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Models" }));
   await user.click(
@@ -791,14 +777,7 @@ it("shows a new agent's starting config, and accepts a custom model", async () =
   });
 });
 
-it("disables a new agent's controls while it is being created", () => {
-  const Create = installed().type.Create;
-  if (!Create) throw new Error("no create choices");
-  render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
-  expect(screen.getByLabelText("Instructions")).toBeDisabled();
-});
-
-it("edits a custom model and instructions in settings", async () => {
+it("edits a custom model in settings, with no instructions field", async () => {
   const Settings = tab(installed().type, 0);
   const save = vi.fn(async () => undefined);
   render(
@@ -816,9 +795,8 @@ it("edits a custom model and instructions in settings", async () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(modelControl).toHaveTextContent("claude-opus-4-1");
-  expect(screen.getByLabelText("Instructions")).toHaveAccessibleDescription(
-    "Added to every session's system prompt, after Buzz's own.",
-  );
+  // The app's Instructions tab owns them now.
+  expect(screen.queryByLabelText("Instructions")).toBeNull();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Custom model" }));
   const modelId = await screen.findByRole("textbox", { name: "Model ID" });
@@ -826,14 +804,10 @@ it("edits a custom model and instructions in settings", async () => {
   await user.clear(modelId);
   await user.type(modelId, "claude-sonnet-custom");
   await user.click(screen.getByRole("button", { name: "Use model" }));
-  fireEvent.change(screen.getByLabelText("Instructions"), {
-    target: { value: "Triage." },
-  });
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith({
     ...DEFAULT_CONFIG,
     model: "claude-sonnet-custom",
-    instructions: "Triage.",
   });
 });
 

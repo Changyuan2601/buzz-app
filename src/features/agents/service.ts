@@ -28,6 +28,8 @@ import {
   type Fallback,
   type Inventory,
   type Resolved,
+  type SaveState,
+  saveState,
 } from "./instructions";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
@@ -496,6 +498,14 @@ export type NewAgent = Readonly<{
    * of them is confirmed on the relay. */
   instructions?: string;
 }>;
+export type AgentInstructionsView = Readonly<{
+  /** What its next session launches with, or why it can't launch. */
+  resolved: Resolved;
+  /** The version the editor saves over. */
+  head?: string | undefined;
+  /** The last save that hasn't been confirmed or cleared yet. */
+  save?: SaveState | undefined;
+}>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
@@ -521,6 +531,16 @@ export type Agents = {
    * instructions and workspace the type adopts; its other settings stay behind. */
   port(input: PortInput): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
+  /** The Instructions tab's view of an agent here; absent for hosted agents
+   * and agents on another device. */
+  instructions?(pubkey: string): AgentInstructionsView | undefined;
+  /** Saves a new version over `base`, the head the editor started from.
+   * Rejects with "Changed on another device" when the head moved. */
+  saveInstructions?(
+    pubkey: string,
+    text: string,
+    base: string | undefined,
+  ): Promise<void>;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
   previewRetype(pubkey: string, type: string): RetypePreview;
@@ -882,6 +902,7 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<AgentType>(ctx);
     migrateAgentStorage(storage);
     this.instructionStore = new InstructionStore(storage);
+    ctx.effect(() => this.instructionStore.subscribe(() => this.notify()));
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.teamList = Object.freeze(readTeams(storage));
@@ -1232,6 +1253,30 @@ export class AgentsService extends Service implements Agents {
       );
     await this.refresh();
     return this.view(shown, record);
+  }
+
+  instructions(pubkey: string): AgentInstructionsView | undefined {
+    const identity = this.live(pubkey);
+    if (!identity) return undefined;
+    const resolved = this.instructionsFor(
+      identity,
+      this.recordOf(identity).config,
+    );
+    const pending = this.bindingOf(identity)?.instructions?.pendingSave(pubkey);
+    return {
+      resolved,
+      ...("versionId" in resolved ? { head: resolved.versionId } : {}),
+      ...(pending
+        ? { save: saveState(pending, Math.floor(Date.now() / 1000)) }
+        : {}),
+    };
+  }
+  async saveInstructions(pubkey: string, text: string, base?: string) {
+    const identity = this.live(pubkey);
+    const sync = identity && this.bindingOf(identity)?.instructions;
+    if (!sync) throw new Error("This community can't save instructions yet");
+    await sync.save(pubkey, text, base);
+    this.notify();
   }
 
   /** Created or imported agents that stopped before they were confirmed. */

@@ -645,9 +645,6 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   fireEvent.change(screen.getByLabelText("Workspace"), {
     target: { value: "/tmp/codex" },
   });
-  fireEvent.change(screen.getByLabelText("Instructions"), {
-    target: { value: "Custom instructions" },
-  });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   try {
     await waitFor(() =>
@@ -656,7 +653,6 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
         model: "model-b",
         effort: "medium",
         workspace: "/tmp/codex",
-        instructions: "Custom instructions",
       }),
     );
     expect(screen.getByRole("button", { name: "Saving…" })).toHaveAttribute(
@@ -778,7 +774,7 @@ it("preserves unavailable saved choices and closes a late provider check on disp
   await pending;
 });
 
-it("starts a new agent from a model and instructions, keeping the rest", async () => {
+it("starts a new agent from a model, keeping the rest", async () => {
   const f = fixture();
   const config = {
     ...defaults,
@@ -790,7 +786,6 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   const onChange = vi.fn();
   render(
     <>
-      <f.tabs.Create config={config} onChange={onChange} disabled={false} />
       <MenuRoot>
         <MenuTrigger render={<Button>Models</Button>} />
         <MenuPopup>
@@ -820,13 +815,6 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   expect(f.tabs.createModelLabel({ ...config, model: "model-b" })).toBe(
     "Model B",
   );
-  fireEvent.change(screen.getByLabelText("Instructions"), {
-    target: { value: "Triage." },
-  });
-  expect(onChange).toHaveBeenLastCalledWith({
-    ...config,
-    instructions: "Triage.",
-  });
   await user.click(screen.getByRole("button", { name: "Models" }));
   await user.click(
     await screen.findByRole("menuitemradio", {
@@ -872,10 +860,11 @@ it("shows the default workspace and restores it when the field is cleared", asyn
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   expect(screen.getByLabelText("Workspace")).toHaveValue("~/.buzz");
   await waitFor(() => expect(f.processes[0]?.end).toHaveBeenCalled());
-  fireEvent.change(screen.getByLabelText("Instructions"), {
-    target: { value: "Test instructions" },
+  expect(screen.queryByLabelText("Instructions")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Workspace"), {
+    target: { value: "/tmp/codex" },
   });
-  const expected = { ...defaults, instructions: "Test instructions" };
+  const expected = { ...defaults, workspace: "/tmp/codex" };
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
   await waitFor(() => expect(screen.getByLabelText("Workspace")).toBeEnabled());
@@ -884,7 +873,7 @@ it("shows the default workspace and restores it when the field is cleared", asyn
     target: { value: "   " },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(save).toHaveBeenCalledWith(expected));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(defaults));
 });
 
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {

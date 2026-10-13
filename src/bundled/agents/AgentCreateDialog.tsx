@@ -7,6 +7,7 @@ import {
   type CardEditing,
 } from "../../features/agents/create-card";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
+import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CustomModelDialog } from "../../features/agents/ModelPicker";
 import type {
   Agent,
@@ -69,6 +70,8 @@ export function AgentCreateDialog({
   const [typeKey, setTypeKey] = useState(types[0]?.key ?? "");
   const type = types.find((item) => item.key === typeKey) ?? types[0];
   const [config, setConfig] = useState(() => startingConfig(type));
+  // The app owns instructions (kind 44300), whatever the type.
+  const [instructions, setInstructions] = useState("");
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -188,6 +191,7 @@ export function AgentCreateDialog({
         name: name.trim(),
         ...(picture ? { picture } : {}),
         ...(config !== undefined ? { config } : {}),
+        ...(!type.remote && instructions.trim() ? { instructions } : {}),
       });
       onCreated(agent);
     } catch (reason) {
@@ -285,22 +289,33 @@ export function AgentCreateDialog({
             }}
             nameRef={nameField}
             details={
-              Create ? (
-                <Create
-                  key={type.key}
-                  config={config}
-                  disabled={pending}
-                  onChange={(next) => {
-                    setConfig(next);
-                    setDirty(true);
-                  }}
-                />
-              ) : (
+              type?.remote ? (
                 <p className="m-0 text-center text-body-sm text-secondary">
-                  {type?.remote
-                    ? "Its provider keeps its key and runs it, whether or not this app is open."
-                    : "Set it up after it is made."}
+                  Its provider keeps its key and runs it, whether or not this
+                  app is open.
                 </p>
+              ) : (
+                <>
+                  <AgentInstructions
+                    value={instructions}
+                    disabled={pending}
+                    onChange={(next) => {
+                      setInstructions(next);
+                      setDirty(true);
+                    }}
+                  />
+                  {Create && type && (
+                    <Create
+                      key={type.key}
+                      config={config}
+                      disabled={pending}
+                      onChange={(next) => {
+                        setConfig(next);
+                        setDirty(true);
+                      }}
+                    />
+                  )}
+                </>
               )
             }
             editing={!!editing}

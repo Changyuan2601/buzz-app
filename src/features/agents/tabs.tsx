@@ -5,6 +5,7 @@
 import { useState, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
+import { InstructionsPanel } from "./InstructionsPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type {
   Agent,
@@ -16,7 +17,7 @@ import type {
 import { Button } from "../../shared/design-system/ui/Button";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:attention` or `agent:memory`; never collides with a host tab. */
+  /** `agent:<type tab id>`, `agent:instructions`, `agent:attention` or `agent:memory`; never collides with a host tab. */
   value: `agent:${string}`;
   label: string;
   render(): ReactNode;
@@ -75,6 +76,15 @@ export function agentSections({
   if (agent.place === "hosted") return tabs;
   return [
     ...tabs,
+    ...(agents.instructions
+      ? [
+          {
+            value: "agent:instructions" as const,
+            label: "Instructions",
+            render: () => <InstructionsPanel agents={agents} agent={agent} />,
+          },
+        ]
+      : []),
     {
       value: "agent:attention",
       label: "Attention",

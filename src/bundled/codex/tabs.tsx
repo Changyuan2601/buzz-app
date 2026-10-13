@@ -2,7 +2,6 @@
 // and its part of the New agent dialog.
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
-import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
@@ -11,7 +10,6 @@ import {
 } from "../../features/agents/OpenedConversation";
 import type {
   AgentCreateModelMenuProps,
-  AgentCreateProps,
   AgentProviderSnapshot,
   AgentViewProps,
 } from "../../features/agents/service";
@@ -492,20 +490,6 @@ export function createTabs(
     );
   }
 
-  /** The instructions a new agent starts with. */
-  function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
-    return (
-      <AgentInstructions
-        value={current.instructions}
-        disabled={disabled}
-        onChange={(instructions) =>
-          onChange(readConfig({ ...current, instructions }))
-        }
-      />
-    );
-  }
-
   /** Codex's model choices inside the New agent provider submenu. */
   function CreateModelMenu({
     config,
@@ -855,12 +839,6 @@ export function createTabs(
             })
           }
         />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={saving}
-          description="Buzz guidance supplements Codex’s native instructions. Saved changes apply to the next turn. A workspace change starts a fresh session."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
           <p role="alert" className="buzz-field-error">
             {error}
@@ -889,7 +867,6 @@ export function createTabs(
   }
 
   return {
-    Create,
     CreateModelMenu,
     createModelLabel,
     ProviderDialogBody,
