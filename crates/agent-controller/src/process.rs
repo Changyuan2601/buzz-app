@@ -10,6 +10,12 @@ use std::process::{Child, Command};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
+// ACP drains accepted turns for up to thirty seconds before shutting workers down.
+// Keep enough time for that drain and its final durable delivery checkpoint.
+pub(crate) const STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(40);
+#[cfg(unix)]
+const DRAIN_GRACE: Duration = Duration::from_secs(35);
+
 pub(crate) struct Process {
     child: Child,
     #[cfg(unix)]
@@ -83,15 +89,25 @@ impl Process {
     /// Short-lived discovery has no cooperative listener shutdown to wait for.
     #[cfg(unix)]
     pub fn kill(&mut self) -> Result<()> {
-        self.stop_with_grace(Duration::ZERO)
+        self.stop_with_grace(Duration::ZERO, || {})
     }
     pub fn stop(&mut self) -> Result<()> {
-        #[cfg(unix)]
-        return self.stop_with_grace(Duration::from_secs(2));
-        #[cfg(windows)]
-        self.stop_with_grace()
+        self.stop_with_progress(|| {})
     }
-    fn stop_with_grace(&mut self, #[cfg(unix)] grace: Duration) -> Result<()> {
+    pub(crate) fn stop_with_progress(&mut self, progress: impl FnMut()) -> Result<()> {
+        #[cfg(unix)]
+        return self.stop_with_grace(DRAIN_GRACE, progress);
+        #[cfg(windows)]
+        {
+            let _ = progress;
+            self.stop_with_grace()
+        }
+    }
+    fn stop_with_grace(
+        &mut self,
+        #[cfg(unix)] grace: Duration,
+        #[cfg(unix)] mut progress: impl FnMut(),
+    ) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
@@ -101,11 +117,19 @@ impl Process {
             signal_in_session(self.session, self.session, libc::SIGTERM)?;
             let deadline = Instant::now() + grace;
             loop {
+                progress();
                 let members = session_members(self.session)?;
                 if members.is_empty() {
                     break;
                 }
-                if Instant::now() >= deadline {
+                // A departed listener cannot cooperate further. Reap it and
+                // clean up orphaned workers without waiting out its drain grace.
+                let exited = self
+                    .child
+                    .try_wait()
+                    .map_err(|_| "Could not reap agent listener")?
+                    .is_some();
+                if exited || Instant::now() >= deadline {
                     // Freeze first so a terminating child cannot create a fresh
                     // descendant between the enumeration and the kill pass.
                     for pid in &members {
@@ -117,10 +141,6 @@ impl Process {
                     }
                     break;
                 }
-                // Reap the leader if it exited; session ID is retained by living members.
-                self.child
-                    .try_wait()
-                    .map_err(|_| "Could not reap agent listener")?;
                 std::thread::sleep(Duration::from_millis(25));
             }
             self.child

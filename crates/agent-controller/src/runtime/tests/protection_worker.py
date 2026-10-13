@@ -18,6 +18,7 @@ def denied(operation):
     raise AssertionError('protected operation succeeded')
 
 def probe(p):
+    assert 'BUZZ_ACP_DELIVERY_JOURNAL' not in os.environ, 'listener-owned journal leaked to worker'
     # Broad profile writes must actually be allowed; a restrictive workspace
     # grant would mask the cross-run defect and make this test a false positive.
     with tempfile.TemporaryFile(dir=p['config']) as ordinary:

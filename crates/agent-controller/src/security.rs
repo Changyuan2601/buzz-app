@@ -204,6 +204,9 @@ impl Controller {
         protected_paths.push(self.ownership_root.clone());
         protected_paths.push(directory.to_path_buf());
         protected_paths.push(controls);
+        // Protect the namespace, including future journal and lock files, even
+        // when the policy grants broad writes elsewhere in the app profile.
+        protected_paths.push(self.store.root().join("delivery-journals"));
         if let Ok(bundle) = &self.bundle {
             protected_paths.push(bundle.directory.clone());
         }

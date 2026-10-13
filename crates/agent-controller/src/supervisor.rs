@@ -138,7 +138,14 @@ pub(crate) fn serve(
                 Err(_) => break,
             }
         }
-        if process.stop().is_err() {
+        if process
+            .stop_with_progress(|| {
+                // ACP may emit final replies/diagnostics throughout its drain. Keep
+                // consuming the pipe so logging backpressure cannot stop that work.
+                let _ = drain_log(&mut reader, &mut writer, true);
+            })
+            .is_err()
+        {
             // Neither lock nor signing directory may be released on failed cleanup.
             let _ = socket.write_all(b"F");
             loop {
@@ -372,6 +379,9 @@ impl Supervised {
         Ok(byte == Some(b'F'))
     }
     pub(crate) fn stop(&mut self) -> Result<()> {
+        self.stop_with_timeout(crate::process::STOP_TIMEOUT)
+    }
+    fn stop_with_timeout(&mut self, timeout: Duration) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
@@ -382,7 +392,7 @@ impl Supervised {
             self.shutdown_unconfirmed = true;
             let _ = self.socket.write_all(b"S");
         }
-        let _ = self.socket.set_read_timeout(Some(Duration::from_secs(8)));
+        let _ = self.socket.set_read_timeout(Some(timeout));
         let mut result = [0u8];
         if self.socket.read_exact(&mut result).is_err() {
             return Err("Agent session shutdown could not be confirmed".into());
@@ -746,10 +756,11 @@ mod lifecycle_tests {
             released.recv().unwrap();
             guardian.write_all(b"S").unwrap();
         });
-        // Exercise the real eight-second read timeout while the gate is held;
+        // Exercise a real read timeout while the gate is held;
         // not a sleep racing with process teardown.
         assert_eq!(
-            run.stop().unwrap_err(),
+            run.stop_with_timeout(Duration::from_millis(30))
+                .unwrap_err(),
             "Agent session shutdown could not be confirmed"
         );
         accepted_rx.recv().unwrap();
@@ -872,7 +883,9 @@ while True: time.sleep(.1)
         assert!(Ownership::acquire(&root.join("locks"), ID).is_err());
         assert!(root.join("temp").exists() && root.join("control").exists());
         assert_eq!(unsafe { libc::kill(guardian_pid, libc::SIGCONT) }, 0);
-        let deadline = Instant::now() + Duration::from_secs(8);
+        // This fixture deliberately ignores TERM; allow the production drain
+        // window before expecting the guardian's forced whole-session cleanup.
+        let deadline = Instant::now() + crate::process::STOP_TIMEOUT;
         loop {
             if Ownership::acquire(&root.join("locks"), ID).is_ok() {
                 break;

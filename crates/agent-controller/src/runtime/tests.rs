@@ -351,9 +351,20 @@ printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTE
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s' "$BUZZ_ACP_AGENTS" > worker-count
 printf '%s' "$BUZZ_ACP_MCP_COMMAND" > mcp-command
+printf '%s' "$BUZZ_ACP_DELIVERY_JOURNAL" > journal-path
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 printf 'harness fixture output\n'
-trap 'exit 0' TERM INT
+finish() {
+  if [ -f "$BUZZ_AGENT_CONFIG_DIR/drain-gate" ]; then
+    /usr/bin/head -c 262144 /dev/zero >&2
+    /bin/date +%s > draining
+    while [ ! -f "$BUZZ_AGENT_CONFIG_DIR/drain-release" ]; do /bin/sleep .01; done
+    printf 'drained' > drained
+  fi
+  exit 0
+}
+trap finish TERM INT
+printf 'ready' > listener-ready
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
 "#,
         );
@@ -854,6 +865,7 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
         "BUZZ_MANAGED_AGENT",
         "BUZZ_MANAGED_AGENT_START_NONCE",
         "BUZZ_ACP_REPLAY_FLOOR",
+        "BUZZ_ACP_DELIVERY_JOURNAL",
         "BUZZ_API_TOKEN",
         "GIT_CONFIG_COUNT",
     ] {
@@ -2080,6 +2092,131 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     });
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn restart_drains_before_launch_and_replays_from_before_the_stop() {
+    for supplied_key in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let mut store = Store::open(config.clone()).unwrap();
+        let agent = agent(dir.path());
+        store.insert(vec![agent.clone()]).unwrap();
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(bundle(tools.path())),
+            dir.path().join("ownership"),
+        );
+        controller.action(&agent.id, Action::Start).unwrap();
+        wait_for_contents(&dir.path().join("starts"), |s| {
+            (s.lines().count() == 10).then_some(())
+        });
+        wait_for_contents(&dir.path().join("listener-ready"), |_| Some(()));
+        fs::write(config.join("drain-gate"), b"").unwrap();
+        let id = agent.id.clone();
+        let restart = std::thread::spawn(move || {
+            if supplied_key {
+                controller
+                    .action_with_key(
+                        &id,
+                        Action::Restart,
+                        1,
+                        &Secret::parse(KEY, PUB).unwrap(),
+                        None,
+                    )
+                    .unwrap();
+            } else {
+                controller.action(&id, Action::Restart).unwrap();
+            }
+            controller
+        });
+        let stopped_at: u64 =
+            wait_for_contents(&dir.path().join("draining"), |s| s.trim().parse().ok());
+        // Keep the old listener behind a gate past the former two-second kill
+        // deadline and across the replay clock boundary. No replacement may
+        // launch until that explicit gate is released.
+        let boundary = std::time::UNIX_EPOCH + Duration::from_secs(stopped_at + 4);
+        while std::time::SystemTime::now() < boundary {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let before_release = fs::read_to_string(dir.path().join("starts")).unwrap();
+        fs::write(config.join("drain-release"), b"").unwrap();
+        let mut controller = restart.join().unwrap();
+        assert_eq!(
+            before_release.lines().count(),
+            10,
+            "replacement started before old drain completed"
+        );
+        assert_eq!(fs::read(dir.path().join("drained")).unwrap(), b"drained");
+        let output = wait_for_contents(&dir.path().join("starts"), |s| {
+            (s.lines().count() == 20).then(|| s.to_owned())
+        });
+        let floor: u64 = output.lines().nth(18).unwrap().parse().unwrap();
+        assert!(
+            floor <= stopped_at,
+            "replay boundary was captured after stopping"
+        );
+        controller.action(&agent.id, Action::Stop).unwrap();
+    }
+    assert_eq!(
+        restart_replay_floor(Some(123)),
+        123,
+        "earlier mention floor must survive restart"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn delivery_journal_is_private_stable_and_not_runtime_scratch() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mut store = Store::open(config.clone()).unwrap();
+    let first = agent(dir.path());
+    let mut second = first.clone();
+    second.relay_url = "wss://another.example".into();
+    second.id = agent_id(&second.pubkey, &second.relay_url);
+    store.insert(vec![first.clone(), second.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let root = config.join("delivery-journals");
+    for agent in [&first, &second] {
+        for action in [Action::Start, Action::Restart] {
+            fs::remove_file(dir.path().join("journal-path")).ok();
+            controller.action(&agent.id, action).unwrap();
+            let journal = wait_for_contents(&dir.path().join("journal-path"), |s| {
+                (!s.is_empty()).then(|| PathBuf::from(s))
+            });
+            assert_eq!(journal, root.join(format!("{}.json", agent.id)));
+            assert!(journal.is_absolute());
+            assert_eq!(
+                fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            if matches!(action, Action::Start) {
+                fs::write(&journal, "runtime-owned checkpoint").unwrap();
+            } else {
+                assert_eq!(
+                    fs::read_to_string(&journal).unwrap(),
+                    "runtime-owned checkpoint"
+                );
+            }
+        }
+        controller.action(&agent.id, Action::Stop).unwrap();
+        assert!(root.join(format!("{}.json", agent.id)).exists());
+    }
+    for command in ["goose", "buzz-pi-acp", "buzz-agent"] {
+        assert!(crate::config::validate_env_key("BUZZ_ACP_DELIVERY_JOURNAL", command).is_err());
+        assert!(crate::config::validate_env_key("buzz_acp_delivery_journal", command).is_err());
+    }
 }
 
 fn deployment_defaults() -> crate::BuildDefaults {
@@ -3970,6 +4107,7 @@ while :; do /bin/sleep 0.1; done
             &plugin_root,
             &dir.path().join("config/agents.json"),
             &dir.path().join("config/run-controls"),
+            &dir.path().join("config/delivery-journals"),
             &tools.path().to_path_buf(),
         ] {
             assert!(paths.contains(&json!(path)), "{paths:?}");

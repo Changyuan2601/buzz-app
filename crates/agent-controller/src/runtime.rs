@@ -8,6 +8,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+fn restart_replay_floor(previous: Option<u64>) -> u64 {
+    let before_stop = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_sub(1);
+    previous.map_or(before_stop, |floor| floor.min(before_stop))
+}
+
 impl RuntimeBundle {
     fn command(&self, agent: &Agent, key: &crate::Secret) -> Result<Command> {
         self.command_with_defaults(agent, key, &crate::build_defaults())
@@ -1006,11 +1015,13 @@ impl Controller {
                 stopped.and(saved)
             }
             Action::Start => self.store.enabled(id, true).and_then(|_| self.start(id)),
-            Action::Restart => self
-                .store
-                .enabled(id, true)
-                .and_then(|_| self.stop(id))
-                .and_then(|_| self.start(id)),
+            Action::Restart => {
+                let floor = restart_replay_floor(None);
+                self.store
+                    .enabled(id, true)
+                    .and_then(|_| self.stop(id))
+                    .and_then(|_| self.start_with_key(id, None, Some(floor), None))
+            }
         };
         match &result {
             Ok(()) => {
@@ -1101,7 +1112,11 @@ impl Controller {
             preflight.check(&self.pi_launch_context(id, revision)?)?;
         }
         self.store.enabled(id, true)?;
+        let mut replay_floor = replay_floor;
         if matches!(action, Action::Restart) {
+            // Capture before the old listener drains: mentions arriving during
+            // that gap must remain eligible in the replacement subscription.
+            replay_floor = Some(restart_replay_floor(replay_floor));
             if let Err(error) = self.stop(id) {
                 self.errors.insert(id.into(), error);
                 return Ok(());
@@ -1174,6 +1189,9 @@ impl Controller {
         let settings = effective_databricks(&agent)?;
         let config = self.store.root();
         crate::connection::oauth_root(config)?;
+        let journals = config.join("delivery-journals");
+        crate::connection::private_directory(&journals)?;
+        let journal = journals.join(format!("{}.json", agent.id));
         let runs = config.join("runs");
         crate::connection::private_directory(&runs)?;
         let temporary = tempfile::Builder::new()
@@ -1195,6 +1213,7 @@ impl Controller {
         // may redirect credentials/temp signing material outside this app profile.
         command
             .env("BUZZ_AGENT_CONFIG_DIR", config)
+            .env("BUZZ_ACP_DELIVERY_JOURNAL", journal)
             .env("TMPDIR", &scratch)
             .env("TMP", &scratch)
             .env("TEMP", &scratch);

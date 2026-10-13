@@ -3249,3 +3249,57 @@ fn failed_imported_prompt_cleanup_still_opens_the_controller_with_a_warning() {
         .unwrap()
         .contains("Could not finish removing old Buzz team text"));
 }
+
+#[test]
+fn protection_save_uses_restart_on_save_and_keeps_stopped_agents_stopped() {
+    let (dir, _host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored["agents"][0]["enabled"] = json!(false);
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    let launcher = dir.path().join("protection");
+    std::fs::write(&launcher, "synthetic launcher bytes").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    invoke(
+        &view,
+        "agent_security",
+        json!({"request": {
+            "kind": "register", "provider": "fixture.security", "executable": launcher
+        }}),
+    )
+    .unwrap();
+    let binding = json!({"provider": "fixture.security", "policy": {
+        "tool_review": {"enabled": true, "rules": "BLOCK test.txt", "tools": ["shell"]}
+    }});
+    for revision in [1, 2] {
+        let result = invoke(
+            &view,
+            "agent_security",
+            json!({"request": {
+                "kind": "agent", "id": id, "revision": revision, "binding": binding
+            }}),
+        )
+        .unwrap();
+        assert_eq!(result["restarted"], 0);
+        assert_eq!(result["restartFailures"], 0);
+        assert_eq!(result["agents"][0]["binding"], binding);
+        let snapshot = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        assert_eq!(snapshot["agents"][0]["status"], "stopped");
+        assert_eq!(snapshot["agents"][0]["enabled"], false);
+    }
+    let before = std::fs::read(&path).unwrap();
+    assert!(invoke(
+        &view,
+        "agent_security",
+        json!({"request": {
+            "kind": "agent", "id": id, "revision": 1, "binding": null
+        }})
+    )
+    .is_err());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}

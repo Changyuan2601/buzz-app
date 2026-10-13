@@ -725,6 +725,7 @@ pub(crate) fn validate_env_key(key: &str, command: &str) -> Result<()> {
                 | "BUZZ_ACP_NO_PRESENCE"
                 | "BUZZ_ACP_SETUP_PAYLOAD"
                 | "BUZZ_ACP_REPLAY_FLOOR"
+                | "BUZZ_ACP_DELIVERY_JOURNAL"
                 | "BUZZ_MANAGED_AGENT"
                 | "BUZZ_MANAGED_AGENT_START_NONCE"
         )
