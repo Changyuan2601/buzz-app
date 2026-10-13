@@ -895,16 +895,34 @@ export class InstructionSync {
 
   /** §3: publish staged local text, one agent at a time per community, then
    * confirm that exact event before the caller strips plugin config. */
-  migrate(agent: string, strip: () => Promise<void>) {
-    const run = this.migrating.then(() => this.migrateOne(agent, strip));
+  /** `configured` reads the plugin's value now: one edited since staging
+   * becomes a draft and is never stripped (§3). */
+  migrate(
+    agent: string,
+    strip: () => Promise<void>,
+    configured?: () => string | undefined,
+  ) {
+    const run = this.migrating.then(() =>
+      this.migrateOne(agent, strip, configured),
+    );
     this.migrating = run.catch(() => {});
     return run;
   }
-  private async migrateOne(agent: string, strip: () => Promise<void>) {
+  private async migrateOne(
+    agent: string,
+    strip: () => Promise<void>,
+    configured?: () => string | undefined,
+  ) {
     const { store, outbox } = this.ports;
     const key = this.key(agent);
     const entry = store.entry(key);
     if (entry?.migration.state !== "staged" || !this.eligible(agent)) return;
+    const { sourceRevision } = entry.migration;
+    const stripUnlessEdited = async () => {
+      const now = configured?.();
+      if (now === undefined || hash(now) === sourceRevision) return strip();
+      store.write(key, { ...(store.entry(key) ?? entry), draft: now });
+    };
     if (store.hadVersion(key)) {
       const head = entry.head;
       const current =
@@ -918,7 +936,7 @@ export class InstructionSync {
         migration: { state: "never" },
         ...(same ? {} : { draft: entry.migration.text }),
       });
-      if (same) await strip();
+      if (same) await stripUnlessEdited();
       return;
     }
     let eventId = entry.migration.eventId;
@@ -957,7 +975,7 @@ export class InstructionSync {
       migration: { state: "done", eventId },
     });
     await this.settleSaved(eventId);
-    await strip();
+    await stripUnlessEdited();
   }
 }
 

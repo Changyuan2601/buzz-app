@@ -24,6 +24,7 @@ import {
   InstructionStore,
   InstructionSync,
   resolveInstructions,
+  hash,
   subjectKey,
   type Fallback,
   type Inventory,
@@ -2174,13 +2175,17 @@ export class AgentsService extends Service implements Agents {
           identity.pubkey,
         ),
         text,
-        "plugin",
+        hash(text),
       );
       void sync
-        .migrate(identity.pubkey, async () => {
-          const record = this.recordOf(identity);
-          this.write({ ...record, config: strip(record.config) });
-        })
+        .migrate(
+          identity.pubkey,
+          async () => {
+            const record = this.recordOf(identity);
+            this.write({ ...record, config: strip(record.config) });
+          },
+          () => kind.legacyInstructions?.(this.recordOf(identity).config),
+        )
         .catch((error: unknown) =>
           console.warn(`Agent ${identity.name} instructions not moved`, error),
         );

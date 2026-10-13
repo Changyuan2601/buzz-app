@@ -10,6 +10,7 @@ import {
   RESEND_WINDOW_SECONDS,
   type Inventory,
   recoveryKey,
+  hash,
   resolveInstructions,
   saveState,
   subjectKey,
@@ -674,6 +675,41 @@ describe("instructions sync", () => {
       expect(h.resolve()).toEqual({ source: "legacy", text: "legacy" });
     });
 
+    it("T14 a config edit during migration becomes a recoverable draft, not stripped", async () => {
+      const h = harness();
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      h.store.write(subjectKey(OWNER, COMMUNITY, AGENT), {
+        head: { unknown: true },
+        migration: {
+          state: "staged",
+          text: "plugin text",
+          sourceRevision: hash("plugin text"),
+        },
+      });
+      let configured = "plugin text";
+      const strip = vi.fn(async () => {});
+      const run = h.sync.migrate(AGENT, strip, () => configured);
+      configured = "edited meanwhile";
+      await run;
+      expect(strip).not.toHaveBeenCalled();
+      const entry = h.store.entry(subjectKey(OWNER, COMMUNITY, AGENT));
+      expect(entry?.draft).toBe("edited meanwhile");
+      expect(h.box.sends.map((e) => e.content)).toEqual(["c:plugin text"]);
+      // Unchanged config strips as before.
+      h.store.write(subjectKey(OWNER, COMMUNITY, AGENT2), {
+        head: { unknown: true },
+        migration: {
+          state: "staged",
+          text: "two",
+          sourceRevision: hash("two"),
+        },
+      });
+      h.sync.identities(ready([AGENT, AGENT2]));
+      await h.sync.migrate(AGENT2, strip, () => "two");
+      expect(strip).toHaveBeenCalledOnce();
+    });
+
     it("T29 publishes one agent at a time", async () => {
       const h = harness();
       h.sync.start();
@@ -953,7 +989,20 @@ describe("instructions sync", () => {
       await flush();
       expect(h.box.sends.filter((e) => e.id === lost)).toHaveLength(1);
       storage.fail = undefined;
+      // The cleanup list is durable before the outbox entry is retired.
+      const order: string[] = [];
+      const setItem = storage.setItem.bind(storage);
+      storage.setItem = (key: string, value: string) => {
+        if (key === CLEANUP_KEY) order.push("cleanup-list");
+        setItem(key, value);
+      };
+      const retire = h.box.outbox.retire;
+      h.box.outbox.retire = async (eventId: string) => {
+        order.push(`retire ${eventId === lost ? "lost" : eventId}`);
+        await retire(eventId);
+      };
       await h.sync.deleteAgent(AGENT);
+      expect(order.slice(0, 2)).toEqual(["cleanup-list", "retire lost"]);
       expect(h.store.cleanupIds(OWNER, COMMUNITY)).toEqual([lost]);
       expect(h.box.outbox.snapshot()).toHaveLength(0);
       expect(h.store.hadVersion(subjectKey(OWNER, COMMUNITY, AGENT))).toBe(
