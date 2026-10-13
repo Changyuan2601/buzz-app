@@ -1,5 +1,5 @@
 import { createLocalAgentActivity } from "./local-activity";
-import { AgentRunners } from "./runner";
+import { AgentRunners, type Connection } from "./runner";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -95,6 +95,7 @@ import {
   type Unfinished,
 } from "./store";
 import { meChat } from "./me-chat";
+import { readCheckpoints, writeCheckpoints } from "./catch-up";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -665,6 +666,7 @@ type Binding = {
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
   stopLive: () => void;
+  connection: Connection;
 };
 /** A community the viewer has an agent in, and its session while live. */
 type Bound = {
@@ -821,6 +823,12 @@ export class AgentsService extends Service implements Agents {
       agent: (pubkey) => this.agent(pubkey),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
+      community: (agent) => this.bindingOf(agent),
+      records: () => Object.values(this.records),
+      checkpoints: {
+        read: () => readCheckpoints(this.storage),
+        write: (checkpoints) => writeCheckpoints(this.storage, checkpoints),
+      },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
       record: (pubkey) => {
@@ -897,6 +905,7 @@ export class AgentsService extends Service implements Agents {
         this.runners.tick();
         this.reconnect();
         this.announce();
+        this.runners.catchUp(true);
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -2204,9 +2213,11 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
+      const connection: Connection = { epoch: 0, start: Math.floor(Date.now() / 1000) };
       entry.binding = live && {
         ...live,
-        stopLive: this.listen(live.session, origin),
+        connection,
+        stopLive: this.listen(live.session, origin, connection),
       };
     }
     // Disconnecting stops its agents even when no binding changed.
@@ -2221,9 +2232,14 @@ export class AgentsService extends Service implements Agents {
    * recent history again: what in it is new since this listener started was
    * missed while it was down, and is delivered now (`seen` drops the rest).
    * Older history is catch-up's, not replay's. */
-  private listen(session: RelaySession, origin: string) {
+  private listen(
+    session: RelaySession,
+    origin: string,
+    connection: Connection,
+  ) {
     let connected = session.live.snapshot().status === "connected";
-    const since = Math.floor(Date.now() / 1000);
+    const since = connection.start;
+    if (connected) Object.assign(connection, { epoch: 1, since });
     const heard = (agent: Agent) => originOf(agent.relay) === origin;
     const stopEvents = session.subscribeLive(
       (batch) => this.runners.dispatch(batch, heard, since),
@@ -2231,8 +2247,14 @@ export class AgentsService extends Service implements Agents {
     );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
+      if (now !== connected) {
+        // Catch-up reads what this connect may have missed, up to now.
+        connection.epoch += now ? 1 : 0;
+        connection.since = now ? Math.floor(Date.now() / 1000) : undefined;
+      }
       if (now && !connected) this.sync();
       connected = now;
+      this.runners.catchUp(false);
     });
     // A roster the relay confirms decides the events held for it.
     const stopRosters = session.channels.subscribeList?.(() =>
@@ -2303,6 +2325,7 @@ export class AgentsService extends Service implements Agents {
       ),
     );
     this.announce();
+    this.runners.catchUp(false);
   }
 
   /** Tells each community which agents this copy runs there: online every

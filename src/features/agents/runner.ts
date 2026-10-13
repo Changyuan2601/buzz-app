@@ -12,13 +12,14 @@ import type {
 } from "./service";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
-import type { RelayEvent } from "../relay/events";
+import { hasEventProof, type RelayEvent } from "../relay/events";
 import { Lanes } from "../agent-harness/lanes";
 import { wake } from "../agent-harness/wakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { LIVE_REPLAY_LIMIT } from "../relay/live";
+import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
@@ -54,6 +55,14 @@ import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord } from "./store";
 import { type Pulses, pulseTyping } from "./typing";
+import {
+  CATCH_UP_PAGE,
+  afterPage,
+  nextPage,
+  streamsOf,
+  type Checkpoint,
+  type Stream,
+} from "./catch-up";
 
 const QUEUE_LIMIT = 32;
 /** The spec asks for at least the agent's 2,048 most recent events. */
@@ -72,6 +81,10 @@ const SEEN_CHANNELS = 128;
 /** Runs per agent per minute; bounds two agents that answer each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
+/** How long catch-up waits for room in a full queue before it looks again. */
+const CATCH_UP_WAIT_MS = 1_000;
+/** How long a failed catch-up waits before it is tried again. */
+const CATCH_UP_RETRY_MS = 30_000;
 
 /** Classifier calls in flight per agent. */
 const CLASSIFY_LIMIT = 32;
@@ -172,7 +185,8 @@ type Runner = {
   /** Whether a claim has been answered, so `mayHold` is known rather than
    * assumed. */
   asked?: boolean;
-  /** Classified watch events not yet queued or dropped. */
+  /** Classified watch events not yet queued or dropped. Each counts against
+   * the queue and rate room a catch-up page needs. */
   classifying: number;
   /** The last classified event's release: results queue in arrival order. */
   classified: Promise<void>;
@@ -180,6 +194,33 @@ type Runner = {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
   };
+};
+
+/** The session's live connection: `since` is when it last connected, and is
+ * absent while it is down; `epoch` counts its connects; `start` is when its
+ * listener started, from which live events, replay included, are heard. */
+export type Connection = {
+  epoch: number;
+  start: number;
+  since?: number | undefined;
+};
+/** An agent's community while it is live: one object for as long as its
+ * session lasts. */
+export type LiveCommunity = {
+  readonly session: Pick<RelaySession, "read">;
+  /** Aborts when the session is replaced, so no work outlives it. */
+  readonly controller: AbortController;
+  readonly connection: Connection;
+};
+/** One agent's catch-up, for the attention, community and connect it started
+ * under; any of them changing starts another. */
+type Pass = {
+  attention: Agent["attention"];
+  community: LiveCommunity;
+  epoch: number;
+  controller: AbortController;
+  done?: boolean;
+  failedAt?: number;
 };
 
 const EMPTY = Object.freeze({});
@@ -203,6 +244,16 @@ export type RunnerHost = {
   member(agent: Agent, event: RelayEvent): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
+  /** Its community, while live. */
+  community(agent: Agent): LiveCommunity | undefined;
+  /** Every saved record, whose watches' catch-up progress is kept. */
+  records(): readonly AgentRecord[];
+  /** Catch-up progress, as saved. */
+  checkpoints: {
+    read(): Readonly<Record<string, Checkpoint>>;
+    /** Throws when storage refuses it. */
+    write(checkpoints: Readonly<Record<string, Checkpoint>>): void;
+  };
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
@@ -257,7 +308,17 @@ export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
-  constructor(private readonly host: RunnerHost) {}
+  /** Catch-up progress of each kind 9 watch stream, as saved. */
+  private checkpoints: Readonly<Record<string, Checkpoint>>;
+  /** By agent, its catch-up running or last run. */
+  private passes = new Map<string, Pass>();
+  /** Streams seen off (their watch disabled or the agent's attention off)
+   * since the host started. One turned on starts from then, so it wakes
+   * nothing from the time it was off. */
+  private quiet = new Set<string>();
+  constructor(private readonly host: RunnerHost) {
+    this.checkpoints = host.checkpoints.read();
+  }
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
    * replaced type aborts its run. Turning attention off voids the watch work
@@ -396,6 +457,8 @@ export class AgentRunners {
     };
   }
   private retire(runner: Runner) {
+    this.passes.get(runner.pubkey)?.controller.abort();
+    this.passes.delete(runner.pubkey);
     this.host.activity.clear(undefined, runner.pubkey);
     runner.queue.length = 0;
     runner.held.clear();
@@ -432,29 +495,25 @@ export class AgentRunners {
       let overflow = 0;
       for (const event of batch.events) {
         if (batch.replay && event.created_at < since) continue;
+        if (!batch.replay) {
+          this.hear(runner, agent, event, batch.channelId);
+          continue;
+        }
         const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-        const seenIn = channel ? runner.seenIn.get(channel) : undefined;
-        if (runner.seen.has(event.id) || seenIn?.has(event.id)) continue;
+        if (this.hasSeen(runner, event.id, channel)) continue;
         // Left unseen, so a later replay or catch-up can still deliver it.
-        if (batch.replay && runner.backlog.length >= BACKLOG_LIMIT) {
+        if (runner.backlog.length >= BACKLOG_LIMIT) {
           overflow++;
           continue;
         }
         this.markSeen(runner, event.id, channel);
-        // An agent never hears itself; its own events keep reactions to them
-        // from its watches.
-        if (event.pubkey === agent.pubkey) {
-          bounded(runner.wrote, event.id);
-          continue;
-        }
+        if (this.isOwn(runner, agent, event)) continue;
         // A replay waits for room rather than take the drops a burst of
         // live traffic would.
-        if (batch.replay)
-          runner.backlog.push({
-            event,
-            ...(batch.channelId ? { channelId: batch.channelId } : {}),
-          });
-        else this.deliver(runner, agent, event, batch.channelId);
+        runner.backlog.push({
+          event,
+          ...(batch.channelId ? { channelId: batch.channelId } : {}),
+        });
       }
       if (overflow)
         console.warn(
@@ -462,6 +521,19 @@ export class AgentRunners {
         );
       if (batch.replay) this.admit(runner);
     }
+  }
+  private hasSeen(runner: Runner, id: string, channel: string | undefined) {
+    return (
+      runner.seen.has(id) ||
+      (!!channel && !!runner.seenIn.get(channel)?.has(id))
+    );
+  }
+  /** An agent never hears itself; its own events keep reactions to them from
+   * its watches. */
+  private isOwn(runner: Runner, agent: Agent, event: RelayEvent) {
+    if (event.pubkey !== agent.pubkey) return false;
+    bounded(runner.wrote, event.id);
+    return true;
   }
   private markSeen(runner: Runner, id: string, channel: string | undefined) {
     bounded(runner.seen, id);
@@ -512,7 +584,179 @@ export class AgentRunners {
       )
         return;
       runner.backlog.shift();
-      this.deliver(runner, agent, event, channelId, triggers);
+      this.deliver(runner, agent, event, channelId, false, triggers);
+    }
+  }
+  /** Gives the agent `event` once, however many times it arrives. With
+   * `watchesOnly`, only its watches hear it: a mention from before the app
+   * listened is not answered late. */
+  private hear(
+    runner: Runner,
+    agent: Agent,
+    event: RelayEvent,
+    channelId: string | undefined,
+    watchesOnly = false,
+  ) {
+    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+    if (this.hasSeen(runner, event.id, channel)) return;
+    this.markSeen(runner, event.id, channel);
+    if (this.isOwn(runner, agent, event)) return;
+    this.deliver(runner, agent, event, channelId, watchesOnly);
+  }
+  /** Keeps each agent's catch-up going: on start, and after each connect, its
+   * kind 9 watches read the events they missed from their saved checkpoints,
+   * up to the connect. From then on live events cover them, so while the
+   * connection stays up a `tick` moves their checkpoints to now; a quit or a
+   * drop leaves the checkpoint where the next catch-up starts. */
+  catchUp(tick: boolean) {
+    const now = seconds();
+    let changed = false;
+    const move = (key: string, checkpoint: Checkpoint) => {
+      this.checkpoints = { ...this.checkpoints, [key]: checkpoint };
+      changed = true;
+    };
+    for (const runner of this.runners.values()) {
+      const agent = this.host.agent(runner.pubkey);
+      const community = agent && this.host.community(agent);
+      const on = !!agent?.attentionEnabled && !!runner.type?.run;
+      const reading: Stream[] = [];
+      for (const stream of agent ? streamsOf(agent) : []) {
+        if (!on || !stream.enabled) this.quiet.add(stream.key);
+        else if (this.quiet.delete(stream.key))
+          move(stream.key, { through: now });
+        else reading.push(stream);
+      }
+      const pass = this.passes.get(runner.pubkey);
+      const since = community?.connection.since;
+      if (!agent || !community || since === undefined || !reading.length) {
+        pass?.controller.abort();
+        this.passes.delete(runner.pubkey);
+        continue;
+      }
+      if (
+        pass?.attention === agent.attention &&
+        pass.community === community &&
+        pass.epoch === community.connection.epoch &&
+        !(pass.failedAt && Date.now() - pass.failedAt >= CATCH_UP_RETRY_MS)
+      ) {
+        if (pass.done && tick)
+          for (const { key } of reading) {
+            const checkpoint = this.checkpoints[key];
+            if (checkpoint && !checkpoint.upper && checkpoint.through < now)
+              move(key, { through: now });
+          }
+        continue;
+      }
+      pass?.controller.abort();
+      const next: Pass = {
+        attention: agent.attention,
+        community,
+        epoch: community.connection.epoch,
+        controller: new AbortController(),
+      };
+      this.passes.set(runner.pubkey, next);
+      void this.readMissed(runner, next, reading, since);
+    }
+    if (changed) this.saveCheckpoints();
+  }
+  /** Reads each stream's missed events, newest page first, through `upper`,
+   * saving its checkpoint after each page. A page waits until the agent's
+   * queue has room for all of it, so catch-up drops nothing. */
+  private async readMissed(
+    runner: Runner,
+    pass: Pass,
+    streams: readonly Stream[],
+    upper: number,
+  ) {
+    const signal = AbortSignal.any([
+      pass.controller.signal,
+      pass.community.controller.signal,
+    ]);
+    try {
+      for (const stream of streams)
+        for (;;) {
+          const page = nextPage(stream, this.checkpoints[stream.key], upper);
+          if (!page) break;
+          await this.room(runner, signal);
+          const events = await pass.community.session.read([page.filter], {
+            signal,
+            priority: "background",
+            fresh: true,
+          });
+          signal.throwIfAborted();
+          const checkpoint = afterPage(page, events);
+          // An edit since starts another pass, which reads it again.
+          const agent = this.host.ready(runner.pubkey);
+          if (agent?.attention !== pass.attention) return;
+          // Only what the relay signed: a read also returns the owner's own
+          // messages not yet sent.
+          // One from before the listener started wakes only watches. A later
+          // one live would have heard, mentions too; catch-up may read it
+          // before replay does, which then drops it as seen.
+          for (const event of [...events].reverse())
+            if (event.kind === 9 && hasEventProof(event))
+              this.hear(
+                runner,
+                agent,
+                event as RelayEvent,
+                event.tags.find(([key]) => key === "h")?.[1],
+                event.created_at < pass.community.connection.start,
+              );
+          this.checkpoints = { ...this.checkpoints, [stream.key]: checkpoint };
+          this.saveCheckpoints();
+        }
+      pass.done = true;
+    } catch (error) {
+      if (signal.aborted) return;
+      pass.failedAt = Date.now();
+      console.warn(
+        `Agent ${this.host.agent(runner.pubkey)?.name} could not catch up`,
+        error,
+      );
+    }
+  }
+  /** Waits until the agent can take a whole page without dropping any of it:
+   * its queue, its classifier calls and its rate limit all have room. */
+  private async room(runner: Runner, signal: AbortSignal) {
+    for (;;) {
+      signal.throwIfAborted();
+      const admitted =
+        Date.now() - runner.windowStart >= RATE_WINDOW_MS ? 0 : runner.admitted;
+      if (
+        // Events still being classified will take queue and rate room too.
+        runner.queue.length + runner.classifying + CATCH_UP_PAGE <=
+          QUEUE_LIMIT &&
+        runner.classifying + CATCH_UP_PAGE <= CLASSIFY_LIMIT &&
+        admitted + runner.classifying + CATCH_UP_PAGE <= RATE_LIMIT
+      )
+        return;
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, CATCH_UP_WAIT_MS);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    }
+  }
+  /** Saves the checkpoints of watches that still exist. Unsaved, catch-up
+   * starts from the last saved one again, which `seen` dedupes until a
+   * restart. */
+  private saveCheckpoints() {
+    const keys = new Set(
+      this.host
+        .records()
+        .flatMap((record) => streamsOf(record).map((stream) => stream.key)),
+    );
+    this.checkpoints = Object.fromEntries(
+      Object.entries(this.checkpoints).filter(([key]) => keys.has(key)),
+    );
+    try {
+      this.host.checkpoints.write(this.checkpoints);
+    } catch (error) {
+      console.warn("Agent catch-up progress was not saved", error);
     }
   }
   /** Matches the held events of a community's agents again, as its rosters
@@ -535,9 +779,10 @@ export class AgentRunners {
     agent: Agent,
     event: RelayEvent,
     channelId: string | undefined,
-    triggers = this.heard(runner, agent, event),
+    watchesOnly = false,
+    heard = this.heard(runner, agent, event),
   ) {
-    if (triggers === "held") {
+    if (heard === "held") {
       runner.held.set(event.id, { event, ...(channelId ? { channelId } : {}) });
       if (runner.held.size > HELD_LIMIT) {
         runner.held.delete(runner.held.keys().next().value as string);
@@ -547,6 +792,9 @@ export class AgentRunners {
       }
       return;
     }
+    const triggers = watchesOnly
+      ? heard.filter((trigger) => trigger.type === "watch")
+      : heard;
     for (const trigger of triggers) {
       const job = {
         trigger,
