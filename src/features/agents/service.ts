@@ -42,6 +42,7 @@ import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
+import { threadReference } from "../relay/thread-reference";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import {
@@ -60,6 +61,14 @@ import type {
   WatchSummary,
   WriteOptions,
 } from "./attention-objects";
+import {
+  excerpt,
+  mentionFacts,
+  nativeClassifier,
+  type ClassifierContext,
+  type ClassifierNative,
+  type ClassifierOutcome,
+} from "./classifier";
 import {
   nativeAgents,
   type AgentEventTemplate,
@@ -224,11 +233,7 @@ export type AgentAttention = Readonly<{
     options: WriteOptions,
   ): Promise<Shown>;
 }>;
-/** Why a classified watch's event passed without a classifier answer. */
-export type ClassifierSkip = Readonly<{
-  outcome: "not-run";
-  reason: string;
-}>;
+export type { ClassifierOutcome } from "./classifier";
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
@@ -240,10 +245,10 @@ export type Trigger =
       watch: EventWatch;
       /** Absent when the watch names an Interest that does not exist. */
       interest?: Interest;
-      /** Set when the watch has a classifier that did not run. The event
-       * passes rather than lose a match to an unavailable model, and the
-       * agent is told why. */
-      classifier?: ClassifierSkip;
+      /** Set when the watch has a classifier: its answers, or why it did
+       * not run or failed. An event the classifier cannot check passes
+       * rather than lose a match, and the agent is told why. */
+      classifier?: ClassifierOutcome;
     }>
   | Readonly<{
       type: "timer";
@@ -446,6 +451,8 @@ export type RetypePreview = Readonly<{
 }>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
+  /** Whether a watch's classifier can run on this device now. */
+  classifier: ClassifierAvailability;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -557,6 +564,12 @@ export type Agents = {
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Whether a watch's classifier can run on this device now. */
+  classifier(): ClassifierAvailability;
+  /** Saves the TypeSafe key in native storage, which the classifier uses.
+   * It is never read back into the app or given to an agent. */
+  setClassifierKey(key: string): Promise<void>;
+  clearClassifierKey(): Promise<void>;
   /** Creates a team, or replaces the one with `id`. Members must be agents on
    * this device. */
   saveTeam(team: TeamChange): Promise<Team>;
@@ -719,6 +732,9 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  /** Settles once the saved key's status is known; until then a classified
+   * event waits rather than pass unchecked. */
+  private jevStatus: Promise<void> | undefined;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -775,6 +791,7 @@ export class AgentsService extends Service implements Agents {
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
+    private readonly jev: ClassifierNative | undefined = nativeClassifier(),
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
@@ -784,6 +801,7 @@ export class AgentsService extends Service implements Agents {
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
+      classifier: "unavailable",
       agents: [],
       running: [],
       teams: this.teamList,
@@ -827,6 +845,11 @@ export class AgentsService extends Service implements Agents {
         }));
       },
       classifier: () => this.classifier(),
+      jev: () => this.jev,
+      jevStatus: () => this.jevStatus,
+      unconfigured: () => this.setAvailability(false),
+      context: (agent, event) => this.context(agent, event),
+      displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
       meChat: (agent, channel, signal) =>
@@ -845,6 +868,12 @@ export class AgentsService extends Service implements Agents {
       ];
       this.watch();
       void this.refresh();
+      this.jevStatus = this.jev
+        ?.status()
+        .then((configured) => this.setAvailability(configured))
+        .catch((error) =>
+          console.warn("The classifier key could not be read", error),
+        );
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runners.tick();
@@ -967,8 +996,77 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
-  /** Whether watch classifiers can run on this device. */
-  private classifier = (): ClassifierAvailability => "unavailable";
+  /** Whether watch classifiers can run on this device: a key is saved. */
+  classifier(): ClassifierAvailability {
+    return this.state.classifier;
+  }
+  async setClassifierKey(key: string) {
+    if (!this.jev)
+      throw new Error("The classifier runs only in the desktop app");
+    await this.jev.setKey(key);
+    this.setAvailability(true);
+  }
+  async clearClassifierKey() {
+    if (!this.jev)
+      throw new Error("The classifier runs only in the desktop app");
+    await this.jev.clearKey();
+    this.setAvailability(false);
+  }
+  private setAvailability(configured: boolean) {
+    const classifier = configured ? "available" : "unavailable";
+    if (this.state.classifier === classifier) return;
+    this.state = Object.freeze({ ...this.state, classifier });
+    this.notify();
+  }
+  /** The event's surroundings for the classifier, from what the app knows. */
+  private async context(
+    agent: Agent,
+    event: RelayEvent,
+  ): Promise<ClassifierContext> {
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.bindingOf(agent)?.session.channels;
+    const summary = channelId
+      ? (channels?.list().channels.find((item) => item.id === channelId) ??
+        channels?.get?.(channelId))
+      : undefined;
+    const parent = threadReference(event)?.parentId ?? null;
+    let found: RelayEvent | undefined;
+    if (parent && this.native)
+      try {
+        [found] = await this.native.query(agent.pubkey, [
+          { ids: [parent], limit: 1 },
+        ]);
+      } catch {
+        // The parent stays unknown; the classifier still runs.
+      }
+    return {
+      channel: { name: summary?.name ?? null },
+      thread: {
+        is_reply: !!parent,
+        parent: found
+          ? {
+              author: {
+                role:
+                  found.pubkey === agent.pubkey
+                    ? "self"
+                    : found.pubkey === agent.owner
+                      ? "owner"
+                      : "other",
+                name: this.displayName(agent, found.pubkey),
+              },
+              content: excerpt(found.content),
+            }
+          : null,
+      },
+      mentions: mentionFacts(event.tags, agent.pubkey, agent.owner),
+    };
+  }
+  private displayName(agent: Agent, pubkey: string) {
+    return (
+      this.bindingOf(agent)?.session.profiles?.snapshot().get(pubkey)?.name ??
+      null
+    );
+  }
 
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */

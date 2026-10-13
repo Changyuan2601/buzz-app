@@ -146,6 +146,7 @@ function setup(
 ) {
   let snapshot: AgentsSnapshot = {
     status,
+    classifier: "unavailable",
     agents: saved,
     running: saved,
     teams: [],
@@ -319,6 +320,9 @@ function setup(
       return ["workspace"] as const;
     }),
     remove: vi.fn(async () => {}),
+    classifier: () => "unavailable",
+    setClassifierKey: vi.fn(async () => {}),
+    clearClassifierKey: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
       snapshot = {

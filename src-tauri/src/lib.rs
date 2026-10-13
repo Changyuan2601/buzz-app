@@ -31,6 +31,7 @@ mod host_process;
 mod host_request;
 mod identity;
 mod image_clipboard;
+mod jev;
 
 mod notifications;
 mod os_idle;
@@ -491,6 +492,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_remember,
         app_agents::app_agent_claim,
         app_agents::app_agent_release,
+        jev::jev_classifier_status,
+        jev::jev_classifier_set_key,
+        jev::jev_classifier_clear_key,
+        jev::jev_classify,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -660,6 +665,7 @@ pub fn run() {
         .manage(image_clipboard::ImageClipboard::default())
         .manage(identity)
         .manage(archive::ArchiveHost::default())
+        .manage(jev::JevHost::new())
         .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)

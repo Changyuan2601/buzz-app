@@ -136,6 +136,10 @@ fn native_command_permissions_allow_only_main_webview() {
         "app_agent_remember",
         "app_agent_claim",
         "app_agent_release",
+        "jev_classifier_status",
+        "jev_classifier_set_key",
+        "jev_classifier_clear_key",
+        "jev_classify",
         "title_bar_double_click",
         "notification_show",
         #[cfg(target_os = "macos")]

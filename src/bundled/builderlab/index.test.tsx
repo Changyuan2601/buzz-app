@@ -112,7 +112,12 @@ it.each([undefined, "", "http://builderlab.example"])(
         /not configured|does not support/,
       );
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
-      expect(native.invoke).not.toHaveBeenCalled();
+      // Agents reads its own classifier key; Builderlab makes no native call.
+      expect(
+        native.invoke.mock.calls.filter(
+          ([command]) => command !== "jev_classifier_status",
+        ),
+      ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);

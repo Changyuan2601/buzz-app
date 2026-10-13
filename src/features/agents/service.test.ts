@@ -25,6 +25,7 @@ import {
   fromOwner,
   teamPrompt,
 } from "./service";
+import type { ClassifierNative } from "./classifier";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -333,6 +334,7 @@ async function setup({
   listed = [] as RelayEvent[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
+  jev = undefined as ClassifierNative | undefined,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -356,6 +358,7 @@ async function setup({
     storage,
     authorize,
     activity,
+    jev,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -2514,6 +2517,289 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
   ]);
   // Its Interest does not exist, so it arrives without instructions.
   expect(triggers[1]).not.toHaveProperty("interest");
+});
+
+/** A native classifier whose answers the test sets. */
+function fakeJev(configured = true) {
+  let key = configured;
+  const jev = {
+    status: vi.fn(async () => key),
+    setKey: vi.fn(async (_: string) => {
+      key = true;
+    }),
+    clearKey: vi.fn(async () => {
+      key = false;
+    }),
+    classify: vi.fn<ClassifierNative["classify"]>(async () => ({
+      outcome: "answered",
+      answers: { deploy: { type: "noul", noul: 0.9 } },
+    })),
+  };
+  return jev;
+}
+async function classifiedAgent(jev: ReturnType<typeof fakeJev>) {
+  const harness = await setup({ jev });
+  await harness.service.create({ type: "example/echo", name: "Echo" });
+  await harness.service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: [channel],
+        kinds: [9],
+        classifier: {
+          questions: {
+            deploy: { question: "Is it about a deploy?", threshold: 0.5 },
+          },
+        },
+      },
+    },
+  });
+  return harness;
+}
+
+it("runs a watch's classifier after its selectors and passes the event with each answer", async () => {
+  const jev = fakeJev();
+  const { service, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  emit({ events: [event("w", { content: "shipping v2" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    slug: "watch/channel",
+    classifier: {
+      outcome: "passed",
+      model: "jev-1.13.0",
+      answers: { deploy: { probability: 0.9, threshold: 0.5, pass: true } },
+      policy: "deploy",
+    },
+  });
+  const [state, questions] = jev.classify.mock.calls[0] ?? [];
+  expect(state).toMatchObject({
+    event: { id: expect.stringMatching(/^w0+$/), content: "shipping v2" },
+    author: { role: "other" },
+    context: { channel: expect.any(Object), thread: { is_reply: false } },
+  });
+  expect(questions).toMatchObject({
+    deploy: {
+      type: "noul",
+      instructions: { question: "Is it about a deploy?" },
+      criteria: { true: expect.any(String), false: expect.any(String) },
+    },
+  });
+});
+
+it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {
+  const jev = fakeJev();
+  jev.classify.mockResolvedValue({
+    outcome: "answered",
+    answers: { deploy: { type: "noul", noul: 0.2 } },
+  });
+  const { run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("w", { content: "lunch?" })] });
+  emit({ events: [event("x", { kind: 7 })] });
+  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("passes the event when the classifier fails, and says why", async () => {
+  const jev = fakeJev();
+  jev.classify
+    .mockResolvedValueOnce({ outcome: "failed", reason: "timeout" })
+    .mockResolvedValueOnce({ outcome: "answered", answers: {} })
+    .mockRejectedValueOnce(new Error("ipc"));
+  const { run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("a"), event("b"), event("c")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(
+    run.mock.calls
+      .map(([delivery]) => delivery.trigger)
+      .map((t) => (t.type === "watch" ? t.classifier : undefined)),
+  ).toEqual([
+    { outcome: "failed", reason: "timeout" },
+    { outcome: "failed", reason: "invalid_response" },
+    { outcome: "failed", reason: "service_error" },
+  ]);
+});
+
+it("without a key the classifier does not run and the turn is told so", async () => {
+  const jev = fakeJev(false);
+  const { service, run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(jev.classify).not.toHaveBeenCalled();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "not-run" },
+  });
+  expect(service.classifier()).toBe("unavailable");
+});
+
+it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
+  const jev = fakeJev(false);
+  const { service, run, emit } = await classifiedAgent(jev);
+  await service.setClassifierKey("tk");
+  expect(jev.setKey).toHaveBeenCalledWith("tk");
+  expect(service.classifier()).toBe("available");
+  expect(service.snapshot().classifier).toBe("available");
+  await service.clearClassifierKey();
+  expect(service.classifier()).toBe("unavailable");
+  await service.setClassifierKey("tk");
+  jev.classify.mockResolvedValueOnce({
+    outcome: "failed",
+    reason: "missing_credentials",
+  });
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "not-run" },
+  });
+  expect(service.classifier()).toBe("unavailable");
+});
+
+it("does not run an event classified against a classifier changed since", async () => {
+  const jev = fakeJev();
+  let answer!: (
+    value: Awaited<ReturnType<ClassifierNative["classify"]>>,
+  ) => void;
+  jev.classify.mockImplementationOnce(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const { service, run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("no watch");
+  await service.save(bot, {
+    attention: {
+      "watch/channel": {
+        ...watch,
+        classifier: { questions: { deploy: { question: "Is it urgent?" } } },
+      },
+    },
+  });
+  answer({
+    outcome: "answered",
+    answers: { deploy: { type: "noul", noul: 1 } },
+  });
+  await settle();
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+});
+
+type Answer = Awaited<ReturnType<ClassifierNative["classify"]>>;
+const yes: Answer = {
+  outcome: "answered",
+  answers: { deploy: { type: "noul", noul: 0.9 } },
+};
+
+it("queues classified events in arrival order, whichever answer comes first", async () => {
+  const jev = fakeJev();
+  let first!: (value: Answer) => void;
+  jev.classify
+    .mockImplementationOnce(() => new Promise((resolve) => (first = resolve)))
+    .mockResolvedValueOnce(yes);
+  const { run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("a"), event("b")] });
+  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledTimes(2));
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  first(yes);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(
+    run.mock.calls.map(([delivery]) =>
+      delivery.trigger.type === "watch" ? delivery.trigger.event.id[0] : "",
+    ),
+  ).toEqual(["a", "b"]);
+});
+
+it("an event heard before the saved key's status is read waits for it, then is classified", async () => {
+  const jev = fakeJev();
+  let known!: (value: boolean) => void;
+  jev.status.mockImplementationOnce(
+    () => new Promise<boolean>((resolve) => (known = resolve)),
+  );
+  const { run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("w")] });
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  known(true);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(jev.classify).toHaveBeenCalledOnce();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    classifier: { outcome: "passed" },
+  });
+});
+
+it("sends nothing to the classifier for a watch stopped while its event waited", async () => {
+  const jev = fakeJev();
+  let known!: (value: boolean) => void;
+  jev.status.mockImplementationOnce(
+    () => new Promise<boolean>((resolve) => (known = resolve)),
+  );
+  const { service, run, emit } = await classifiedAgent(jev);
+  emit({ events: [event("w")] });
+  await settle();
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("no watch");
+  await service.save(bot, {
+    attention: { "watch/channel": { ...watch, enabled: false } },
+  });
+  known(true);
+  await settle();
+  await settle();
+  expect(jev.classify).not.toHaveBeenCalled();
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("a copy of the app that does not hold the agent sends nothing to the classifier", async () => {
+  const jev = fakeJev();
+  const { native, run, emit } = await classifiedAgent(jev);
+  native.claim.mockResolvedValue(false);
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalled());
+  await settle();
+  await settle();
+  expect(jev.classify).not.toHaveBeenCalled();
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("gives the classifier Buzz's thread parent: the marked reply, in any case; a lone root is no reply", async () => {
+  const jev = fakeJev();
+  const { native, emit } = await classifiedAgent(jev);
+  const parent = "A".repeat(64);
+  emit({
+    events: [
+      event("r", {
+        tags: [
+          ["h", channel],
+          ["e", "b".repeat(64), "", "root"],
+        ],
+      }),
+      event("p", {
+        tags: [
+          ["h", channel],
+          ["e", "b".repeat(64), "", "root"],
+          ["e", "c".repeat(64), "", "reply"],
+          ["e", parent, "", "reply"],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledTimes(2));
+  const states = jev.classify.mock.calls.map(
+    ([state]) => state as { context: { thread: { is_reply: boolean } } },
+  );
+  expect(states.map((state) => state.context.thread.is_reply)).toEqual([
+    false,
+    true,
+  ]);
+  expect(native.query).toHaveBeenCalledOnce();
+  expect(native.query).toHaveBeenCalledWith(bot, [
+    { ids: [parent.toLowerCase()], limit: 1 },
+  ]);
 });
 
 it("keeps encrypted DMs and reactions to its own messages away from watches", async () => {
