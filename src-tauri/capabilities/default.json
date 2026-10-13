@@ -69,6 +69,7 @@
     "allow-oauth-callback-begin",
     "allow-oauth-callback-wait",
     "allow-oauth-callback-cancel",
+    "allow-app-agent-subscribe-pr",
     "allow-app-agent-list",
     "allow-app-agent-create",
     "allow-app-agent-portable",

@@ -99,6 +99,7 @@ fn main() {
             "oauth_callback_begin",
             "oauth_callback_wait",
             "oauth_callback_cancel",
+            "app_agent_subscribe_pr",
             "app_agent_list",
             "app_agent_create",
             "app_agent_portable",
