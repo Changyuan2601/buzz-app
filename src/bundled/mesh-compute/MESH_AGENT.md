@@ -25,6 +25,12 @@ workspace (default `~/.buzz`).
 
 - **Chat:** no goose harness or tools. One mesh chat completion is posted as
   a direct reply; intended for small models.
+  An owner-configured event watch with exactly `author == "<64-character hex public key>"`
+  may also follow that sender's messages, including thread replies. Set the watch's
+  channels to where it should listen. Names and Interest instructions do not filter
+  senders. Broad or compound filters retain owner-only triggering. The agent never
+  triggers itself; a one-way follower needs no timer. Keep the source agent's watch
+  restricted to the human owner to avoid a reciprocal conversation.
 - **Agent (default):** lean goose with workspace tools and skills. With
   **Buzz access** off, its final text is posted through the same direct-reply
   path as Chat.

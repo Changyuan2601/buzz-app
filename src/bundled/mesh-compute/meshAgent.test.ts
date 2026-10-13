@@ -1,6 +1,11 @@
 import { TOOLS } from "../../buzz-mcp/tools";
 import { describe, expect, it, vi } from "vitest";
 import type { Delivery } from "../../features/agents/service";
+import {
+  compileFilter,
+  watchMatches,
+  type EventWatch,
+} from "../../features/agents/attention";
 import type { HostProcessOptions } from "../../features/host/service";
 import {
   conversationKey,
@@ -531,6 +536,85 @@ describe("Mesh agent runtime", () => {
     await runtime.run(delivery());
     expect(publish).not.toHaveBeenCalled();
   });
+
+  it("answers a selected sender's watched reply in Chat mode, in the same thread", async () => {
+    const sender = "d".repeat(64);
+    const { delivery, publish, deps, seen, runtime } = setup({}, sender, {
+      mode: "chat",
+    });
+    const watch: EventWatch = {
+      type: "event",
+      interest_id: "follow",
+      enabled: true,
+      since: 1,
+      channels: ["chan"],
+      kinds: [9],
+      filter: `author == "${sender}"`,
+    };
+    const reply = delivery(inThread("e".repeat(64), 2));
+    if (reply.trigger.type !== "mention") throw new Error("Expected message");
+    const filter = compileFilter(watch.filter ?? "");
+    expect(
+      watchMatches(watch, { ...reply.trigger.event, pubkey: OWNER }, filter),
+    ).toBe(false);
+    expect(
+      watchMatches(watch, { ...reply.trigger.event, pubkey: AGENT }, filter),
+    ).toBe(false);
+    expect(watchMatches(watch, reply.trigger.event, filter)).toBe(true);
+    await runtime.run({
+      ...reply,
+      trigger: { ...reply.trigger, type: "watch", slug: "watch/follow", watch },
+    });
+    expect(deps.chat).toHaveBeenCalledTimes(1);
+    expect(seen.agents).toBe(0);
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "chat answer",
+        tags: [
+          ["h", "chan"],
+          ["e", "9".repeat(64), "", "root"],
+          ["e", "e".repeat(64), "", "reply"],
+          ["p", sender],
+        ],
+      }),
+    );
+  });
+
+  it.each([
+    ["agent", "d".repeat(64), `author == "${"d".repeat(64)}"`],
+    ["chat", "d".repeat(64), undefined],
+    ["chat", "d".repeat(64), "true"],
+    ["chat", "d".repeat(64), `author == "${"e".repeat(64)}"`],
+    ["chat", "d".repeat(64), `author == "${"d".repeat(64)}" || true`],
+    ["chat", AGENT, `author == "${AGENT}"`],
+  ])(
+    "refuses a non-owner watch in %s mode from %s with filter %s",
+    async (mode, sender, filter) => {
+      const { delivery, deps, publish, runtime } = setup({}, sender, { mode });
+      const turn = delivery();
+      if (turn.trigger.type !== "mention") throw new Error("Expected message");
+      await runtime.run({
+        ...turn,
+        trigger: {
+          ...turn.trigger,
+          type: "watch",
+          slug: "watch/follow",
+          watch: {
+            type: "event",
+            interest_id: "follow",
+            enabled: true,
+            since: 1,
+            channels: "all",
+            kinds: [9],
+            ...(filter === undefined ? {} : { filter }),
+          },
+        },
+      });
+      expect(deps.chat).not.toHaveBeenCalled();
+      expect(deps.spawn).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps the Buzz bridge for the session with Buzz access, answering discovery but refusing calls between turns", async () => {
     const { delivery, publish, seen, runtime } = setup({}, OWNER, {

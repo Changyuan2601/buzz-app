@@ -292,6 +292,7 @@ async function setup({
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   timeoutMs = 60_000,
+  allowAgentWatch = undefined as AgentType<Config>["allowAgentWatch"],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -324,6 +325,7 @@ async function setup({
     id: "echo",
     title: "Echo",
     timeoutMs,
+    ...(allowAgentWatch ? { allowAgentWatch } : {}),
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
     defaults: () => ({
       config: { reply: "ok" },
@@ -1021,6 +1023,68 @@ it("wakes on another of the owner's agents only when it names the agent", async 
     type: "mention",
     event: { pubkey: sibling },
   });
+});
+
+it("delivers a sibling's watched thread reply only when the type opts in, respecting membership and attention", async () => {
+  const allowAgentWatch = vi.fn(
+    (_config, watch, from) => watch.filter === `author == "${from.pubkey}"`,
+  );
+  const { service, run, emit } = await setup({ allowAgentWatch });
+  await service.create({ type: "example/echo", name: "Follower" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [9],
+        filter: `author == "${sibling}"`,
+      },
+    },
+  });
+  const reply = (id: string, patch: Partial<RelayEvent> = {}) =>
+    event(id, {
+      pubkey: sibling,
+      tags: [
+        ["h", channel],
+        ["e", "9".repeat(64), "", "reply"],
+        ["auth", viewer],
+      ],
+      ...patch,
+    });
+  emit({ events: [reply("reply")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    type: "watch",
+    event: { pubkey: sibling },
+  });
+  emit({
+    events: [
+      reply("reply"),
+      reply("own", { pubkey: bot }),
+      reply("human", { pubkey: viewer, tags: [["h", channel]] }),
+      reply("private", {
+        tags: [
+          ["h", "private"],
+          ["auth", viewer],
+        ],
+      }),
+    ],
+  });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, { attentionEnabled: false });
+  emit({ events: [reply("off")] });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, { attentionEnabled: true });
+  allowAgentWatch.mockReturnValue(false);
+  emit({ events: [reply("refused")] });
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
 });
 
 it("answers the owner and agents the owner attested, nobody else", async () => {

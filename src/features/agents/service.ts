@@ -317,6 +317,14 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Opts a specific watch into messages from another of the owner's agents.
+   * Without it, those messages wake the agent only by explicit mention.
+   * Membership, watch matching and current-attention checks still apply. */
+  allowAgentWatch?(
+    config: Config,
+    watch: EventWatch,
+    event: RelayEvent,
+  ): boolean;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
@@ -1944,22 +1952,30 @@ export class AgentsService extends Service implements Agents {
   }
   private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
-    // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // watch enough, two agents replying to each other would never stop. The
-    // claimed owner only narrows this; the type verifies it before answering.
-    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
-      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? [{ type: "mention", event }]
-        : [];
+    // Sibling messages need an explicit mention unless the type opts this
+    // watch in. The claimed owner only narrows dispatch, never grants authority.
+    const sibling = event.tags.some(
+      (tag) => tag[0] === "auth" && tag[1] === agent.owner,
+    );
+    if (sibling) {
+      if (CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey))
+        return [{ type: "mention", event }];
+      if (!runner.type?.allowAgentWatch) return [];
+    }
     // Addressed events never reach a watch. Only conversation starts a run: not a
     // DM it cannot read yet, nor a reaction to its message.
-    if (addressedTo(event, agent.pubkey, wrote))
+    else if (addressedTo(event, agent.pubkey, wrote))
       return CHAT_KINDS.includes(event.kind)
         ? [{ type: "mention", event }]
         : [];
     if (!agent.attentionEnabled || !this.member(agent, event)) return [];
     return this.watches(runner, agent)
-      .filter(({ watch, filter }) => watchMatches(watch, event, filter))
+      .filter(
+        ({ watch, filter }) =>
+          (!sibling ||
+            runner.type?.allowAgentWatch?.(agent.config, watch, event)) &&
+          watchMatches(watch, event, filter),
+      )
       .map(({ filter: _, ...match }) => ({ type: "watch", event, ...match }));
   }
   /** Whether the agent is in the event's channel, by its relay-signed roster.

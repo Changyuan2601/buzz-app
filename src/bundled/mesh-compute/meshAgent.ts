@@ -30,6 +30,7 @@
 // holds replacement through the response. The final freshness check also drops
 // replies after a switch; already-published tool sends are not undone.
 import type { Delivery } from "../../features/agents/service";
+import type { EventWatch } from "../../features/agents/attention";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -576,6 +577,20 @@ type Goose = {
 
 const STORAGE_PREFIX = "buzz.mesh-agent.session:";
 
+/** Chat alone may follow one sender explicitly selected by the owner's watch.
+ * More general predicates do not grant non-owner triggering. */
+export function allowMeshAgentWatch(
+  config: unknown,
+  watch: EventWatch,
+  event: EventData,
+) {
+  return (
+    meshAgentConfig(config).mode === "chat" &&
+    /^\s*author\s*==\s*"([0-9a-f]{64})"\s*$/.exec(watch.filter ?? "")?.[1] ===
+      event.pubkey
+  );
+}
+
 /** Mesh agents' work after Agents hands a delivery over: one goose process per
  * agent, a goose session per conversation, turns in a conversation in order. */
 export class MeshAgentRuntime {
@@ -592,10 +607,18 @@ export class MeshAgentRuntime {
     const { trigger, agent, channelId } = delivery;
     if (trigger.type === "timer" || !channelId) return Promise.resolve();
     const event = trigger.event;
-    // Spends shared compute and runs tools on this machine: answers its owner only.
-    if (event.pubkey !== agent.owner || event.pubkey === agent.pubkey)
-      return Promise.resolve();
     const config = meshAgentConfig(delivery.config);
+    // Tool-enabled turns remain owner-only. Chat may follow a selected sender;
+    // neither a broad watch nor a non-owner mention grants that permission.
+    if (
+      event.pubkey === agent.pubkey ||
+      (event.pubkey !== agent.owner &&
+        !(
+          trigger.type === "watch" &&
+          allowMeshAgentWatch(config, trigger.watch, event)
+        ))
+    )
+      return Promise.resolve();
     const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
     const conversation = conversationKey(channelId, event, dm, config.scope);
     const lane = `${agent.pubkey}\n${conversation}`;

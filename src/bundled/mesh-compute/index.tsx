@@ -18,6 +18,7 @@ import { MeshAgentTab } from "./MeshAgentTab";
 import { MeshHelpers } from "./MeshHelpers";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
+  allowMeshAgentWatch,
   type MeshAgentConfig,
   MeshAgentRuntime,
   type PreparedInference,
@@ -222,6 +223,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       // Covers compute startup (native waits up to 120s) plus one reply.
       timeoutMs: 5 * 60_000,
       run: (delivery) => runtime.run(delivery),
+      allowAgentWatch: allowMeshAgentWatch,
     });
   }
 
