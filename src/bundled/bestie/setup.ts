@@ -32,9 +32,13 @@ type State = Readonly<{
   status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
   message: string;
   candidates?: readonly Agent[];
+  /** An active Builderlab Bestie exists that this community doesn't list. */
+  unlisted?: boolean;
   record?: Record | undefined;
   connection?: RelaySnapshot;
 }>;
+type SetupOptions = Readonly<{ createNew?: boolean }>;
+class UnlistedBestieError extends Error {}
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -159,7 +163,11 @@ export function createRemoteBestie(
   });
   refresh();
 
-  async function provision(signal: AbortSignal, selected?: string) {
+  async function provision(
+    signal: AbortSignal,
+    selected?: string,
+    options: SetupOptions = {},
+  ) {
     const context = scope();
     if (!context) throw new Error("Connect to a community first.");
     const { key, owner, connection } = context;
@@ -248,6 +256,7 @@ export function createRemoteBestie(
       if (!agent) {
         // Never make a second Bestie because this community's list is unread.
         if (
+          !options.createNew &&
           remote.some(
             (row) =>
               row.name === NAME &&
@@ -255,8 +264,8 @@ export function createRemoteBestie(
               !agents.find(row.pubkey),
           )
         )
-          throw new Error(
-            "Your Builderlab account already has a Bestie that isn't listed in this community yet. Wait for your agents to load, then retry, or review Agents.",
+          throw new UnlistedBestieError(
+            "Your Builderlab account already has a Bestie that isn't listed in this community yet. Wait for your agents to load, then retry, or create a new Bestie for this community.",
           );
         progress("Creating Bestie…");
         // A failure after Builderlab made the agent leaves it unfinished in
@@ -447,7 +456,7 @@ export function createRemoteBestie(
       connection,
     });
   }
-  function run(selected?: string) {
+  function run(selected?: string, options?: SetupOptions) {
     if (disposed) return Promise.resolve();
     if (work) return work;
     const controller = new AbortController();
@@ -461,15 +470,20 @@ export function createRemoteBestie(
         await navigator.locks.request(
           current.key,
           { signal: controller.signal },
-          () => provision(controller.signal, selected),
+          () => provision(controller.signal, selected, options),
         );
-      else await provision(controller.signal, selected);
+      else await provision(controller.signal, selected, options);
     };
     work = task()
       .catch((error: unknown) => {
         if (disposed || controller.signal.aborted) return;
         held = true;
-        publish({ ...state, status: "error", message: explain(error) });
+        publish({
+          ...state,
+          status: "error",
+          message: explain(error),
+          unlisted: error instanceof UnlistedBestieError,
+        });
       })
       .finally(() => {
         if (operation === controller) operation = undefined;
@@ -487,7 +501,8 @@ export function createRemoteBestie(
         listeners.delete(listener);
       };
     },
-    setup: (selected?: string) => run(selected),
+    setup: (selected?: string, options?: SetupOptions) =>
+      run(selected, options),
     dispose() {
       disposed = true;
       operation?.abort();

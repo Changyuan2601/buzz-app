@@ -268,15 +268,27 @@ function Setup({
                 </Button>
               ))
             ) : (
-              <Button
-                variant="prominent"
-                loading={state.status === "busy"}
-                onClick={() => void bestie.setup()}
-              >
-                {state.status === "error"
-                  ? "Retry Bestie setup"
-                  : "Set up Bestie"}
-              </Button>
+              <>
+                <Button
+                  variant="prominent"
+                  loading={state.status === "busy"}
+                  onClick={() => void bestie.setup()}
+                >
+                  {state.status === "error"
+                    ? "Retry Bestie setup"
+                    : "Set up Bestie"}
+                </Button>
+                {state.status === "error" && state.unlisted && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      void bestie.setup(undefined, { createNew: true })
+                    }
+                  >
+                    Create a new Bestie
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </>
