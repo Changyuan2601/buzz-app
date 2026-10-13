@@ -171,7 +171,7 @@ export function sessionModel(
         if (!/new-message-arrived-while-you-were-working/.test(body) || !active)
           start(r.uuid ?? `turn-${index}`, r.timestamp, true);
       }
-      // Claude Code writes zero-usage "<synthetic>" replies (for example "No
+      // Claude writes zero-usage "<synthetic>" replies (for example "No
       // response requested.") when it resumes; no model request happened.
       if (
         r.type === "assistant" &&
@@ -343,7 +343,7 @@ export function sessionModel(
     file,
     sessionId: meta.id ?? records.find((r) => r.sessionId)?.sessionId,
     header: {
-      harness: provider === "codex" ? "Codex" : "Claude Code",
+      harness: provider === "codex" ? "Codex" : "Claude",
       model:
         turns
           .flatMap((t) => t.requests)
@@ -379,6 +379,6 @@ export function sessionModel(
     limitations:
       provider === "codex"
         ? "Recorded base instructions, dynamic tools, run settings, messages and usage. Native tool schemas and exact post-compaction inference requests are not recorded. Encrypted reasoning is omitted."
-        : "Recorded system prompt and tool snapshots (when Claude Code writes them), injected context as rendered, messages and per-response usage. Request framing, such as billing and SDK system blocks, beta headers and deferred tool schemas, is not recorded. Without completion records, duration is unknown or an inferred boundary.",
+        : "Recorded system prompt and tool snapshots (when Claude writes them), injected context as rendered, messages and per-response usage. Request framing, such as billing and SDK system blocks, beta headers and deferred tool schemas, is not recorded. Without completion records, duration is unknown or an inferred boundary.",
   };
 }

@@ -12,7 +12,7 @@ contract.
 ## Product behavior
 
 Codex uses its native integration ID, not an executable basename. New selection
-requires installed CLI and adapter presence, as Claude Code does. Settings owns
+requires installed CLI and adapter presence, as Claude does. Settings owns
 installation and the global setup check. Agent forms do not repeat that check
 because an existing agent can use a different saved adapter.
 

@@ -37,7 +37,7 @@ Default/Advanced configuration, and a configuration without the marker is
 refused. Re-selecting Codex or editing its adapter path keeps the saved
 configuration. Stopped agents stay stopped on Save.
 
-Start resolves the saved binding and launches it, as for Claude Code; it does
+Start resolves the saved binding and launches it, as for Claude; it does
 not probe versions or sign-in and does not send a test prompt. The runtime's
 normal conversation path owns inference. Adapter, login, and inference failures
 remain visible in existing status/log controls.

@@ -448,7 +448,7 @@ test("names each matching session's agent and opens the one picked", async (t) =
     latest.candidates.map((c) => [c.path, c.agent?.name ?? null, c.harness]),
     [
       [codexFile, "codex00", "Codex"],
-      [claudeFile, null, "Claude Code"],
+      [claudeFile, null, "Claude"],
     ],
   );
   const picked = await (

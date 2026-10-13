@@ -30,7 +30,7 @@ export function buildClaude(records) {
   );
   const entries = [];
   let model;
-  // Claude Code writes `prompt_snapshot`s in pairs: the first, before a
+  // Claude writes `prompt_snapshot`s in pairs: the first, before a
   // response, lacks the CLI prefix and tools that the second fills in. Show the
   // pair as one, at the first, and again only when the prompt or tools change.
   let system;
@@ -163,7 +163,7 @@ export function buildClaude(records) {
     ...new Set(messages.map((record) => record[key]).filter(Boolean)),
   ];
   return {
-    title: "Claude Code session",
+    title: "Claude session",
     info: [
       `Session: ${first.sessionId}`,
       `Working directory: ${unique("cwd").join(", ")}`,

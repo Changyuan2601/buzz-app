@@ -30,7 +30,7 @@ import {
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
 
-/** What a session can switch to between turns. Claude Code runs `max` as
+/** What a session can switch to between turns. Claude runs `max` as
  * `xhigh` in a stream-json session, so it is not offered. */
 const EFFORTS = [
   { id: "low", label: "Low" },
@@ -40,7 +40,7 @@ const EFFORTS = [
 ];
 
 export type Config = Readonly<{
-  /** A Claude model or alias; empty uses Claude Code's own default. */
+  /** A Claude model or alias; empty uses Claude's own default. */
   model: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
@@ -110,8 +110,7 @@ export class ClaudeRuntime {
 
   private get spawn(): Spawn {
     const spawn = this.host.spawn?.bind(this.host);
-    if (!spawn)
-      throw new Error("Claude Code agents run only in the desktop app");
+    if (!spawn) throw new Error("Claude agents run only in the desktop app");
     return spawn;
   }
 
@@ -180,7 +179,7 @@ export class ClaudeRuntime {
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
       )?.value ?? own;
-    // An own model Claude Code does not list is still the one it runs.
+    // An own model Claude does not list is still the one it runs.
     return models.some((model) => model.id === current)
       ? { current, models }
       : {
@@ -188,7 +187,7 @@ export class ClaudeRuntime {
           models: [
             {
               id: current,
-              label: current ? modelName(current) : "Claude Code",
+              label: current ? modelName(current) : "Claude",
               efforts: EFFORTS,
               ...resting(EFFORTS),
             },
@@ -307,7 +306,7 @@ export class ClaudeRuntime {
   ) {
     void done
       .then((result) => after(result.ok ? undefined : result.error))
-      .catch((error) => console.warn("Claude Code turn failed", error))
+      .catch((error) => console.warn("Claude turn failed", error))
       .finally(() => this.notify());
   }
 
@@ -331,7 +330,7 @@ export class ClaudeRuntime {
         ],
       })
       .catch((failure) =>
-        console.warn("Claude Code could not report a failed turn", failure),
+        console.warn("Claude could not report a failed turn", failure),
       );
   }
 
@@ -376,7 +375,7 @@ export class ClaudeRuntime {
           )
           .sort((a, b) => a.created_at - b.created_at);
       } catch (error) {
-        console.warn("Claude Code could not read the conversation", error);
+        console.warn("Claude could not read the conversation", error);
       }
     // A session already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
@@ -490,7 +489,7 @@ export class ClaudeRuntime {
       const memories = await this.memories(pubkey);
       value = memories.find((memory) => memory.slug === "core")?.body ?? null;
     } catch (error) {
-      console.warn("Claude Code could not read the agent's memory", error);
+      console.warn("Claude could not read the agent's memory", error);
     }
     entry.memory = { value, at: Date.now() };
     return value;

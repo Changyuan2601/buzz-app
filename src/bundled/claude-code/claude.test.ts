@@ -7,7 +7,7 @@ const launch = {
   systemPrompt: "<base>be useful</base>",
 };
 
-it("starts Claude Code as the SDK does and initializes it with the system prompt", async () => {
+it("starts Claude as the SDK does and initializes it with the system prompt", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
@@ -150,7 +150,7 @@ it("runs a turn on the model asked for, and the next without one on the session'
   ).toEqual(["haiku", "opus"]);
 });
 
-it("settles on each result when Claude Code does not report idle", async () => {
+it("settles on each result when Claude does not report idle", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(
     (id, options) => spawn(id, { ...options, env: {} }),

@@ -210,7 +210,7 @@ pub(crate) fn effective_path() -> OsString {
         } else {
             path
         };
-        // Per-user installs, such as the official Claude Code and Codex installers,
+        // Per-user installs, such as the official Claude and Codex installers,
         // come first: an older system-wide copy in /usr/local/bin would otherwise
         // run instead, and installing again could not replace it. Linux sessions
         // add ~/.local/bin only if it existed at login, so a new install needs it too.

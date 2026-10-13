@@ -1,4 +1,5 @@
 @import "./composer.css" layer(components);
+@import "./tab-drag.css";
 
 @layer components {
   /* Optical alignment: lift Robot face artwork without moving its layout box. */
@@ -449,6 +450,8 @@
   .buzz-avatar-status {
     position: relative;
     display: inline-grid;
+    /* Artwork/fallback changes must not change the inline box's baseline. */
+    vertical-align: middle;
     flex: 0 0 auto;
     width: max-content;
     height: max-content;
@@ -1018,9 +1021,9 @@
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
     display: flex;
     position: relative;
-    flex: 0 0 12rem;
-    width: 12rem;
-    max-width: 100%;
+    flex: 0 0 auto;
+    width: max-content;
+    max-width: min(12rem, 100%);
   }
   .buzz-tabs[data-variant="navigation"] .navigation-item {
     border-radius: var(--radius-icon-button);

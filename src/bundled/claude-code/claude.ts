@@ -16,7 +16,7 @@ export type Spawn = (
 
 export type ClaudeLaunch = Readonly<{
   cwd: string;
-  /** Appended to Claude Code's own system prompt. */
+  /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
   /** A saved session to continue. */
@@ -39,7 +39,7 @@ const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };
 
-/** A model Claude Code lists as one a session can switch to. */
+/** A model Claude lists as one a session can switch to. */
 export type ClaudeModel = Readonly<{
   /** What `set_model` takes: an alias such as `opus`, or a model id. */
   value: string;
@@ -62,7 +62,7 @@ export type Settled = Readonly<{
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
- * Claude Code session that started the app. */
+ * Claude session that started the app. */
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
@@ -98,9 +98,9 @@ export class ClaudeProcess {
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   private requests = 0;
-  /** Control requests awaiting Claude Code's answer, by request id. */
+  /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
-  /** The models Claude Code lists, from its answer to `initialize`. */
+  /** The models Claude lists, from its answer to `initialize`. */
   private listed: Promise<readonly ClaudeModel[]> = Promise.resolve([]);
   /** The model the next turn runs on; undefined is the session's own. */
   private pickedModel: string | undefined;
@@ -115,19 +115,19 @@ export class ClaudeProcess {
     private readonly process: HostProcess,
     resume: string | undefined,
     private tools: ToolServer | undefined,
-    /** The session's own model, as launched; undefined is Claude Code's default. */
+    /** The session's own model, as launched; undefined is Claude's default. */
     private readonly ownModel: string | undefined,
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
       this.alive = false;
       for (const resolve of this.calls.values())
-        resolve({ subtype: "error", error: "Claude Code exited" });
+        resolve({ subtype: "error", error: "Claude exited" });
       this.calls.clear();
       const error =
         this.lastError ??
         (this.stderr.trim().split("\n").at(-1) ||
-          `Claude Code exited (${code ?? "signal"})`);
+          `Claude exited (${code ?? "signal"})`);
       this.settle({ ok: false, error });
       return code;
     });
@@ -237,7 +237,7 @@ export class ClaudeProcess {
   models() {
     return this.listed;
   }
-  /** The effort a turn without a pick runs at, when Claude Code reports it. */
+  /** The effort a turn without a pick runs at, when Claude reports it. */
   async readEffort() {
     await this.readOwnEffort();
     return this.ownEffort;
@@ -262,7 +262,7 @@ export class ClaudeProcess {
     if (!this.alive)
       return Promise.resolve({
         ok: false,
-        error: "Claude Code is not running",
+        error: "Claude is not running",
       });
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
@@ -279,7 +279,7 @@ export class ClaudeProcess {
     }).catch((error) =>
       this.settle({
         ok: false,
-        error: `Claude Code did not take the message: ${error}`,
+        error: `Claude did not take the message: ${error}`,
       }),
     );
     return settled;
@@ -293,7 +293,7 @@ export class ClaudeProcess {
     return this.process.write(`${JSON.stringify(message)}\n`);
   }
   /** Writes a control request: `written` settles with the write, `answer`
-   * with Claude Code's response. */
+   * with Claude's response. */
   private request(request: Message) {
     const id = `buzz-${++this.requests}`;
     const answer = new Promise<Message>((resolve) =>
@@ -306,7 +306,7 @@ export class ClaudeProcess {
     });
     return { written, answer };
   }
-  /** Sends a control request and resolves with Claude Code's response. */
+  /** Sends a control request and resolves with Claude's response. */
   private call(request: Message): Promise<Message> {
     const { written, answer } = this.request(request);
     return written.then(() => answer);
@@ -323,7 +323,7 @@ export class ClaudeProcess {
       ...(next ? { model: next } : {}),
     }).then((answer) => {
       if (answer.subtype !== "success")
-        console.warn("Claude Code did not change its model", answer.error);
+        console.warn("Claude did not change its model", answer.error);
     });
   }
   /** Changes effort without restarting, which keeps the prompt cache: Claude
@@ -336,7 +336,7 @@ export class ClaudeProcess {
     void this.readOwnEffort();
     const level = effort ?? this.ownEffort;
     if (!level) {
-      console.warn("Claude Code's own effort is unknown; keeping the last one");
+      console.warn("Claude's own effort is unknown; keeping the last one");
       return;
     }
     this.effort = effort;
@@ -345,7 +345,7 @@ export class ClaudeProcess {
       settings: { effortLevel: level },
     }).then((answer) => {
       if (answer.subtype !== "success")
-        console.warn("Claude Code did not change its effort", answer.error);
+        console.warn("Claude did not change its effort", answer.error);
     });
   }
   /** Read once, ahead of the first change, so it is the session's own. */
@@ -421,14 +421,14 @@ export class ClaudeProcess {
       this.lastError =
         typeof message.result === "string" && message.result
           ? message.result
-          : `Claude Code stopped (${String(message.subtype)})`;
+          : `Claude stopped (${String(message.subtype)})`;
     if (!this.reportsState && this.pending) this.done();
   }
   private done() {
     const error = this.lastError;
     this.settle(error ? { ok: false, error } : { ok: true });
   }
-  /** Answers what Claude Code asks its host: calls to the Buzz tools, the
+  /** Answers what Claude asks its host: calls to the Buzz tools, the
    * hook after `send`, and, since permissions are bypassed, anything else only
    * so an unexpected request does not stall the turn. */
   private async answer(message: Message) {

@@ -226,98 +226,125 @@ test.describe("personal recipients", () => {
     page,
     app,
   }) => {
-    await page.goto(app.origin);
-    await openPage(page, "Me");
-    await page
-      .getByRole("navigation", { name: "Me conversations" })
-      .getByRole("button", { name: "Beta", exact: true })
-      .click();
-    const workspace = page.getByRole("main");
-    const composer = page.getByRole("textbox", {
-      name: "Message your agents",
-      exact: true,
+    // An older finite head may finish after a live arrival mounts the reader.
+    // Hold the response to exercise that route; the mounted timeline test
+    // controls the exact zero-viewport ordering independently of browser timing.
+    let releaseHead;
+    const heldHead = new Promise((resolve) => {
+      releaseHead = resolve;
     });
-    const [honey, brain, outsider] = app.meAgents;
-    await workspace
-      .getByRole("button", { name: "Mention a member", exact: true })
-      .click();
-    const picker = page.getByRole("dialog", {
-      name: "Mention a member or agent",
+    let readHead = false;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        !route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.top_level && filter["#h"]?.includes("gamma"))
+      )
+        return route.continue();
+      const response = await route.fetch();
+      readHead = true;
+      await heldHead;
+      await route.fulfill({ response }).catch(() => {});
     });
-    await expect(
-      picker.getByRole("button", {
-        name: `${brain.name} ${brain.pubkey}`,
+    try {
+      await page.goto(app.origin);
+      await openPage(page, "Me");
+      await page
+        .getByRole("navigation", { name: "Me conversations" })
+        .getByRole("button", { name: "Beta", exact: true })
+        .click();
+      const workspace = page.getByRole("main");
+      const composer = page.getByRole("textbox", {
+        name: "Message your agents",
         exact: true,
-      }),
-    ).toBeVisible();
-    await picker
-      .getByRole("button", {
-        name: `${honey.name} ${honey.pubkey}`,
+      });
+      const [honey, brain, outsider] = app.meAgents;
+      await workspace
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      const picker = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      await expect(
+        picker.getByRole("button", {
+          name: `${brain.name} ${brain.pubkey}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+      await picker
+        .getByRole("button", {
+          name: `${honey.name} ${honey.pubkey}`,
+          exact: true,
+        })
+        .click();
+      await composer.press("End");
+      await page.keyboard.insertText("Only this agent from Beta");
+      await composer.press("Enter");
+      const publications = () =>
+        app.report.publications.filter(({ event }) => event.kind === 9);
+      await expect.poll(() => publications().length).toBe(1);
+      const sent = publications()[0].event;
+      expect(verifyEvent(sent)).toBe(true);
+      expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", other]]);
+      expect(sent.tags.filter(([key]) => key === "p")).toEqual([
+        ["p", honey.pubkey],
+      ]);
+      // Successful personal sends keep explicit mention chips for follow-up turns.
+      await expect(composer).toHaveText(`@${honey.name} `);
+      // A draft from the ordinary Messages reader may retain a channel member
+      // who isn't in the owner's inventory. Me must reject that explicit recipient.
+      await composer.fill("");
+      await openPage(page, "Messages");
+      await page.locator('[data-channel-id="gamma"]').click();
+      // Me-owned conversations are intentionally absent from the Messages
+      // sidebar. A real conversation link still opens their ordinary reader.
+      const link = app.append(
+        "primary",
+        "gamma",
+        `[Open Beta](buzz://channel/${other})`,
+      );
+      await expect.poll(() => readHead).toBe(true);
+      releaseHead();
+      await page
+        .locator(`[data-message-id="${link.id}"]`)
+        .getByRole("link", { name: "Open Beta", exact: true })
+        .click();
+      await workspace
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Mention a member or agent" })
+        .getByRole("button", {
+          name: `${outsider.name} ${outsider.pubkey}`,
+          exact: true,
+        })
+        .click();
+      const ordinaryComposer = page.getByRole("textbox", {
+        name: "Message #Beta",
         exact: true,
-      })
-      .click();
-    await composer.press("End");
-    await page.keyboard.insertText("Only this agent from Beta");
-    await composer.press("Enter");
-    const publications = () =>
-      app.report.publications.filter(({ event }) => event.kind === 9);
-    await expect.poll(() => publications().length).toBe(1);
-    const sent = publications()[0].event;
-    expect(verifyEvent(sent)).toBe(true);
-    expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", other]]);
-    expect(sent.tags.filter(([key]) => key === "p")).toEqual([
-      ["p", honey.pubkey],
-    ]);
-    // Successful personal sends keep explicit mention chips for follow-up turns.
-    await expect(composer).toHaveText(`@${honey.name} `);
-    // A draft from the ordinary Messages reader may retain a channel member
-    // who isn't in the owner's inventory. Me must reject that explicit recipient.
-    await composer.fill("");
-    await openPage(page, "Messages");
-    await page.locator('[data-channel-id="gamma"]').click();
-    // Me-owned conversations are intentionally absent from the Messages
-    // sidebar. A real conversation link still opens their ordinary reader.
-    const link = app.append(
-      "primary",
-      "gamma",
-      `[Open Beta](buzz://channel/${other})`,
-    );
-    await page
-      .locator(`[data-message-id="${link.id}"]`)
-      .getByRole("link", { name: "Open Beta", exact: true })
-      .click();
-    await workspace
-      .getByRole("button", { name: "Mention a member", exact: true })
-      .click();
-    await page
-      .getByRole("dialog", { name: "Mention a member or agent" })
-      .getByRole("button", {
-        name: `${outsider.name} ${outsider.pubkey}`,
-        exact: true,
-      })
-      .click();
-    const ordinaryComposer = page.getByRole("textbox", {
-      name: "Message #Beta",
-      exact: true,
-    });
-    await ordinaryComposer.press("End");
-    await page.keyboard.insertText("Not mine");
-    await openPage(page, "Me");
-    await page
-      .getByRole("navigation", { name: "Me conversations" })
-      .getByRole("button", { name: "Beta", exact: true })
-      .click();
-    await expect(composer).toContainText("@Outside Agent");
-    await composer.press("Enter");
-    await expect(
-      workspace.getByText(
-        "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    // Error rendering is the completion barrier: rejected admission never reaches outbox.
-    expect(publications()).toHaveLength(1);
-    await expect(composer).toContainText("Not mine");
+      });
+      await ordinaryComposer.press("End");
+      await page.keyboard.insertText("Not mine");
+      await openPage(page, "Me");
+      await page
+        .getByRole("navigation", { name: "Me conversations" })
+        .getByRole("button", { name: "Beta", exact: true })
+        .click();
+      await expect(composer).toContainText("@Outside Agent");
+      await composer.press("Enter");
+      await expect(
+        workspace.getByText(
+          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      // Error rendering is the completion barrier: rejected admission never reaches outbox.
+      expect(publications()).toHaveLength(1);
+      await expect(composer).toContainText("Not mine");
+    } finally {
+      releaseHead();
+    }
   });
 });
 

@@ -1002,3 +1002,11 @@
   color: var(--text-unavailable);
   cursor: not-allowed;
 }
+
+/* The main pane's tab host fills the conversation above any bottom drawer. */
+.mainWorkspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}

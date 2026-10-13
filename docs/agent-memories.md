@@ -64,9 +64,9 @@ not production memory reads or packaged-native acceptance.
 ## Consumers
 
 No plugin shows memories in a UI now: the Profiles plugin and its Memories tab
-were removed. The Claude Code and Codex bundled runtimes open a view through
+were removed. The Claude and Codex bundled runtimes open a view through
 `session.agentMemories.open(pubkey)` to read the agent's own memories for its Buzz
-tools; Claude Code also reads the `core` memory for a new session and reuses a
+tools; Claude also reads the `core` memory for a new session and reuses a
 read for five minutes. Each read refreshes one view and disposes it when settled,
 and fails unless the view's status is `ready`. Without a ready relay connection
 no view is opened.

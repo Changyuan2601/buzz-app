@@ -29,7 +29,7 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
    Buzz kills when the step ends. After an in-app install the terminal may not
    find `codex` (the installer sees `~/.local/bin` on Buzz's PATH and leaves
    the shell profile alone); run `~/.local/bin/codex login` then.
-3. The **Workspace** defaults to `~/.buzz`, like Claude Code. In the agent's
+3. The **Workspace** defaults to `~/.buzz`, like Claude. In the agent's
    **Settings** tab, you can set an absolute path instead; clearing it restores
    the default. A disposable directory is useful for the first test. Choose model, thinking,
    session scope, and instructions, then **Save**.
@@ -112,7 +112,7 @@ and cleanup.
   publish through the Buzz CLI. Short Buzz guidance and custom instructions are
   supplied as developer instructions, preserving Codex’s native coding prompt.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
-  Claude Code's `bypassPermissions`: it can write outside its workspace, reach the
+  Claude's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
   are disabled.
 - Shared Agent Activity integration is deferred because this Agents delivery

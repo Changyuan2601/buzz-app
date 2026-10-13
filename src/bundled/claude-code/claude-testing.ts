@@ -27,7 +27,7 @@ export type FakeClaude = {
   exit(code: number | null, stderr?: string): void;
 };
 
-/** The models the fake lists, as Claude Code's `initialize` answer does. */
+/** The models the fake lists, as Claude's `initialize` answer does. */
 export const MODELS = [
   { value: "default", resolvedModel: "claude-opus-5-5" },
   {
@@ -47,7 +47,7 @@ export const MODELS = [
 const resolved = (model: string) =>
   MODELS.find((item) => item.value === model)?.resolvedModel ?? model;
 
-/** A spawn whose `claude` processes answer like Claude Code. Sessions named in
+/** A spawn whose `claude` processes answer like Claude. Sessions named in
  * `known` (or created by a process) can be resumed; others fail to load. */
 export function fakeSpawn(known = new Set<string>()) {
   const processes: FakeClaude[] = [];
@@ -90,7 +90,7 @@ export function fakeSpawn(known = new Set<string>()) {
           ...(result.error ? { result: result.error } : {}),
           session_id: session,
         });
-        // Claude Code reports idle only when asked to.
+        // Claude reports idle only when asked to.
         if (options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS === "1")
           fake.emit({
             type: "system",

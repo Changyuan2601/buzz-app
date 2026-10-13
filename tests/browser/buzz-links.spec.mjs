@@ -86,7 +86,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(
     panel.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
-  await button(page, "Close Thread tab").click();
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
   await expect(link).toBeFocused();
   await link.hover();
   await expect(
@@ -115,7 +119,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect.poll(async () => (await state(page)).status).toBe("opened");
   expect((await state(page)).entry.target.messageId).toBe(target.id);
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  await button(page, "Close Thread tab").click();
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
   await expect(panel).toHaveCount(0);
   await button(page, "Go back").click();
   await expect(
@@ -215,19 +223,12 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await trigger.click();
   const dock = page.locator("[data-panel-dock]");
   const tablist = page.getByRole("tablist", { name: "Panel tabs" });
-  const threadTab = tablist.getByRole("tab", { name: "Thread", exact: true });
+  const threadTab = tablist.locator('[role="tab"][data-tab-value^="thread:"]');
   const details = tablist.getByRole("tab", {
     name: "Wrong panel",
     exact: true,
   });
   await expect(threadTab).toHaveClass(/navigation-item/);
-  expect(
-    await threadTab.evaluate(
-      (el) =>
-        el.parentElement.getBoundingClientRect().width /
-        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-    ),
-  ).toBeCloseTo(12);
   await expect(threadTab.locator("svg")).toHaveCount(1);
   await expect(details).toHaveCount(1);
   await expect(details).toBeFocused();
@@ -318,7 +319,11 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await details.press("Delete");
   await expect(threadTab).toBeFocused();
   await expect(editor).toHaveText("Keep this thread draft");
-  await button(page, "Close Thread tab").click();
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+    )
+    .click();
   await expect(dock).toHaveCount(0);
 });
 

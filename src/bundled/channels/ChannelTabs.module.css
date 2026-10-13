@@ -26,3 +26,8 @@
   width: 100%;
   margin-inline: 0;
 }
+
+/* Retained tab content moves between panes without its own box. */
+.tabSlot {
+  display: contents;
+}

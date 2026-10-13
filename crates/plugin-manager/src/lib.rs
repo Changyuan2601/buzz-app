@@ -218,7 +218,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!(
             "../../../src/bundled/claude-code/manifest.json"
         ))
-        .expect("claude code manifest"),
+        .expect("claude manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/codex/manifest.json"))
             .expect("codex manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))

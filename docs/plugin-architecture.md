@@ -215,7 +215,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
-Projects, Agents, Claude Code, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
+Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Me is an empty, optional default-enabled page. Me and Channels request topbar
@@ -630,7 +630,7 @@ profile locking, rollback, recovery and safe-mode behavior. An uncertain write r
 the preview identity for same-artifact retry; it does not refetch or rebuild.
 
 Local discovery skips symlink directories, `node_modules`, `target` and dot-prefixed
-directories such as `.git` and `.claude` (Claude Code worktrees) below the selected
+directories such as `.git` and `.claude` (Claude worktrees) below the selected
 folder; select such a folder itself to import from it. Git discovery does not skip
 dot-prefixed directories. Local discovery uses `cap-std` directory-relative reads to
 confine descendant path resolution. Files

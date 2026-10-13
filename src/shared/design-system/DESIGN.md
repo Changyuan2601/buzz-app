@@ -1022,7 +1022,7 @@ Tabs with content use renderPanel, which lets Base UI connect each tab and panel
 Route navigation uses NavigationItem with aria-current instead, except for the
 wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
+semantics, hug their contents up to a 12rem maximum with ellipsis, use 10px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main

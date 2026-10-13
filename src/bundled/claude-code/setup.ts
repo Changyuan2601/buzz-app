@@ -1,4 +1,4 @@
-// Claude Code on this computer: whether it is installed and signed in, and the
+// Claude on this computer: whether it is installed and signed in, and the
 // installer and sign-in, each run as a declared process.
 import type { HostProcess } from "../../features/host/service";
 import { ENV, type Spawn } from "./claude";
@@ -38,7 +38,7 @@ export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
     if (result.code !== 0)
       return {
         state: "error",
-        message: result.stderr.trim() || "Claude Code did not start",
+        message: result.stderr.trim() || "Claude did not start",
       };
     version = result.stdout.trim().split(/\s/)[0] ?? "";
   } catch (error) {
@@ -90,7 +90,7 @@ export type SetupState = Readonly<{
 }>;
 const OUTPUT_LIMIT = 20_000;
 
-/** The plugin's one view of Claude Code on this computer. */
+/** The plugin's one view of Claude on this computer. */
 export class ClaudeSetup {
   private state: SetupState = {
     status: undefined,
@@ -122,7 +122,7 @@ export class ClaudeSetup {
       this.set({
         status: {
           state: "error",
-          message: "Claude Code agents run only in the desktop app",
+          message: "Claude agents run only in the desktop app",
         },
       });
       return;

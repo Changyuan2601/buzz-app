@@ -378,3 +378,44 @@ test("a consumed native Close request cannot close another workspace", () => {
   expect(screen.getAllByRole("tab", { name: "Thread" })).toHaveLength(1);
   expect(screen.getAllByRole("tab", { name: "Ada" })).toHaveLength(2);
 });
+
+test("background tab selection does not take focus from a modal", () => {
+  const view = render(
+    <>
+      <div role="dialog" aria-modal="true">
+        <input aria-label="Modal search" />
+      </div>
+      <PanelWorkspace
+        value="one"
+        select={() => {}}
+        focusOnMount={false}
+        items={["one", "two"].map((id) => ({
+          id,
+          label: id,
+          content: <p>{id} body</p>,
+        }))}
+      />
+    </>,
+  );
+  const search = screen.getByRole("textbox", { name: "Modal search" });
+  act(() => search.focus());
+  view.rerender(
+    <>
+      <div role="dialog" aria-modal="true">
+        <input aria-label="Modal search" />
+      </div>
+      <PanelWorkspace
+        value="two"
+        select={() => {}}
+        focusOnMount={false}
+        items={["one", "two"].map((id) => ({
+          id,
+          label: id,
+          content: <p>{id} body</p>,
+        }))}
+      />
+    </>,
+  );
+  expect(search).toHaveFocus();
+  expect(tab("two")).toHaveAttribute("aria-selected", "true");
+});

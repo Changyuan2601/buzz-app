@@ -2428,3 +2428,35 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Returning from a thread only paints its already-visible origin. The wash
+   extends into the feed's inset without changing the row's layout box. */
+.returnHighlight {
+  isolation: isolate;
+}
+.returnHighlight::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: calc(-1 * var(--space-2));
+  z-index: -1;
+  border-radius: var(--radius-row);
+  background: var(--affordance-accent);
+  pointer-events: none;
+  animation: return-message-highlight calc(var(--duration-settle) * 5) ease-out
+    both;
+}
+@keyframes return-message-highlight {
+  0%,
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .returnHighlight::after {
+    animation-timing-function: steps(1, end);
+  }
+}

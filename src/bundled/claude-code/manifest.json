@@ -1,6 +1,6 @@
 {
   "id": "buzz.claude-code",
-  "name": "Claude Code",
+  "name": "Claude",
   "apiVersion": 1,
   "host": {
     "processes": [

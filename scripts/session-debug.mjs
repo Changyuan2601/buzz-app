@@ -127,7 +127,7 @@ export async function createInspector({
               agent: matches ? agentOf(records) : null,
               harness: records.some((r) => r.type === "session_meta")
                 ? "Codex"
-                : "Claude Code",
+                : "Claude",
               started: records.find((r) => r.timestamp)?.timestamp ?? null,
               updated: info.mtimeMs,
             };

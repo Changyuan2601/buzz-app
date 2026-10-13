@@ -415,6 +415,10 @@ confirmedPresence(
       await expect(settingsSidebar).toBeVisible();
       await profile.focus();
       await tab();
+      await expect(
+        sections.getByRole("button", { name: "Messages", exact: true }),
+      ).toBeFocused();
+      await tab();
       await expect(personalGroups).toBeFocused();
       await tab();
       await expect(channelTemplates).toBeFocused();
@@ -490,6 +494,10 @@ confirmedPresence(
         await button(page, "Show navigation").click();
         await profile.focus();
       }
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Messages", exact: true }),
+      ).toBeFocused();
       await tab();
       await expect(personalGroups).toBeFocused();
       await tab();

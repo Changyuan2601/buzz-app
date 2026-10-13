@@ -232,6 +232,50 @@ it("offers outside agents in the session mention picker while ordinary channel p
   view.unmount();
   test.library.dispose();
 });
+function completionLabels(publish: ReturnType<typeof vi.fn>) {
+  return (
+    publish.mock.lastCall?.[0] as CompletionResult | undefined
+  )?.items.map((item) => item.label);
+}
+const emptyCompletion = {
+  scope: "test",
+  channelId: "parent",
+  observation: { revision: 1, text: "@", start: 1, end: 1 },
+  query: { start: 0, end: 1, query: "" },
+};
+it("offers the viewer's own unmanaged agent outside a stream before directory people", async () => {
+  const test = setup();
+  // Remote agent setup refreshes agent choices after creating the agent.
+  await test.library.queries.refresh();
+  const session = {
+    ...test.session,
+    viewer: "d".repeat(64),
+    outbox: { supports: () => true },
+    directMessages: {
+      people: vi.fn(async () => ({
+        people: [{ pubkey: "c".repeat(64), name: "Aaron", isAgent: true }],
+        hasMore: false,
+      })),
+    },
+  } as unknown as RelaySession;
+  const publish = vi.fn();
+  const view = render(
+    <MentionCompletion
+      session={session}
+      {...emptyCompletion}
+      publish={publish}
+    />,
+  );
+  await waitFor(() =>
+    expect(completionLabels(publish)).toEqual([
+      "Member",
+      "Outside agent",
+      "Aaron",
+    ]),
+  );
+  view.unmount();
+  test.library.dispose();
+});
 it("focuses search on open and supports clear, Escape, and outside dismissal", async () => {
   const test = setup(),
     user = userEvent.setup();

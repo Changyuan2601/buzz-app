@@ -8,7 +8,7 @@
 Codex is a native integration. New selection requires installed tools; Create
 and Save require no inference check. Settings shows tool presence and, once
 both tools are found, reads the existing CLI login with `codex login status`,
-as it does for Claude Code. Like Claude Code, Start launches the saved binding
+as it does for Claude. Like Claude, Start launches the saved binding
 without a separate probe; adapter and login failures appear in the agent log.
 
 ## Binding contract
@@ -33,7 +33,7 @@ configuration used by the adapter.
 ## Adapter lookup and Install
 
 Settings status and new harness selection share the installer lookup, as
-Claude Code does. A user-installed
+Claude does. A user-installed
 `codex-acp` wins; Buzz searches `~/.local/bin`, the discovered login-shell
 PATH, the app's inherited PATH,
 `/opt/homebrew/bin`, then `/usr/local/bin`. Otherwise Buzz uses the app-owned
@@ -45,13 +45,13 @@ resolved from the same user directories.
 When Settings reports **Adapter needed**, it offers **Install** on macOS
 and Linux. It reuses the checksum-verified managed Node and installs
 `@agentclientprotocol/codex-acp@2.1.1` into a new `codex-tools/releases`
-directory. As with Claude Code, npm also installs the adapter's bundled platform
+directory. As with Claude, npm also installs the adapter's bundled platform
 binaries, including about 330 MB for its own Codex CLI. Buzz never runs that CLI
 because it always sets `CODEX_PATH`. The launcher must pass `--version` before
 activation. A failed
 install keeps the previous release and shows the private install log. Success
 re-detects the tools, so no `PATH` change or symlink is needed. Install shares the
-native install/quit owner with Pi and Claude Code. If a user-installed adapter
+native install/quit owner with Pi and Claude. If a user-installed adapter
 exists, Install refuses and the user updates it in their terminal. Settings
 does not probe adapter versions; an incompatible user adapter appears in the
 agent log at Start. Adding
@@ -73,7 +73,7 @@ and isolated environment, then launches the adapter through the bundled Buzz
 ACP runtime. A missing or non-executable saved adapter, a missing CLI, or a
 rejected `CODEX_CONFIG` is recorded as the agent's Start error. Version,
 login, and protocol failures come from the adapter itself and appear in the
-agent log, as they do for Claude Code. Ordinary agent snapshots and lifecycle
+agent log, as they do for Claude. Ordinary agent snapshots and lifecycle
 polling never launch Codex tools.
 
 ## Verification

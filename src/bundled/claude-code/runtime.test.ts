@@ -151,7 +151,7 @@ it("knows the agent's own model once one of its sessions has begun", async () =>
   // Before then nothing says which model it runs, nor what else it could.
   expect(await runtime.models(self)).toEqual({
     current: "",
-    models: [{ id: "", label: "Claude Code", efforts: EFFORTS }],
+    models: [{ id: "", label: "Claude", efforts: EFFORTS }],
   });
   await deliver({ type: "mention", event: mention });
   await flush(10);
@@ -182,7 +182,7 @@ it("discovers models and effort without a turn or retaining a per-agent spare", 
     runtime.dispose();
   }
 });
-it("still offers a configured model Claude Code does not list", async () => {
+it("still offers a configured model Claude does not list", async () => {
   const { runtime } = setup();
   const config = { ...DEFAULT_CONFIG, model: "claude-sonnet-9-9" };
   runtime.sync([{ pubkey: self, config } as Agent]);

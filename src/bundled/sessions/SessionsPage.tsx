@@ -312,6 +312,7 @@ function SessionWork({
     extensions,
     leadingIds: [],
     continuingVisit: continuing.current,
+    navigationSignal: navigation?.signal,
     isLive: () => !navigation?.signal.aborted,
     openLink: (url) => openLink(url),
     conversationIcon: (item) => {
@@ -553,7 +554,10 @@ function SessionWork({
               className={channelStyles.retainedPanel}
               hidden={!!companion && !showingPanel}
             >
+              {secondary.drag.feedback}
+              {secondary.hosts}
               <PanelWorkspace
+                drag={secondary.drag.side}
                 value={secondary.selectedTab}
                 select={secondary.selectPanelTab}
                 items={secondary.items}

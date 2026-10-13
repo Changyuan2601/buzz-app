@@ -1,4 +1,4 @@
-// Claude Code agents: an agent type whose agents are Claude Code sessions on
+// Claude agents: an agent type whose agents are Claude sessions on
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
@@ -42,9 +42,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const { ClaudeTab, SettingsTab } = createTabs({ setup, runtime });
   agents.register<Config>({
     id: TYPE_ID,
-    title: "Claude Code",
+    title: "Claude",
     description:
-      "Claude Code on this computer. Each thread it is mentioned in is one continuing session.",
+      "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     adopt: (carry, saved) => ({
@@ -52,7 +52,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       instructions: carry.instructions ?? saved.instructions,
       workspace: carry.workspace ?? saved.workspace,
     }),
-    summary: (agent) => config(agent.config).model || "Claude Code",
+    summary: (agent) => config(agent.config).model || "Claude",
     tabs: [
       { id: "claude", title: "Claude", component: ClaudeTab },
       { id: "settings", title: "Settings", component: SettingsTab },

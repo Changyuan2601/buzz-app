@@ -113,8 +113,8 @@ the lookup.
 Action policy stays explicit: ordinary member mentions use the channel roster and
 hide known-archived identities without requiring verified non-archived evidence.
 In streams and forums, nonmember mentions also offer people from the selected
-community directory and, when the viewer can add members, the viewer's `managed`
-agents that are not in the channel. Send asks before adding them; selection grants
+community directory and, when the viewer can add members, the viewer's own agents
+(`managed` or not) that are not in the channel. Send asks before adding them; selection grants
 no access. A pasted mention of a known profile is offered the same way. A DM can
 name outsiders but never notifies them. Session invitations keep their existing
 rules, including library choices. Shared choice visibility is not permission to
@@ -423,7 +423,7 @@ from the `<buzz-event>` framing, other sections collapsed), the session's system
 prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
 their tool call with the auto-approval outcome, plans, mode changes, the session's
 selected config values (e.g. model), context usage, stop reason and errors. Tool
-names and inputs differ by adapter (Pi, Goose, Codex, Claude Code), so tool rows show the
+names and inputs differ by adapter (Pi, Goose, Codex, Claude), so tool rows show the
 adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
 `locations` and content (text, with a wholly fenced Markdown block shown as its body,
 and `diff` as removed/added lines) are interpreted.

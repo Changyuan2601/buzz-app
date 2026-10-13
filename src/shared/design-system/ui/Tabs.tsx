@@ -12,6 +12,9 @@ export type TabItem<Value extends string> = {
   /** Link a retained, externally owned tab panel. */
   panelId?: string;
   onClose?: (() => void) | undefined;
+  /** Option/Alt+Shift+Arrow moves this tab one position; the caller places it. */
+  draggable?: boolean | undefined;
+  onMove?: ((delta: -1 | 1) => void) | undefined;
 };
 
 /**
@@ -96,6 +99,19 @@ export function Tabs<Value extends string>({
                   event.preventDefault();
                   item.onClose();
                 }
+                if (
+                  item.onMove &&
+                  event.altKey &&
+                  event.shiftKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  (event.key === "ArrowLeft" || event.key === "ArrowRight")
+                ) {
+                  // Keep Base UI's arrow navigation from also moving focus.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  item.onMove(event.key === "ArrowLeft" ? -1 : 1);
+                }
               }}
               className="buzz-tabs-tab"
               /* Base UI spells the selected tab `data-active`; every other
@@ -109,6 +125,7 @@ export function Tabs<Value extends string>({
                 (showSelection && item.value === value) || undefined
               }
               data-preview={item.value === previewValue || undefined}
+              data-draggable={item.draggable || undefined}
               data-tab-value={item.value}
             >
               {variant === "workspace" && item.value === arrivalValue ? (

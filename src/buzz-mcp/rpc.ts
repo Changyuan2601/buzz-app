@@ -1,5 +1,5 @@
 // The Buzz tools as an MCP server inside the host process: answers one
-// JSON-RPC message at a time, as Claude Code sends them over its stream-json
+// JSON-RPC message at a time, as Claude sends them over its stream-json
 // pipe to an in-process (`sdk`) server. Holds no state between messages.
 import type { BuzzClient, Context } from "./client";
 import { callTool, type Reply, TOOLS } from "./tools";

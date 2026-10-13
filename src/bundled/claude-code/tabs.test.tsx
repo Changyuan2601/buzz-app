@@ -109,7 +109,7 @@ async function choose(label: string, option: string) {
 it("is an agent type on the desktop app", () => {
   expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
-  expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
+  expect(type).toMatchObject({ id: "claude-code", title: "Claude" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
   expect(
     type.adopt?.(
@@ -138,12 +138,12 @@ it("registers only where setup's bash and base64 exist", () => {
   expect(applied().type).toBeUndefined();
 });
 
-it("shows that Claude Code is ready and that nothing is running yet", async () => {
+it("shows that Claude is ready and that nothing is running yet", async () => {
   const Claude = tab(installed().type, 0);
   render(<Claude agent={agent()} save={vi.fn()} />);
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude Code 2.1.292 is ready (me@example.com).",
+      "Claude 2.1.292 is ready (me@example.com).",
     ),
   );
   expect(
@@ -181,7 +181,7 @@ it("saves settings as one config", async () => {
   );
   await choose("Model", "Sonnet");
   expect(screen.getByLabelText("Workspace")).toHaveAccessibleDescription(
-    "The folder Claude Code works in. Use ~/ for your home folder.",
+    "The folder Claude works in. Use ~/ for your home folder.",
   );
   await user.clear(screen.getByLabelText("Workspace"));
   await user.click(screen.getByRole("button", { name: "Save" }));

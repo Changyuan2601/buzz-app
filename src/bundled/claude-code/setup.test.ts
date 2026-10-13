@@ -30,7 +30,7 @@ function scripted(
   return { spawn, calls };
 }
 
-it("finds Claude Code missing when it cannot be started", async () => {
+it("finds Claude missing when it cannot be started", async () => {
   const { spawn } = scripted({
     "claude --version": new Error("Could not start claude: No such file"),
   });
@@ -121,6 +121,6 @@ it("explains that it needs the desktop app", async () => {
   await setup.check();
   expect(setup.snapshot().status).toEqual({
     state: "error",
-    message: "Claude Code agents run only in the desktop app",
+    message: "Claude agents run only in the desktop app",
   });
 });

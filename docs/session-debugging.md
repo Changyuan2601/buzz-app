@@ -29,7 +29,7 @@ bars are explicitly estimated from the preceding logged input/result through
 observed model output, and can include queue, prefill and dispatch overhead. With
 no usable output boundary, the chart shows an untimed inference and leaves that
 time unattributed. An explicit running turn extends to now; legacy sessions with
-no completion record end at their last recorded message. Claude Code's zero-usage
+no completion record end at their last recorded message. Claude's zero-usage
 `<synthetic>` replies and queue bookkeeping are not counted as activity. The chart
 uses UTC to match the transcript timestamps.
 
@@ -60,7 +60,7 @@ sessions and DMs may require `--file`, and can contain multiple Buzz threads.
 are tagged with the role they were sent as (System, Developer, User, or Settings
 for run configuration) and render as Markdown: the system prompt first, then
 the rest in recorded order. Tools show one row per tool, opening to its
-description and JSON schema. Context injected later, such as Claude Code's
+description and JSON schema. Context injected later, such as Claude's
 reminders, stays in the conversation as faint rows.
 
 Codex supplies `session_meta.base_instructions`, `dynamic_tools`, developer/user
@@ -72,7 +72,7 @@ response IDs, and falls back to changes in cumulative token counts. It does not
 add those two sources together. The chart uses timestamp intervals to account for
 wall time; recorded `duration_ms` remains available in raw records.
 
-Claude's native transcript supplies messages and usage. Claude Code also writes a
+Claude's native transcript supplies messages and usage. Claude also writes a
 `prompt_snapshot` with the system prompt and tool schemas, shown once per change,
 and the rendered text and role of each reminder it injects (environment, skills,
 CLAUDE.md, hook context). Request framing, such as billing and SDK system blocks,

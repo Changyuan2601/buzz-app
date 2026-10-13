@@ -778,7 +778,9 @@ function Timeline({
         <Virtualizer
           ref={handle}
           scrollRef={scroller}
-          shift={prepend}
+          // Before Virtua measures its viewport there is no reading position
+          // to preserve; shifting then can freeze its initial empty range.
+          shift={prepend && !!handle.current?.viewportSize}
           bufferSize={1600}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}

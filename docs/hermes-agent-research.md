@@ -3,7 +3,7 @@
 > **Status: superseded by Agents.** The v1 create/edit form, Settings harness rows,
 > model picker and device-defaults card this research targeted were removed with the
 > v1 Agents system. A harness now reaches the app as an agent type that a
-> plugin registers, as the bundled Claude Code and Codex plugins do. The sections
+> plugin registers, as the bundled Claude and Codex plugins do. The sections
 > below record the research and the slice built against the removed UI; table rows
 > whose owners no longer exist are dropped.
 
