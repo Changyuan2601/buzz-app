@@ -81,7 +81,7 @@ it("reviews and customises a helper's instructions, mode, workspace and session 
   });
   await user.click(within(dialog).getByRole("combobox", { name: "Sessions" }));
   await user.click(
-    screen.getByRole("option", { name: "One session per channel" }),
+    await screen.findByRole("option", { name: "One session per channel" }),
   );
   await user.click(
     within(dialog).getByRole("button", { name: "Create agent" }),
