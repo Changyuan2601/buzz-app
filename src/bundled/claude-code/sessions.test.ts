@@ -331,6 +331,68 @@ it("runs any number of conversations at once", async () => {
   expect(pool.snapshot().every((session) => session.busy)).toBe(true);
 });
 
+it("runs a one-off turn in a new session that is never saved", async () => {
+  const store = memoryStore();
+  const { pool, claudes } = sessions({ store });
+  await expect(pool.runOnce("timer/a", () => "wake")).resolves.toEqual({
+    ok: true,
+  });
+  const claude = claudes().find((process) => process.prompts.includes("wake"));
+  expect(claude?.options.args).toContain("--session-id");
+  expect(claude?.killed).toBe(true);
+  expect(pool.snapshot()).toEqual([]);
+  expect(store.get("timer/a #1")).toBeUndefined();
+});
+
+it("asks a one-off turn for its prompt only once its process is ready", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  // It went stale while its process started, as a watch turned off would.
+  let stale = false;
+  const prompt = vi.fn(() => (stale ? undefined : "wake"));
+  const waiting = pool.runOnce("watch/a", prompt);
+  await flush();
+  expect(prompt).not.toHaveBeenCalled();
+  stale = true;
+  release();
+  await expect(waiting).resolves.toEqual({ ok: true });
+  expect(prompt).toHaveBeenCalledTimes(1);
+  expect(claudes().some((process) => process.prompts.includes("wake"))).toBe(
+    false,
+  );
+});
+
+it("keeps a one-off turn's entry until its process has exited", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions({ hold: true });
+  let settled = false;
+  const done = pool
+    .runOnce("timer/slow", () => "work", 1_000)
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await vi.advanceTimersByTimeAsync(10);
+  const claude = claudes().find((process) => process.prompts.includes("work"));
+  // The host only signals it; it exits later, as after a grace period.
+  if (claude) claude.exitOnKill = false;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(claude?.killed).toBe(true);
+  expect(settled).toBe(false);
+  expect(pool.snapshot().map((session) => session.key)).toContain(
+    "timer/slow #1",
+  );
+  claude?.exit(null);
+  await vi.advanceTimersByTimeAsync(10);
+  await expect(done).resolves.toMatchObject({ ok: false });
+  expect(pool.snapshot().map((session) => session.key)).not.toContain(
+    "timer/slow #1",
+  );
+});
+
 it("starts again with settings saved while a conversation's process started", async () => {
   let release!: () => void;
   const launched = new Promise<void>((resolve) => {

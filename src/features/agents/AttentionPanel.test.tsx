@@ -19,6 +19,7 @@ const agent: Agent = {
   config: {},
   skipped: {},
   timers: {},
+  attentionEnabled: true,
   attention: {
     "interest/release-triage": {
       slug: "interest/release-triage",
@@ -87,6 +88,16 @@ it("groups watches under their interest, pauses them, and adds timers", async ()
       }),
     },
   });
+});
+
+it("lets the owner turn the agent's attention off", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn(async () => {});
+  render(<AttentionPanel agent={agent} save={save} channels={[]} />);
+  const toggle = screen.getByRole("switch", { name: "Attention on" });
+  expect(toggle).toBeChecked();
+  await user.click(toggle);
+  expect(save).toHaveBeenLastCalledWith({ attentionEnabled: false });
 });
 
 it("accepts the curly quotes macOS substitutes in a watch filter", async () => {
@@ -192,6 +203,7 @@ it("keeps an Interest in use, shows skipped objects, and rearms a spent timer", 
         armed_at: expect.any(Number),
       }),
     },
+    restart: ["watch/timer"],
   });
   const [change] = save.mock.lastCall as unknown as [
     { attention: Record<string, { armed_at: number }> },

@@ -274,6 +274,7 @@ function fixture(
       },
       signal: new AbortController().signal,
       workingUntil,
+      current: () => true,
     };
     if (result.trigger.type !== "timer")
       events.push(result.trigger.event as EventData);
