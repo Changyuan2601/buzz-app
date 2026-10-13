@@ -203,7 +203,7 @@ export class HostService extends Service implements Host {
             handle,
             data: data.slice(at, end),
             close: close && end === data.length,
-            observation: at === 0 ? (observation ?? null) : null,
+            ...(at === 0 && observation ? { observation } : {}),
           });
           at = end;
         } while (at < data.length);
