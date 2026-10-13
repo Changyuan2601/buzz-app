@@ -1,5 +1,5 @@
-import { expect, it, vi } from "vitest";
-import { ClaudeProcess } from "./claude";
+import { describe, expect, it, vi } from "vitest";
+import { ClaudeProcess, stepLabel } from "./claude";
 import { fakeSpawn, flush } from "./claude-testing";
 
 const launch = {
@@ -7,7 +7,7 @@ const launch = {
   systemPrompt: "<base>be useful</base>",
 };
 
-it("starts Claude Code as the SDK does and initializes it with the system prompt", async () => {
+it("starts Claude as the SDK does and initializes it with the system prompt", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
@@ -21,6 +21,7 @@ it("starts Claude Code as the SDK does and initializes it with the system prompt
     "--input-format",
     "stream-json",
     "--verbose",
+    "--replay-user-messages",
     "--permission-mode",
     "bypassPermissions",
     "--model",
@@ -82,7 +83,143 @@ it("answers both messages of a turn that took a second one mid-way", async () =>
   await expect(second).resolves.toEqual({ ok: true });
 });
 
-it("settles on each result when Claude Code does not report idle", async () => {
+it("runs a turn at the effort asked for, and the next without one at the session's own", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  await claude.send("plain");
+  expect(fake.received.map((message) => message.type)).toEqual([
+    "control_request",
+    "user",
+  ]);
+  await claude.send("hard", { effort: "xhigh" });
+  fake.hold = true;
+  const quick = claude.send("quick", { effort: "low" });
+  // Folded into the running turn, a message without an effort keeps it.
+  const steer = claude.send("also");
+  await flush();
+  fake.finish();
+  await Promise.all([quick, steer]);
+  fake.hold = false;
+  await claude.send("after");
+  expect(fake.prompts).toEqual(["plain", "hard", "quick", "also", "after"]);
+  expect(fake.efforts).toEqual(["high", "xhigh", "low", "low", "high"]);
+  // The session's own level is read once, before the first change.
+  expect(
+    fake.received.filter(
+      (message) =>
+        (message.request as { subtype?: string } | undefined)?.subtype ===
+        "get_settings",
+    ),
+  ).toHaveLength(1);
+});
+
+it("runs a turn on the model asked for, and the next without one on the session's own", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    model: "opus",
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  await expect(claude.models()).resolves.toEqual(
+    expect.arrayContaining([expect.objectContaining({ value: "haiku" })]),
+  );
+  await claude.send("plain");
+  fake.hold = true;
+  const quick = claude.send("quick", { model: "haiku" });
+  // Folded into the running turn, a message without a model keeps it.
+  const steer = claude.send("also");
+  await flush();
+  fake.finish();
+  await Promise.all([quick, steer]);
+  fake.hold = false;
+  await claude.send("after");
+  expect(fake.models).toEqual(["opus", "haiku", "haiku", "opus"]);
+  // The session reports its own model, not the picked one.
+  await expect(claude.readModel()).resolves.toBe("claude-opus-5-5");
+  expect(
+    fake.received
+      .map((message) => message.request as { subtype?: string; model?: string })
+      .filter((request) => request?.subtype === "set_model")
+      .map((request) => request.model),
+  ).toEqual(["haiku", "opus"]);
+});
+
+it("moves activity only when the exact follow-up is acknowledged, without ending the turn", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  // Hold acknowledgment explicitly, independently from turn completion.
+  const emit = fake.emit;
+  fake.emit = (message) => {
+    if (message.isReplay !== true) emit(message);
+  };
+  const first = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  const second = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  const sent = claude.send("same text", first);
+  const a = fake.received.find((m) => m.type === "user");
+  if (!a) throw new Error("Expected first request");
+  const tool = (name: string) => ({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name, input: {} }] },
+  });
+  emit({ ...a, isReplay: true });
+  expect(first.acknowledged).toHaveBeenCalledOnce();
+  const steered = claude.send("same text", second);
+  const b = fake.received.filter((m) => m.type === "user").at(-1);
+  if (!b) throw new Error("Expected follow-up");
+  emit(tool("Read"));
+  expect(first.step).toHaveBeenLastCalledWith("Read", undefined);
+  expect(second.step).not.toHaveBeenCalled();
+  // Neither a tool result nor a same-text echo with an unknown id admits work.
+  emit({ type: "user", uuid: b.uuid, message: { content: "tool result" } });
+  emit({ ...b, uuid: "unknown", isReplay: true });
+  expect(second.acknowledged).not.toHaveBeenCalled();
+  emit({ ...b, isReplay: true });
+  expect(first.superseded).toHaveBeenCalledOnce();
+  expect(second.acknowledged).toHaveBeenCalledOnce();
+  emit({ ...b, isReplay: true });
+  const watched = claude.send("watched event");
+  const watch = fake.received.filter((m) => m.type === "user").at(-1);
+  emit({ ...watch, isReplay: true });
+  emit(tool("Bash"));
+  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined);
+  expect(first.superseded).toHaveBeenCalledOnce();
+  const other = {
+    step: vi.fn(),
+    superseded: vi.fn(),
+    activityScope: "other-thread",
+  };
+  const elsewhere = claude.send("other thread", other);
+  const third = fake.received.filter((m) => m.type === "user").at(-1);
+  emit({ ...third, isReplay: true });
+  emit(tool("Grep"));
+  expect(second.superseded).not.toHaveBeenCalled();
+  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined);
+  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined);
+  expect(claude.busy).toBe(true);
+  fake.finish();
+  await watched;
+  await elsewhere;
+  await expect(sent).resolves.toEqual({ ok: true });
+  await expect(steered).resolves.toEqual({ ok: true });
+  emit(tool("Edit"));
+  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined);
+});
+
+it("settles on each result when Claude does not report idle", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(
     (id, options) => spawn(id, { ...options, env: {} }),
@@ -273,4 +410,42 @@ it("reads messages split across output chunks", async () => {
   stdout?.(`${line.slice(10)}\n`);
   expect(claude.started).toBe(true);
   expect(claude.sessionId).toBe("s2");
+});
+
+describe("stepLabel", () => {
+  const msg = (content: unknown) => ({
+    type: "assistant",
+    message: { content },
+  });
+  it("names the latest tool with its target, thought or reply block", () => {
+    expect(
+      stepLabel(
+        msg([
+          { type: "tool_use", name: "Read", input: { file_path: "/a/b.txt" } },
+        ]),
+      ),
+    ).toEqual({ tool: "Read", target: "b.txt" });
+    expect(
+      stepLabel(
+        msg([
+          {
+            type: "tool_use",
+            name: "Bash",
+            input: { command: "ls", description: "List files" },
+          },
+        ]),
+      ),
+    ).toEqual({ tool: "Bash", target: "List files" });
+    expect(
+      stepLabel(msg([{ type: "tool_use", name: "mcp__buzz__send_message" }])),
+    ).toEqual({ tool: "send_message" });
+    expect(stepLabel(msg([{ type: "thinking" }]))).toEqual({
+      tool: "Thinking",
+    });
+    expect(stepLabel(msg([{ type: "text", text: "hi" }]))).toEqual({
+      tool: "Writing reply",
+    });
+    expect(stepLabel(msg("text"))).toBeUndefined();
+    expect(stepLabel({ type: "assistant" })).toBeUndefined();
+  });
 });

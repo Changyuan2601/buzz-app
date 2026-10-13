@@ -222,8 +222,18 @@ import TablerPresentationIcon from "@tabler/icons-react/dist/esm/icons/IconPrese
 export const PresentationIcon = defineIcon("tabler", TablerPresentationIcon);
 import TablerQuestionIcon from "@tabler/icons-react/dist/esm/icons/IconHelpCircle.mjs";
 export const QuestionIcon = defineIcon("tabler", TablerQuestionIcon);
-import TablerRobotFaceIcon from "@tabler/icons-react/dist/esm/icons/IconRobotFace.mjs";
-export const RobotIcon = defineIcon("tabler", TablerRobotFaceIcon);
+import { RobotArtwork } from "./Robot";
+export const RobotIcon = defineIcon("custom", RobotArtwork, {
+  meaning: "AI agent",
+  category: "Product mark",
+  provenance:
+    "Original Buzz Soft & wide robot, Fuller canvas refinement with inward ears, selected by the designer",
+  intendedSizes: [
+    { width: 14, height: 14 },
+    { width: 16, height: 16 },
+    { width: 24, height: 24 },
+  ],
+});
 import TablerShieldIcon from "@tabler/icons-react/dist/esm/icons/IconShield.mjs";
 export const ShieldIcon = defineIcon("tabler", TablerShieldIcon);
 import TablerSidebarIcon from "@tabler/icons-react/dist/esm/icons/IconLayoutSidebar.mjs";
@@ -435,6 +445,8 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
   ],
 });
 
+import TablerOpenAILogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandOpenai.mjs";
+export const OpenAILogoIcon = defineIcon("tabler", TablerOpenAILogoIcon);
 import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
 export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);
 
@@ -442,3 +454,6 @@ import TablerCircleIcon from "@tabler/icons-react/dist/esm/icons/IconCircle.mjs"
 export const CircleIcon = defineIcon("tabler", TablerCircleIcon);
 import TablerCircleHalfIcon from "@tabler/icons-react/dist/esm/icons/IconCircleHalf.mjs";
 export const CircleHalfIcon = defineIcon("tabler", TablerCircleHalfIcon);
+
+import TablerGaugeIcon from "@tabler/icons-react/dist/esm/icons/IconGauge.mjs";
+export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);

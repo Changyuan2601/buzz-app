@@ -1,5 +1,10 @@
 # Codex persistence and execution
 
+> **Status: superseded by Agents.** This describes the v1 native Codex binding
+> (Settings rows, Create/Edit form, native model discovery and harness install),
+> which was removed with the v1 Agents system. Codex now reaches the app as an
+> The agent type registered by the bundled Codex plugin.
+
 The October 8, 2026 simplification replaces the earlier mandatory connection
 validation contract. Create and Save follow the existing Claude lifecycle:
 persist the requested configuration, then report execution errors through Start
@@ -32,7 +37,7 @@ Default/Advanced configuration, and a configuration without the marker is
 refused. Re-selecting Codex or editing its adapter path keeps the saved
 configuration. Stopped agents stay stopped on Save.
 
-Start resolves the saved binding and launches it, as for Claude Code; it does
+Start resolves the saved binding and launches it, as for Claude; it does
 not probe versions or sign-in and does not send a test prompt. The runtime's
 normal conversation path owns inference. Adapter, login, and inference failures
 remain visible in existing status/log controls.

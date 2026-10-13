@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { pathToFileURL } from "node:url";
 import { entry, exportSession, text } from "./session-viewer.mjs";
 
 const contentText = (content) =>
@@ -17,6 +18,14 @@ const isContext = (value) =>
   /^(# AGENTS\.md instructions|<environment_context>|<user_instructions>)/.test(
     value,
   );
+// Name injected context by its role and leading tag, as `developer · skills instructions`.
+const contextLabel = (role, body) =>
+  `${role} · ${
+    /^# AGENTS\.md/.test(body)
+      ? "AGENTS.md"
+      : (body.match(/^<([A-Za-z][\w.-]*)>/)?.[1].replace(/[_.]/g, " ") ??
+        "instructions")
+  }`;
 // Buzz turns end with `Request: "<json string>"`; show that instead of context.
 function buzzRequest(value) {
   const match = value.match(/^Request: (".*")$/m);
@@ -27,7 +36,15 @@ function buzzRequest(value) {
   }
 }
 
-exportSession((records) => {
+function jsonString(literal) {
+  try {
+    return JSON.parse(literal);
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildCodex(records) {
   const meta =
     records.find((record) => record?.type === "session_meta")?.payload ?? {};
   const outputs = new Map(
@@ -37,7 +54,28 @@ exportSession((records) => {
   );
   const entries = [];
   let model;
+  let settings;
   for (const { timestamp, type, payload: item } of records) {
+    // Approval, sandbox, collaboration mode and effort, shown when they change.
+    if (type === "turn_context" && item) {
+      const { turn_id: _, root_turn_id: __, ...rest } = item;
+      const next = JSON.stringify(
+        {
+          ...rest,
+          model_provider: meta.model_provider,
+          context_window: meta.context_window,
+        },
+        null,
+        2,
+      );
+      if (next !== settings)
+        entries.push(
+          entry.instructions(timestamp, "Run settings", next, {
+            scope: "settings",
+          }),
+        );
+      settings = next;
+    }
     if (type === "turn_context" && item?.model && item.model !== model) {
       model = item.model;
       entries.push(
@@ -53,11 +91,9 @@ exportSession((records) => {
       if (!body) continue;
       if (item.role === "developer" || isContext(body))
         entries.push(
-          entry.instructions(
-            timestamp,
-            item.role === "developer" ? "instructions" : "context",
-            body,
-          ),
+          entry.instructions(timestamp, contextLabel(item.role, body), body, {
+            scope: item.role,
+          }),
         );
       else if (item.role === "user")
         entries.push(entry.user(timestamp, body, buzzRequest(body)));
@@ -67,19 +103,36 @@ exportSession((records) => {
       if (summary) entries.push(entry.thinking(timestamp, summary));
     } else if (item.call_id && !item.type.endsWith("_output")) {
       const input = item.input ?? item.arguments ?? item.action ?? "";
-      // Code Mode runs nested tools from an `exec` script; name them.
-      const nested = new Set(
-        [...text(input).matchAll(/tools\.([A-Za-z0-9_]+)/g)].map((m) => m[1]),
-      );
       const output = outputs.get(item.call_id);
-      entries.push(
+      const tool = (name) =>
         entry.tool(timestamp, {
-          name: item.name || item.type,
-          detail: [...nested].join(", "),
+          name,
           input,
           result: output && outputText(output.output),
-        }),
-      );
+        });
+      // Code Mode runs nested tools from an `exec` script: name the calls in
+      // order, and show each Buzz send as the message it posted.
+      let group = [];
+      const flush = () => {
+        if (group.length) entries.push(tool([...new Set(group)].join(", ")));
+        group = [];
+      };
+      const calls = [
+        ...text(input).matchAll(
+          /tools\.([A-Za-z0-9_]+)\(\s*(?:\{\s*"?text"?\s*:\s*("(?:[^"\\]|\\.)*"))?/g,
+        ),
+      ];
+      for (const [, name, literal] of calls) {
+        const body = name === "buzz__send" && literal && jsonString(literal);
+        if (body === undefined || body === false || body === "")
+          group.push(name);
+        else {
+          flush();
+          entries.push(entry.sent(timestamp, body));
+        }
+      }
+      flush();
+      if (!calls.length) entries.push(tool(item.name || item.type));
     } else if (!item.type.endsWith("_output")) {
       const { encrypted_content: _, ...rest } = item;
       entries.push(entry.other(timestamp, item.type, rest));
@@ -95,4 +148,7 @@ exportSession((records) => {
     ],
     entries,
   };
-});
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  exportSession(buildCodex);

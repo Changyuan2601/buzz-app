@@ -6,8 +6,13 @@ import {
   BellIcon,
   BrowserIcon,
   ChatsCircleIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons/index";
-import { orderPages, pagePresentation } from "./presentation";
+import {
+  headerPageSelection,
+  orderPages,
+  pagePresentation,
+} from "./presentation";
 
 function page(key: string, title: string, icon?: string): RegisteredPage {
   const separator = key.indexOf("/");
@@ -74,13 +79,9 @@ test("other pages sort by label then full key and cannot claim bundled slots", (
 
 test("bundled pages get their own icons and Bestie's row shows its artwork", () => {
   expect(pagePresentation(inbox).icon).toBe(BellIcon);
-  expect(
-    renderToStaticMarkup(
-      createElement(
-        pagePresentation(page("buzz.agents/agents", "Agents")).icon,
-      ),
-    ),
-  ).toContain("tabler-icon-robot-face");
+  expect(pagePresentation(page("buzz.agents/agents", "Agents")).icon).toBe(
+    RobotIcon,
+  );
   expect(
     renderToStaticMarkup(
       createElement(pagePresentation(bestie).icon, { size: 15 }),
@@ -131,5 +132,71 @@ describe("page mark precedence", () => {
     const two = pagePresentation(page("example.two/main", "Two", fox));
     expect(one).toHaveProperty("image", owl);
     expect(two).toHaveProperty("image", fox);
+  });
+});
+
+describe("header area selection", () => {
+  const entries: RegisteredPage[] = [
+    { ...me, primary: true, placement: "topbar" },
+    { ...messages, primary: true, placement: "topbar" },
+    inbox,
+    { ...page("buzz.reminders/reminders", "Reminders"), placement: "sidebar" },
+    page("buzz.agents/agents", "Agents"),
+    page("buzz.workflows/workflows", "Workflows"),
+    { ...page("buzz.sessions/sessions", "Sessions"), primary: false },
+    page("example.sidebar/me", "External sidebar"),
+    {
+      ...page("example.header/main", "External header"),
+      primary: true,
+      placement: "topbar",
+    },
+    {
+      ...page("example.tools/main", "External toolbar"),
+      primary: true,
+      placement: "toolbar",
+    },
+    {
+      ...page("example.linked/main", "External linked"),
+      primary: false,
+      placement: "toolbar",
+    },
+  ];
+  test.each([
+    ["buzz.channels/channels", "buzz.channels/channels"],
+    ["buzz.inbox/inbox", "buzz.channels/channels"],
+    ["buzz.reminders/reminders", "buzz.channels/channels"],
+    ["buzz.agents/agents", "buzz.channels/channels"],
+    ["buzz.workflows/workflows", "buzz.channels/channels"],
+    ["buzz.sessions/sessions", "buzz.channels/channels"],
+    ["example.sidebar/me", "buzz.channels/channels"],
+    ["buzz.me/me", "buzz.me/me"],
+    ["settings", "settings"],
+    ["example.header/main", "example.header/main"],
+    ["example.tools/main", "example.tools/main"],
+    ["example.linked/main", "buzz.channels/channels"],
+    ["missing/page", "missing/page"],
+  ])("%s selects %s without changing the destination", (selected, expected) => {
+    expect(headerPageSelection(entries, selected)).toBe(expected);
+  });
+  test("never borrows an absent, non-primary or non-topbar Messages entry", () => {
+    const others = entries.filter((entry) => entry.key !== messages.key);
+    for (const registered of [
+      others,
+      [...others, { ...messages, placement: "topbar" as const }],
+      [
+        ...others,
+        { ...messages, primary: true, placement: "toolbar" as const },
+      ],
+    ]) {
+      expect(headerPageSelection(registered, inbox.key)).toBe(inbox.key);
+    }
+  });
+  test("Me stays separate even when its placement is omitted", () => {
+    expect(
+      headerPageSelection(
+        [...entries.filter((entry) => entry.key !== me.key), me],
+        me.key,
+      ),
+    ).toBe(me.key);
   });
 });

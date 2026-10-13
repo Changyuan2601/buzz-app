@@ -3,6 +3,7 @@ import { SectionHeading } from "./primitives";
 import { useState } from "react";
 import {
   ArrowRightIcon,
+  CaretDownIcon,
   PlusIcon,
   DotsThreeIcon,
   GearIcon,
@@ -16,6 +17,7 @@ import {
   MenuPopup,
   MenuItem,
 } from "../../../../src/shared/design-system/ui/Menu";
+import { SurfaceButton } from "../../../../src/shared/design-system/ui/SurfaceButton";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 
@@ -140,6 +142,37 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview
+        code={`<Button size="inline" variant="ghost">Model <CaretDownIcon aria-hidden="true" /></Button>`}
+      >
+        <Button size="inline" variant="ghost">
+          Model <CaretDownIcon aria-hidden="true" />
+        </Button>
+        <Button size="inline" variant="ghost" disabled>
+          Model <CaretDownIcon aria-hidden="true" />
+        </Button>
+      </ExamplePreview>
+      <section
+        aria-label="Artwork controls"
+        className="component-specimen-stack"
+      >
+        <SectionHeading
+          title="Surface button (proposed)"
+          description="Artwork supplies the layout; shared activation and keyboard focus stay consistent."
+        />
+        <ExamplePreview code='<SurfaceButton aria-label="Choose artwork"><PlusIcon /></SurfaceButton>'>
+          <SurfaceButton aria-label="Choose artwork" className="rounded-xl p-4">
+            <PlusIcon size={32} />
+          </SurfaceButton>
+          <SurfaceButton
+            aria-label="Unavailable artwork"
+            disabled
+            className="rounded-xl p-4"
+          >
+            <PlusIcon size={32} />
+          </SurfaceButton>
+        </ExamplePreview>
+      </section>
       <section
         aria-label="Button behavior"
         className="component-specimen-group"
@@ -277,6 +310,10 @@ export function IconButtonSpecimen() {
   const [unread, setUnread] = useState(false);
   return (
     <div className="component-specimen-stack">
+      <p className="text-body-sm text-subtle">
+        Icon actions default to small: a 32px control with 16px artwork.
+        Labelled buttons stay medium; choose a larger icon size explicitly.
+      </p>
       <ExamplePreview
         className="justify-center"
         code={`<IconButton

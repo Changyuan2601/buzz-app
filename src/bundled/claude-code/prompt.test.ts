@@ -1,6 +1,7 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
+import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { steerPrompt, systemPrompt, timerPrompt, turnPrompt } from "./prompt";
 
 const alice = "a".repeat(64);
@@ -32,9 +33,11 @@ it("builds the harness system prompt with instructions and core memory", () => {
     scope: "thread",
     cwd: "~/.buzz",
     instructions: "Be terse.",
+    team: "<team>\nCrew\n</team>",
     memory: "I am Claude.",
   });
   expect(prompt).toMatch(/^<base>\n/);
+  expect(prompt).toContain(BUZZ_PROMPT);
   expect(prompt).toContain("## Session Model");
   expect(prompt).toContain(
     "<workspace>\nCurrent working directory: ~/.buzz\n</workspace>",
@@ -43,11 +46,27 @@ it("builds the harness system prompt with instructions and core memory", () => {
     "<agent-instructions>\nBe terse.\n</agent-instructions>",
   );
   expect(prompt).toContain("<core-memory>\nI am Claude.\n</core-memory>");
+  // A team follows the agent's own instructions.
+  expect(prompt).toContain(
+    "</agent-instructions>\n\n<team>\nCrew\n</team>\n\n<core-memory>",
+  );
   expect(systemPrompt({ scope: "thread", cwd: "/w", memory: null })).toContain(
     "No core memory found.",
   );
   expect(systemPrompt({ scope: "channel", cwd: "/w" })).not.toContain(
     "<core-memory>",
+  );
+});
+
+it("names the agent first when it is known", () => {
+  const prompt = systemPrompt({
+    scope: "thread",
+    cwd: "/w",
+    agent: { name: "Claude", pubkey: agent },
+  });
+  expect(prompt).toMatch(/^<identity>\n/);
+  expect(prompt).toContain(
+    `<identity>\nYou are Claude (pubkey ${agent}).\n</identity>\n\n<base>\n`,
   );
 });
 
@@ -59,6 +78,7 @@ it("frames a new top-level mention as the root of its thread", () => {
     ],
   });
   const prompt = turnPrompt({
+    agent,
     event: mention,
     channel: { id: "chan", name: "general" },
     scope: "thread",
@@ -71,6 +91,7 @@ it("frames a new top-level mention as the root of its thread", () => {
     "Scope: thread\nSession scope: thread\nChannel: general (#chan)",
   );
   expect(prompt).toContain(`Thread root: ${mention.id}`);
+  expect(prompt).toContain(`Agent: ${agent}`);
   expect(prompt).toContain(
     "This is a new top-level message. `send` replies in its thread by default",
   );
@@ -98,6 +119,7 @@ it("includes the thread messages the session has not seen", () => {
     ],
   });
   const prompt = turnPrompt({
+    agent,
     event: reply,
     channel: { id: "chan" },
     scope: "thread",
@@ -106,7 +128,6 @@ it("includes the thread messages the session has not seen", () => {
     total: 3,
     label: "@mention",
     name,
-    interest: "Fix builds.",
   });
   expect(prompt).toContain(`Thread root: ${root.id}\nParent: ${earlier.id}`);
   expect(prompt).toContain(
@@ -122,11 +143,12 @@ it("includes the thread messages the session has not seen", () => {
     `[2] ${bob} (2027-01-15T08:00:10.000Z): It fails on main`,
   );
   expect(prompt).toContain(`Parsed: parent=${earlier.id}, root=${root.id}`);
-  expect(prompt).toMatch(/<interest>\nFix builds.\n<\/interest>$/);
+  expect(prompt).toMatch(/<\/buzz-event>$/);
 });
 
 it("says earlier context is already in the session when none is new", () => {
   const prompt = turnPrompt({
+    agent,
     event: event("3", "and another thing"),
     channel: { id: "dm", dm: true },
     scope: "thread",
@@ -147,6 +169,7 @@ it("says earlier context is already in the session when none is new", () => {
 
 it("shows a DM's recent messages as conversation context", () => {
   const prompt = turnPrompt({
+    agent,
     event: event("3", "and this"),
     channel: { id: "dm", dm: true },
     scope: "thread",
@@ -163,11 +186,29 @@ it("wraps a message that arrives mid-turn and frames a timer", () => {
     /^<new-message-arrived-while-you-were-working>\n<buzz-event>x<\/buzz-event>\n<\/new-message-arrived-while-you-were-working>\n\nNote: A new message arrived/,
   );
   const timer = timerPrompt({
-    slug: "watch/daily",
+    id: "daily",
+    interest: "ops",
     prompt: "Summarize",
     instructions: "Be brief",
+    spent: false,
   });
-  expect(timer).toContain("Timer: watch/daily");
+  expect(timer).toContain("Timer: daily");
   expect(timer).toContain("Prompt: Summarize");
-  expect(timer).toContain("<interest>\nBe brief\n</interest>");
+  expect(timer).not.toContain("spent: true");
+  expect(timer).toContain('<interest id="ops">\nBe brief\n</interest>');
+  // A timer whose Interest is gone says so, rather than running without one.
+  expect(
+    timerPrompt({ id: "daily", interest: "o<p", prompt: "x", spent: true }),
+  ).toContain(
+    '<interest id="o&lt;p" missing="true">\nThis timer names Interest "o&lt;p", which does not exist.',
+  );
+});
+
+it("adds attention guidance only for a session with attention tools", () => {
+  expect(
+    systemPrompt({ scope: "thread", cwd: "/w", attention: true }),
+  ).toContain("## Attention");
+  expect(systemPrompt({ scope: "thread", cwd: "/w" })).not.toContain(
+    "## Attention",
+  );
 });

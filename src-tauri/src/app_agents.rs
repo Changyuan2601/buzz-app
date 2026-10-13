@@ -1,10 +1,10 @@
-//! Native custody for agents the app runs through a plugin (Agents2). The key
+//! Native custody for agents the app runs through a plugin (Agents). The key
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
-use crate::agents::profile_http::authorization;
 use buzz_agent_controller::{
-    AppAgent, AppAgents, Credentials, PlatformCredentials, Published, Secret, CREDENTIALS_BUSY,
+    AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
+    Published, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,15 +13,27 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// A NIP-98 `Authorization` header for one signed HTTP auth event.
+fn authorization(event: Value) -> Result<String, String> {
+    use base64::Engine;
+    Ok(format!(
+        "Nostr {}",
+        base64::engine::general_purpose::STANDARD
+            .encode(serde_json::to_vec(&event).map_err(|_| "Could not authorize profile request")?)
+    ))
+}
+
 const BUSY_WAITS: u32 = 50;
 const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The identity file (which locks its own writes across app instances) and its
-/// own credential handle, so Agents2 never waits on, or fails with, the harness
+/// own credential handle, so Agents never waits on, or fails with, the harness
 /// agent controller (whose storage lock another app may hold).
 #[derive(Clone)]
 pub(crate) struct AppAgentHost {
     agents: Result<AppAgents, String>,
+    /// Earlier agent systems' identities on this machine, which it can take over.
+    old: Result<OldStores, String>,
     credentials: Arc<dyn Credentials>,
     /// Each key after its first read, so only create and first use reach the
     /// credential store, whose lock refuses rather than waits. Waiting on this
@@ -34,13 +46,18 @@ pub(crate) struct AppAgentHost {
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
-    pub(crate) fn new(path: Result<PathBuf, String>, packaged: bool) -> Self {
+    pub(crate) fn new(
+        path: Result<PathBuf, String>,
+        old: Result<OldStores, String>,
+        packaged: bool,
+    ) -> Self {
         let hosts = path
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
         Self {
             agents: path.map(AppAgents::open),
+            old,
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),
             profiles: Arc::default(),
@@ -220,6 +237,8 @@ pub(crate) struct AppAgentSummary {
     #[serde(rename = "type")]
     agent_type: String,
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picture: Option<String>,
     deleted: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
@@ -230,9 +249,17 @@ impl From<AppAgent> for AppAgentSummary {
             owner: agent.owner,
             agent_type: agent.agent_type,
             name: agent.name,
+            picture: agent.picture,
             deleted: agent.deleted,
         }
     }
+}
+
+/// A taken-over identity and the settings its old store kept for its new type.
+#[derive(Serialize)]
+pub(crate) struct Ported {
+    agent: AppAgentSummary,
+    carry: Carry,
 }
 
 #[tauri::command]
@@ -272,6 +299,72 @@ pub(crate) async fn app_agent_create(
     .await
 }
 
+/// Identities earlier agent systems saved on this machine, as Agents could take
+/// them over; the caller leaves out its own.
+#[tauri::command]
+pub(crate) async fn app_agent_portable(
+    state: tauri::State<'_, AppAgentHost>,
+) -> Result<Portables, String> {
+    let old = state.old.clone()?;
+    blocking(move || Ok(old.list())).await
+}
+
+/// Takes over an earlier identity with its key, name, picture and description,
+/// as `app_agent_create` does for a new one, and reports its carried settings.
+/// Its old store keeps it.
+#[tauri::command]
+pub(crate) async fn app_agent_port(
+    state: tauri::State<'_, AppAgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    source: PortSource,
+    pubkey: String,
+    destination: String,
+    owner: String,
+    agent_type: String,
+) -> Result<Ported, String> {
+    let agents = state.agents.clone()?;
+    let old = state.old.clone()?;
+    let credentials = state.credentials.clone();
+    let (found, key) = blocking(move || {
+        credentials.retry();
+        let mut waits = 0;
+        loop {
+            match old.take(source, &pubkey, credentials.as_ref()) {
+                Err(error) if error == CREDENTIALS_BUSY && waits < BUSY_WAITS => {
+                    waits += 1;
+                    std::thread::sleep(BUSY_WAIT);
+                }
+                taken => return taken,
+            }
+        }
+    })
+    .await?;
+    let prepared = AppAgents::adopt(
+        &destination,
+        &owner,
+        &agent_type,
+        key,
+        &found.name,
+        found.picture,
+        found.about,
+    )?;
+    let auth = identity
+        .inner()
+        .authorize_agent(owner, prepared.pubkey().to_owned())
+        .await?;
+    let host = state.inner().clone();
+    blocking(move || {
+        let mut keys = host.keys();
+        let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
+        keys.insert(agent.pubkey.clone(), Arc::new(key));
+        Ok(Ported {
+            agent: agent.into(),
+            carry: found.carry,
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 pub(crate) async fn app_agent_rename(
     state: tauri::State<'_, AppAgentHost>,
@@ -280,6 +373,16 @@ pub(crate) async fn app_agent_rename(
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
     blocking(move || agents.rename(&pubkey, &name)).await
+}
+
+#[tauri::command]
+pub(crate) async fn app_agent_set_picture(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    picture: Option<String>,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.set_picture(&pubkey, picture)).await
 }
 
 #[tauri::command]
@@ -336,8 +439,8 @@ pub(crate) async fn app_agent_publish(
     post(&agent, &key, signed).await
 }
 
-/// Publishes the agent's profile if its name differs from the last one its
-/// community accepted. Safe to call any time; one runs per agent at a time.
+/// Publishes changed public metadata. Safe to call any time; one publication
+/// runs per agent at a time and records only what its community accepted.
 #[tauri::command]
 pub(crate) async fn app_agent_publish_profile(
     state: tauri::State<'_, AppAgentHost>,
@@ -346,7 +449,7 @@ pub(crate) async fn app_agent_publish_profile(
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
     let agent = state.agent(pubkey).await?;
-    if agent.profile.as_ref().map(|last| &last.name) == Some(&agent.name) {
+    if agent.profile_is_current() {
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
@@ -361,6 +464,8 @@ pub(crate) async fn app_agent_publish_profile(
             &agent.pubkey,
             Published {
                 name: agent.name,
+                picture: agent.picture,
+                about: agent.about,
                 created_at,
             },
         )
@@ -380,13 +485,17 @@ pub(crate) async fn app_agent_query(
         return Err("Agents read with one to eight filters".into());
     }
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
-    let bytes = serde_json::to_vec(&filters).map_err(|_| "Could not encode agent read")?;
+    read(&agent, &key, &filters).await
+}
+
+async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value, String> {
+    let bytes = serde_json::to_vec(filters).map_err(|_| "Could not encode agent read")?;
     let response = client(20)?
         .post(agent.query_url())
         .header("Content-Type", "application/json")
         .header(
             "Authorization",
-            authorization(agent.http_auth(&key, &agent.query_url(), &bytes)?)?,
+            authorization(agent.http_auth(key, &agent.query_url(), &bytes)?)?,
         )
         .header("x-auth-tag", &agent.auth)
         .body(bytes)
@@ -460,6 +569,48 @@ pub(crate) async fn app_agent_upload(
         ));
     }
     serde_json::from_slice(&body).map_err(|_| "Invalid upload receipt".into())
+}
+
+/// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
+/// strictest hosts, and base64 is 4 characters per 3 bytes.
+const MEDIA_LIMIT: usize = 5 * 1024 * 1024 / 4 * 3;
+
+/// Downloads one of its community's media blobs (its URL or `sha256[.ext]`)
+/// as the agent, base64.
+#[tauri::command]
+pub(crate) async fn app_agent_media(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    url: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let url = agent.media_url(&url)?;
+    let auth =
+        serde_json::to_vec(&agent.media_auth(&key)?).map_err(|_| "Could not authorize media")?;
+    let response = client(120)?
+        .get(&url)
+        .header(
+            "Authorization",
+            format!(
+                "Nostr {}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(auth)
+            ),
+        )
+        .header("x-auth-tag", &agent.auth)
+        .send()
+        .await
+        .map_err(|_| "Agent media request failed")?;
+    let status = response.status();
+    let body = bounded(response, MEDIA_LIMIT).await?;
+    if !status.is_success() {
+        return Err(format!(
+            "The community refused the media: {}",
+            reason(status, &body)
+        ));
+    }
+    agent.verify_media_hash(&url, &body)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(body))
 }
 
 /// Writes one memory entry, encrypted to the agent's owner. `after` is the
@@ -578,6 +729,7 @@ mod tests {
         let key = Secret::generate().unwrap();
         let host = AppAgentHost {
             agents: Err("unused".into()),
+            old: Err("unused".into()),
             credentials: Arc::new(Busy(key.hex().to_string(), AtomicU32::new(3))),
             keys: Arc::default(),
             profiles: Arc::default(),
@@ -590,7 +742,9 @@ mod tests {
             auth: "[]".into(),
             agent_type: "p/t".into(),
             name: "Ada".into(),
+            picture: None,
             profile: None,
+            about: None,
             deleted: false,
         };
         let (_, read) = host.key(agent).await.unwrap();
@@ -600,7 +754,11 @@ mod tests {
     #[tokio::test]
     async fn delete_waits_for_a_profile_publication_in_flight() {
         let dir = tempfile::tempdir().unwrap();
-        let host = AppAgentHost::new(Ok(dir.path().join("identities.json")), true);
+        let host = AppAgentHost::new(
+            Ok(dir.path().join("identities.json")),
+            Err("unused".into()),
+            true,
+        );
         let pubkey = "c".repeat(64);
         let turn = host.profile_turn(&pubkey);
         let publishing = turn.lock().await;

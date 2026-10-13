@@ -1,9 +1,9 @@
 // The Buzz tools' client inside the app: the agent's native-held key signs and
-// reads through its Agents2 handle, files are read by a declared process, and
+// reads through its Agents handle, files are read by a declared process, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memory } from "./client";
-import type { AgentHandle } from "../features/agents2/service";
+import type { AgentHandle } from "../features/agents/service";
 import type { HostProcess, HostProcessOptions } from "../features/host/service";
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
@@ -41,6 +41,10 @@ export function appClient(
       check();
       return agent.upload(toBase64(data), mime);
     },
+    media: (url) => {
+      check();
+      return agent.media(url);
+    },
     read: (path) => {
       check();
       return readFile(options.spawn, options.cwd, path, options.signal);
@@ -58,7 +62,7 @@ export function appClient(
 
 /** Reads a file with the plugin's declared `read` process (`base64 -i`),
  * which passes binary files through intact. */
-async function readFile(
+export async function readFile(
   spawn: Spawn,
   cwd: string,
   path: string,

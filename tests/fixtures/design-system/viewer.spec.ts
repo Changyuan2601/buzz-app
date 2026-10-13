@@ -1200,9 +1200,23 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
     });
     await expect(samples).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
+    const defaultControl = page
+      .getByRole("button", {
+        name: kind === "button" ? "Continue" : "Add item",
+        exact: true,
+      })
+      .first();
     for (const mode of ["light", "dark"]) {
       const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
       if (await toggle.count()) await toggle.click();
+      await expect(defaultControl).toHaveCSS(
+        "height",
+        kind === "button" ? "40px" : "32px",
+      );
+      if (kind === "icon-button") {
+        await expect(defaultControl).toHaveCSS("width", "32px");
+        await expect(defaultControl.locator("svg")).toHaveCSS("width", "16px");
+      }
       for (const [size, height, artwork] of [
         ["sm", 32, 16],
         ["md", 40, 24],

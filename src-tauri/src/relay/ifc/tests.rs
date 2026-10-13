@@ -20,7 +20,9 @@ impl Facts {
                 auth: "[]".into(),
                 agent_type: "claude-code/agent".into(),
                 name: "test".into(),
+                picture: None,
                 profile: None,
+                about: None,
                 deleted: false,
             },
             owner,
@@ -96,7 +98,7 @@ async fn production_observer_preserves_history_on_failure_and_capacity_exhaustio
         body: "original history".into(),
     };
     let host = IdentityHost::fixture();
-    let agents = AppAgentHost::new(Err("unused".into()), false);
+    let agents = AppAgentHost::new(Err("unused".into()), Err("unused".into()), false);
     let url = Url::parse("https://relay.test/query").unwrap();
     let held = AUDITS.acquire_many(2).await.unwrap();
     observe(

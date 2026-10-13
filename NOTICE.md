@@ -70,9 +70,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Claude Code: the bundled `icons/claude.png` is reused unchanged from Block Buzz's
+Claude: the bundled `icons/claude.png` is reused unchanged from Block Buzz's
 `desktop/src/features/onboarding/assets/harness-logos/claude.png` to identify
-Anthropic's Claude Code harness. Claude is a trademark of Anthropic.
+Anthropic's Claude harness. Claude is a trademark of Anthropic.
 
 Codex: the OpenAI Blossom mark in `CodexLogoArtwork` is taken from OpenAI's
 brand kit (https://cdn.openai.com/brand/openai-logos.zip,

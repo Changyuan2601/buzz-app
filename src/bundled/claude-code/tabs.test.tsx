@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Agent, AgentType } from "../../features/agents2/service";
+import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 
@@ -14,10 +22,21 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => desktop.tauri }));
 beforeEach(() => {
   desktop.tauri = true;
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  // jsdom has no layout observers; the model picker sizes itself with one.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 const agent = (config: Config = DEFAULT_CONFIG) =>
@@ -33,10 +52,57 @@ const agent = (config: Config = DEFAULT_CONFIG) =>
 // browser drops it, so the focus tests also check for no `disabled`.
 
 /** Applies the plugin to a stand-in context; sign-in runs until killed. */
-function applied({ loggedIn = true } = {}) {
+function applied({
+  loggedIn = true,
+  files = {},
+}: {
+  loggedIn?: boolean;
+  files?: Record<string, string>;
+} = {}) {
   let type: AgentType<Config> | undefined;
-  const spawn = vi.fn(async (_id: string, options: HostProcessOptions = {}) => {
+  const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
     const args = (options.args ?? []).join(" ");
+    if (id === "find") {
+      // Session files in the project folder that mention the pattern.
+      const project = options.cwd?.split("/").pop();
+      const [pattern = ""] = options.args ?? [];
+      const found = Object.keys(files).filter(
+        (path) =>
+          path.startsWith(`./${project}/`) && files[path]?.includes(pattern),
+      );
+      queueMicrotask(() =>
+        options.onStdout?.(
+          found.map((path) => `./${path.split("/").pop()}\n`).join(""),
+        ),
+      );
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number>((resolve) =>
+          setTimeout(() => resolve(found.length ? 0 : 1), 0),
+        ),
+      };
+    }
+    if (id === "workspace" || id === "read") {
+      const file = files[args];
+      queueMicrotask(() =>
+        id === "workspace"
+          ? options.onStdout?.("/Users/me/.buzz\n")
+          : file === undefined
+            ? options.onStderr?.(`base64: ${args}: No such file or directory`)
+            : options.onStdout?.(btoa(file)),
+      );
+      const code = id === "read" && file === undefined ? 1 : 0;
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number>((resolve) =>
+          setTimeout(() => resolve(code), 0),
+        ),
+      };
+    }
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
       if (args === "auth login") kill = () => resolve(null);
@@ -61,12 +127,12 @@ function applied({ loggedIn = true } = {}) {
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { spawn, request: vi.fn() },
-    relay: { snapshot: () => ({ status: "signed-out" }) },
-    agents2: {
+    agents: {
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
-      snapshot: () => ({ status: "ready", agents: [] }),
+      snapshot: () => ({ status: "ready", agents: [], running: [] }),
+      relay: () => undefined,
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
@@ -74,7 +140,7 @@ function applied({ loggedIn = true } = {}) {
   apply(ctx as never);
   return { type, spawn };
 }
-function installed(options?: { loggedIn?: boolean }) {
+function installed(options?: Parameters<typeof applied>[0]) {
   const { type, spawn } = applied(options);
   if (!type) throw new Error("no type registered");
   return { type, spawn };
@@ -91,10 +157,21 @@ async function choose(label: string, option: string) {
 }
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents2", "host", "relay"]);
+  expect(inject).toEqual(["agents", "host"]);
   const { type } = installed();
-  expect(type).toMatchObject({ id: "claude-code", title: "Claude Code" });
+  expect(type).toMatchObject({ id: "claude-code", title: "Claude" });
   expect(type.defaults()).toEqual({ config: DEFAULT_CONFIG });
+  expect(
+    type.adopt?.(
+      { instructions: "Triage.", workspace: "~/code" },
+      DEFAULT_CONFIG,
+    ),
+  ).toEqual({
+    ...DEFAULT_CONFIG,
+    instructions: "Triage.",
+    workspace: "~/code",
+  });
+  expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
   );
@@ -111,12 +188,12 @@ it("registers only where setup's bash and base64 exist", () => {
   expect(applied().type).toBeUndefined();
 });
 
-it("shows that Claude Code is ready and that nothing is running yet", async () => {
+it("shows that Claude is ready and that nothing is running yet", async () => {
   const Claude = tab(installed().type, 0);
   render(<Claude agent={agent()} save={vi.fn()} />);
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude Code 2.1.292 is ready (me@example.com).",
+      "Claude 2.1.292 is ready (me@example.com).",
     ),
   );
   expect(
@@ -143,7 +220,7 @@ it("keeps focus on sign-in while it runs and on the same button after cancel", a
   expect(cancel).not.toHaveAttribute("disabled");
 });
 
-it("saves settings as one config and warns before answering anyone", async () => {
+it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 1);
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
@@ -153,17 +230,14 @@ it("saves settings as one config and warns before answering anyone", async () =>
     "true",
   );
   await choose("Model", "Sonnet");
-  await choose("Answers", "Anyone who mentions it");
-  expect(screen.getByText(/with no approval step/)).toBeVisible();
   expect(screen.getByLabelText("Workspace")).toHaveAccessibleDescription(
-    "The folder Claude Code works in. Use ~/ for your home folder.",
+    "The folder Claude works in. Use ~/ for your home folder.",
   );
   await user.clear(screen.getByLabelText("Workspace"));
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith({
     ...DEFAULT_CONFIG,
     model: "sonnet",
-    respondTo: "anyone",
     workspace: "~/.buzz",
   });
 });
@@ -193,4 +267,221 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   await user.click(saveButton);
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("lists saved conversations and shows one's transcript, or that it is gone", async () => {
+  const thread = `channel/${"e".repeat(64)}`;
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: {
+        channel: { id: "deleted", seen: 0, at: 1 },
+        [thread]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const transcript = [
+    JSON.stringify({
+      type: "user",
+      uuid: "u1",
+      timestamp: "2026-10-09T10:00:00Z",
+      message: {
+        content:
+          "<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>",
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      uuid: "u2",
+      timestamp: "2026-10-09T10:00:05Z",
+      message: { content: [{ type: "text", text: "Two files." }] },
+    }),
+  ].join("\n");
+  const Claude = tab(
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
+    0,
+  );
+  render(
+    <PanelSubviewHost close={vi.fn()}>
+      <Claude agent={agent()} save={vi.fn()} />
+    </PanelSubviewHost>,
+  );
+  const user = userEvent.setup();
+  const rows = screen.getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("channel · thread eeeeeeee"),
+    expect.stringContaining("channel · channel"),
+  ]);
+  const viewButton = (index: number) =>
+    screen.getAllByRole("button", { name: "View transcript" })[
+      index
+    ] as HTMLElement;
+  const opened = viewButton(0);
+  await user.click(opened);
+  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(screen.getByText("Two files.")).toBeVisible();
+  // The transcript covers the tab, and Back returns focus to what opened it.
+  const back = screen.getByRole("button", { name: "Back to profile" });
+  expect(back).toHaveFocus();
+  await user.click(back);
+  expect(opened).toHaveFocus();
+  await user.click(viewButton(1));
+  expect(
+    await screen.findByText(/no transcript for this conversation/),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("sets the conversation the profile was opened from apart from the recent ones", async () => {
+  const root = "e".repeat(64);
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: {
+        channel: { id: "channel-session", seen: 0, at: 1 },
+        [`channel/${root}`]: { id: "kept", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const Claude = tab(installed().type, 0);
+  const user = userEvent.setup();
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  const opened = screen.getByRole("region", { name: "This thread" });
+  expect(screen.getAllByRole("listitem").map((row) => row.textContent)).toEqual(
+    [expect.stringContaining("channel · channel")],
+  );
+  await user.click(
+    within(opened).getByRole("button", { name: "View transcript" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "channel · thread eeeeeeee" }),
+  ).toBeVisible();
+  cleanup();
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "elsewhere" }}
+    />,
+  );
+  const empty = screen.getByRole("region", { name: "This channel" });
+  expect(empty).toHaveTextContent("Looking for a Claude session…");
+  await waitFor(() =>
+    expect(empty).toHaveTextContent("No Claude session here yet"),
+  );
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+});
+
+it("finds the thread's session another build of the app started", async () => {
+  const root = "f".repeat(64);
+  const started = JSON.stringify({
+    type: "user",
+    uuid: "u1",
+    timestamp: "2026-10-09T10:00:00Z",
+    message: {
+      content: `<context>\nScope: thread\nSession scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent().pubkey}\n</context>\n\n<buzz-event>\nEvent ID: e\nContent: what changed?\nTags: []\n</buzz-event>`,
+    },
+  });
+  const Claude = tab(
+    installed({ files: { "./-Users-me--buzz/elsewhere.jsonl": started } }).type,
+    0,
+  );
+  const user = userEvent.setup();
+  render(
+    <Claude
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: root }}
+    />,
+  );
+  const opened = screen.getByRole("region", { name: "This thread" });
+  await user.click(
+    await within(opened).findByRole("button", { name: "View transcript" }),
+  );
+  expect(await screen.findByText("what changed?")).toBeVisible();
+});
+
+it("starts a new agent from a model and instructions, keeping the rest", async () => {
+  const Create = installed().type.Create;
+  if (!Create) throw new Error("no create view");
+  const config = {
+    ...DEFAULT_CONFIG,
+    workspace: "~/code",
+    scope: "channel" as const,
+  };
+  const onChange = vi.fn();
+  render(<Create config={config} onChange={onChange} disabled={false} />);
+  await choose("Model", "Opus");
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "Triage." },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...config,
+    instructions: "Triage.",
+  });
+});
+
+it("shows a new agent's starting config, and lets a custom model be typed", async () => {
+  const Create = installed().type.Create;
+  if (!Create) throw new Error("no create view");
+  const onChange = vi.fn();
+  render(
+    <Create
+      config={{ ...DEFAULT_CONFIG, model: "sonnet", instructions: "Triage." }}
+      onChange={onChange}
+      disabled={false}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("Sonnet");
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
+  const user = userEvent.setup();
+  const model = screen.getByRole("combobox", { name: "Model" });
+  await user.clear(model);
+  await user.type(model, "claude-opus-4-1{Enter}");
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...DEFAULT_CONFIG,
+    model: "claude-opus-4-1",
+    instructions: "Triage.",
+  });
+});
+
+it("disables a new agent's controls while it is being created", () => {
+  const Create = installed().type.Create;
+  if (!Create) throw new Error("no create view");
+  render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.getByLabelText("Instructions")).toBeDisabled();
+});
+
+it("keeps a custom model and instructions in settings", async () => {
+  const Settings = tab(installed().type, 1);
+  const save = vi.fn(async () => undefined);
+  render(
+    <Settings
+      agent={agent({ ...DEFAULT_CONFIG, model: "claude-opus-4-1" })}
+      save={save}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+    "claude-opus-4-1",
+  );
+  expect(screen.getByLabelText("Instructions")).toHaveAccessibleDescription(
+    "Added to every session's system prompt, after Buzz's own.",
+  );
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value: "Triage." },
+  });
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith({
+    ...DEFAULT_CONFIG,
+    model: "claude-opus-4-1",
+    instructions: "Triage.",
+  });
 });

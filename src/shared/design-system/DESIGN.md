@@ -79,7 +79,8 @@ Master/detail layouts preserve list selection, scroll, and drafts while inspecti
 an item. Follow the existing host's narrow overlay/navigation behavior rather than
 squeezing two unusable columns into a small viewport. Selection, hover, and focus
 remain distinct. Shared tabs connect related views of one object; route destinations
-retain navigation semantics. When replacing a focused page heading with shared
+retain navigation semantics except for the wide shell topbar described in
+[Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
@@ -626,10 +627,17 @@ use the same 10px corners as icon actions, including hover and pressed fills.
 Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
-extra-small capsule uses `text-caption`.
+extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
+the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
+horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
+for an unframed label; shared hover, disabled, and keyboard focus still apply.
 
-IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
-sm/md/lg sizes. Existing names
+Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
+(32px square with 16px artwork) and a 10px rounded rectangle
+(`--radius-icon-button`). Choose `md` or `lg` explicitly when an icon action needs
+a larger control; community rail identities and the avatar edit badge retain their
+existing larger treatment. These defaults do not depend on pointer type or viewport
+width. Both controls use the same sm/md/lg scale. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
@@ -1011,9 +1019,10 @@ not add feature-specific top offsets. F6 enters notifications, Tab reaches actio
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
-Route navigation uses NavigationItem with aria-current instead. Tabs can also
+Route navigation uses NavigationItem with aria-current instead, except for the
+wide shell topbar described below. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
+semantics, hug their contents up to a 12rem maximum with ellipsis, use 10px corners matching adjacent icon
 actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
@@ -1122,6 +1131,10 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
+- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
+  default), matching Berd’s relaxed reply rhythm for both sent and received
+  messages. The message renderer uses `space-4` between prose blocks; labels,
+  controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
@@ -1157,6 +1170,22 @@ inside a group than between groups.
 Use motion to explain a change in state, position, or structure. Remove animation
 that adds no useful information.
 
+### Activity dots
+
+`TypingDots` owns the shared decorative activity motion. `state="waiting"`
+breathes all three dots together over 2.4 seconds for a received request waiting
+to start. `state="working"` (the default) preserves the 1.4-second staggered fade.
+Switching state keeps the same footprint. These named component rhythms are
+continuous status motion, not the short state-transition durations.
+
+The feature must supply reliable receipt/work evidence; rendering the waiting
+variant does not establish that an agent received a message. Keep visible or
+accessible state text with the owning surface. The dots are hidden from assistive
+technology and stay static under reduced motion, so motion alone must never be
+the only way to distinguish lifecycle states. The component viewer includes both
+states and an interactive transition. Agents2 waiting/working presentations reuse
+these states in messages, thread summaries and navigation.
+
 Direct manipulation follows the pointer without easing. Apply settling motion
 after release, and prevent a drag from selecting text it passes over.
 
@@ -1181,6 +1210,21 @@ Add roles for real uses and their required states; document the intended surface
 and paired text. Do not generate unused role families from every palette hue.
 Existing palette utilities and older role names are compatibility APIs while
 callers migrate, not the default for new UI. Tailwind's stock palette is removed.
+
+`ShimmerText` gives a short live-work label (an agent's current step) a slow
+sheen between the subtle and standard text roles. Use it only while that work is
+live, never on finished, failed or waiting text. Reduced motion shows plain text.
+
+Activity indicators that appear while work is live (the message activity pill,
+thread-summary dots, sidebar working badge) use the `buzz-arrive` recipe.
+Inline indicators beside text get a quiet fade at `--duration-state`.
+Standalone pills add `data-arrive="grow"`: they open their space while fading
+in, with `--duration-settle` and `--easing-settle`, so content below moves
+instead of jumping. When work ends, the owner may set `data-leaving` and keep
+the pill mounted until its animation finishes; it fades and closes its space.
+Growing and closing resize the row for a few frames, so reserve them for
+indicators that start and end with work, never for revoked access. Reduced
+motion disables all of it.
 
 ### Changing a color
 
@@ -1374,6 +1418,16 @@ Keep the public gateway names stable. For chat and conversation metaphors, use
 the variant that matches the meaning. Keep accessible names on controls and
 decorative artwork hidden from assistive technology.
 
+`RobotIcon` is the designer-approved **Soft & wide** custom agent mark, using the
+**Fuller canvas** refinement: a larger rounded head, short antenna, narrow ear
+strokes moved inward to meet the head, and filled dot eyes, with no mouth. The
+artwork fills more of the same icon box without widening the ears or adding fill
+between them and the head. It uses Tabler's 24-unit canvas, round caps and default
+stroke width of 2. Use the
+existing gateway export for agent mentions, navigation and placeholders; retain
+its inherited color, relative sizing and decorative-by-default semantics. This
+is a specific product-mark exception, not another general icon family.
+
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on
 Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in
 the shared icon gateway. It does not permit another general icon library.
@@ -1396,5 +1450,35 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The wide shell topbar is the deliberate exception: Me and Messages use
+`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+move focus without selecting; Enter, Space or pointer selection changes the page
+while focus stays on its tab. The host passes per-opening focus intent so page
+autofocus does not override that handoff. Explicit content openings, including
+New conversation, retain their destination focus. This is not a general route-tab
+recipe: toolbar destinations and More pages overflow retain button semantics.
+Messages represents the containing area for registered sidebar/default-placement
+pages, while their sidebar selection and route remain exact. Its tab stays linked
+to the active child panel. The shell opts into Tabs' `onReselect` to return from a
+child to Messages without changing ordinary active-tab behavior elsewhere. More
+pages marks that containing area with `aria-current="true"`, reserving `page` for
+an exact destination. Settings and independent header pages stay separate.
+
 The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
 `aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.
+
+### Artwork actions (proposed)
+
+`SurfaceButton` uses Base UI activation and the shared keyboard-only focus ring.
+Use it for artwork tiles whose content owns their geometry, such as new-agent
+and avatar choices. It adds no label wrapper, padding, or background; callers
+must supply an accessible name and keep state colors semantic. The Button
+viewer includes enabled and disabled examples.
+
+### Chip and title fields (proposed)
+
+`Combobox.Control appearance="chip"` drops the field's surface and browse
+button until the control is hovered or open, so a choice reads as a label, such
+as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+`Input appearance="title"` sets its value at title size with no field around it,
+for a name that is also the heading, such as the new agent's name.

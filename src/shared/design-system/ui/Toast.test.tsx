@@ -24,6 +24,63 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it.each(["expiry", "Escape", "repeated Escape"])(
+  "cancels pending toast removal on host unmount after %s",
+  async (trigger) => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const view = render(
+      <ToastProvider>
+        <ToastNotice title="Saved" timeout={1000} />
+      </ToastProvider>,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const card = screen.getByRole("dialog", { name: "Saved" });
+    const item = card.closest("[data-sonner-toast]");
+    if (!item) throw new Error("Toast item missing");
+    if (trigger === "expiry") {
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+    } else {
+      fireEvent.keyDown(card, { key: "Escape" });
+      if (trigger === "repeated Escape")
+        fireEvent.keyDown(item, { key: "Escape" });
+    }
+    expect(item).toHaveAttribute("data-removed", "true");
+    view.unmount();
+    // Flush queued dismissal notifications before emulating jsdom teardown,
+    // but leave the 200ms exit-removal timer pending.
+    await act(() => vi.advanceTimersByTimeAsync(20));
+    vi.stubGlobal("window", undefined);
+    try {
+      await vi.runAllTimersAsync();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it("finishes toast removal after the exit animation while the host stays mounted", async () => {
+  vi.useFakeTimers();
+  const view = render(
+    <StrictMode>
+      <ToastProvider>
+        <ToastNotice title="Saved" onDismiss={() => {}} />
+      </ToastProvider>
+    </StrictMode>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const card = screen.getByRole("dialog", { name: "Saved" });
+  const item = card.closest("[data-sonner-toast]");
+  fireEvent.keyDown(card, { key: "Escape" });
+  expect(item).toHaveAttribute("data-removed", "true");
+  await act(() => vi.advanceTimersByTimeAsync(199));
+  expect(item).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(item).not.toBeInTheDocument();
+  view.unmount();
+});
+
 it("keeps startup notices inside the inert toast host", async () => {
   const host = document.createElement("div");
   host.id = "buzz-toast-root";

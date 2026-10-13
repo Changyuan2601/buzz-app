@@ -83,12 +83,6 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
-const noProviders: [] = [];
-const providers = {
-  snapshot: () => noProviders,
-  subscribe: () => () => {},
-  register: () => {},
-};
 
 function fixture(
   sidebarPreferences?: ReturnType<
@@ -175,7 +169,6 @@ function fixture(
         <ChannelSidebar
           relay={relay}
           navigator={navigator}
-          providers={providers}
           target={{
             version: 1,
             kind: "conversation",
@@ -374,13 +367,12 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
   }
 });
 
-async function failedMoveFixture(groupSource?: "personal") {
+async function failedMoveFixture() {
   const data: SidebarPreferences = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { beta: "work" },
     starred: [],
     muted: [],
-    ...(groupSource ? { groupSource } : {}),
   };
   const read = vi.fn(async () => data);
   const write = vi.fn(async () => {
@@ -397,32 +389,6 @@ async function failedMoveFixture(groupSource?: "personal") {
   expect(notice).toHaveTextContent("Couldn’t save the move for beta. offline");
   return { ...h, owner, prefs, read, write, star, data, notice, mounted };
 }
-
-it.each([undefined, "personal"] as const)(
-  "updates the move notice when retry is rejected after group source %s changes",
-  async (source) => {
-    const h = await failedMoveFixture(source);
-    try {
-      const { groupSource: _source, ...data } = h.data;
-      h.read.mockResolvedValue({
-        ...data,
-        ...(source ? {} : { groupSource: "personal" as const }),
-      });
-      await act(() => h.prefs.refresh());
-      fireEvent.click(
-        within(h.notice).getByRole("button", { name: "Retry move" }),
-      );
-      expect(h.notice).toHaveTextContent(
-        "The active group source changed; dismiss this move and choose its destination again",
-      );
-      expect(h.notice).not.toHaveTextContent("offline");
-      expect(h.write).toHaveBeenCalledOnce();
-      expect(h.star).not.toHaveBeenCalled();
-    } finally {
-      h.owner.dispose();
-    }
-  },
-);
 
 it("explains and disables unavailable move retries, then enables them after preference recovery", async () => {
   const h = await failedMoveFixture();
@@ -554,7 +520,6 @@ it.each([true, false])(
                   canvas: "",
                   templateId: "",
                   groupId: "laptop",
-                  groupSource: "legacy",
                 },
               }
             : {}),
@@ -590,8 +555,6 @@ it("rejects a deferred header Create section after its navigation origin retires
         channel={h.list.channels[0]}
         session={h.session}
         origin={origin.signal}
-        providers={providers}
-        templateProvider={undefined}
         trigger={createRef<HTMLButtonElement>()}
         openDetails={() => {}}
         openCanvas={() => {}}
@@ -671,7 +634,7 @@ it("clears only the removed section's collapsed intent after confirmation, never
     };
     let dialog = await open();
     expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to Channels. This does not delete any channels or saved templates.",
+      "1 channel will move back to Channels. This does not delete any channels.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(remove).not.toHaveBeenCalled();

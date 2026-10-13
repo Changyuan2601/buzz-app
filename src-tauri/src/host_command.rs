@@ -210,7 +210,7 @@ pub(crate) fn effective_path() -> OsString {
         } else {
             path
         };
-        // Per-user installs, such as Claude Code's official installer, come first:
+        // Per-user installs, such as Claude's official installer, come first:
         // an older system-wide copy in /usr/local/bin would otherwise run instead,
         // and installing again could not replace it.
         let mut directories = std::env::var_os("HOME")
@@ -295,17 +295,6 @@ async fn run(
     let (output, status) =
         run_output_with_input(executable, args, deadline, path, max_output_bytes, input).await?;
     status.success().then_some(output)
-}
-
-/// Bounded stdout and exit status; callers must project away private command output.
-pub(crate) async fn run_output(
-    executable: &Path,
-    args: &[String],
-    deadline: Duration,
-    path: &OsStr,
-    max_output_bytes: u64,
-) -> Option<(String, std::process::ExitStatus)> {
-    run_output_with_input(executable, args, deadline, path, max_output_bytes, None).await
 }
 
 async fn run_output_with_input(

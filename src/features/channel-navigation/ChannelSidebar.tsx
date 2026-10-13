@@ -13,9 +13,8 @@ import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleD
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { useMePlacement } from "../sessions/personal";
-import { personalGroups } from "../channel-templates/setup";
-import type { TemplateProviders } from "../channel-templates/provider";
 import type { RelayData } from "../relay/service";
+import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
@@ -63,7 +62,6 @@ import { channelIcon } from "../channels/channel-icon";
 import { SidebarGroupIcon } from "../../bundled/channels/SidebarGroupIcon";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
-import { projectPersonalGroups } from "../relay/sidebar-personal-groups";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
@@ -90,7 +88,8 @@ import styles from "../../bundled/channels/Channels.module.css";
 type Props = {
   relay: RelayData;
   navigator: Navigation;
-  providers: TemplateProviders;
+  /** For channel templates, which start a channel with the owner's teams. */
+  agents?: Agents | undefined;
   target: OpenTarget;
   sessionsEnabled: boolean;
   meEnabled?: boolean;
@@ -188,7 +187,7 @@ class SidebarBoundary extends Component<
 function ReadySidebar({
   relay,
   navigator,
-  providers,
+  agents,
   target,
   children,
   queries,
@@ -220,8 +219,6 @@ function ReadySidebar({
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
   );
-  const personal = personalGroups(kitState.entries)?.record.value;
-  const groups = personal?.type === "groups" ? personal : undefined;
   const hiddenDms = useHiddenDms(scope, queries, list);
   const lifecycle = queries.channelLifecycle;
   const dmVisibility = useSyncExternalStore(
@@ -509,22 +506,10 @@ function ReadySidebar({
       true,
     );
   };
-  // The independent personal catalog remains readable when legacy preferences
-  // fail. This fallback is presentation-only: the store still gates moves until
-  // a successful retry and owns every optimistic placement when writable.
-  const displayedPreferences =
-    groups && !preferences.writable
-      ? {
-          ...preferences.data,
-          ...projectPersonalGroups(groups),
-          starred: preferences.data?.starred ?? [],
-          muted: preferences.data?.muted ?? [],
-        }
-      : preferences.data;
   const sections = startup.ready
     ? sidebarSections(
         sidebarChannels,
-        displayedPreferences,
+        preferences.data,
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
       )
     : [];
@@ -593,7 +578,7 @@ function ReadySidebar({
       .setSort(
         key.startsWith("group:") ? `section:${key.slice(6)}` : key,
         mode,
-        displayedPreferences?.sections.map((section) => section.id) ?? [],
+        preferences.data?.sections.map((section) => section.id) ?? [],
       )
       .catch(() => {});
   };
@@ -957,7 +942,6 @@ function ReadySidebar({
       {creatingFor && !creatingFor.surface?.signal?.aborted && (
         <CreateSidebarSection
           channelName={creatingFor.channel.name}
-          maxLength={preferences.data?.groupSource === "personal" ? 120 : 256}
           writable={preferences.writable}
           refreshing={preferences.status === "loading"}
           retry={preferences.reload}
@@ -1375,12 +1359,8 @@ function ReadySidebar({
           pending={pendingChannelCreation}
           finalFocus={createChannelTrigger}
           session={queries}
-          providers={providers}
-          groups={groups}
-          destinations={displayedPreferences?.sections ?? []}
-          {...(preferences.data?.groupSource !== "personal"
-            ? { groupSource: "legacy" as const }
-            : {})}
+          agents={agents}
+          destinations={preferences.data?.sections ?? []}
           initialGroup={initialGroup}
           groupsReady={preferences.writable}
         />

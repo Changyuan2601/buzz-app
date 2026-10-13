@@ -30,7 +30,7 @@ export type IconButtonProps = Omit<
 export function IconButton({
   icon,
   variant = "ghost",
-  size = "md",
+  size = "sm",
   shape = variant === "avatar" ? "round" : "control",
   ...props
 }: IconButtonProps) {

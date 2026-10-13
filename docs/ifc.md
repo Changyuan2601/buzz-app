@@ -20,10 +20,11 @@ The port retains the source policy, public APIs, doctests, and regression tests.
 Its only adaptations are local Cargo dependencies, the app's Nostr version,
 and a local UUID-backed `CommunityId`, avoiding the relay's `buzz-core` crate.
 The [design paper](practical-information-flow-for-buzz-agents.md) describes the
-model and its assumptions. Adding these crates alone does not mediate Agents2.
+model and its assumptions. Adding these crates alone does not mediate Agents.
+
 ## Observational history read
 
-Claude Code Agents2 continues to use the existing `session.read()` for recent
+Claude Code Agents continues to use the existing `session.read()` for recent
 DM history. The shared `IfcContext` carries the agent and signed triggering event
 through the existing scheduler, transport and `relay_http` command. There is no
 opt-in flag, alternate history command, or change to the history result.

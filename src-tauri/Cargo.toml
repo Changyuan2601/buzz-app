@@ -31,7 +31,6 @@ buzz-agent-controller = { path = "../crates/agent-controller" }
 buzz-ifc = { path = "../crates/buzz-ifc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-buzz-agent = { git = "https://github.com/block/buzz.git", rev = "4f51b9e1010e086a16c099cd8d8218ca974a5e18" }
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util", "net"] }
 sha2 = "0.10"
 hmac = "0.12"

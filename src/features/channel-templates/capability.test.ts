@@ -1,13 +1,10 @@
 import { CanvasConflictError } from "./canvas-conflict";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { createChannelKit, type Resume } from "./capability";
-import { TEAM_MANIFEST_TAG } from "./team-payload";
-import { readTeamTexts, teamTextConflict } from "../agents/team-instructions";
+import { createChannelKit } from "./capability";
 import {
   coordinate,
   KIT_TAG,
-  TEAM_TEXT_TAG,
   type KitRecord,
   type PayloadRecord,
 } from "./model";
@@ -264,6 +261,40 @@ it("fails visibly rather than exposing a partial or mismatched catalog", async (
   await f.capability.refresh();
   expect(f.capability.snapshot().error).toMatch(/Incomplete/);
   expect(f.capability.snapshot().entries).toEqual([]);
+});
+
+it("ignores retired personal groups without rejecting the catalog", async () => {
+  const f = fixture();
+  const kitEvent = (content: unknown, d: string) =>
+    signed(viewer, {
+      kind: 30078,
+      content: JSON.stringify(content),
+      tags: [
+        ["d", d],
+        ["t", KIT_TAG],
+      ],
+    });
+  f.events.push(
+    kitEvent(record, coordinate(record)),
+    kitEvent(
+      {
+        version: 1,
+        community,
+        deleted: false,
+        value: { type: "groups", id: "personal", groups: [], assignments: {} },
+      },
+      `${KIT_TAG}:${encodeURIComponent(community)}:groups:personal`,
+    ),
+  );
+  await f.capability.refresh();
+  expect(f.capability.snapshot()).toMatchObject({
+    status: "ready",
+    entries: [{ record }],
+  });
+  expect(f.host.decode).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: f.events[0]?.id })],
+    expect.any(AbortSignal),
+  );
 });
 
 it.each(["recipe", "Canvas"])(
@@ -731,131 +762,6 @@ it("fences Canvas history after access loss or session retirement, including dur
   });
 });
 
-it("publishes payloads before a manifest and discovers only recipes", async () => {
-  const f = fixture();
-  const team = {
-    type: "team" as const,
-    id: "portable",
-    name: "Portable",
-    agents: [keypair().pubkey],
-  };
-  const snapshot = {
-    format: "buzz-team-snapshot" as const,
-    version: 1 as const,
-    team: {
-      name: team.name,
-      description: "Description",
-      instructions: "TEAM".repeat(12000),
-    },
-    members: [
-      {
-        format: "buzz-agent-snapshot" as const,
-        version: 1 as const,
-        definition: { name: "Agent", systemPrompt: "INDIVIDUAL" },
-        profile: { displayName: "Agent" },
-        memory: { level: "none" as const, entries: [] },
-      },
-    ],
-  };
-  const id = await f.capability.savePortable(
-    team,
-    snapshot,
-    undefined,
-    crypto.randomUUID(),
-  );
-  expect(f.events.at(-1)?.id).toBe(id);
-  expect(f.events.length).toBeGreaterThan(2);
-  expect(
-    f.events
-      .slice(0, -1)
-      .every((event) =>
-        event.tags.some(
-          ([tag, value]) => tag === "t" && value === "buzz-team-payload-v1",
-        ),
-      ),
-  ).toBe(true);
-  expect(f.capability.snapshot().entries).toHaveLength(1);
-  const saved = f.capability.snapshot().entries[0]?.record.value;
-  if (saved?.type !== "team") throw new Error("Missing portable team");
-  expect(await f.capability.loadTeam(saved)).toEqual(snapshot);
-  // The old reader's exact v1 query cannot see/rewrite portable manifest records.
-  expect(
-    f.events.filter((event) =>
-      matchesEvent(event, { "#t": [KIT_TAG], limit: 500 }),
-    ),
-  ).toHaveLength(0);
-});
-
-it("resumes interrupted payload publication without replacing the previous team", async () => {
-  const f = fixture();
-  const team = {
-    type: "team" as const,
-    id: "portable",
-    name: "Portable",
-    agents: [keypair().pubkey],
-  };
-  const snapshot = {
-    format: "buzz-team-snapshot" as const,
-    version: 1 as const,
-    team: { name: team.name, instructions: "TEAM".repeat(12000) },
-    members: [
-      {
-        format: "buzz-agent-snapshot" as const,
-        version: 1 as const,
-        definition: { name: "Agent" },
-        profile: { displayName: "Agent" },
-        memory: { level: "none" as const, entries: [] },
-      },
-    ],
-  };
-  const oldRevision = crypto.randomUUID();
-  const oldId = await f.capability.savePortable(
-    team,
-    snapshot,
-    undefined,
-    oldRevision,
-  );
-  const nextRevision = crypto.randomUUID();
-  const prepare = f.host.prepare.getMockImplementation();
-  if (!prepare) throw new Error("Missing fixture prepare");
-  let fail = true;
-  f.host.prepare.mockImplementation(async (record, signal) => {
-    if (
-      fail &&
-      record.value.type === "team-payload" &&
-      record.value.index === 1
-    )
-      throw new Error("Fixture interrupted upload");
-    return prepare(record, signal);
-  });
-  await expect(
-    f.capability.savePortable(
-      team,
-      { ...snapshot, team: { ...snapshot.team, description: "Next" } },
-      oldId,
-      nextRevision,
-    ),
-  ).rejects.toThrow("interrupted");
-  expect(f.capability.snapshot().entries[0]?.eventId).toBe(oldId);
-  fail = false;
-  await f.capability.savePortable(
-    team,
-    { ...snapshot, team: { ...snapshot.team, description: "Next" } },
-    oldId,
-    nextRevision,
-  );
-  const firstChunkCoordinates = f.events.filter((event) => {
-    const record = JSON.parse(event.content);
-    return (
-      record.value.type === "team-payload" &&
-      record.value.revision === nextRevision &&
-      record.value.index === 0
-    );
-  });
-  expect(firstChunkCoordinates).toHaveLength(1);
-  expect(f.capability.snapshot().entries).toHaveLength(1);
-});
-
 it("keeps private catalog refresh and saves independent of native bindings", async () => {
   const f = fixture();
   const id = await f.capability.save(record.value, undefined);
@@ -868,238 +774,4 @@ it("keeps private catalog refresh and saves independent of native bindings", asy
       id,
     ),
   ).resolves.toBeTypeOf("string");
-});
-
-async function savedTeam(f: ReturnType<typeof fixture>, id = "team") {
-  const head = await f.capability.save(
-    { type: "team", id, name: "Team", agents: [] },
-    undefined,
-  );
-  return head;
-}
-async function saveText(
-  f: ReturnType<typeof fixture>,
-  text: string,
-  expected: string | undefined,
-  team: string | undefined,
-  teamId = "team",
-) {
-  const manifest = await f.capability.prepareText(
-    teamId,
-    text,
-    crypto.randomUUID(),
-  );
-  return f.capability.publishText(teamId, manifest, expected, team);
-}
-
-it("round-trips maximum multibyte text through chunks a text head and old readers ignore", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  expect(await f.capability.readText("team")).toBeUndefined();
-  // 4-byte characters and JSON escapes, exactly 128 KiB.
-  const text = '\u{1F600}"\\\n'.repeat(131_072 / 7) + "x".repeat(131_072 % 7);
-  expect(new TextEncoder().encode(text)).toHaveLength(131_072);
-  const head = await saveText(f, text, undefined, team);
-  expect(await f.capability.readText("team")).toEqual({ text, head });
-  const headEvent = f.events.find((event) => event.id === head);
-  expect(headEvent?.tags).toContainEqual(["t", TEAM_TEXT_TAG]);
-  // Neither the old v1 nor v2 catalog query sees the head or its chunks.
-  expect(
-    f.events.filter((event) =>
-      matchesEvent(event, { "#t": [KIT_TAG, TEAM_MANIFEST_TAG], limit: 500 }),
-    ),
-  ).toHaveLength(1);
-  await f.capability.refresh();
-  expect(f.capability.snapshot().entries).toHaveLength(1);
-});
-
-it.each([
-  ["one byte over the cap", "x".repeat(131_073), "exceed"],
-  ["a NUL", "a\0b", "NUL"],
-  ["a lone surrogate", "a\uD800", "valid text"],
-])("refuses text with %s before writing anything", async (_, text, error) => {
-  const f = fixture();
-  await expect(
-    f.capability.prepareText("team", text, crypto.randomUUID()),
-  ).rejects.toThrow(error);
-  expect(f.events).toHaveLength(0);
-});
-
-it("an empty head and a tombstone read as empty text, never absent", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  const empty = await saveText(f, "", undefined, team);
-  expect(await f.capability.readText("team")).toEqual({
-    text: "",
-    head: empty,
-  });
-  vi.useFakeTimers({ now: Date.now() + 2_000, toFake: ["Date"] });
-  const tombstone = await f.capability.publishText(
-    "team",
-    null,
-    empty,
-    undefined,
-  );
-  expect(await f.capability.readText("team")).toEqual({
-    text: "",
-    head: tombstone,
-  });
-  expect(await f.capability.readTextHead("team")).toEqual({
-    head: tombstone,
-    deleted: true,
-  });
-});
-
-it("refuses unreadable text instead of reporting it absent", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  await saveText(f, "SHARED", undefined, team);
-  const chunk = f.events.findIndex((event) =>
-    event.tags.some(([t, v]) => t === "t" && v === "buzz-team-payload-v1"),
-  );
-  const [removed] = f.events.splice(chunk, 1);
-  await expect(f.capability.readText("team")).rejects.toThrow();
-  if (removed) f.events.splice(chunk, 0, removed);
-  // A head this session saw that disappears is an error too.
-  f.events.splice(
-    f.events.findIndex((event) =>
-      event.tags.some(([t, v]) => t === "t" && v === TEAM_TEXT_TAG),
-    ),
-    1,
-  );
-  await expect(f.capability.readText("team")).rejects.toThrow("unavailable");
-});
-
-it("an invalid head that later disappears stays unreadable, never legacy", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  await saveText(f, "SHARED", undefined, team);
-  const index = f.events.findIndex((event) =>
-    event.tags.some(([t, v]) => t === "t" && v === TEAM_TEXT_TAG),
-  );
-  const head = f.events[index];
-  if (!head) throw new Error("No text head");
-  // A fresh session (no earlier successful read) sees only an invalid head.
-  const g = fixture();
-  g.events.push(...f.events);
-  g.events[index] = { ...head, content: '{"version":9}' };
-  await expect(g.capability.readText("team")).rejects.toThrow();
-  g.events.splice(index, 1);
-  await expect(g.capability.readText("team")).rejects.toThrow("unavailable");
-});
-
-it("publishes a live text head only against the expected live team head", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  await expect(saveText(f, "SHARED", undefined, "stale")).rejects.toThrow(
-    "changed or was deleted",
-  );
-  vi.useFakeTimers({ now: Date.now() + 2_000, toFake: ["Date"] });
-  await f.capability.save(
-    { type: "team", id: "team", name: "Team", agents: [] },
-    team,
-    true,
-  );
-  await expect(saveText(f, "SHARED", undefined, team)).rejects.toThrow(
-    "changed or was deleted",
-  );
-  expect(
-    f.events.some((event) =>
-      event.tags.some(([t, v]) => t === "t" && v === TEAM_TEXT_TAG),
-    ),
-  ).toBe(false);
-});
-
-it("refuses a stale text head and reuse of a revision with different text", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  await saveText(f, "FIRST", undefined, team);
-  await expect(saveText(f, "SECOND", undefined, team)).rejects.toThrow(
-    "changed",
-  );
-  const revision = crypto.randomUUID();
-  await f.capability.prepareText("team", "ONE", revision);
-  await expect(
-    f.capability.prepareText("team", "TWO", revision),
-  ).rejects.toThrow("different content");
-});
-
-it("a retry confirms the event an earlier attempt enqueued", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  const manifest = await f.capability.prepareText(
-    "team",
-    "SHARED",
-    crypto.randomUUID(),
-  );
-  const resume: Resume = {
-    enqueued(id) {
-      this.id = id;
-    },
-  };
-  const head = await f.capability.publishText(
-    "team",
-    manifest,
-    undefined,
-    team,
-    resume,
-  );
-  const count = f.events.length;
-  expect(
-    await f.capability.publishText("team", manifest, undefined, team, resume),
-  ).toBe(head);
-  expect(f.events).toHaveLength(count);
-});
-
-it("a save check never joins a catalog read that began before it", async () => {
-  const f = fixture();
-  const member = "a".repeat(64);
-  const other = await f.capability.save(
-    { type: "team", id: "other", name: "Reviewers", agents: [] },
-    undefined,
-  );
-  await saveText(f, "THEIRS", undefined, other, "other");
-  // A background catalog read starts and sees the roster as it is now.
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => (release = resolve));
-  let gated = false;
-  vi.mocked(f.reader.read).mockImplementation(async (filters) => {
-    const seen = f.events.filter((event) =>
-      filters.some((filter) => matchesEvent(event, filter)),
-    );
-    if (gated || !filters.some((filter) => filter["#t"])) return seen;
-    gated = true;
-    await gate;
-    return seen;
-  });
-  const background = f.capability.refresh();
-  // Another team then gains an overlapping member. (Its own post-save
-  // refresh joins the background read, so it settles only after release.)
-  const sent = f.events.length;
-  const saving = f.capability.save(
-    { type: "team", id: "other", name: "Reviewers", agents: [member] },
-    other,
-  );
-  await vi.waitFor(() => expect(f.events.length).toBe(sent + 1));
-  const check = readTeamTexts(f.capability, undefined);
-  release();
-  await Promise.all([background, saving]);
-  expect(
-    teamTextConflict(await check, { id: "team", agents: [member] }, "OURS"),
-  ).toMatch(/"Reviewers", which has different team instructions/);
-});
-
-it("checks and reads back a text head from the writer", async () => {
-  const f = fixture();
-  const team = await savedTeam(f);
-  vi.mocked(f.reader.read).mockClear();
-  await saveText(f, "SHARED", undefined, team);
-  const headReads = vi
-    .mocked(f.reader.read)
-    .mock.calls.flatMap(([filters]) => filters)
-    .filter((filter) => filter["#d"]?.[0]?.startsWith("buzz-team-text-v1:"));
-  expect(headReads.length).toBeGreaterThanOrEqual(2);
-  expect(headReads.every((filter) => filter.consistency === "strong")).toBe(
-    true,
-  );
 });

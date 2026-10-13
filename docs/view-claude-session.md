@@ -1,9 +1,14 @@
-# View a Claude Code session started by Buzz
+# View a Claude session started by Buzz
+
+For the live viewer, run `bin/node scripts/session-debug.mjs '<Buzz thread ID or link>'`
+from the repository root. See [session debugging](session-debugging.md) for wall
+time, token use and live updates. The commands below remain useful for
+standalone snapshots and manual transcript inspection.
 
 This guide is for agents investigating a Buzz conversation. All commands run
 non-interactively and read the saved transcript without invoking Claude or tools.
 
-Buzz runs Claude Code through `claude-agent-acp`. Claude Code saves transcripts
+Buzz runs Claude through `claude-agent-acp`. Claude saves transcripts
 as JSONL under `~/.claude/projects/<project>/<session-id>.jsonl`. The project
 directory derives from the agent's working directory, with non-alphanumeric
 characters replaced by `-` (long paths also get truncated and hashed). For

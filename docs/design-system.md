@@ -329,8 +329,8 @@ Keep routine copy short: omit descriptions that repeat a label. Retain scope,
 security consequences, recovery actions, and explicit-save guidance. Built-in
 settings use shared Header, Field, PreferenceRow, Select, Switch, Button, Tabs,
 Accordion, and EmptyState components. Remaining specialized UI includes the
-profile avatar editor, shortcut recorder, native emoji file input, agent manual
-setup/log disclosures, plugin skipped-folder disclosure, and developer diagnostics.
+profile avatar editor, shortcut recorder, native emoji file input,
+plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
 Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
@@ -344,8 +344,7 @@ desktop alerts are off, preserving saved choices. Keep a development-pause notic
 visible so it explains the disabled alert switch. Show sound choices whenever
 desktop alerts and sound are enabled. Selecting a new sound previews it; there is
 no separate play button or waveform. Silent stops playback, and loading settings
-never previews audio. Keep adding agent environment variables behind a `form`
-Accordion; saved variables stay visible. Disclosure alone never changes preferences.
+never previews audio. Disclosure alone never changes preferences.
 Keep unfinished input mounted when collapsed. Use the shared disclosure's immediate
 response without extra entrance motion.
 
@@ -361,8 +360,7 @@ Informational cards
 have the same bottom inset without a phantom action margin. Use heading level 4
 inside a named settings group; the default is level 3.
 
-Use it for emoji upload and My emojis, plugin loading, software update status, Personal groups, Templates
-(including the library tabs), and hosted-community setup and empty lists. Setup cards
+Use it for emoji upload and My emojis, plugin loading, software update status, and hosted-community setup and empty lists. Setup cards
 can remain alongside existing objects; only use empty-result wording once the
 collection has loaded and is empty. Keep loading, permission,
 and error/retry states explicit; never describe them as empty results. Public identity inspection uses `PreferenceRow`

@@ -317,6 +317,11 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await page.keyboard.press("Enter");
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
   await expect(detail).toBeVisible();
+  // The exact-target reveal focuses its row after the thread loads. Let it land
+  // before keyboard sizing, or it can take focus from the handle mid-press.
+  await expect(
+    detail.locator("[data-message-id]").filter({ hasText: "Unread reply 1" }),
+  ).toBeFocused();
   const resizedWidth = await resizeInboxDetail(page, detail);
   await detail
     .getByRole("button", { name: "Close detail", exact: true })
