@@ -1922,6 +1922,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-height: 16rem;
 }
 .mediaPreview[data-video-preview] .mediaExpand {
+  z-index: 4;
   top: 0.5rem;
   right: 0.5rem;
 }

@@ -9,7 +9,7 @@ import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import type { Wire } from "./rpc";
@@ -229,9 +229,12 @@ function fixture(
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
+  // The owner's view, with no channel filed in Me unless a test does so.
+  const personal = new Set<string>();
   const snapshot = {
     status: "ready",
     scope: scope as string | undefined,
+    viewer: owner,
     session: {
       workflowAuthority: undefined as string | undefined,
       profiles: {
@@ -246,6 +249,12 @@ function fixture(
         list: () => ({
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
         }),
+      },
+      mePlacement: {
+        state: { status: "ready" } as { status: string; error?: string },
+        snapshot: () => snapshot.session.mePlacement.state,
+        refresh: vi.fn(async () => {}),
+        has: (id: string) => personal.has(id),
       },
     },
   };
@@ -457,6 +466,7 @@ function fixture(
     complete,
     interrupt,
     snapshot,
+    personal,
     exits,
   };
 }
@@ -2433,4 +2443,149 @@ it("T20 a thread keeps its pinned instructions until a local save", async () => 
   });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(4));
   expect(sent(3)).toContain("REMOTE_V4");
+});
+
+/** Files the fixture's channel in its owner's Me. */
+function inMe(f: ReturnType<typeof fixture>) {
+  f.personal.add("channel");
+  return f.personal;
+}
+const inputText = (wire: Wire | undefined) =>
+  JSON.stringify((wire?.params as { input?: unknown } | undefined)?.input);
+const tagsOf = (f: ReturnType<typeof fixture>) =>
+  f.publish.mock.calls.map(([event]) => (event as EventData).tags);
+
+it("continues an owner's Me chat as one channel conversation posted at the top level", async () => {
+  const f = fixture();
+  inMe(f);
+  const first = f.delivery("@Codex first", root);
+  const activity = {
+    step: vi.fn(),
+    acknowledged: vi.fn(),
+    superseded: vi.fn(),
+  };
+  await f.runtime.run({ ...first, ...activity });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain('\\"posting\\":\\"top-level\\"');
+  expect(inputText(f.starts()[0])).toContain(
+    JSON.stringify(TOP_LEVEL_PROMPT).slice(1, 40),
+  );
+  expect(inputText(f.starts()[0])).not.toContain("reply_to");
+  expect(inputText(f.starts()[0])).toContain("conversation-context");
+  // A message in another thread of the chat steers the same turn and takes
+  // over its activity, as one conversation.
+  const next = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  await f.runtime.run({
+    ...f.delivery("@Codex also", "e".repeat(64)),
+    ...next,
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
+  );
+  await vi.waitFor(() => expect(activity.superseded).toHaveBeenCalledOnce());
+  await f.tool("send", { audience: "everyone", text: "Progress" });
+  if (first.trigger.type !== "mention") throw new Error("Expected mention");
+  // A stale reply into the chat is returned for correction, not posted.
+  expect(
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "threaded",
+        reply: first.trigger.event.id,
+      })
+    )?.result,
+  ).toMatchObject({
+    success: false,
+    contentItems: [
+      {
+        text: "This chat stays at the top level: send again without reply.",
+      },
+    ],
+  });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // A later prompt in a different thread resumes the same Codex thread.
+  await f.runtime.run(f.delivery("@Codex later", "7".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.find((w) => w.method === "thread/resume")?.params,
+  ).toMatchObject({ threadId: "thread-1" });
+  await f.complete(1, "");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(f.publish.mock.calls[2]?.[0]).toMatchObject({
+    content: expect.stringContaining("without a final reply"),
+  });
+  // Progress, final answer and the runtime's own failure notice.
+  expect(tagsOf(f)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["p", owner],
+    ],
+  ]);
+});
+
+it("finishes a Me turn under its policy when the chat is shared mid-turn", async () => {
+  const f = fixture();
+  const personal = inMe(f);
+  const channelScope = (delivery: Delivery) => ({
+    ...delivery,
+    config: { ...(delivery.config as object), scope: "channel" },
+  });
+  await f.runtime.run(channelScope(f.delivery("@Codex first")));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  personal.delete("channel");
+  await f.runtime.run(channelScope(f.delivery("@Codex after share")));
+  // The shared chat's request waits for the Me turn instead of steering in.
+  await f.tool("send", { audience: "everyone", text: "Progress" });
+  expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
+  expect(f.starts()).toHaveLength(1);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("reply_to");
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(tagsOf(f)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["e", root, "", "reply"],
+    ],
+  ]);
+});
+
+it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+  const f = fixture();
+  const placement = f.snapshot.session.mePlacement;
+  placement.state = { status: "error", error: "Recipe read failed" };
+  await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
+    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+  );
+  expect(placement.refresh).toHaveBeenCalledOnce();
+  expect(f.starts()).toEqual([]);
+  expect(f.workingUntil).not.toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalled();
+  placement.state = { status: "ready" };
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("keeps Messages routing for a channel filed in someone else's Me", async () => {
+  const f = fixture();
+  inMe(f);
+  Object.assign(f.snapshot, { viewer: "9".repeat(64) });
+  await f.runtime.run(f.delivery("@Codex hi"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });

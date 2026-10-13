@@ -14,3 +14,8 @@ export function coreMemory(memory: string | null | undefined) {
       : memory?.trim();
   return body ? `<core-memory>\n${body.trim()}\n</core-memory>` : "";
 }
+
+/** The turn instruction for a conversation whose messages stay at the
+ * channel's top level; the tools refuse a reply into a thread there. */
+export const TOP_LEVEL_PROMPT =
+  "This is a continuous personal chat in the current channel. Continue this channel's conversation. Post progress, results and failures at the channel top level: use the current channel and omit `reply`; do not start or continue a thread here. Destinations you are explicitly asked to use elsewhere keep their own routing.";
