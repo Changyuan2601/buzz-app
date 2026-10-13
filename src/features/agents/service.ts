@@ -606,6 +606,8 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
     record = setAttention(record, slug, value);
   return record;
 }
+/** How long the classifier waits for a reply's parent before it goes on. */
+const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 /** The team sections for agent `self`: each team it is on, its members that
@@ -735,6 +737,9 @@ export class AgentsService extends Service implements Agents {
   /** Settles once the saved key's status is known; until then a classified
    * event waits rather than pass unchecked. */
   private jevStatus: Promise<void> | undefined;
+  /** Whether the key's status is known. While it is not (its read failed), a
+   * classified event still calls native, which reports a missing key. */
+  private jevKnown = false;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -847,7 +852,8 @@ export class AgentsService extends Service implements Agents {
       classifier: () => this.classifier(),
       jev: () => this.jev,
       jevStatus: () => this.jevStatus,
-      unconfigured: () => this.setAvailability(false),
+      jevKnown: () => this.jevKnown,
+      configured: (configured) => this.setAvailability(configured),
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
@@ -1013,6 +1019,7 @@ export class AgentsService extends Service implements Agents {
     this.setAvailability(false);
   }
   private setAvailability(configured: boolean) {
+    this.jevKnown = true;
     const classifier = configured ? "available" : "unavailable";
     if (this.state.classifier === classifier) return;
     this.state = Object.freeze({ ...this.state, classifier });
@@ -1031,11 +1038,21 @@ export class AgentsService extends Service implements Agents {
       : undefined;
     const parent = threadReference(event)?.parentId ?? null;
     let found: RelayEvent | undefined;
-    if (parent && this.native)
+    const native = this.native;
+    if (parent && native)
       try {
-        [found] = await this.native.query(agent.pubkey, [
-          { ids: [parent], limit: 1 },
-        ]);
+        // Bounded: classified events release in order, so a stuck lookup
+        // would hold back every later one.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        [found] = await Promise.race([
+          native.query(agent.pubkey, [{ ids: [parent], limit: 1 }]),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("The parent lookup timed out")),
+              PARENT_LOOKUP_MS,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
       } catch {
         // The parent stays unknown; the classifier still runs.
       }
