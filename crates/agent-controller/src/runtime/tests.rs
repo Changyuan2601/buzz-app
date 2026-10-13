@@ -395,7 +395,8 @@ fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {
         }
         assert!(
             Instant::now() < deadline,
-            "fixture did not publish complete output"
+            "fixture did not publish complete output: {}",
+            path.display()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
