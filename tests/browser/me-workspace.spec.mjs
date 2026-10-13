@@ -155,9 +155,6 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
     .getByRole("button", { name: "Close Agent Activity tab", exact: true })
     .click();
   await expect(alpha).toBeFocused();
-  // The installed clock ticks from injection, so pausing at runner "now" races
-  // its first sync. Pause a fixed margin past the install base, well inside the
-  // 30s window that keeps Alpha's liveness working.
   const base = Date.now();
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 5000);
