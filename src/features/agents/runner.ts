@@ -38,6 +38,7 @@ import {
   show,
   watchSummaries,
   type ClassifierAvailability,
+  type ClassifierKey,
   type WatchFilter,
   type WriteOptions,
 } from "./attention-objects";
@@ -200,11 +201,10 @@ export type RunnerHost = {
   /** Settles once the saved key's status is known; until then a classified
    * event waits rather than pass unchecked. */
   jevStatus(): Promise<void> | undefined;
-  /** Whether the key's status is known. While it is not (its read failed), a
-   * classified event still calls native, which reports a missing key. */
-  jevKnown(): boolean;
+  /** What is known about the saved classifier key. */
+  classifierKey(): ClassifierKey;
   /** What a classifier call found out about the saved key. */
-  configured(configured: boolean): void;
+  setClassifierKey(key: ClassifierKey): void;
   /** The event's surroundings for the classifier. */
   context(agent: Agent, event: RelayEvent): Promise<ClassifierContext>;
   /** A person's name as the agent's community shows it. */
@@ -452,11 +452,8 @@ export class AgentRunners {
       // A saved key is not known to be missing until its status is read.
       await this.host.jevStatus();
       const jev = this.host.jev();
-      if (
-        !jev ||
-        (this.host.jevKnown() && this.host.classifier() === "unavailable")
-      )
-        return notRun();
+      // While the key cannot be read, native is still asked: it may find one.
+      if (!jev || this.host.classifierKey() === "missing") return notRun();
       // Only the copy of the app that holds the agent sends its events out.
       if (!(await this.claim(runner)) || !live()) return undefined;
       const context = await this.host.context(agent, trigger.event);
@@ -474,10 +471,12 @@ export class AgentRunners {
         },
         context,
       });
-      // The key was removed outside the app since it was read, or native
-      // found one the failed status read could not.
-      if (result.outcome === "not-run") this.host.configured(false);
-      else if (!this.host.jevKnown()) this.host.configured(true);
+      // The key was removed outside the app since it was read, the service
+      // refused it, or native found one the failed status read could not.
+      if (result.outcome === "not-run") this.host.setClassifierKey("missing");
+      else if (result.outcome === "passed") this.host.setClassifierKey("saved");
+      else if (result.reason === "unauthorized")
+        this.host.setClassifierKey("refused");
       return pass ? result : undefined;
     })().catch((error) => {
       console.warn(`Agent ${agent.name} could not classify an event`, error);

@@ -147,6 +147,7 @@ function setup(
   let snapshot: AgentsSnapshot = {
     status,
     classifier: "unavailable",
+    classifierKey: "missing",
     agents: saved,
     running: saved,
     teams: [],

@@ -56,6 +56,7 @@ import {
 } from "./attention";
 import type {
   ClassifierAvailability,
+  ClassifierKey,
   Shown,
   WatchFilter,
   WatchSummary,
@@ -453,6 +454,8 @@ export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
   classifier: ClassifierAvailability;
+  /** What is known about the saved classifier key, for the owner. */
+  classifierKey: ClassifierKey;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -737,9 +740,6 @@ export class AgentsService extends Service implements Agents {
   /** Settles once the saved key's status is known; until then a classified
    * event waits rather than pass unchecked. */
   private jevStatus: Promise<void> | undefined;
-  /** Whether the key's status is known. While it is not (its read failed), a
-   * classified event still calls native, which reports a missing key. */
-  private jevKnown = false;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -807,6 +807,7 @@ export class AgentsService extends Service implements Agents {
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
       classifier: "unavailable",
+      classifierKey: "checking",
       agents: [],
       running: [],
       teams: this.teamList,
@@ -852,8 +853,8 @@ export class AgentsService extends Service implements Agents {
       classifier: () => this.classifier(),
       jev: () => this.jev,
       jevStatus: () => this.jevStatus,
-      jevKnown: () => this.jevKnown,
-      configured: (configured) => this.setAvailability(configured),
+      classifierKey: () => this.state.classifierKey,
+      setClassifierKey: (key) => this.setKey(key),
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
@@ -876,10 +877,11 @@ export class AgentsService extends Service implements Agents {
       void this.refresh();
       this.jevStatus = this.jev
         ?.status()
-        .then((configured) => this.setAvailability(configured))
-        .catch((error) =>
-          console.warn("The classifier key could not be read", error),
-        );
+        .then((configured) => this.setKey(configured ? "saved" : "missing"))
+        .catch((error) => {
+          console.warn("The classifier key could not be read", error);
+          this.setKey("unreadable");
+        });
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runners.tick();
@@ -1010,19 +1012,24 @@ export class AgentsService extends Service implements Agents {
     if (!this.jev)
       throw new Error("The classifier runs only in the desktop app");
     await this.jev.setKey(key);
-    this.setAvailability(true);
+    this.setKey("saved");
   }
   async clearClassifierKey() {
     if (!this.jev)
       throw new Error("The classifier runs only in the desktop app");
     await this.jev.clearKey();
-    this.setAvailability(false);
+    this.setKey("missing");
   }
-  private setAvailability(configured: boolean) {
-    this.jevKnown = true;
-    const classifier = configured ? "available" : "unavailable";
-    if (this.state.classifier === classifier) return;
-    this.state = Object.freeze({ ...this.state, classifier });
+  /** Agents are told a classifier can run only while a key is known to be
+   * saved. A key the service refused still runs, and each event reports why
+   * it passed unchecked. */
+  private setKey(classifierKey: ClassifierKey) {
+    const classifier =
+      classifierKey === "saved" || classifierKey === "refused"
+        ? "available"
+        : "unavailable";
+    if (this.state.classifierKey === classifierKey) return;
+    this.state = Object.freeze({ ...this.state, classifier, classifierKey });
     this.notify();
   }
   /** The event's surroundings for the classifier, from what the app knows. */
