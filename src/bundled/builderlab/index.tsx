@@ -14,6 +14,7 @@ import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import type {} from "./service";
 
 export const inject = ["host", "settingsCards", "agents", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -106,6 +107,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
+    ctx.provide("builderlab", { session, agents });
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.
