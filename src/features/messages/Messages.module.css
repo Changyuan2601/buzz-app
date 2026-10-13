@@ -63,7 +63,7 @@
 }
 .edge {
   /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
-  height: 3.5rem;
+  min-height: var(--space-4);
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -73,6 +73,9 @@
   letter-spacing: var(--text-caption--letter-spacing);
   color: var(--text-subtle);
   gap: var(--space-2);
+}
+.edge[data-history-space] {
+  min-height: calc(var(--size-control) + var(--space-4));
 }
 .day {
   display: flex;
@@ -476,7 +479,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: relative;
   border: 1px solid var(--border-standard);
   background: var(--surface-panel);
-  border-radius: var(--radius-panel);
+  /* Match the send control plus its inset, measured from the outer border. */
+  border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
   margin: 0 var(--space-4) var(--space-4);
@@ -511,7 +515,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-3)) var(--space-1);
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-1h)) var(--space-1);
   padding: var(--space-2) var(--space-3);
   background: var(--surface-inset);
   color: var(--text-secondary);

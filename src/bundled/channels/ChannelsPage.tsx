@@ -5,6 +5,7 @@ import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
@@ -634,21 +635,6 @@ function ChannelWorkspace({
   const returnFocus = useRef<
     { trigger: HTMLElement; channelId: string | undefined } | undefined
   >(undefined);
-  useLayoutEffect(() => {
-    const pending = returnFocus.current;
-    if (!pending) return;
-    if (pending.channelId !== currentId || !pending.trigger.isConnected) {
-      returnFocus.current = undefined;
-      return;
-    }
-    // The close commit gets one focus handoff, never a deferred request that
-    // can override a later, unrelated tab selection.
-    returnFocus.current = undefined;
-    if (pending.trigger.closest('[inert], [hidden], [aria-hidden="true"]'))
-      return;
-    if (!document.querySelector('dialog[open], [aria-modal="true"]'))
-      pending.trigger.focus({ preventScroll: true });
-  });
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -690,6 +676,22 @@ function ChannelWorkspace({
         !cached &&
         entry.panel.channelMenu.eligible(current, queries)
       ),
+  });
+  // The page's thread opener wins after the tab owner restores its fallback.
+  useLayoutEffect(() => {
+    const pending = returnFocus.current;
+    if (!pending) return;
+    if (pending.channelId !== currentId || !pending.trigger.isConnected) {
+      returnFocus.current = undefined;
+      return;
+    }
+    // The close commit gets one focus handoff, never a deferred request that
+    // can override a later, unrelated tab selection.
+    returnFocus.current = undefined;
+    if (pending.trigger.closest('[inert], [hidden], [aria-hidden="true"]'))
+      return;
+    if (!document.querySelector('dialog[open], [aria-modal="true"]'))
+      pending.trigger.focus({ preventScroll: true });
   });
   const {
     open,
@@ -1397,30 +1399,32 @@ function ChannelWorkspace({
                             );
                           }}
                         />
-                        {current && (
-                          <IconButton
-                            ref={splitTrigger}
-                            data-tab-pane-toggle=""
-                            size="toolbar"
-                            aria-label="Toggle tab pane"
-                            title={
-                              showingChannelPanel
-                                ? "Close tab pane"
-                                : "Open tab pane"
-                            }
-                            aria-expanded={!!showingChannelPanel}
-                            disabled={!hasChannelPanel}
-                            focusableWhenDisabled
-                            onClick={() =>
-                              tabState.setPaneOpen(!showingChannelPanel)
-                            }
-                            icon={
-                              <SidebarRightIcon
-                                size="1rem"
-                                aria-hidden="true"
-                              />
-                            }
-                          />
+                        {current && !showingChannelPanel && (
+                          <span className={panelStyles.paneToggle}>
+                            <IconButton
+                              ref={splitTrigger}
+                              data-tab-pane-toggle=""
+                              size="toolbar"
+                              aria-label="Toggle tab pane"
+                              title={
+                                showingChannelPanel
+                                  ? "Close tab pane"
+                                  : "Open tab pane"
+                              }
+                              aria-expanded={!!showingChannelPanel}
+                              disabled={!hasChannelPanel}
+                              focusableWhenDisabled
+                              onClick={() =>
+                                tabState.setPaneOpen(!showingChannelPanel)
+                              }
+                              icon={
+                                <SidebarRightIcon
+                                  size="1rem"
+                                  aria-hidden="true"
+                                />
+                              }
+                            />
+                          </span>
                         )}
                       </>
                     }
@@ -1489,6 +1493,19 @@ function ChannelWorkspace({
               >
                 <PanelWorkspace
                   key={currentId}
+                  actions={
+                    <IconButton
+                      data-tab-pane-toggle=""
+                      data-highlight-expanded="false"
+                      variant="subtle"
+                      size="toolbar"
+                      aria-label="Toggle tab pane"
+                      title="Close tab pane"
+                      aria-expanded={true}
+                      onClick={secondary.closePane}
+                      icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
+                    />
+                  }
                   drag={secondary.drag.side}
                   value={selectedTab}
                   focusOnMount={
