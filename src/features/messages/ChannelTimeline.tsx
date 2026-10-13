@@ -254,6 +254,9 @@ function Timeline({
     width: number;
     viewport: number;
   } | null>(null);
+  const lateHeightCorrection = useRef<
+    { intent: number; offset: number } | undefined
+  >(undefined);
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
@@ -261,7 +264,7 @@ function Timeline({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
-    (element: HTMLElement) => {
+    (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
       // Keep the restored event anchored through that change until reader input.
       const anchor = restoredAnchor.current;
@@ -308,12 +311,15 @@ function Timeline({
       // Reflow can move the offset twice: the browser clamps a shrinking list,
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
+      // A growing list can likewise include Virtua's own offset correction.
+      // Samples owned by that height commit are not reader movement.
       // Explicit upward input wins even when shrink and reader movement share
       // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
         previous &&
         (upwardGesture.current ||
-          (element.clientWidth === previous.width &&
+          (!layoutOwned &&
+            element.clientWidth === previous.width &&
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
@@ -596,8 +602,13 @@ function Timeline({
               measuredPosition.current &&
               intent.current === scheduledIntent &&
               scroller.current
-            )
-              recordPosition(scroller.current);
+            ) {
+              recordPosition(scroller.current, true);
+              lateHeightCorrection.current = {
+                intent: intent.current,
+                offset: scroller.current.scrollTop,
+              };
+            }
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(restorePosition);
           });
@@ -749,7 +760,21 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          recordPosition(element);
+          const correction = lateHeightCorrection.current;
+          const layoutOwned = correction?.intent === intent.current;
+          recordPosition(element, layoutOwned);
+          if (layoutOwned) {
+            if (
+              !follow.current ||
+              element.scrollHeight - element.clientHeight - element.scrollTop <=
+                1
+            )
+              lateHeightCorrection.current = undefined;
+            else if (element.scrollTop < correction.offset)
+              v.scrollToIndex(rows.length - 1, {
+                align: "end",
+              });
+          } else lateHeightCorrection.current = undefined;
           updateJumpToLatest(element);
         }
         loadNearTop(element);

@@ -926,6 +926,52 @@ it("initial bottom and ordinary appends follow late measured list reflow", () =>
   h.unmount();
 });
 
+it("keeps bottom follow through an upward virtualizer correction during late growth", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.element.scrollHeight += 120;
+  h.element.scrollTop -= 3;
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  h.dispatchScroll();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it.each([false, true])(
+  "a post-restore late-growth correction follows bottom unless the reader moves=%s",
+  (readerMoves) => {
+    const h = setup();
+    h.element.scrollTop = 3038;
+    h.scroll();
+    h.element.clientWidth = 1400;
+    h.resize();
+    h.element.scrollHeight += 120;
+    h.handle.scrollToIndex.mockClear();
+    h.measureRows();
+    expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+      align: "end",
+    });
+    h.handle.scrollToIndex.mockClear();
+    if (readerMoves) h.gesture(true);
+    h.element.scrollTop -= 3;
+    h.dispatchScroll();
+    if (readerMoves) expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+    else
+      expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+        align: "end",
+      });
+    h.unmount();
+    expect(h.saved().bottom).toBe(!readerMoves);
+  },
+);
+
 it("honors one cached top-edge gesture when the replacement head becomes verified", () => {
   const h = setup({
     hasMore: true,
