@@ -1,7 +1,14 @@
 import { config, type Config } from "./runtime";
 
-export type ClaudeProviderDefaults = Readonly<{ model: string }>;
-const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({ model: "" });
+export type ClaudeProviderDefaults = Readonly<{
+  model: string;
+  autoMemory: boolean;
+}>;
+export type ResolvedConfig = Config & Readonly<{ disableAutoMemory: boolean }>;
+const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({
+  model: "",
+  autoMemory: false,
+});
 const STORAGE_KEY = "buzz.claude-code.provider-defaults.v1";
 
 /** Device-wide defaults are separate from agent records; a blank agent value
@@ -19,17 +26,22 @@ export class ClaudeDefaults {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
-  resolve(raw: unknown): Config {
+  resolve(raw: unknown): ResolvedConfig {
     const explicit = config(raw);
     return {
       ...explicit,
       model: explicit.model.trim() ? explicit.model : this.state.model,
+      disableAutoMemory: !this.state.autoMemory,
     };
   }
   save(next: ClaudeProviderDefaults) {
     const { model } = next;
-    this.storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, model }));
-    this.state = Object.freeze({ model });
+    const autoMemory = Boolean(next.autoMemory);
+    this.storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: 1, model, autoMemory }),
+    );
+    this.state = Object.freeze({ model, autoMemory });
     for (const listener of this.listeners) listener();
   }
   private read(): ClaudeProviderDefaults {
@@ -43,7 +55,10 @@ export class ClaudeDefaults {
         (value as { version?: unknown }).version === 1 &&
         typeof (value as { model?: unknown }).model === "string"
       )
-        return Object.freeze({ model: (value as { model: string }).model });
+        return Object.freeze({
+          model: (value as { model: string }).model,
+          autoMemory: (value as { autoMemory?: unknown }).autoMemory === true,
+        });
     } catch {
       // Malformed local preferences preserve Claude Code's native default.
     }

@@ -35,6 +35,7 @@ import {
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { readTranscript, type Conversation } from "./transcript";
+import type { ResolvedConfig } from "./defaults";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -88,7 +89,7 @@ const CHAT = [9, 40002];
 
 type Entry = {
   sessions: AgentSessions;
-  config: Config;
+  config: ResolvedConfig;
   /** The team sections of the latest run; a change restarts idle sessions. */
   team: string;
   /** The agent's name, for its prompt; a rename restarts idle sessions. */
@@ -111,8 +112,14 @@ type Entry = {
 };
 
 /** Where an agent's processes run, and with which model and effort. */
-const where = ({ workspace, model, effort }: Config) => ({
+const where = ({
+  workspace,
+  model,
+  effort,
+  disableAutoMemory,
+}: ResolvedConfig) => ({
   cwd: workspace,
+  disableAutoMemory,
   ...(model.trim() ? { model: model.trim() } : {}),
   ...(effort ? { effort } : {}),
 });
@@ -138,7 +145,12 @@ export class ClaudeRuntime {
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage = globalThis.localStorage,
-    private readonly resolveConfig: (raw: unknown) => Config = config,
+    private readonly resolveConfig: (raw: unknown) => ResolvedConfig = (
+      raw,
+    ) => ({
+      ...config(raw),
+      disableAutoMemory: false,
+    }),
   ) {}
 
   private get spawn(): Spawn {
@@ -675,7 +687,11 @@ export class ClaudeRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config, attention: boolean): Entry {
+  private entry(
+    pubkey: string,
+    initial: ResolvedConfig,
+    attention: boolean,
+  ): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
@@ -720,6 +736,7 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
+          entry.config.disableAutoMemory,
           entry.team,
           entry.name,
           entry.attention,
