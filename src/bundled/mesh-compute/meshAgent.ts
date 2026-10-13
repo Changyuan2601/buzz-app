@@ -1,21 +1,30 @@
-// The Agents "Mesh" type's runtime: a delivery becomes one turn of lean
-// upstream goose (`goose-acp`, bundled as `buzz-mesh-goose`), spoken to over ACP
-// on stdio. goose brings its `developer` tools and skills; inference comes only
-// from this app's shared compute (`mesh_compute_prepare_inference`), with no
-// provider fallback.
+// The Agents "Mesh" type's runtime. Inference comes only from this app's
+// shared compute (`mesh_compute_prepare_inference`), with no provider fallback.
 //
-// Replies, per agent (`reply`):
-// - "tools": like the Codex and Claude Code types, the model gets the shared
-//   Buzz tools `send` and `read` (`buzz-mcp/tools.ts`), executed here through
+// Modes, per agent (`mode`):
+// - "chat": no harness. One chat completion (`mesh_compute_chat`) over the
+//   injected conversation; the answer is posted. For small models.
+// - "workspace": lean upstream goose (`goose-acp`, bundled as
+//   `buzz-mesh-goose`) over ACP with its `developer` tools and skills; the
+//   plugin posts goose's final text.
+// - "full": workspace plus the shared Buzz tools (`buzz-mcp/tools.ts`), the
+//   same tools and handler as Codex and Claude Code, executed here through
 //   `appClient` so Agents' host signer signs as the agent; goose never holds a
 //   key. A turn that never calls `send` still has its text posted.
-// - "direct": the plugin posts goose's final text as the reply.
+//
+// Conversations follow Codex and Claude Code: a DM, or every channel when
+// `scope` is "channel", is one conversation; otherwise each thread (or new
+// top-level mention) is. goose runs as one long-lived process per agent, with
+// one goose session per conversation; its id is kept so the conversation
+// resumes (`session/load`) after goose or the app restarts. A conversation's
+// turns run one at a time; a mention during a turn runs right after it.
 //
 // Bridge: goose only adds tools as stdio MCP servers it spawns, with no way to
 // call the client back. The app's own executable is both ends of a private
-// per-turn channel (`src-tauri/src/tool_relay.rs`): the plugin starts it with
-// `--tool-listen` and answers MCP on its stdio; goose spawns it with
-// `--tool-relay`, the socket and a one-time token. Unix only for now.
+// channel per goose session (`src-tauri/src/tool_relay.rs`): the plugin starts
+// it with `--tool-listen` and answers MCP on its stdio; goose spawns it with
+// `--tool-relay`, the socket and a one-time token, and keeps it for the
+// session. Calls act for the session's current turn. Unix only for now.
 //
 // LIMITATION (not isolation): the lease returned with the inference target is
 // checked again before publishing so a reply produced across a community switch
@@ -34,15 +43,19 @@ import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
+import { MESH_AGENT_PRESETS } from "./meshAgentPresets";
 
-export type ReplyMode = "tools" | "direct";
+export type MeshMode = "chat" | "workspace" | "full";
+export type MeshScope = "thread" | "channel";
 export type MeshAgentConfig = Readonly<{
   prompt: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
-  /** Whether the model replies with the Buzz `send` tool, or the plugin posts
-   * its final text. */
-  reply: ReplyMode;
+  mode: MeshMode;
+  /** Whether each thread is its own conversation, or the whole channel is one. */
+  scope: MeshScope;
+  /** The preset it started from, if any; informational. */
+  preset?: string;
 }>;
 export const DEFAULT_PROMPT =
   "You are a helpful assistant in a Buzz community. Answer the latest message directly and concisely. Use your tools when the request needs them, and never claim to have run something you did not.";
@@ -50,43 +63,71 @@ export const DEFAULT_WORKSPACE = "~/.buzz";
 export const DEFAULT_MESH_AGENT_CONFIG: MeshAgentConfig = Object.freeze({
   prompt: DEFAULT_PROMPT,
   workspace: DEFAULT_WORKSPACE,
-  reply: "tools",
+  mode: "full",
+  scope: "thread",
 });
 export const absoluteWorkspace = (path: string) =>
   path.trim().startsWith("/") || /^[A-Za-z]:[\\/]/.test(path.trim());
 export const validWorkspace = (path: string) =>
   path.trim() === DEFAULT_WORKSPACE || absoluteWorkspace(path);
+const MODES: readonly MeshMode[] = ["chat", "workspace", "full"];
 export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
   const raw =
     value && typeof value === "object"
-      ? (value as { prompt?: unknown; workspace?: unknown; reply?: unknown })
+      ? (value as Record<string, unknown>)
       : {};
+  // Earlier configs: `reply: "direct"` was today's workspace mode.
+  const mode = MODES.includes(raw.mode as MeshMode)
+    ? (raw.mode as MeshMode)
+    : raw.reply === "direct"
+      ? "workspace"
+      : "full";
+  const preset =
+    typeof raw.preset === "string" &&
+    MESH_AGENT_PRESETS.some((item) => item.id === raw.preset)
+      ? raw.preset
+      : undefined;
   return {
     prompt: typeof raw.prompt === "string" ? raw.prompt : DEFAULT_PROMPT,
     workspace:
       typeof raw.workspace === "string" && validWorkspace(raw.workspace)
         ? raw.workspace.trim()
         : DEFAULT_WORKSPACE,
-    reply: raw.reply === "direct" ? "direct" : "tools",
+    mode,
+    scope: raw.scope === "channel" ? "channel" : "thread",
+    ...(preset ? { preset } : {}),
   };
 };
 
 /** Where goose keeps its own config, sessions and state for Mesh agents. */
 const GOOSE_ROOT = "~/.local/share/buzz-mesh-goose";
+/** A goose process with no turn for this long is stopped. */
+export const IDLE_MS = 10 * 60_000;
 
 export type PreparedInference = Readonly<{
   baseUrl: string;
   model: string;
   lease: string;
 }>;
+export type ChatMessage = Readonly<{
+  role: "system" | "user" | "assistant";
+  content: string;
+}>;
 export type MeshAgentDeps = Readonly<{
   spawn(id: string, options?: HostProcessOptions): Promise<HostProcess>;
   prepare(origin: string): Promise<PreparedInference>;
   current(lease: string): Promise<boolean>;
+  /** One chat completion on the leased route ("chat" mode). */
+  chat(
+    inference: PreparedInference,
+    messages: readonly ChatMessage[],
+  ): Promise<string>;
   /** The foreground community origin; the turn's inference is prepared for it. */
   origin(): string | undefined;
-  /** Earlier messages of the conversation, oldest first; best effort. */
-  history?(delivery: Delivery<MeshAgentConfig>): Promise<readonly EventData[]>;
+  /** Whether the channel is a DM, so the whole DM is one conversation. */
+  dm?(agent: string, channelId: string): boolean;
+  /** Where goose session ids are kept across restarts. */
+  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 }>;
 
 /** Provider, credential and Buzz identity variables a developer's shell might
@@ -151,7 +192,9 @@ export function gooseEnv(
   };
 }
 
-/** A minimal ACP client over newline-delimited JSON-RPC. */
+/** A minimal ACP client over newline-delimited JSON-RPC. Agent text is
+ * collected per session, and only while `collecting` names that session, so
+ * `session/load`'s history replay is ignored. */
 export class AcpClient {
   private buffer = "";
   private next = 1;
@@ -159,9 +202,21 @@ export class AcpClient {
     number,
     { resolve(value: unknown): void; reject(error: Error): void }
   >();
-  text = "";
+  private readonly texts = new Map<string, string>();
+  private readonly collecting = new Set<string>();
 
   constructor(private readonly write: (line: string) => Promise<void>) {}
+
+  collect(sessionId: string) {
+    this.texts.set(sessionId, "");
+    this.collecting.add(sessionId);
+  }
+  take(sessionId: string): string {
+    this.collecting.delete(sessionId);
+    const text = this.texts.get(sessionId) ?? "";
+    this.texts.delete(sessionId);
+    return text;
+  }
 
   receive(chunk: string) {
     this.buffer += chunk;
@@ -184,6 +239,7 @@ export class AcpClient {
       id?: number;
       method?: string;
       params?: {
+        sessionId?: string;
         update?: {
           sessionUpdate?: string;
           content?: { type?: string; text?: string };
@@ -198,12 +254,17 @@ export class AcpClient {
       return;
     }
     if (message.method === "session/update") {
+      const session = message.params?.sessionId ?? "";
       const update = message.params?.update;
       if (
+        this.collecting.has(session) &&
         update?.sessionUpdate === "agent_message_chunk" &&
         update.content?.type === "text"
       )
-        this.text += update.content.text ?? "";
+        this.texts.set(
+          session,
+          (this.texts.get(session) ?? "") + (update.content.text ?? ""),
+        );
       return;
     }
     if (message.method && message.id !== undefined) {
@@ -334,34 +395,30 @@ export function turnTools(
   };
 }
 
-/** Holds the plugin's end of the `buzz` MCP bridge: the app's
+type Bridge = Readonly<{ server: object; close(): void }>;
+
+/** Holds the plugin's end of a goose session's `buzz` MCP bridge: the app's
  * `--tool-listen` process, whose stdio carries goose's MCP messages once
- * goose's `--tool-relay` connects with the token. */
+ * goose's `--tool-relay` connects with the token. Each message is answered by
+ * the session's current turn (`tools()`); between turns tool calls are
+ * refused, while discovery is answered by `idle`. */
 async function openBridge(
   deps: Pick<MeshAgentDeps, "spawn">,
-  tools: TurnTools,
-): Promise<{ server: object; close(): void }> {
+  tools: () => TurnTools | undefined,
+  idle: TurnTools,
+): Promise<Bridge> {
   let buffer = "";
   let bridge: HostProcess | undefined;
-  let ready: (value: {
-    command: string;
-    socket: string;
-    token: string;
-  }) => void;
-  const announced = new Promise<{
-    command: string;
-    socket: string;
-    token: string;
-  }>((resolve) => {
+  type Announce = { command: string; socket: string; token: string };
+  let ready!: (value: Announce) => void;
+  const announced = new Promise<Announce>((resolve) => {
     ready = resolve;
   });
   let first = true;
+  const answer = (reply: object | undefined) =>
+    reply && bridge?.write(`${JSON.stringify(reply)}\n`);
   const handle = (line: string) => {
-    let message: Message & {
-      command?: string;
-      socket?: string;
-      token?: string;
-    };
+    let message: Message & Partial<Announce>;
     try {
       message = JSON.parse(line);
     } catch {
@@ -370,13 +427,23 @@ async function openBridge(
     if (first) {
       first = false;
       if (message.command && message.socket && message.token)
-        return ready(
-          message as { command: string; socket: string; token: string },
-        );
+        return ready(message as Announce);
     }
-    void tools
+    // Discovery and handshakes come when goose opens the session, before any
+    // turn; only tool calls act, and they act for the current turn.
+    const turn = message.method === "tools/call" ? tools() : idle;
+    if (!turn) {
+      if (message.id !== undefined && message.id !== null)
+        void answer({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32000, message: "No turn is active" },
+        });
+      return;
+    }
+    void turn
       .serve(message)
-      .then((reply) => reply && bridge?.write(`${JSON.stringify(reply)}\n`))
+      .then(answer)
       .catch(() => {});
   };
   bridge = await deps.spawn("bridge", {
@@ -391,9 +458,13 @@ async function openBridge(
       }
     },
   });
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("Buzz tools did not start")), 10_000),
-  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Buzz tools did not start")),
+      10_000,
+    );
+  });
   try {
     const { command, socket, token } = await Promise.race([announced, timeout]);
     return {
@@ -411,89 +482,16 @@ async function openBridge(
   } catch (error) {
     void bridge.kill();
     throw error;
-  }
-}
-
-/** Runs one goose turn and returns its final text. */
-export async function generate(
-  deps: MeshAgentDeps,
-  inference: PreparedInference,
-  instructions: string,
-  text: string,
-  signal: AbortSignal,
-  cwd: string,
-  tools?: TurnTools,
-): Promise<string> {
-  let client: AcpClient | undefined;
-  let stderr = "";
-  const root = await resolveWorkspace(deps, GOOSE_ROOT);
-  const bridge = tools ? await openBridge(deps, tools) : undefined;
-  try {
-    const process = await deps.spawn("agent", {
-      cwd,
-      env: gooseEnv(inference, root),
-      onStdout: (data) => client?.receive(data),
-      onStderr: (data) => {
-        stderr = (stderr + data).slice(-2000);
-      },
-    });
-    client = new AcpClient((line) => process.write(line));
-    const abort = () => void process.kill();
-    signal.addEventListener("abort", abort, { once: true });
-    void process.exited.then((code) =>
-      client?.fail(
-        new Error(
-          `goose exited (${code ?? "signal"})${stderr ? `: ${stderr.trim().split("\n").pop()}` : ""}`,
-        ),
-      ),
-    );
-    try {
-      await client.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-      });
-      const session = await client.request<{ sessionId: string }>(
-        "session/new",
-        { cwd, mcpServers: bridge ? [bridge.server] : [] },
-      );
-      await client.request("_goose/unstable/session/system-prompt/set", {
-        sessionId: session.sessionId,
-        mode: "append",
-        key: "buzz",
-        text: instructions,
-      });
-      // A final `send` ends the turn, as for Codex and Claude Code.
-      const watch = setInterval(() => {
-        if (tools?.finished()) {
-          clearInterval(watch);
-          void client?.notify("session/cancel", {
-            sessionId: session.sessionId,
-          });
-        }
-      }, 250);
-      try {
-        await client.request("session/prompt", {
-          sessionId: session.sessionId,
-          prompt: [{ type: "text", text }],
-        });
-      } finally {
-        clearInterval(watch);
-      }
-      return client.text.trim();
-    } finally {
-      signal.removeEventListener("abort", abort);
-      void process.kill();
-    }
   } finally {
-    bridge?.close();
+    clearTimeout(timer);
   }
 }
 
-/** The appended system prompt: Buzz's shared guidance when the model replies
- * with tools, then the agent's own prompt. */
+/** The appended system prompt: Buzz's shared guidance in full mode, then the
+ * agent's own prompt. */
 export function instructions(config: MeshAgentConfig): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
-  if (config.reply === "direct") return prompt;
+  if (config.mode !== "full") return prompt;
   return `${BUZZ_PROMPT}
 
 Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
@@ -503,56 +501,482 @@ ${prompt}
 </agent-instructions>`;
 }
 
-export async function runMeshAgent(
-  deps: MeshAgentDeps,
-  delivery: Delivery<MeshAgentConfig>,
-): Promise<void> {
-  const { trigger, agent, channelId, signal } = delivery;
-  if (trigger.type === "timer" || !channelId) return;
-  const event = trigger.event;
-  // Spends shared compute and runs tools on this machine: answers its owner only.
-  if (event.pubkey !== agent.owner || event.pubkey === agent.pubkey) return;
+/** Codex and Claude Code's conversation key: a DM, or the channel in
+ * channel scope, is one conversation; otherwise each thread root is. */
+export function conversationKey(
+  channelId: string,
+  event: EventData,
+  dm: boolean,
+  scope: MeshScope,
+): string {
   const root = threadReference(event)?.rootId ?? event.id;
-  const tags = [
-    ["h", channelId],
-    ...(root === event.id ? [] : [["e", root, "", "root"]]),
-    ["e", event.id, "", "reply"],
-    ["p", event.pubkey],
-  ];
-  let content: string;
-  try {
-    const origin = deps.origin();
-    if (!origin) throw new Error("No community is connected");
-    const inference = await deps.prepare(origin);
-    const earlier = (await deps.history?.(delivery).catch(() => [])) ?? [];
+  return dm || scope === "channel" ? channelId : `${channelId}/${root}`;
+}
+
+/** Earlier messages of the event's conversation, oldest first, read as the
+ * agent: the thread, or the channel's latest for a whole-channel one. */
+async function conversationMessages(
+  delivery: Delivery<MeshAgentConfig>,
+  event: EventData,
+  channelId: string,
+  wholeChannel: boolean,
+): Promise<EventData[]> {
+  const root = threadReference(event)?.rootId;
+  const base = { kinds: [9], "#h": [channelId], until: event.created_at };
+  const filters = wholeChannel
+    ? [{ ...base, limit: 50 }]
+    : root
+      ? [
+          { ...base, ids: [root], limit: 1 },
+          { ...base, "#e": [root], limit: 50 },
+        ]
+      : [];
+  if (!filters.length) return [];
+  const found = (await delivery.agent.query(filters)) as EventData[];
+  const unique = new Map(found.map((item) => [item.id, item]));
+  unique.delete(event.id);
+  return [...unique.values()]
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+    .slice(-50);
+}
+
+type Session = {
+  id: string;
+  bridge?: Bridge;
+  /** The turn whose Buzz tool calls this session's bridge serves. */
+  turn?: TurnTools | undefined;
+  /** The latest message the session has seen. */
+  seen: number;
+  /** The appended system prompt goose has for this session. */
+  prompt: string;
+  /** Records `seen`, kept with the session id across restarts. */
+  remember(seen: number): void;
+};
+type Goose = {
+  key: string;
+  process: HostProcess;
+  client: AcpClient;
+  sessions: Map<string, Promise<Session>>;
+  idle?: ReturnType<typeof setTimeout>;
+  busy: number;
+  dead: boolean;
+};
+
+const STORAGE_PREFIX = "buzz.mesh-agent.session:";
+
+/** Mesh agents' work after Agents hands a delivery over: one goose process per
+ * agent, a goose session per conversation, turns in a conversation in order. */
+export class MeshAgentRuntime {
+  private readonly geese = new Map<string, Promise<Goose>>();
+  private readonly lanes = new Map<string, Promise<unknown>>();
+
+  constructor(private readonly deps: MeshAgentDeps) {}
+
+  run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
+    const { trigger, agent, channelId } = delivery;
+    if (trigger.type === "timer" || !channelId) return Promise.resolve();
+    const event = trigger.event;
+    // Spends shared compute and runs tools on this machine: answers its owner only.
+    if (event.pubkey !== agent.owner || event.pubkey === agent.pubkey)
+      return Promise.resolve();
     const config = meshAgentConfig(delivery.config);
-    const cwd = await resolveWorkspace(deps, config.workspace);
-    const tools =
-      config.reply === "tools"
-        ? turnTools(delivery, deps, cwd, { channel: channelId, root })
-        : undefined;
-    const reply = await generate(
-      deps,
-      inference,
-      instructions(config),
-      turnText(event, earlier),
-      signal,
-      cwd,
-      tools,
-    );
-    // The model already answered through `send`.
-    if (tools?.sent()) return;
-    if (!reply) throw new Error("The mesh model returned no text");
-    // Stale-result mitigation only; see the module comment.
-    if (!(await deps.current(inference.lease))) {
-      console.warn("Mesh agent reply dropped: community changed mid-turn");
-      return;
-    }
-    content = reply;
-  } catch (error) {
-    if (signal.aborted) return;
-    const reason = error instanceof Error ? error.message : String(error);
-    content = `⚠️ Mesh agent couldn't answer: ${reason.slice(0, 500)}`;
+    const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
+    const conversation = conversationKey(channelId, event, dm, config.scope);
+    const lane = `${agent.pubkey}\n${conversation}`;
+    const previous = this.lanes.get(lane) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(() =>
+        this.turn(delivery, event, channelId, config, dm, conversation),
+      );
+    this.lanes.set(lane, next);
+    void next.finally(() => {
+      if (this.lanes.get(lane) === next) this.lanes.delete(lane);
+    });
+    return next;
   }
-  await agent.publish({ kind: 9, content, tags });
+
+  /** Stops every goose process. */
+  dispose() {
+    for (const goose of this.geese.values())
+      void goose.then((item) => this.stop(item)).catch(() => {});
+    this.geese.clear();
+  }
+
+  private async turn(
+    delivery: Delivery<MeshAgentConfig>,
+    event: EventData,
+    channelId: string,
+    config: MeshAgentConfig,
+    dm: boolean,
+    conversation: string,
+  ) {
+    const { agent, signal } = delivery;
+    const root = threadReference(event)?.rootId ?? event.id;
+    const tags = [
+      ["h", channelId],
+      ...(root === event.id ? [] : [["e", root, "", "root"]]),
+      ["e", event.id, "", "reply"],
+      ["p", event.pubkey],
+    ];
+    let content: string;
+    try {
+      if (signal.aborted) return;
+      const origin = this.deps.origin();
+      if (!origin) throw new Error("No community is connected");
+      const inference = await this.deps.prepare(origin);
+      const wholeChannel = dm || config.scope === "channel";
+      const read = () =>
+        conversationMessages(delivery, event, channelId, wholeChannel).catch(
+          () => [] as EventData[],
+        );
+      let reply: string;
+      let sent = false;
+      if (config.mode === "chat") {
+        reply = await this.deps.chat(
+          inference,
+          chatMessages(config, agent.pubkey, await read(), event),
+        );
+      } else {
+        const result = await this.goose(
+          delivery,
+          inference,
+          config,
+          event,
+          { channel: channelId, root },
+          `${agent.pubkey}\n${config.mode}\n${conversation}`,
+          read,
+        );
+        reply = result.text;
+        sent = result.sent;
+      }
+      if (signal.aborted) return;
+      // The model already answered through `send`.
+      if (sent) return;
+      if (!reply) throw new Error("The mesh model returned no text");
+      // Stale-result mitigation only; see the module comment.
+      if (!(await this.deps.current(inference.lease))) {
+        console.warn("Mesh agent reply dropped: community changed mid-turn");
+        return;
+      }
+      content = reply;
+    } catch (error) {
+      if (signal.aborted) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      content = `⚠️ Mesh agent couldn't answer: ${reason.slice(0, 500)}`;
+    }
+    await agent.publish({ kind: 9, content, tags });
+  }
+
+  /** One turn on the conversation's goose session. */
+  private async goose(
+    delivery: Delivery<MeshAgentConfig>,
+    inference: PreparedInference,
+    config: MeshAgentConfig,
+    event: EventData,
+    context: Context,
+    sessionKey: string,
+    read: () => Promise<EventData[]>,
+  ): Promise<{ text: string; sent: boolean }> {
+    const { agent, signal } = delivery;
+    const cwd = await resolveWorkspace(this.deps, config.workspace);
+    const goose = await this.process(agent.pubkey, inference, cwd);
+    goose.busy++;
+    if (goose.idle) clearTimeout(goose.idle);
+    try {
+      const session = await this.session(
+        delivery,
+        context,
+        goose,
+        sessionKey,
+        cwd,
+        config,
+        instructions(config),
+      );
+      const prompt = instructions(config);
+      if (session.prompt !== prompt) {
+        await setPrompt(goose.client, session.id, prompt);
+        session.prompt = prompt;
+      }
+      const earlier = (await read()).filter(
+        // A fresh session needs the whole conversation; a live one remembers
+        // its own replies and earlier messages.
+        (item) =>
+          session.seen === 0 ||
+          (item.created_at > session.seen && item.pubkey !== agent.pubkey),
+      );
+      const tools =
+        config.mode === "full"
+          ? turnTools(delivery, this.deps, cwd, context)
+          : undefined;
+      session.turn = tools;
+      const cancel = () =>
+        void goose.client
+          .notify("session/cancel", { sessionId: session.id })
+          .catch(() => {});
+      signal.addEventListener("abort", cancel, { once: true });
+      // A final `send` ends the turn, as for Codex and Claude Code.
+      const watch = setInterval(() => {
+        if (tools?.finished()) {
+          clearInterval(watch);
+          cancel();
+        }
+      }, 250);
+      goose.client.collect(session.id);
+      try {
+        await goose.client.request("session/prompt", {
+          sessionId: session.id,
+          prompt: [{ type: "text", text: turnText(event, earlier) }],
+        });
+      } finally {
+        clearInterval(watch);
+        signal.removeEventListener("abort", cancel);
+        session.turn = undefined;
+        session.remember(event.created_at);
+      }
+      return {
+        text: goose.client.take(session.id).trim(),
+        sent: tools?.sent() ?? false,
+      };
+    } finally {
+      goose.busy--;
+      if (!goose.busy && !goose.dead)
+        goose.idle = setTimeout(() => {
+          if (!goose.busy) this.retire(agent.pubkey, goose);
+        }, IDLE_MS);
+    }
+  }
+
+  /** The agent's goose, restarted when its inference target or workspace
+   * changed (goose reads both at start). */
+  private async process(
+    agent: string,
+    inference: PreparedInference,
+    cwd: string,
+  ): Promise<Goose> {
+    const key = JSON.stringify([inference.baseUrl, inference.model, cwd]);
+    const existing = this.geese.get(agent);
+    if (existing) {
+      const goose = await existing.catch(() => undefined);
+      if (goose && !goose.dead && goose.key === key) return goose;
+      if (goose && this.geese.get(agent) === existing) {
+        // Turns in flight on the old target finish there; new ones restart.
+        if (goose.busy) await waitIdle(goose);
+        this.retire(agent, goose);
+      }
+      const again = this.geese.get(agent);
+      if (again && again !== existing)
+        return this.process(agent, inference, cwd);
+    }
+    const started = this.start(key, inference, cwd);
+    this.geese.set(agent, started);
+    started.catch(() => {
+      if (this.geese.get(agent) === started) this.geese.delete(agent);
+    });
+    const goose = await started;
+    void goose.process.exited.then(() => {
+      if (this.geese.get(agent) === started) this.geese.delete(agent);
+    });
+    return goose;
+  }
+
+  private async start(
+    key: string,
+    inference: PreparedInference,
+    cwd: string,
+  ): Promise<Goose> {
+    const root = await resolveWorkspace(this.deps, GOOSE_ROOT);
+    let client: AcpClient | undefined;
+    let stderr = "";
+    const process = await this.deps.spawn("agent", {
+      cwd,
+      env: gooseEnv(inference, root),
+      onStdout: (data) => client?.receive(data),
+      onStderr: (data) => {
+        stderr = (stderr + data).slice(-2000);
+      },
+    });
+    client = new AcpClient((line) => process.write(line));
+    const goose: Goose = {
+      key,
+      process,
+      client,
+      sessions: new Map(),
+      busy: 0,
+      dead: false,
+    };
+    void process.exited.then((code) => {
+      goose.dead = true;
+      if (goose.idle) clearTimeout(goose.idle);
+      client.fail(
+        new Error(
+          `goose exited (${code ?? "signal"})${stderr ? `: ${stderr.trim().split("\n").pop()}` : ""}`,
+        ),
+      );
+      this.closeBridges(goose);
+    });
+    try {
+      await client.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      });
+    } catch (error) {
+      void process.kill();
+      throw error;
+    }
+    return goose;
+  }
+
+  /** The conversation's goose session: live, resumed by id, or new. */
+  private session(
+    delivery: Delivery<MeshAgentConfig>,
+    context: Context,
+    goose: Goose,
+    key: string,
+    cwd: string,
+    config: MeshAgentConfig,
+    prompt: string,
+  ): Promise<Session> {
+    const live = goose.sessions.get(key);
+    if (live) return live;
+    const opened = this.open(
+      delivery,
+      context,
+      goose,
+      key,
+      cwd,
+      config,
+      prompt,
+    );
+    goose.sessions.set(key, opened);
+    opened.catch(() => {
+      if (goose.sessions.get(key) === opened) goose.sessions.delete(key);
+    });
+    return opened;
+  }
+
+  private async open(
+    delivery: Delivery<MeshAgentConfig>,
+    context: Context,
+    goose: Goose,
+    key: string,
+    cwd: string,
+    config: MeshAgentConfig,
+    prompt: string,
+  ): Promise<Session> {
+    const session: Session = {
+      id: "",
+      seen: 0,
+      prompt,
+      remember: () => {},
+    };
+    const mcpServers: object[] = [];
+    if (config.mode === "full") {
+      session.bridge = await openBridge(
+        this.deps,
+        () => session.turn,
+        turnTools(delivery, this.deps, cwd, context),
+      );
+      mcpServers.push(session.bridge.server);
+    }
+    try {
+      const storage = this.deps.storage;
+      const stored = storage?.getItem(STORAGE_PREFIX + key);
+      let resumed = false;
+      if (stored) {
+        try {
+          const saved = JSON.parse(stored) as { id: string; seen: number };
+          await goose.client.request("session/load", {
+            sessionId: saved.id,
+            cwd,
+            mcpServers,
+          });
+          session.id = saved.id;
+          session.seen = saved.seen;
+          resumed = true;
+        } catch {
+          storage?.removeItem(STORAGE_PREFIX + key);
+        }
+      }
+      if (!resumed) {
+        const created = await goose.client.request<{ sessionId: string }>(
+          "session/new",
+          { cwd, mcpServers },
+        );
+        session.id = created.sessionId;
+      }
+      // The system prompt is not part of goose's saved session; set it each time.
+      await setPrompt(goose.client, session.id, prompt);
+      session.remember = (seen) => {
+        session.seen = seen;
+        storage?.setItem(
+          STORAGE_PREFIX + key,
+          JSON.stringify({ id: session.id, seen }),
+        );
+      };
+      session.remember(session.seen);
+      return session;
+    } catch (error) {
+      session.bridge?.close();
+      throw error;
+    }
+  }
+
+  private closeBridges(goose: Goose) {
+    for (const session of goose.sessions.values())
+      void session.then((item) => item.bridge?.close()).catch(() => {});
+    goose.sessions.clear();
+  }
+
+  private retire(agent: string, goose: Goose) {
+    const entry = this.geese.get(agent);
+    if (entry)
+      void entry
+        .then((item) => {
+          if (item === goose && this.geese.get(agent) === entry)
+            this.geese.delete(agent);
+        })
+        .catch(() => {});
+    this.stop(goose);
+  }
+
+  private stop(goose: Goose) {
+    goose.dead = true;
+    if (goose.idle) clearTimeout(goose.idle);
+    this.closeBridges(goose);
+    void goose.process.kill();
+  }
+}
+
+const setPrompt = (client: AcpClient, sessionId: string, text: string) =>
+  client.request("_goose/unstable/session/system-prompt/set", {
+    sessionId,
+    mode: "append",
+    key: "buzz",
+    text,
+  });
+
+async function waitIdle(goose: Goose) {
+  while (goose.busy && !goose.dead)
+    await new Promise((resolve) => setTimeout(resolve, 200));
+}
+
+/** "chat" mode's request: the agent's prompt, the conversation as turns
+ * (its own messages as the assistant's), then the latest message. */
+export function chatMessages(
+  config: MeshAgentConfig,
+  self: string,
+  earlier: readonly EventData[],
+  event: EventData,
+): ChatMessage[] {
+  return [
+    { role: "system", content: config.prompt.trim() || DEFAULT_PROMPT },
+    ...earlier.map(
+      (item): ChatMessage =>
+        item.pubkey === self
+          ? { role: "assistant", content: item.content }
+          : { role: "user", content: `[${label(item)}] ${item.content}` },
+    ),
+    { role: "user", content: `[${label(event)}] ${event.content}` },
+  ];
 }

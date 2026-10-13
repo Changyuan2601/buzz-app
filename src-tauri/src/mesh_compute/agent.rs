@@ -138,6 +138,61 @@ pub async fn mesh_compute_inference_current(
         .unwrap_or(false))
 }
 
+/// One non-streaming chat completion on the leased loopback route, for the Mesh
+/// agent's "Chat" mode (no harness). Native so the WebView CSP stays closed to
+/// loopback HTTP. Refuses unless `lease` is still current and compute is Ready;
+/// the same stale-result limitation as `mesh_compute_prepare_inference` applies.
+#[cfg(feature = "mesh")]
+#[tauri::command]
+pub async fn mesh_compute_chat(
+    app: tauri::AppHandle,
+    lease: String,
+    model: String,
+    messages: Vec<serde_json::Value>,
+) -> Result<String, String> {
+    let port = {
+        let host = app.state::<super::MeshHost>();
+        host.lease.with_current(&lease, |_| {
+            if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
+                return Err("Shared compute is not ready".into());
+            }
+            super::mesh_port("BUZZ_MESH_API_PORT", 19337)
+        })?
+    };
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(240))
+        .build()
+        .map_err(|e| e.to_string())?;
+    chat_completion(&client, port, &model, messages).await
+}
+
+#[cfg(feature = "mesh")]
+async fn chat_completion(
+    client: &reqwest::Client,
+    port: u16,
+    model: &str,
+    messages: Vec<serde_json::Value>,
+) -> Result<String, String> {
+    let response = client
+        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .bearer_auth("mesh-local")
+        .json(&serde_json::json!({"model": model, "messages": messages, "stream": false}))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let detail = body["error"]["message"].as_str().unwrap_or("");
+        return Err(format!("HTTP {status} {detail}").trim().to_owned());
+    }
+    Ok(body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned())
+}
+
 /// Baseline readiness (legacy `mesh_readiness::wait_for_mesh_inference`): a real
 /// chat request decides. The catalog only explains a failure; it never gates.
 #[cfg(feature = "mesh")]
@@ -278,6 +333,53 @@ mod tests {
             .timeout(std::time::Duration::from_secs(2))
             .build()
             .unwrap()
+    }
+
+    /// Answers one request with `code` and `body`, returning the request text.
+    async fn once(code: u16, body: &'static str) -> (u16, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 4096];
+            while !String::from_utf8_lossy(&request).contains("\"messages\"") {
+                let n = socket.read(&mut buf).await.unwrap();
+                request.extend_from_slice(&buf[..n]);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if let Ok(n) = socket.try_read(&mut buf) {
+                request.extend_from_slice(&buf[..n]);
+            }
+            socket.write_all(format!("HTTP/1.1 {code} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (port, server)
+    }
+
+    #[tokio::test]
+    async fn chat_returns_the_answer_for_the_given_messages() {
+        let (port, server) = once(200, r#"{"choices":[{"message":{"content":"Monday"}}]}"#).await;
+        let messages = vec![serde_json::json!({"role":"user","content":"when?"})];
+        assert_eq!(
+            chat_completion(&client(), port, "mesh", messages)
+                .await
+                .unwrap(),
+            "Monday"
+        );
+        let request = server.await.unwrap();
+        assert!(request.starts_with("POST /v1/chat/completions"));
+        assert!(request.contains(r#""stream":false"#));
+        assert!(request.contains(r#""content":"when?""#));
+    }
+
+    #[tokio::test]
+    async fn chat_reports_the_endpoint_error() {
+        let (port, _server) = once(503, r#"{"error":{"message":"no capacity"}}"#).await;
+        let error = chat_completion(&client(), port, "mesh", vec![])
+            .await
+            .unwrap_err();
+        assert_eq!(error, "HTTP 503 Service Unavailable no capacity");
     }
 
     // Live 0.78.1 shape: a remote peer's model with no context_length.

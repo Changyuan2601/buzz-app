@@ -18,8 +18,8 @@ import { MeshAgentTab } from "./MeshAgentTab";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
   type MeshAgentConfig,
+  MeshAgentRuntime,
   type PreparedInference,
-  runMeshAgent,
 } from "./meshAgent";
 
 type MeshStatus = {
@@ -158,33 +158,49 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   // Agents "Mesh" type: inference through shared compute only.
   const spawn = ctx.host?.spawn?.bind(ctx.host);
-  if (isTauri() && spawn && ctx.agents)
-    ctx.agents.register<MeshAgentConfig>({
+  if (isTauri() && spawn && ctx.agents) {
+    const agents = ctx.agents;
+    const runtime = new MeshAgentRuntime({
+      spawn,
+      origin: () => ctx.relay.snapshot().origin,
+      prepare: (relay) =>
+        invoke<PreparedInference>("mesh_compute_prepare_inference", {
+          relay,
+          model: "auto",
+        }),
+      current: (lease) =>
+        invoke<boolean>("mesh_compute_inference_current", { lease }),
+      chat: (inference, messages) =>
+        invoke<string>("mesh_compute_chat", {
+          lease: inference.lease,
+          model: inference.model,
+          messages,
+        }),
+      dm: (agent, channelId) => {
+        const snapshot = agents.relay(agent)?.snapshot();
+        return (
+          snapshot?.status === "ready" &&
+          snapshot.session.channels
+            .list()
+            .channels.find((row) => row.id === channelId)?.channelType === "dm"
+        );
+      },
+      storage: localStorage,
+    });
+    ctx.effect(() => () => runtime.dispose());
+    agents.register<MeshAgentConfig>({
       id: "mesh",
       title: "Mesh",
       description:
-        "Runs goose on this community's shared compute, with shell, file and Buzz tools.",
+        "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
       defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
       summary: () => "Shared compute",
       tabs: [{ id: "prompt", title: "Settings", component: MeshAgentTab }],
       // Covers compute startup (native waits up to 120s) plus one reply.
       timeoutMs: 5 * 60_000,
-      run: (delivery) =>
-        runMeshAgent(
-          {
-            spawn,
-            origin: () => ctx.relay.snapshot().origin,
-            prepare: (relay) =>
-              invoke<PreparedInference>("mesh_compute_prepare_inference", {
-                relay,
-                model: "auto",
-              }),
-            current: (lease) =>
-              invoke<boolean>("mesh_compute_inference_current", { lease }),
-          },
-          delivery,
-        ),
+      run: (delivery) => runtime.run(delivery),
     });
+  }
 
   function CommunityComputePage({
     community,
