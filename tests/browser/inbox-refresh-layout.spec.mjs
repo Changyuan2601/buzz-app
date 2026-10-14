@@ -66,6 +66,8 @@ for (const width of [1280, 390, 320]) {
       });
     const measurements = [];
     await expect(filters).toBeVisible();
+    // An error notice above the header would also move it; the baseline must be clean.
+    await expect(inbox.getByRole("alert")).toHaveCount(0);
     const before = await geometry();
     gate = { ...Promise.withResolvers(), started: false };
     try {

@@ -66,6 +66,16 @@ export function browserReadPublisherLock(
 }
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Read state unavailable";
+/**
+ * The caller's observation ended before its save ran, so storage is unchanged.
+ * The caller still gets the rejection, but read-state health stays the same:
+ * leaving a channel during a queued automatic read is not a sync failure.
+ */
+class ObservationExpired extends Error {
+  constructor() {
+    super("Reading observation expired");
+  }
+}
 const same = (a: unknown, b: unknown): boolean => {
   if (Object.is(a, b)) return true;
   if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
@@ -422,7 +432,7 @@ export function createReadState({
         throw new Error("Read-state sync unsupported by this host");
       try {
         const saved = await save((current) => {
-          if (!valid(current)) throw new Error("Reading observation expired");
+          if (!valid(current)) throw new ObservationExpired();
           if (
             !contextId(key) ||
             (timestamp !== undefined && !uint32(timestamp))
@@ -483,7 +493,8 @@ export function createReadState({
               : "local-only",
         };
       } catch (error) {
-        health({ status: "error", error: errorText(error) });
+        if (!(error instanceof ObservationExpired))
+          health({ status: "error", error: errorText(error) });
         throw error;
       }
     });
@@ -735,7 +746,7 @@ export function createReadState({
           throw new Error("Saved read state unavailable; retry storage first");
         try {
           const saved = await save((current) => {
-            if (!valid(current)) throw new Error("Reading observation expired");
+            if (!valid(current)) throw new ObservationExpired();
             if (
               messages.some(
                 ({ key, timestamp }) => !contextId(key) || !uint32(timestamp),
@@ -808,7 +819,8 @@ export function createReadState({
                 : ("local-only" as const),
           };
         } catch (error) {
-          health({ status: "error", error: errorText(error) });
+          if (!(error instanceof ObservationExpired))
+            health({ status: "error", error: errorText(error) });
           throw error;
         }
       }),

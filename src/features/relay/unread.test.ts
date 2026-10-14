@@ -1668,6 +1668,33 @@ it("reopening waits for the prior visit's queued unread and reconciles its sideb
   expect(h.snapshot().manual).toBe("none");
 });
 
+it.each(["markMessageUnread", "markMessageRead"] as const)(
+  "a visit that ends during a queued %s rejects without reporting a sync error",
+  async (action) => {
+    const h = setup();
+    h.grant("room");
+    const row = message(h.alice, "room", "old", 11);
+    h.emit([row]);
+    await h.session.unread.enterChannel("room");
+    const before = h.session.unread.sync();
+    expect(before.error).toBeUndefined();
+    const { started, release } = h.holdSaveStarted();
+    const pending = h.session.unread[action]("room", row.id);
+    await started;
+    try {
+      h.session.unread.leaveChannel("room");
+    } finally {
+      release();
+    }
+    await expect(pending).rejects.toThrow("Reading observation expired");
+    // Nothing was saved, so Inbox and other health readers keep the prior state.
+    const after = h.session.unread.sync();
+    expect(after.status).toBe(before.status);
+    expect(after.error).toBeUndefined();
+    expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBeUndefined();
+  },
+);
+
 it("without a signer, own descendants do not require read frontiers to clear a forced peer subtree", async () => {
   const peer = message(keypair(), "room", "peer", 11);
   const h = setup({}, false, (journal) => ({
