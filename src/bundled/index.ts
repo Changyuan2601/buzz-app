@@ -32,6 +32,8 @@ import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import piManifest from "./pi/manifest.json";
 import * as pi from "./pi";
+import databricksManifest from "./databricks/manifest.json";
+import * as databricks from "./databricks";
 import channelsManifest from "./channels/manifest.json";
 import usageManifest from "./channel-usage/manifest.json";
 import * as usage from "./channel-usage";
@@ -61,6 +63,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...databricksManifest, apiVersion: 1 },
+    module: databricks,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,
