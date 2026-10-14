@@ -84,6 +84,17 @@ function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
   );
 }
 
+// A session row merges what were separate per-message rows, so archives saved
+// for some of them must not hide the rest.
+const partial = (entries: readonly Archive[], item: InboxItem) => {
+  const observed = new Set(entries.flatMap((archive) => archive.messageIds));
+  return (
+    item.id === `${item.channelId}:${item.channelId}` &&
+    entries.some((archive) => archive.id !== item.id) &&
+    !item.messageIds.every((id) => observed.has(id))
+  );
+};
+
 export function isArchived(
   index: ArchiveIndex,
   item: InboxItem,
@@ -93,6 +104,7 @@ export function isArchived(
   const entries = matches(index, item);
   return (
     entries.length > 0 &&
+    !partial(entries, item) &&
     !entries.some(
       (archive) =>
         (!mentionsOnly && ordinaryActivity(item) && archive.reopened) ||

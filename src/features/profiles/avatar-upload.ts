@@ -19,10 +19,11 @@ export function avatarPictureError(value: string): string | undefined {
 export function avatarPreview(
   value: string,
   community?: string,
+  size?: "small",
 ): string | undefined {
   const source = avatarSource(value);
   if (!source || !community || source.startsWith("data:")) return source;
-  return communityMedia(community)(source);
+  return communityMedia(community)(source, size);
 }
 
 /** Relay-hosted media of one community through the host's media adapter. */

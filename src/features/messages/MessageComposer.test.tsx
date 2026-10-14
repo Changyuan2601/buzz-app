@@ -2842,7 +2842,7 @@ it("restores live profile avatars with one removal control per exact recipient",
   const media = vi
     .spyOn(h.session, "media")
     .mockImplementation((url) =>
-      url ? `https://media.test/${url}` : undefined,
+      url.replace("https://art.test", "https://media.test"),
     );
   act(() => {
     h.commands().insertMention(first);
@@ -2858,8 +2858,11 @@ it("restores live profile avatars with one removal control per exact recipient",
   // Profiles can arrive after draft restoration; artwork must update without an edit.
   h.setProfiles(
     new Map([
-      [first.pubkey, { name: "Honey", picture: "person.png" }],
-      [second.pubkey, { name: "Honey", picture: "agent.png", isAgent: true }],
+      [first.pubkey, { name: "Honey", picture: "https://art.test/person.png" }],
+      [
+        second.pubkey,
+        { name: "Honey", picture: "https://art.test/agent.png", isAgent: true },
+      ],
     ]),
   );
   expect(controls[0]?.querySelector(".buzz-avatar")).toHaveAttribute(
@@ -2874,7 +2877,7 @@ it("restores live profile avatars with one removal control per exact recipient",
     "src",
     "https://media.test/agent.png",
   );
-  expect(media).toHaveBeenCalledWith("agent.png", "small");
+  expect(media).toHaveBeenCalledWith("https://art.test/agent.png", "small");
   // Loaded-library hints update both artwork layers without another keystroke;
   // clearing them removes only that fallback, not self-declared agent metadata.
   for (const control of controls)

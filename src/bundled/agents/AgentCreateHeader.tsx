@@ -50,6 +50,8 @@ export function AgentCreateHeader({
   onAvatarActiveChange?: (active: boolean) => void;
   nameRef?: Ref<HTMLInputElement>;
 }) {
+  // The header shares AvatarEditor's full-size frame, so it requests the
+  // original rather than the thumbnail (see avatar-source.grit).
   const preview = useAvatarPreview(picture ?? "", community);
   const [view, setView] = useState("selected");
   const [movingAvatar, setMovingAvatar] = useState<string>();

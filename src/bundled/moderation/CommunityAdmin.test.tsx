@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayData } from "../../features/relay/service";
+import { mediaUrl } from "../../features/relay/transport";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { allowedActions, membersFromSnapshot } from "./api";
 import { CommunityAdmin } from "./CommunityAdmin";
@@ -80,7 +81,7 @@ it("offers only actions the relay permission matrix allows", () => {
 function relay(
   viewer: string,
   events = [snapshot(roster)],
-  profiles = new Map<string, { name: string }>(),
+  profiles = new Map<string, { name: string; picture?: string }>(),
   people: { pubkey: string; name: string }[] = [],
 ) {
   const read = vi.fn(async () => events);
@@ -88,7 +89,9 @@ function relay(
     relayAuthor: relayKey,
     read,
     viewer,
-    media: () => undefined,
+    // The real sizing rewrite behind a pass-through proxy, as the session applies it.
+    media: (url: string, size?: "small") =>
+      mediaUrl(url, (proxied) => proxied, "https://primary.example", size),
     directMessages: {
       people: async () => ({ people, hasMore: false }),
     },
@@ -451,7 +454,13 @@ it.each([
         ]),
       ],
       new Map([
-        [bobA, { name: "Bob" }],
+        [
+          bobA,
+          {
+            name: "Bob",
+            picture: `https://primary.example/media/${bobA}.png`,
+          },
+        ],
         [bobB, { name: nameB }],
       ]),
     );
@@ -459,11 +468,16 @@ it.each([
     const keys = publicKeyLabels([owner, bobA, bobB]);
     const labelB = `${nameB} · ${keys.get(bobB)}`;
     expect(keys.get(bobA)).not.toBe(keys.get(bobB));
-    expect(
-      await screen.findByRole("button", {
-        name: `Actions for Bob · ${keys.get(bobA)}`,
-      }),
-    ).toBeVisible();
+    const actionsA = await screen.findByRole("button", {
+      name: `Actions for Bob · ${keys.get(bobA)}`,
+    });
+    expect(actionsA).toBeVisible();
+    // A relay-hosted picture goes through the session proxy as the thumbnail;
+    // the raw URL would be an unsigned request the relay refuses.
+    expect(actionsA.closest("li")?.querySelector("img")).toHaveAttribute(
+      "src",
+      `https://primary.example/media/${bobA}.thumb.jpg`,
+    );
     await user.click(
       screen.getByRole("button", { name: `Actions for ${labelB}` }),
     );

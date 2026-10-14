@@ -1,12 +1,13 @@
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
-// session for its conversation; a watch or timer wake runs as a one-off turn in
-// a new session, in its Interest's lane. The run returns once the turn is handed over,
+// session for its conversation; a standalone turn, such as a watch's or a
+// timer's, runs as a one-off process. The run returns once the turn is handed over,
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
+import { turnNote } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
@@ -15,6 +16,8 @@ import type {
   Delivery,
   Effort,
   Models,
+  StandaloneTurn,
+  TurnResult,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -22,16 +25,12 @@ import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
 import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
-import { Lanes } from "./lanes";
 import {
-  ATTENTION_REVIEW,
   CONTEXT_LIMIT,
   type Scope,
   steerPrompt,
   systemPrompt,
-  timerPrompt,
   turnPrompt,
-  watchPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { readTranscript, type Conversation } from "./transcript";
@@ -93,11 +92,6 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename restarts idle sessions. */
   name?: string;
-  /** Whether the owner has attention on: new sessions get its tools, its
-   * guidance and the end-of-turn review. */
-  attention: boolean;
-  /** Watch and timer turns, one lane per Interest. */
-  lanes: Lanes;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
@@ -156,27 +150,22 @@ export class ClaudeRuntime {
     // processes stop. Saved sessions stay so it resumes when it is back.
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
-        entry.lanes.stop();
         entry.sessions.dispose();
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
       const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry)
-        this.entry(agent.pubkey, next, agent.attentionEnabled).name =
-          agent.name;
-      else if (
+      if (!entry) {
+        this.entry(agent.pubkey, next).name = agent.name;
+        continue;
+      }
+      if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name ||
-        entry.attention !== agent.attentionEnabled
+        entry.name !== agent.name
       ) {
-        // Attention changes what a new session is told and offered. Turned
-        // off, its waiting watch and timer turns are dropped too.
-        if (!agent.attentionEnabled) entry.lanes.clear();
         entry.config = next;
         entry.name = agent.name;
-        entry.attention = agent.attentionEnabled;
         entry.sessions.reconfigure();
       }
     }
@@ -311,10 +300,7 @@ export class ClaudeRuntime {
 
   dispose() {
     this.spare.dispose();
-    for (const entry of this.agents.values()) {
-      entry.lanes.stop();
-      entry.sessions.dispose();
-    }
+    for (const entry of this.agents.values()) entry.sessions.dispose();
     this.agents.clear();
   }
 
@@ -332,32 +318,25 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
-    current,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
+    // Watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention") return ignored?.();
     // Claude runs commands as you; mentions need owner or delegated authority.
-    // A watch is the agent's own attention: its event is observed data,
-    // framed as such, from anyone.
-    if (trigger.type === "mention") {
-      if (
-        !(await fromOwner(
-          trigger.event,
-          agent.owner,
-          workflowOf(this.reads(agent.pubkey), agent.pubkey),
-        ))
-      ) {
-        ignored?.();
-        return;
-      }
-      signal.throwIfAborted();
-    }
-    const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
-    entry.handle = agent;
-    entry.team = team ?? "";
-    if (trigger.type !== "mention") {
-      workingUntil(this.wake(entry, agent, trigger, current));
+    if (
+      !(await fromOwner(
+        trigger.event,
+        agent.owner,
+        workflowOf(this.reads(agent.pubkey), agent.pubkey),
+      ))
+    ) {
+      ignored?.();
       return;
     }
+    signal.throwIfAborted();
+    const entry = this.entry(agent.pubkey, settings);
+    entry.handle = agent;
+    entry.team = team ?? "";
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -444,106 +423,26 @@ export class ClaudeRuntime {
     });
   }
 
-  /** A watch or timer wake: a one-off turn in its Interest's lane, as in
-   * Janet. It joins no conversation, and nothing about it is saved. The host
-   * says whether it is still `current`, asked when its lane starts it and
-   * again once it has a process: a wake whose watch or timer was disabled or
-   * removed, whose watch changed or no longer matches, or whose agent's
-   * attention went off, while it waited does not run. Its prompt is built
-   * then, from the attention as it is. */
-  private wake(
-    entry: Entry,
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    current: () => boolean,
-  ): Promise<Settled> {
-    const { slug } = trigger;
-    const id = slug.replace(/^watch\//, "");
-    const lane = (trigger.type === "watch" ? trigger.watch : trigger.timer)
-      .interest_id;
-    let settle!: (result: Settled) => void;
-    const settled = new Promise<Settled>((resolve) => {
-      settle = resolve;
-    });
-    const dropped = (why: string) => {
-      console.warn(`Claude dropped a ${trigger.type} turn: ${why}`);
-      settle({ ok: true });
-    };
-    const queued = entry.lanes.add(
-      lane,
-      async () => {
-        try {
-          if (!current()) return settle({ ok: true });
-          const done = entry.sessions.runOnce(`${trigger.type}/${id}`, () =>
-            this.wakePrompt(agent, trigger, id, current),
-          );
-          this.notify();
-          const result = await done;
-          this.notify();
-          if (!result.ok)
-            console.warn(
-              `Claude ${trigger.type} turn failed: ${id}`,
-              result.error,
-            );
-          settle(result);
-        } finally {
-          // Settled already, unless something above threw.
-          settle({ ok: false, error: "The turn failed" });
-        }
-      },
-      () => dropped("attention was turned off or the agent stopped"),
-    );
-    if (queued !== "queued")
-      dropped(
-        queued === "full"
-          ? `too many are waiting (Interest ${lane})`
-          : "the agent stopped",
-      );
-    return settled;
+  /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
+   * process: a new session that is not saved. */
+  async runOnce({
+    delivery,
+    key,
+    prompt,
+  }: StandaloneTurn): Promise<TurnResult> {
+    const { agent, team } = delivery;
+    const entry = this.entry(agent.pubkey, this.resolveConfig(delivery.config));
+    entry.handle = agent;
+    entry.team = team ?? "";
+    const done = entry.sessions.runOnce(key, prompt);
+    this.notify();
+    return done.finally(() => this.notify());
   }
 
-  /** The prompt for a wake as its watch now is, or undefined when it should
-   * no longer run. */
-  private async wakePrompt(
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    id: string,
-    stillCurrent: () => boolean,
-  ) {
-    const { attention } = agent;
-    if (!stillCurrent()) return undefined;
-    const current = (await attention.show(trigger.slug)).object;
-    const type = trigger.type === "watch" ? "event" : "timer";
-    if (!current || current.type !== type) return undefined;
-    const interest = (await attention.show(`interest/${current.interest_id}`))
-      .object;
-    const instructions =
-      interest?.type === "interest"
-        ? { instructions: interest.instructions }
-        : {};
-    const text =
-      trigger.type === "watch"
-        ? watchPrompt({
-            id,
-            interest: current.interest_id,
-            ...instructions,
-            event: trigger.event,
-            ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
-          })
-        : timerPrompt({
-            id,
-            interest: current.interest_id,
-            prompt: current.type === "timer" ? current.prompt : "",
-            ...instructions,
-            spent: trigger.spent,
-          });
-    // Asked again: the attention can change while it is read.
-    return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
-  }
-
-  /** `text` with Janet's end-of-turn attention review, when attention is on. */
+  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
   private review(entry: Entry, text: string) {
-    return entry.attention ? `${text}\n\n${ATTENTION_REVIEW}` : text;
+    const note = turnNote(entry.handle);
+    return note ? `${text}\n\n${note}` : text;
   }
 
   private watch(
@@ -675,14 +574,12 @@ export class ClaudeRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config, attention: boolean): Entry {
+  private entry(pubkey: string, initial: Config): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
-      attention,
-      lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
@@ -690,7 +587,7 @@ export class ClaudeRuntime {
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.
     const tools =
-      (cwd: string, attention: boolean): ToolServer =>
+      (cwd: string): ToolServer =>
       async (conversation, message) => {
         const handle = entry.handle;
         const client =
@@ -703,10 +600,7 @@ export class ClaudeRuntime {
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, {
-          offered: attention,
-          ...(handle ? { api: handle.attention } : {}),
-        });
+        return respond(client, context, message);
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -722,22 +616,19 @@ export class ClaudeRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
-          entry.attention,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
-        const { attention } = entry;
         const memory = await this.core(pubkey);
         return {
           ...where(entry.config),
-          tools: tools(workspace, attention),
+          tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,
-            attention,
             ...(memory === undefined ? {} : { memory }),
           }),
         };

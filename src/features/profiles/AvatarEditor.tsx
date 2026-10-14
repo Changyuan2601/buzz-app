@@ -80,6 +80,8 @@ const colors = [
 export function AvatarEditor(props: Props) {
   const [open, setOpen] = useState(!!props.inlinePicker);
   const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
+  // The 12 rem frame exceeds the relay's 320 px thumbnail, so this is one of
+  // the two avatar surfaces that request the original (see avatar-source.grit).
   const preview = useAvatarPreview(
     draftPreview?.picture ?? props.value,
     props.community,

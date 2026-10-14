@@ -31,6 +31,7 @@ export function appClient(
   };
   return {
     pubkey: agent.pubkey,
+    attention: agent.attention,
     query: (filters) => {
       check();
       return agent.query(filters);

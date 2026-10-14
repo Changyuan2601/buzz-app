@@ -63,7 +63,8 @@ A mention in a chat filed in the owner's Me is one conversation whatever the
 scope: the agent continues the channel's session and posts at its top level, and
 its tools refuse a reply into a thread there. A turn keeps the routing it started
 with, so a mention after the chat is shared waits for it and then threads as
-usual. Watches keep their own routing.
+usual. Watch and timer turns have no default destination: their `send` must
+name a channel.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities does not end an agent's work. Removing the agent, leaving or
 disconnecting from its community interrupts its turns and asks Codex to end
@@ -135,8 +136,14 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 
 ## Limits and boundaries
 
-- Only the owner's events start work. Event watches support those events; timers
-  are unsupported and report an error.
+- Only the owner's mentions start conversation work. The agent always has the
+  attention tools and guidance. Each turn ends with the attention review, or,
+  when attention is off, a note that those tools refuse. Its watches and timers run
+  as one-off turns on an ephemeral Codex thread of their own, queued per
+  Interest by the Agents runner; a watch's event can come from
+  anyone and is framed as observed data. These turns save no binding, have no
+  default `send` destination, stop after 5 minutes, and do not run when their
+  watch or timer, or attention, changed while they waited.
 - Replies use Agents' host signer. Codex receives no Buzz agent key and does not
   publish through the Buzz CLI. The shared Buzz base prompt, custom instructions
   and the agent's `core` memory are supplied as developer instructions, preserving

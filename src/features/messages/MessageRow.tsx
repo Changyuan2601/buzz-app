@@ -82,6 +82,7 @@ import {
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
@@ -253,9 +254,7 @@ function MessageRowContent({
           `${row.workflowOwnerId.slice(0, 10)}…`,
       )
     : undefined;
-  const picture = profile?.picture
-    ? media(profile.picture, "small")
-    : undefined;
+  const picture = avatarMedia(profile?.picture, media);
   const target = profileTarget(row.authorId, {
     agent: !!(row.agentEnvelope || agentPubkeys?.has(row.authorId)),
   });
@@ -997,9 +996,7 @@ function MessageRowContent({
                       return (
                         <Avatar
                           key={agent.pubkey}
-                          src={
-                            agent.avatar ? media(agent.avatar, "small") : null
-                          }
+                          src={avatarMedia(agent.avatar, media)}
                           alt=""
                           fallback={name}
                           size="compact"
@@ -1069,7 +1066,7 @@ function AgentsMessageRow(props: MessageRowProps) {
     return {
       pubkey,
       name,
-      picture: profile?.picture ? media(profile.picture, "small") : undefined,
+      picture: avatarMedia(profile?.picture, media),
       shape: agent ? ("squircle" as const) : ("circle" as const),
     };
   };
@@ -1151,6 +1148,9 @@ function AgentsMessageRow(props: MessageRowProps) {
         </button>
         {open && (
           <div className={styles.audienceBody}>
+            <div className="text-caption">
+              <MessageTimestamp createdAt={row.createdAt} />
+            </div>
             <FullMessageRow
               {...props}
               shownRow={body}

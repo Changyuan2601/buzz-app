@@ -17,6 +17,9 @@ import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
+import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -132,16 +135,7 @@ export function SessionsPage({
   );
 }
 
-function LiveSessions({
-  relay,
-  panels,
-  companion,
-  session,
-  scope,
-  extensions,
-  navigator,
-  navigation,
-}: {
+type LiveProps = {
   relay: RelayData;
   panels: Panels;
   companion?: ReactNode;
@@ -150,7 +144,55 @@ function LiveSessions({
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
-}) {
+};
+type Lifecycle = {
+  channel: ChannelSummary;
+  action: ChannelLifecycleAction;
+  trigger?: HTMLElement | undefined;
+  origin?: AbortSignal | undefined;
+};
+
+// Lifecycle actions remove the conversation from Me, so the dialog outlives
+// the view but not the visit that opened it.
+function LiveSessions(props: LiveProps) {
+  const { session, scope, navigator } = props;
+  const [lifecycle, setLifecycle] = useState<Lifecycle>();
+  return (
+    <>
+      <SessionsView {...props} chooseLifecycle={setLifecycle} />
+      {lifecycle && !lifecycle.origin?.aborted && (
+        <ChannelLifecycleDialog
+          channelId={lifecycle.channel.id}
+          channelName={lifecycle.channel.name}
+          action={lifecycle.action}
+          lifecycle={session.channelLifecycle}
+          close={() => {
+            setLifecycle(undefined);
+            if (lifecycle.trigger?.isConnected)
+              lifecycle.trigger.focus({ preventScroll: true });
+          }}
+          completed={() => {
+            setLifecycle(undefined);
+            if (!lifecycle.origin?.aborted)
+              void navigator?.open(meTarget(scope));
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function SessionsView({
+  relay,
+  panels,
+  companion,
+  session,
+  scope,
+  extensions,
+  navigator,
+  navigation,
+  chooseLifecycle,
+}: LiveProps & { chooseLifecycle(lifecycle: Lifecycle): void }) {
   const list = useChannelList(session.channels);
   const placement = useMePlacement(session);
   const selected = meSelection(navigation?.target);
@@ -206,6 +248,14 @@ function LiveSessions({
   if (selectedSession)
     return (
       <SessionWork
+        chooseLifecycle={(action, trigger) =>
+          chooseLifecycle({
+            channel: selectedSession,
+            action,
+            trigger,
+            origin: navigation?.signal,
+          })
+        }
         relay={relay}
         panels={panels}
         companion={companion}
@@ -271,6 +321,7 @@ function SessionWork({
   parentName,
   navigator,
   navigation,
+  chooseLifecycle,
 }: {
   relay: RelayData;
   panels: Panels;
@@ -282,12 +333,14 @@ function SessionWork({
   parentName?: string | undefined;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
+  chooseLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const [selectedAgent, setSelectedAgent] = useState(() =>
     readSelectedAssistant(scope, channel.id),
   );
@@ -422,15 +475,15 @@ function SessionWork({
             />
             <MenuRoot>
               <MenuTrigger
-                render={(props) => (
+                render={
                   <IconButton
-                    {...props}
+                    ref={menuTrigger}
                     size="toolbar"
                     aria-label="Session actions"
                     title="Session actions"
                     icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
                   />
-                )}
+                }
               />
               <MenuPopup aria-label="Session actions" align="end">
                 <MenuItem
@@ -453,6 +506,17 @@ function SessionWork({
                   </MenuIcon>
                   {inMe ? "Chat settings…" : "Session settings…"}
                 </MenuItem>
+                {!channel.readOnly && !channel.cached && !channel.archived && (
+                  <ChannelLifecycleMenu
+                    channelId={channel.id}
+                    lifecycle={session.channelLifecycle}
+                    disabled={false}
+                    separator
+                    choose={(action) =>
+                      chooseLifecycle(action, menuTrigger.current ?? undefined)
+                    }
+                  />
+                )}
               </MenuPopup>
             </MenuRoot>
             {!showingPanel && (

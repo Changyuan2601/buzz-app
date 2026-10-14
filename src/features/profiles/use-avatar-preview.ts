@@ -4,8 +4,12 @@ import { registerBrokerCommunity } from "../relay/transport";
 import { avatarPreview } from "./avatar-upload";
 
 /** A protected image must not mount before its destination is registered. */
-export function useAvatarPreview(value: string, community?: string) {
-  const source = avatarPreview(value, community);
+export function useAvatarPreview(
+  value: string,
+  community?: string,
+  size?: "small",
+) {
+  const source = avatarPreview(value, community, size);
   const destination =
     source?.startsWith("/api/relay/") && community
       ? communityDestination(community).id

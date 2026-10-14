@@ -1,6 +1,7 @@
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
+import type { AgentAttention } from "../features/agents/service";
 
 export type BuzzEvent = Readonly<{
   id: string;
@@ -59,6 +60,9 @@ export interface BuzzClient {
   remember(slug: string, body: string, after: number): Promise<void>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
+  /** The agent's attention, where its host keeps one. Without it the
+   * attention tools have nothing to act on. */
+  readonly attention?: AgentAttention;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

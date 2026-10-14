@@ -551,7 +551,12 @@ test("historical single-day DMs and their threads expose dates without hover", a
     name: "Thread",
     exact: true,
   });
-  await expect(thread.locator(`[data-day="${day}"]`)).toBeVisible();
+  // The original's byline names its day; the thread has no leading day divider.
+  const original = thread.locator(`[data-message-id="${event.id}"]`);
+  const timestamp = original.locator('time > span[aria-hidden="true"]');
+  await expect(timestamp).toHaveText(/ at /);
+  await expect(timestamp).toBeVisible();
+  await expect(original.locator("[data-day]")).toHaveCount(0);
 });
 
 // Browser-only: live timeline/thread grouping must preserve real native focus

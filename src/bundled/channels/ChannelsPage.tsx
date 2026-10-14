@@ -73,12 +73,16 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
-import type { Attachment } from "../../features/relay/contracts";
+import type {
+  Attachment,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function ChannelsPage({
   extensions,
@@ -639,20 +643,13 @@ function ChannelWorkspace({
     ],
   );
   const conversationIcon = (item: (typeof channels)[number]) => {
-    const Icon = channelIcon(item);
     const person = item.participants?.[0];
-    const picture = person ? profiles.get(person)?.picture : undefined;
-    return item.channelType === "dm" ? (
-      <span className={tabStyles.icon}>
-        <Avatar
-          alt=""
-          fallback={item.name}
-          size="fill"
-          src={picture ? queries.media(picture) : null}
-        />
-      </span>
-    ) : (
-      <Icon size="1rem" />
+    return (
+      <ConversationIcon
+        item={item}
+        picture={person ? profiles.get(person)?.picture : undefined}
+        media={queries.media}
+      />
     );
   };
   const channelConversation = useRef<HTMLDivElement>(null);
@@ -1626,4 +1623,30 @@ export function mediaReviewForDestination<
     (review.entryId === undefined || review.entryId === entryId)
     ? review
     : undefined;
+}
+
+/** A DM tab shows the other participant in a 1rem slot, so it asks for the
+ * relay thumbnail message rows already loaded rather than the original. */
+export function ConversationIcon({
+  item,
+  picture,
+  media,
+}: {
+  item: Pick<ChannelSummary, "name" | "channelType" | "private">;
+  picture: string | undefined;
+  media: RelaySession["media"];
+}) {
+  const Icon = channelIcon(item);
+  return item.channelType === "dm" ? (
+    <span className={tabStyles.icon}>
+      <Avatar
+        alt=""
+        fallback={item.name}
+        size="fill"
+        src={avatarMedia(picture, media)}
+      />
+    </span>
+  ) : (
+    <Icon size="1rem" />
+  );
 }

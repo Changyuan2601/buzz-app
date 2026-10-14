@@ -19,7 +19,11 @@ export function AgentPortrait({
   community?: string | undefined;
 }) {
   const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
-  const src = useAvatarPreview(pack ? "" : (agent.picture ?? ""), community);
+  const src = useAvatarPreview(
+    pack ? "" : (agent.picture ?? ""),
+    community,
+    "small",
+  );
   if (pack) return <PackedAgentAvatar avatar={pack} />;
   return (
     <Avatar

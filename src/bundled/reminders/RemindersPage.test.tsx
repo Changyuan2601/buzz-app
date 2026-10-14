@@ -21,6 +21,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import userEvent from "@testing-library/user-event";
 import { RemindersPage } from "./RemindersPage";
 import { apply } from "./index";
+import { mediaUrl } from "../../features/relay/transport";
 
 afterEach(cleanup);
 
@@ -50,7 +51,8 @@ const channelList = {
   status: "ready",
   channels: [{ id: "c", name: "general", channelType: "stream" }],
 };
-const authors = new Map([["a", { name: "Ada" }]]);
+const authorPicture = `https://community/media/${"a".repeat(64)}.png`;
+const authors = new Map([["a", { name: "Ada", picture: authorPicture }]]);
 const sessionParts = {
   channels: {
     ensureList: () => () => {},
@@ -62,7 +64,8 @@ const sessionParts = {
     subscribe: () => () => {},
     ensure: () => Promise.resolve(),
   },
-  media: (url: string) => url,
+  media: (url: string, size?: "small") =>
+    mediaUrl(url, (target) => target, "https://community", size),
 };
 
 it("lists finished reminders newest first in a collapsed Done group", () => {
@@ -100,6 +103,10 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
   );
   const overdue = screen.getByRole("region", { name: "Overdue" });
   expect(within(overdue).getByText("Ada")).toBeVisible();
+  expect(overdue.querySelector("img")).toHaveAttribute(
+    "src",
+    authorPicture.replace(/\.png$/, ".thumb.jpg"),
+  );
   expect(within(overdue).getByText("#general")).toBeVisible();
   expect(within(overdue).getByText("Overdue · 1 minute ago")).toBeVisible();
   // The row's open action still conveys what the reminder is and when.

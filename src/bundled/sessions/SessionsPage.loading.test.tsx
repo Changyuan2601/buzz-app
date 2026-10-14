@@ -16,6 +16,7 @@ type KitSnapshot = ReturnType<
   ReturnType<typeof createRelaySession>["session"]["mePlacement"]["snapshot"]
 >;
 import type { RelayData } from "../../features/relay/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -68,28 +69,57 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     entries: [],
   };
   const listeners = new Set<() => void>();
-  const channel = {
+  const channel: ChannelSummary = {
     id,
     name: "Planning",
-    channelType: "session" as const,
+    channelType: "session",
     members: [viewer.pubkey],
   };
-  const list = {
+  let list = {
     status: retained ? ("ready" as const) : ("loading" as const),
     channels: retained ? [channel] : [],
   };
+  const listListeners = new Set<() => void>();
   const window = {
     ...owner.session.channels.window(id),
     status: "ready" as const,
     rows: [],
   };
   const set = vi.fn(async () => {});
+  // Like the relay, settle the roster before the confirmed action resolves.
+  const run = vi.fn(async (action: string) => {
+    list = {
+      ...list,
+      channels: action === "archive" ? [{ ...channel, archived: true }] : [],
+    };
+    for (const listener of listListeners) listener();
+  });
   const refresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
+    channelLifecycle: {
+      ...owner.session.channelLifecycle,
+      available: true,
+      load: async () => ({
+        channelId: id,
+        channelType: "stream" as const,
+        canArchive: true,
+        canUnarchive: false,
+        canDelete: true,
+        canLeave: false,
+        canHide: false,
+      }),
+      run,
+    },
     channels: {
       ...owner.session.channels,
       list: () => list,
+      subscribeList: (listener: () => void) => {
+        listListeners.add(listener);
+        return () => {
+          listListeners.delete(listener);
+        };
+      },
       ensureList() {},
       window: () => window,
       ensure() {},
@@ -139,20 +169,22 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const mount = () =>
-    render(
-      <SessionsPage
-        relay={relay}
-        panels={{ ...contribution, register() {}, resolve: () => undefined }}
-        extensions={extensions}
-        navigation={navigation}
-        navigator={{ open } as unknown as Navigation}
-      />,
-    );
+  const page = () => (
+    <SessionsPage
+      relay={relay}
+      panels={{ ...contribution, register() {}, resolve: () => undefined }}
+      extensions={extensions}
+      navigation={navigation}
+      navigator={{ open } as unknown as Navigation}
+    />
+  );
+  const mount = () => render(page());
   return {
     mount,
+    page,
     abort,
     set,
+    run,
     refresh,
     open,
     scope,
@@ -263,4 +295,101 @@ it("opens an already-moved Me route in Messages without a placement or settings 
   );
   expect(f.set).not.toHaveBeenCalled();
   expect(f.session.channelDetails.load).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["archive", "Archive channel"],
+  ["delete", "Delete channel"],
+] as const)(
+  "runs %s from Session actions and leaves the conversation",
+  async (action, label) => {
+    const f = fixture();
+    f.mount();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Session actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: label }));
+    const dialog = screen.getByRole("dialog", {
+      name: `${label}: Planning`,
+    });
+    await user.click(within(dialog).getByRole("button", { name: label }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(f.run).toHaveBeenCalledExactlyOnceWith(
+      action,
+      id,
+      expect.any(AbortSignal),
+    );
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
+  },
+);
+
+it("drops a pending Delete confirmation when its visit ends", async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const settled = f.run.getMockImplementation();
+  f.run.mockImplementation(async (action) => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await settled?.(action);
+  });
+  const view = f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: "Delete channel: Planning",
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete channel" }),
+  );
+  await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+  f.abort.abort();
+  view.rerender(f.page());
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await act(async () => finish());
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("stays put when a confirmation lands after its visit ends but before rerender", async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const settled = f.run.getMockImplementation();
+  f.run.mockImplementation(async (action) => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await settled?.(action);
+  });
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Archive channel",
+    }),
+  );
+  await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+  f.abort.abort();
+  await act(async () => finish());
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("returns focus to Session actions when the confirmation is cancelled", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session actions" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive channel" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(trigger).toHaveFocus();
+  expect(f.run).not.toHaveBeenCalled();
 });

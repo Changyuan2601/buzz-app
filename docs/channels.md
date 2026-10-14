@@ -149,7 +149,13 @@ sessions and session draft do not.
 not reveal an empty section. Use the row menu to star the first channel.
 Dropping into Starred stars the channel; dropping out assigns the destination
 and clears its star, just like the row menu. Forums and Direct
-messages take no part in dragging, and the row menu remains the keyboard path. The
+messages take no part in dragging, and the row menu remains the keyboard path.
+A saved group also drags by its header, expanded or collapsed, onto another saved
+group; an accent line shows where it lands, and Escape cancels. Its section menu's
+**Move up** and **Move down** are the keyboard and single-pointer path. Each move
+rewrites every live section's `order` register with one stamp, so channels, sort
+and collapsed state stay with the group's id; the order shows optimistically and
+a failure rolls back with the same move notice and Retry. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields
@@ -1116,6 +1122,17 @@ replies remain inline with the shared retry action and retain their signed ances
 Read-only connections keep the existing composer capability notice; missing/revoked
 roots do not expose a composer. Exact navigation can retain and focus a selected
 reply beyond the traversal range; it does not extend that range or promise complete history.
+
+A labelled divider separates the original message from replies only while at
+least one reply is displayed. With no displayed replies, including while loading,
+it is hidden even if a summary total is known. It shows the relay's thread summary
+total, the same count as the channel's reply link, including collapsed descendants. Without a positive summary total it says
+“Replies”, never inferring that history is empty from the loaded rows or reader
+state. Summary counts can briefly lag a just-sent reply, matching the channel link.
+The first reply always shows its author, even when it matches the original.
+The original has no day divider above it; its byline already names the day.
+Agent-addressed messages retain their date when expanded.
+Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start

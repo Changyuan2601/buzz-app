@@ -106,6 +106,34 @@
   flex: 1;
   background: var(--border-standard);
 }
+.replyDivider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  /* Reserve a fixed label row. Ordinary message clearance accounts for half
+     its height and the neighbouring .message padding; compact agent-addressed
+     rows keep their own tighter spacing. */
+  min-block-size: var(--space-5);
+  color: var(--text-subtle);
+  @apply text-caption;
+  margin: calc(var(--space-6) - var(--space-5) / 2 - var(--space-half)) 0
+    calc(
+      var(--space-6) -
+      var(--space-5) /
+      2 -
+      var(--space-3) -
+      var(--space-half)
+    );
+}
+.replyDivider::before,
+.replyDivider::after {
+  content: "";
+  height: 1px;
+  min-width: 0;
+  flex: 1;
+  background: var(--border-standard);
+}
 .dayLabel {
   display: inline-flex;
   align-items: center;
@@ -722,7 +750,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-panel-inset);
+  /* Narrower than the channel feed's panel inset; aligns with the composer. */
+  padding: 0 var(--space-4);
+  /* The original starts space-4 below the header, less its .message padding. */
+  padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
   /* Include the join preview lane while keeping the approved message inset. */
   --history-bottom-inset: calc(
     var(--space-8) +
@@ -1435,9 +1466,33 @@ button.mediaPreview {
   margin-bottom: var(--space-1);
 }
 .text blockquote {
+  position: relative;
   padding: var(--space-half) 0 var(--space-half) var(--space-3);
-  border-left: 1px solid var(--border-prominent);
-  color: var(--text-subtle);
+  border-left: 3px solid transparent;
+}
+.text blockquote::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: -3px;
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: color-mix(
+    in srgb,
+    var(--border-prominent),
+    var(--border-standard)
+  );
+}
+@media (forced-colors: active) {
+  .text blockquote::before {
+    background: CanvasText;
+  }
+}
+.text blockquote > :first-child {
+  margin-top: 0;
+}
+.text blockquote > :last-child {
+  margin-bottom: 0;
 }
 .text code {
   border-radius: var(--radius-chip);
@@ -2053,7 +2108,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   background: var(--affordance-selected);
   font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
 }
-/* Shared dark media review and compact video surfaces. */
+/* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
   width: min(24rem, 100%, calc(var(--media-ratio, 16 / 9) * 11.25rem));
   max-height: 16rem;
@@ -2069,7 +2124,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   display: grid;
   place-items: center;
 }
-.mediaReviewViewer[data-color-mode="dark"] {
+.mediaReviewViewer {
   grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
   max-width: 95rem;
   max-height: 61.25rem;
@@ -2077,17 +2132,32 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: var(--media-preview-radius, var(--radius-container));
   background: var(--surface-panel);
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewStage {
+.mediaReviewViewer .mediaReviewStage {
+  color: var(--text-standard);
+  color-scheme: dark;
+  /* Legacy renderer aliases must resolve on this scoped dark surface. */
+  --text: var(--text-standard);
+  --text-primary: var(--text-standard);
+  --text-muted: var(--text-metadata);
+  --text-secondary: var(--text-metadata);
+  --surface: var(--surface-panel);
+  --surface-input: var(--surface-inset);
+  --surface-control: var(--affordance-subtle);
+  --surface-hover: var(--affordance-subtle-hover);
+  --border: var(--border-standard);
+  --border-input: var(--border-prominent);
+  --primary: var(--text-standard);
+  --on-primary: var(--surface-inset);
   background: var(--bg-media-canvas);
   padding: 0;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+.mediaReviewViewer .mediaReviewConversation {
   border-inline-start: 1px solid var(--border-standard);
 }
 .mediaReviewViewer[data-comments-hidden] {
   grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewComment {
+.mediaReviewViewer .mediaReviewComment {
   padding-block: var(--space-2);
   margin-bottom: var(--space-2);
 }
@@ -2095,21 +2165,21 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   outline: 1px solid var(--border-prominent);
   outline-offset: -1px;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .message {
+.mediaReviewViewer .mediaReviewThread .message {
   padding: 0;
   grid-template-columns: 1.5rem minmax(0, 1fr);
   column-gap: var(--space-2);
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .avatar {
+.mediaReviewViewer .mediaReviewThread .avatar {
   width: 1.5rem;
   height: 1.5rem;
 }
 
-.mediaReviewViewer[data-color-mode="dark"] .mediaTimeLink > :is(button, span) {
+.mediaReviewViewer .mediaTimeLink > :is(button, span) {
   color: var(--text-standard);
   background: var(--affordance-subtle-hover);
 }
-.mediaReviewViewer[data-color-mode="dark"] .threadNote {
+.mediaReviewViewer .threadNote {
   padding: var(--space-6) var(--space-3);
   text-align: center;
 }
@@ -2124,30 +2194,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: inherit;
   clip-path: var(--media-corner-clip, none);
 }
-.mediaReviewViewer[data-color-mode="dark"] {
-  color: var(--text-standard);
-  color-scheme: dark;
-  --text: var(--text-standard);
-  --text-primary: var(--text-standard);
-  --text-muted: var(--text-metadata);
-  --text-secondary: var(--text-metadata);
-  --surface: var(--surface-panel);
-  --surface-input: var(--surface-inset);
-  /* Legacy reaction roles must resolve here, not inherit the app root's mode. */
-  --surface-control: var(--affordance-subtle);
-  --surface-hover: var(--affordance-subtle-hover);
-  --border: var(--border-standard);
-  --border-input: var(--border-prominent);
-  --primary: var(--text-standard);
-  --on-primary: var(--surface-inset);
-}
-.mediaReviewViewer[data-color-mode="dark"]
-  .mediaReviewComment
-  .message
-  > :first-child,
-.mediaReviewViewer[data-color-mode="dark"]
-  .mediaReviewComment
-  [data-avatar-shape] {
+.mediaReviewViewer .mediaReviewComment .message > :first-child,
+.mediaReviewViewer .mediaReviewComment [data-avatar-shape] {
   width: 1.5rem;
   height: 1.5rem;
   min-width: 1.5rem;
@@ -2155,15 +2203,16 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   font-size: var(--text-caption);
 }
 @container media-review (max-width: 51.25rem) {
-  .mediaReviewViewer[data-color-mode="dark"] {
+  .mediaReviewViewer {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(10rem, 1fr) minmax(18rem, min(44vh, 22rem));
     overflow-y: auto;
   }
-  .mediaReviewViewer[data-color-mode="dark"][data-comments-hidden] {
+  .mediaReviewViewer[data-comments-hidden] {
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(10rem, 1fr) minmax(0, 0px);
   }
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+  .mediaReviewViewer .mediaReviewConversation {
     max-height: none;
   }
   .mediaReviewViewer[data-video] {
@@ -2195,10 +2244,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   flex: 1;
   min-height: 0;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
+.mediaReviewViewer .mediaReviewConversationContent {
   width: 24rem;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+.mediaReviewViewer .mediaReviewConversation {
   position: relative;
   z-index: 1;
   width: 24rem;
@@ -2227,7 +2276,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   transition: opacity var(--duration-fast) var(--easing-state);
 }
 @container media-review (max-width: 51.25rem) {
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+  .mediaReviewViewer .mediaReviewConversation {
     width: 100%;
     height: clamp(18rem, 44vh, 22rem);
     align-self: end;
@@ -2235,7 +2284,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   .mediaReviewViewer[data-comments-hidden] .mediaReviewConversation {
     transform: translateY(100%);
   }
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
+  .mediaReviewViewer .mediaReviewConversationContent {
     width: 100%;
     height: clamp(18rem, 44vh, 22rem);
     flex: none;
@@ -2280,8 +2329,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mediaPreview[data-video-preview] .mediaExpand button,
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading button {
+  .mediaReviewViewer .mediaReviewHeading button,
+  .mediaPreview[data-video-preview] .mediaExpand button {
     transition: none;
   }
 }

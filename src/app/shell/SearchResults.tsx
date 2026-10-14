@@ -33,6 +33,7 @@ import {
   normalizeInChannel,
   parseSearchOperators,
 } from "./parseSearchOperators";
+import { avatarMedia } from "../../shared/avatar-source";
 
 function conversationName(
   channel: ChannelSummary,
@@ -365,9 +366,9 @@ export function SearchResults({
               detail: pubkey.slice(0, 12),
               icon: ChatCircleIcon,
               avatar: {
-                src: session.media(
-                  profile.picture ?? agent?.avatar ?? "",
-                  "small",
+                src: avatarMedia(
+                  profile.picture ?? agent?.avatar,
+                  session.media,
                 ),
                 shape: isAgent ? ("squircle" as const) : ("circle" as const),
               },

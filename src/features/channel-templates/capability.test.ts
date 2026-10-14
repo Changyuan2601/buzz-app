@@ -792,3 +792,34 @@ it("keeps private catalog refresh and saves independent of native bindings", asy
     ),
   ).resolves.toBeTypeOf("string");
 });
+
+it("keeps a loaded catalog ready while it refreshes in the background", async () => {
+  const f = fixture();
+  const id = await f.capability.save(record.value, undefined);
+  const statuses: string[] = [];
+  f.capability.subscribe(() => statuses.push(f.capability.snapshot().status));
+  let reached!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = f.reader.read;
+  vi.mocked(read).mockImplementationOnce(async (...args) => {
+    reached();
+    await gate;
+    return read(...args);
+  });
+  const refreshing = f.capability.refresh();
+  try {
+    await entered;
+    expect(f.capability.snapshot()).toMatchObject({ status: "ready" });
+    expect(f.capability.snapshot().entries[0]?.eventId).toBe(id);
+  } finally {
+    release();
+  }
+  await refreshing;
+  expect(statuses).toEqual(["ready"]);
+});

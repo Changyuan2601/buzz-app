@@ -39,6 +39,7 @@ import { parseMediaTimeReply } from "./media-timecode";
 import { VideoReviewReactions } from "./VideoReviewReactions";
 import styles from "./Messages.module.css";
 import { MediaReviewFrame } from "./MediaReviewFrame";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type MediaReviewViewerProps = {
   attachment: Attachment;
@@ -244,10 +245,9 @@ function ReviewShell({
             label: parsed.label,
             text: parsed.content,
             author: row.workflowOwnerId ? workflowLabel(name) : name,
-            picture:
-              !row.workflowOwnerId && profile?.picture
-                ? session.media(profile.picture)
-                : undefined,
+            picture: row.workflowOwnerId
+              ? undefined
+              : avatarMedia(profile?.picture, session.media),
           },
         ];
       })

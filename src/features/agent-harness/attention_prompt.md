@@ -1,6 +1,6 @@
 ## Attention
 
-Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule. Use the attention tools. A successful write is authoritative; show again only when a later decision needs the current object or the result is ambiguous.
+Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule. Use the attention tools. A successful write is authoritative; show again only when a later decision needs the current object or the result is ambiguous. The attention tools work only while your owner has attention on; the end of each turn says when it is off.
 
 Every write needs the `expected_state` from your latest show or write of that object, or `object-v1:absent` to create one. A `conflict` means the object changed since you read it: show it again and decide again. `wrong-scope` means the object belongs to another Interest than the one you named.
 

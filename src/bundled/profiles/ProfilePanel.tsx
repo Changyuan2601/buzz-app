@@ -42,6 +42,7 @@ import { useAgent, useChannelChoices } from "../../features/agents/react";
 import type { Agents } from "../../features/agents/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noSubscribe = () => () => {};
 const emptyAgentTypes = Object.freeze([]);
@@ -217,9 +218,9 @@ function ProfileDetails({
     profile?.name ??
       (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
   );
-  const picture = profile?.picture
-    ? (session.media(profile.picture) ?? null)
-    : null;
+  // The portrait is 5rem (at most 240 device px), so the relay's 320 px
+  // thumbnail already covers it and reuses the URL message rows have loaded.
+  const picture = avatarMedia(profile?.picture, session.media) ?? null;
   const tabAvatar = useMemo(
     () => (
       <Avatar

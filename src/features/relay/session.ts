@@ -1304,6 +1304,21 @@ export function createRelaySession(
             )
         : undefined;
     })(),
+    false,
+    (() => {
+      const write = transport?.writeSidebarSectionOrder;
+      return write
+        ? (sectionIds, signal) =>
+            write(
+              sectionIds,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
   );
   let meHead: string | undefined;
   const stopMeGroups = channelKit.capability.subscribe(() => {

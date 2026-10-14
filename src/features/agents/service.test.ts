@@ -21,6 +21,7 @@ import {
   teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
+import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
@@ -304,6 +305,7 @@ async function setup({
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   timeoutMs = 60_000,
+  runOnce = undefined as AgentType<Config>["runOnce"],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -385,6 +387,7 @@ async function setup({
       ],
     }),
     run,
+    ...(runOnce ? { runOnce } : {}),
   };
   plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -1620,6 +1623,103 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
   expect(Object.keys(stored().timers)).toEqual(["watch/stale"]);
+});
+
+it("runs a type's wakes as standalone turns, one at a time per Interest, and drops waiting ones when attention goes off", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const releases: (() => void)[] = [];
+  const turns: { key: string; prompt?: string | undefined }[] = [];
+  const { service, run } = await setup({
+    runOnce: async (turn) => {
+      const entry: (typeof turns)[number] = { key: turn.key };
+      turns.push(entry);
+      entry.prompt = await turn.prompt();
+      await new Promise<void>((resolve) => releases.push(resolve));
+      return { ok: true };
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (prompt: string) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt,
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "watch/first": timer("one"),
+      "watch/second": timer("two"),
+      "watch/third": timer("three"),
+    },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  // The host owns the lane: one turn runs for the Interest, the other waits,
+  // and `run` (mentions only) is never asked.
+  await vi.waitFor(() => expect(turns[0]?.prompt).toBeDefined());
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(turns).toHaveLength(1);
+  expect(turns[0]?.key).toMatch(/^timer\/\w+$/);
+  expect(turns[0]?.prompt).toContain("Timer: ");
+  expect(turns[0]?.prompt).toContain("Be brief.");
+  expect(run).not.toHaveBeenCalled();
+  // Its end frees the lane for the next.
+  releases[0]?.();
+  await vi.waitFor(() => expect(turns[1]?.prompt).toBeDefined());
+  expect(turns).toHaveLength(2);
+  // Turned off, the waiting turn is dropped; the running one finishes.
+  await service.save(bot, { attentionEnabled: false });
+  releases[1]?.();
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(turns).toHaveLength(2);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("aborts a standalone turn's signal at its deadline, counted from when it starts", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const reasons: unknown[] = [];
+  let started: number | undefined;
+  const { service } = await setup({
+    // A harness still waiting for readiness when the deadline passes.
+    runOnce: (turn) =>
+      new Promise((resolve) => {
+        started = Date.now();
+        turn.signal.addEventListener("abort", () => {
+          reasons.push(turn.signal.reason);
+          resolve({ ok: false, error: String(turn.signal.reason) });
+        });
+      }),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/held": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "one",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 1_000,
+        max_occurrences: 1,
+        expires_at: null,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  if (started === undefined) throw new Error("Expected the turn to start");
+  await vi.advanceTimersByTimeAsync(
+    started + STANDALONE_DEADLINE_MS - 1_000 - Date.now(),
+  );
+  expect(reasons).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(reasons).toHaveLength(1);
+  expect(String(reasons[0])).toContain("deadline");
 });
 
 it("keeps at most one occurrence of a timer waiting, and never runs one removed meanwhile", async () => {

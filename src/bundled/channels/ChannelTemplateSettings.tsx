@@ -92,7 +92,11 @@ export function ChannelTemplateSettings({
 const noAgents: readonly never[] = Object.freeze([]);
 
 function AgentLabel({ agent }: { agent: Agent }) {
-  const src = useAvatarPreview(agent.picture ?? "", agent.relay || undefined);
+  const src = useAvatarPreview(
+    agent.picture ?? "",
+    agent.relay || undefined,
+    "small",
+  );
   return (
     <span className={styles.agentLabel}>
       <Avatar

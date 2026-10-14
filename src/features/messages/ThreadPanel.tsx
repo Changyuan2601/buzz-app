@@ -1096,7 +1096,6 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
-  const firstReply = tree.children.get(undefined)?.[0];
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
@@ -1105,7 +1104,9 @@ function ThreadMessages({
       const nextRow = siblings[index + 1];
       const children = tree.children.get(row.id);
       const continuation =
-        previousParent === parent && continuesMessageGroup(previousReply, row);
+        previousReply !== snapshot.root &&
+        previousParent === parent &&
+        continuesMessageGroup(previousReply, row);
       const day =
         !previousReply ||
         new Date(previousReply.createdAt * 1000).toDateString() !==
@@ -1234,6 +1235,12 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
+  // Match the channel's relay summary total. Without a positive total,
+  // stay neutral: visible rows and reader state cannot prove empty history.
+  const replyCount = snapshot.root?.replyCount ?? 0;
+  const replyLabel = replyCount
+    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
+    : "Replies";
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -1352,16 +1359,13 @@ function ThreadMessages({
               scope={scope}
               onReply={focusReply}
               row={snapshot.root}
-              stackNext={
-                !!firstReply && continuesMessageGroup(snapshot.root, firstReply)
-              }
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
               media={session.media}
               onOpenLink={onOpenLink}
               canOpenLink={canOpenLink}
-              day={true}
+              day={false}
               layout="thread"
               retry={session.messages.retry}
               mediaMode="thread"
@@ -1378,6 +1382,11 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
+          {snapshot.root && snapshot.replies.length > 0 && (
+            <div className={styles.replyDivider}>
+              <span>{replyLabel}</span>
+            </div>
+          )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>

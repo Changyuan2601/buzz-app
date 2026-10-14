@@ -14,6 +14,8 @@ import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
 import { localSessions } from "./sessions";
+import { Lanes } from "../../features/agent-harness/lanes";
+import { wake } from "../../features/agent-harness/wakes";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -153,12 +155,13 @@ function setup(
       if (trigger.interest)
         objects.set(`interest/${value.interest_id}`, trigger.interest);
     }
-    return runtime.run({
+    const signal = options.signal ?? new AbortController().signal;
+    const delivery = {
       trigger,
       channelId: channel,
       agent,
       config: DEFAULT_CONFIG,
-      signal: options.signal ?? new AbortController().signal,
+      signal,
       workingUntil,
       // The host's answer, as it is when asked.
       current: () =>
@@ -166,8 +169,23 @@ function setup(
         (attention.on &&
           objects.get(trigger.slug)?.enabled === true &&
           !stale.has(trigger.slug)),
-    } as unknown as Delivery);
+    } as unknown as Delivery;
+    if (trigger.type === "mention") return runtime.run(delivery);
+    // A watch or timer, as the agent runner hands it over: a standalone turn
+    // in its Interest's lane.
+    workingUntil(
+      wake(
+        lanes,
+        agent as unknown as Delivery["agent"],
+        trigger,
+        delivery.current,
+        (key, prompt) => runtime.runOnce({ delivery, key, signal, prompt }),
+        "Claude",
+      ),
+    );
   };
+  // The runner's lanes for this agent.
+  const lanes = new Lanes();
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
   return {
@@ -183,6 +201,7 @@ function setup(
     agent,
     workingUntil,
     attention,
+    lanes,
     objects,
     stale,
     session,
@@ -1052,7 +1071,7 @@ it("skips a waiting turn whose watch was disabled or removed, or whose agent's a
 });
 
 it("counts a wake as working until it ends or is dropped", async () => {
-  const { runtime, deliver, claudes, workingUntil } = setup([], { hold: true });
+  const { deliver, claudes, workingUntil, lanes } = setup([], { hold: true });
   await deliver(timer("first", "ops"));
   await deliver(timer("second", "ops"));
   await flush(10);
@@ -1065,10 +1084,9 @@ it("counts a wake as working until it ends or is dropped", async () => {
   });
   await flush(5);
   expect([first?.settled, second?.settled]).toEqual([false, false]);
-  // Turned off: the waiting turn is dropped; the running one still works.
-  runtime.sync([
-    { pubkey: self, config: DEFAULT_CONFIG, attentionEnabled: false } as Agent,
-  ]);
+  // Turned off, the runner clears the lanes: the waiting turn is dropped;
+  // the running one still works.
+  lanes.clear();
   await flush(5);
   expect([first?.settled, second?.settled]).toEqual([false, true]);
   claudes()
@@ -1133,7 +1151,7 @@ it("gives up a one-off turn that runs past its deadline", async () => {
   }
 });
 
-it("offers attention tools and guidance only while attention is on", async () => {
+it("always offers attention tools and guidance, and says in each turn whether attention is on", async () => {
   const { runtime, claudes, deliver, attention } = setup();
   const agent = {
     pubkey: self,
@@ -1166,19 +1184,26 @@ it("offers attention tools and guidance only while attention is on", async () =>
   const on = asked("6");
   expect(await names(on, 1)).toContain("watch_add");
   expect(systemPromptOf(on)).toContain("## Attention");
-  expect(on?.prompts[0]).toContain("<attention>");
+  expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
+  // Turned off, the session keeps its tools and prompt: nothing restarts.
+  attention.on = false;
   runtime.sync([{ ...agent, attentionEnabled: false } as Agent]);
   await flush(10);
-  expect(on?.killed).toBe(true);
-  // Nor does a mention turn get the attention review.
-  attention.on = false;
+  expect(on?.killed).toBe(false);
   await mention("7");
   await flush(10);
   const off = asked("7");
-  expect(await names(off, 2)).not.toContain("watch_add");
-  expect(await names(off, 3)).toContain("send");
-  expect(systemPromptOf(off)).not.toContain("## Attention");
-  expect(off?.prompts[0]).not.toContain("<attention>");
+  expect(await names(off, 2)).toContain("watch_add");
+  expect(systemPromptOf(off)).toContain("## Attention");
+  // Only the turn says that attention is off, and the tools refuse.
+  expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
+  expect(off?.prompts[0]).not.toContain("Handle the work");
+  const refused = (await mcp(off, 3, "tools/call", {
+    name: "interest_list",
+    arguments: {},
+  })) as { isError?: boolean; content: { text: string }[] } | undefined;
+  expect(refused?.isError).toBe(true);
+  expect(refused?.content[0]?.text).toMatch(/^Attention is off/);
 });
 
 it("keeps one spare for all its agents, and none once they are gone", async () => {

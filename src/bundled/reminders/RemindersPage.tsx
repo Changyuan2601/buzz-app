@@ -59,6 +59,7 @@ import {
 } from "./model";
 import { scopeOf, useReminders } from "./react";
 import styles from "./Reminders.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type Clock = { subscribe(listener: () => void): () => void; read(): number };
 
@@ -255,9 +256,7 @@ function ReminderSections({
             <Avatar
               alt=""
               fallback={sender}
-              src={
-                profile?.picture ? session.media(profile.picture) : undefined
-              }
+              src={avatarMedia(profile?.picture, session.media)}
               shape={profile?.isAgent ? "squircle" : "circle"}
             />
           ) : (

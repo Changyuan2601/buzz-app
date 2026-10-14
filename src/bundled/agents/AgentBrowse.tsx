@@ -259,7 +259,7 @@ function Sharer({
     void session.profiles.ensure([pubkey]).catch(() => {});
   }, [session, pubkey]);
   const profile = profiles.get(pubkey);
-  const picture = useAvatarPreview(profile?.picture ?? "", community);
+  const picture = useAvatarPreview(profile?.picture ?? "", community, "small");
   const npub = canonicalPublicKey(pubkey) ?? pubkey;
   const name =
     profile && !profile.nameIsFallback

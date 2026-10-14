@@ -476,7 +476,7 @@ it("shares legacy fractional timecodes between timeline markers and sidebar and 
 });
 
 it.each(["image", "video"] as const)(
-  "starts an empty %s review dark with comments closed",
+  "starts an empty %s review with a dark stage and comments closed",
   async (kind) => {
     const { user } = await setupReview({ kind, openComments: false });
     const dialog = await screen.findByRole("dialog");
@@ -485,7 +485,13 @@ it.each(["image", "video"] as const)(
         dialog.querySelector('[aria-label="Reply to thread"]'),
       ).not.toBeNull(),
     );
-    expect(dialog).toHaveAttribute("data-color-mode", "dark");
+    expect(dialog).not.toHaveAttribute("data-color-mode");
+    expect(dialog).not.toHaveClass("dark");
+    expect(dialog.parentElement).not.toHaveClass("dark");
+    expect(dialog.querySelector("[data-review-stage]")).toHaveAttribute(
+      "data-color-mode",
+      "dark",
+    );
     expect(dialog).toHaveAttribute("data-comments-hidden");
     expect(
       screen.queryByRole("complementary", { name: "Media comments" }),

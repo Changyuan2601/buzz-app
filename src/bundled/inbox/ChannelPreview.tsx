@@ -77,6 +77,7 @@ export function ChannelPreview({
         channelId={channelId}
         channelName={channelName}
         messageId={anchor}
+        sessionConversation={channel?.channelType === "session"}
         revealSelected
         onOpenLink={() => false}
       />

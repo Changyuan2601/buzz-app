@@ -1,6 +1,7 @@
 import type { RelaySession } from "../../features/relay/session";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** Decorative, bounded preview from already-loaded identity data. No profile reads. */
 export function TeamMentionAvatars({
@@ -23,11 +24,10 @@ export function TeamMentionAvatars({
           key={person.pubkey}
           alt=""
           fallback={person.name}
-          src={session.media(
+          src={avatarMedia(
             profiles.get(person.pubkey)?.picture ??
-              agents.find((agent) => agent.pubkey === person.pubkey)?.avatar ??
-              "",
-            "small",
+              agents.find((agent) => agent.pubkey === person.pubkey)?.avatar,
+            session.media,
           )}
           size="small"
           shape="squircle"

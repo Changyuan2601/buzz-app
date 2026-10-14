@@ -30,6 +30,7 @@ import styles from "./Channels.module.css";
 import activityStyles from "../../features/agents/ActivityRows.module.css";
 import { AgentActivityRow } from "../../features/agents/AgentActivityRow";
 import { workingAgentDetails } from "./working-agents";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const elapsed = (createdAt: number, now = Date.now()) => {
   const seconds = Math.max(0, Math.floor(now / 1000) - createdAt);
@@ -118,9 +119,7 @@ function ActivityRow({
           ) : (
             <Avatar
               name={name}
-              src={
-                profile?.picture ? session.media(profile.picture) : undefined
-              }
+              src={avatarMedia(profile?.picture, session.media)}
               shape={isAgent ? "squircle" : "circle"}
               className={activityStyles.activityAvatar ?? ""}
             />
@@ -326,11 +325,7 @@ export function ChannelActivityPopover({
                     <AgentActivityRow
                       key={agent}
                       name={name}
-                      picture={
-                        profile?.picture
-                          ? session.media(profile.picture, "small")
-                          : undefined
-                      }
+                      picture={avatarMedia(profile?.picture, session.media)}
                       status={label ?? "Working"}
                       meta={
                         startedAt === undefined
