@@ -1285,26 +1285,37 @@ and OS notifications are not enabled by this feature.
 
 ### Attachment layout and scrolling
 
-Message rows show images as fixed square thumbnails with centered `cover` cropping:
-small images scale up and wide or tall images crop to fill the tile without stretching.
-Inline video previews and their posters also fill their bounded frames with `cover`.
-Image and video thumbnails share smoothed corners and a 1px outer hairline, black at
+Message rows show every image and GIF in a full-frame preview, whether sent alone
+or alongside text. Multiple images form a vertical list in attachment order, with a
+count below the list. GIF URLs need no file extension or MIME metadata for this
+presentation. Pixels use `contain`, so the whole image stays visible without
+stretching or cropping.
+Inline video previews and their posters fill their bounded frames with `cover`.
+Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
-media against a pure-black canvas; thumbnail cropping does not change the original.
-Any click on a thumbnail, modified or not, opens the original in-app from the
-same authenticated media source as the thumbnail: the media review where a
+media against a pure-black canvas. Large emoji retain their artwork size with the
+larger emoji line height on every wrapped line.
+Any click on an image preview, modified or not, opens the original in-app from the
+same authenticated media source as the preview: the media review where a
 surface hosts one, and otherwise a plain fullscreen viewer (Inbox, Sessions,
-drafts and previews). The thumbnail link's own destination is that media source,
+drafts and previews). The preview link's own destination is that media source,
 so a middle click, drag or copied link yields the same authenticated URL.
 
-For non-thumbnail attachment surfaces, the following reserved-layout contract applies.
-Image attachments reserve their preview geometry before loading and across virtualized
-row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
-and 320px tall without enlarging the frame beyond the original dimensions.
-Missing/invalid dimensions use a stable 360:320 frame that shrinks with the available
-width. Images scale proportionally and crop centrally to fill their reserved frame,
-including when their dimensions were initially unknown. Loading,
-failure, or retry does not resize it or force an above-bottom reader to the newest row.
+Image attachments reserve loading geometry from valid `imeta dim` metadata,
+bounded to 360px wide and 320px tall without enlarging the frame beyond the
+original dimensions. Missing/invalid dimensions, including metadata that would
+reserve less than one CSS pixel on either axis, use a 360:320 loading frame.
+After the original decodes, its natural dimensions replace metadata and the
+loading frame. Loaded previews follow the image's aspect ratio with no grey
+backing or letterboxing, bounded to 360px wide and 320px tall. Exceptionally thin
+originals retain at least one CSS pixel on each axis. Decode failure retains the
+loading preview; retargeting retires the old source's pixels and dimensions.
+Virtualized remounts start with loading geometry again. The timeline preserves
+the first visible message or bottom-following intent as frames resize. Resizing
+inside a visible message moves its following content in place.
+Unavailable media keeps the same reserved frame and displays its status within it.
+Exceptionally small frames can clip the visible label while retaining the complete
+accessible status.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
 that same frame when it intersects the viewport. No thumbnail is fetched. The
 preview is removed entirely (including behind transparency) only after the lazy

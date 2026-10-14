@@ -20,6 +20,7 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { SidebarFrame } from "./SidebarFrame";
+import { SidebarList } from "./SidebarList";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuGroup,
@@ -123,7 +124,7 @@ export function ChannelSidebar(props: Props) {
               connection.status === "connecting" ? "required" : undefined
             }
           >
-            <div className={styles.sidebarScroll}>
+            <SidebarList>
               {navigation}
               <p className={styles.empty}>
                 {connection.status === "connecting"
@@ -133,7 +134,7 @@ export function ChannelSidebar(props: Props) {
               {connection.status === "error" && (
                 <Button onClick={props.relay.retry}>Retry channels</Button>
               )}
-            </div>
+            </SidebarList>
           </SidebarFrame>
         </div>
       )}
@@ -170,13 +171,13 @@ class SidebarBoundary extends Component<
     return this.state.failed ? (
       <div className="shell-sidebar-default">
         <SidebarFrame label="Channel sidebar">
-          <div className={styles.sidebarScroll}>
+          <SidebarList>
             {this.props.fallback}
             <p role="alert">Channels couldn’t open.</p>
             <Button onClick={() => this.setState({ failed: false })}>
               Retry channels
             </Button>
-          </div>
+          </SidebarList>
         </SidebarFrame>
       </div>
     ) : (

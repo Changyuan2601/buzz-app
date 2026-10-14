@@ -163,7 +163,7 @@
   min-height: var(--size-emoji-line);
   margin-top: var(--space-1);
   font-size: var(--size-emoji-display);
-  line-height: var(--size-emoji-display);
+  line-height: var(--size-emoji-line);
 }
 .text a:not([data-link-renderer]) {
   color: inherit;
@@ -398,8 +398,11 @@
   display: block;
   width: 360px;
   max-width: 100%;
+  min-width: 1px;
+  min-height: 1px;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
+  scroll-margin-block: var(--space-1);
   border-radius: var(--media-preview-radius);
 }
 /* Clip the pixels, not the focusable link's outside keyboard outline. */
@@ -417,6 +420,9 @@
   clip-path: var(--media-corner-clip, none);
   background: var(--surface-inset);
 }
+.attachmentImage[data-image-ready] .attachmentImagePixels {
+  background: transparent;
+}
 .attachmentImage.mediaPlaceholder {
   border-radius: var(--media-preview-radius);
   background: var(--surface-inset);
@@ -430,27 +436,26 @@
   height: 100%;
 }
 .attachmentImage img {
-  object-fit: cover;
+  object-fit: contain;
 }
-/* Fixed tiles keep lazy loading from moving the reading position. */
+.attachmentImageUnavailable {
+  @apply text-caption;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  cursor: auto;
+  color: var(--text-subtle);
+}
 .imageGroup {
   min-width: 0;
   margin-top: var(--space-2);
 }
-.imageStrip {
+.imageList {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-2);
-  overflow-x: auto;
   padding: var(--space-1);
-  scroll-padding-inline: var(--space-1);
-  scrollbar-width: thin;
-}
-.attachmentImage[data-thumbnail],
-.imageUnavailable {
-  flex: 0 0 auto;
-  width: calc(var(--space-16) + var(--space-2));
-  aspect-ratio: 1;
-  margin: 0;
 }
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
   outline: 2px solid var(--border-focus);
@@ -460,15 +465,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   @apply text-caption;
   color: var(--text-subtle);
   margin-top: var(--space-1);
-}
-.imageUnavailable {
-  @apply text-caption;
-  display: grid;
-  place-items: center;
-  padding: var(--space-1);
-  border-radius: var(--radius-row);
-  background: var(--affordance-subtle-hover);
-  color: var(--text-subtle);
 }
 /* Optional plugin accessories use only the space they actually render. */
 .composerContext {
@@ -669,15 +665,48 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
-/* Measure loaded rows without painting a scroll position we will replace. */
+/* Measure loaded rows without painting a scroll position we will replace,
+   then fade them in once positioned. */
+.threadHistory > [data-thread-rows] {
+  transition: opacity var(--duration-state) var(--easing-state);
+}
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-.threadHistory[data-positioning] > [role="status"] {
+/* Fills whichever thread area is waiting. The mark waits one state change
+   before appearing, so a thread that loads at once never flashes it. */
+.threadLoading {
+  container-type: size;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  animation: thread-loading-in var(--duration-state) var(--easing-enter)
+    var(--duration-state) both;
+}
+.threadHistory > .threadLoading {
   position: absolute;
-  inset-block-start: var(--space-4);
-  inset-inline: var(--space-panel-inset);
-  color: var(--text-subtle);
+  inset: 0;
+}
+/* The mark scales with the waiting area: a side pane and a full main pane
+   both read it as the thread's placeholder, not a stray icon. */
+.threadLoading picture {
+  display: block;
+  width: clamp(5rem, 24cqmin, 10rem);
+  line-height: 0;
+}
+.threadLoading img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+:root[data-color-mode="dark"] .threadLoading picture {
+  filter: invert(1);
+}
+@keyframes thread-loading-in {
+  from {
+    opacity: 0;
+  }
 }
 .threadHistoryPageStatus {
   padding: var(--space-2);

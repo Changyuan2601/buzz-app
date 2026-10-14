@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// What a plugin agent may publish: a deletion (5), a reaction (7), a message
-/// (9), an edit of its own message (40003), a
+/// (9), typing (20002), an edit of its own message (40003), a
 /// custom emoji set (30030), channel canvas (40100) or a request to open a DM (41010). Its profile (0)
 /// is the app's, and its memory (30174) is written by `memory`.
-const KINDS: [u16; 7] = [5, 7, 9, 30030, 40003, 40100, 41010];
+const KINDS: [u16; 8] = [5, 7, 9, 20002, 30030, 40003, 40100, 41010];
 
 /// One saved identity. The key itself stays in the OS credential store.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

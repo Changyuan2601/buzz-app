@@ -106,8 +106,8 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-// STOPGAP(agent-local-typing): delete with local-typing.ts.
-import { typeLocally } from "./local-typing";
+import { meChat } from "./me-chat";
+import { type Pulses, pulseTyping } from "./typing";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -550,6 +550,10 @@ const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
+/** How often agents are said to be online; the relay keeps it 180 seconds. */
+const PRESENCE_MS = 60_000;
+/** The most agents one presence event names. */
+const PRESENCE_BATCH = 256;
 const EMPTY = Object.freeze({});
 const blank = (pubkey: string): AgentRecord => ({
   pubkey,
@@ -799,6 +803,8 @@ type Runner = {
   readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
+  /** Its typing pulses, one per conversation it is working in. */
+  readonly typing: Pulses;
   /** A provider/config transition owns the idle runner and pauses its queue. */
   transitioning: boolean;
   /** Whether native may hold the agent for this copy; true at first, since
@@ -807,6 +813,9 @@ type Runner = {
   activityClaimed?: boolean;
   /** Advances each time attention is seen off, which voids queued watch work. */
   epoch: number;
+  /** Whether a claim has been answered, so `mayHold` is known rather than
+   * assumed. */
+  asked?: boolean;
   compiled?: {
     attention: Agent["attention"];
     watches: readonly CompiledWatch[];
@@ -848,6 +857,19 @@ export class AgentsService extends Service implements Agents {
   private busy = new Set<string>();
   /** Hosted and elsewhere agents as last shown, kept while unchanged. */
   private shown = new Map<string, Agent>();
+  /** By origin: the agents last said to be online there, and when. */
+  private presence = new Map<
+    string,
+    {
+      session: RelaySession;
+      online: ReadonlySet<string>;
+      at: number;
+      /** The session cannot send presence, so it is not tried again. */
+      unable?: boolean;
+    }
+  >();
+  /** Origins whose presence is being sent. */
+  private announcing = new Set<string>();
 
   constructor(
     ctx: Context,
@@ -889,6 +911,7 @@ export class AgentsService extends Service implements Agents {
       const tick = setInterval(() => {
         for (const runner of this.runners.values()) void this.drain(runner);
         this.reconnect();
+        this.announce();
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -898,6 +921,7 @@ export class AgentsService extends Service implements Agents {
         for (const origin of [...this.bound.keys()]) this.unbind(origin);
         for (const runner of this.runners.values()) this.retire(runner);
         this.runners.clear();
+        this.presence.clear();
         // Clear what is shown without reconciling, which would make new runners.
         this.state = Object.freeze({
           ...this.state,
@@ -2106,6 +2130,90 @@ export class AgentsService extends Service implements Agents {
       )
         void this.drain(runner);
     this.connected = ready;
+    this.announce();
+  }
+
+  /** Tells each community which agents this copy runs there: online every
+   * minute while it does, and offline once it stops, unless another copy took
+   * over. Offline is best effort; the relay lets a lapsed online expire. */
+  private announce() {
+    const online = new Map<string, Set<string>>();
+    for (const agent of this.state.running) {
+      const origin = originOf(agent.relay);
+      if (origin && this.bindingOf(agent) && this.runs(agent.pubkey))
+        online.set(origin, (online.get(origin) ?? new Set()).add(agent.pubkey));
+    }
+    for (const origin of this.presence.keys())
+      if (!this.bound.has(origin)) this.presence.delete(origin);
+    const now = Date.now();
+    for (const [origin, entry] of this.bound) {
+      const binding = entry.binding;
+      if (!binding || this.announcing.has(origin)) continue;
+      const next = online.get(origin) ?? new Set<string>();
+      const prior = this.presence.get(origin);
+      const same = prior?.session === binding.session;
+      if (same && prior.unable) continue;
+      // Another copy that took an agent over says it is online; offline from
+      // this one could arrive after that, so forget it was online here.
+      const was = new Set(
+        [...(prior?.online ?? [])].filter(
+          (pubkey) => next.has(pubkey) || !this.yielded(pubkey),
+        ),
+      );
+      if (prior && was.size < prior.online.size)
+        this.presence.set(origin, { ...prior, online: was });
+      const gone = [...was].filter((pubkey) => !next.has(pubkey));
+      const due = !same || now - prior.at >= PRESENCE_MS;
+      const changed =
+        gone.length > 0 || [...next].some((pubkey) => !was.has(pubkey));
+      if (!changed && (!due || !next.size)) continue;
+      this.announcing.add(origin);
+      const sent = { session: binding.session, online: next, at: now };
+      this.presence.set(origin, sent);
+      void (async () => {
+        for (const [status, agents] of [
+          ["offline", gone],
+          ["online", [...next]],
+        ] as const)
+          for (let at = 0; at < agents.length; at += PRESENCE_BATCH)
+            if (
+              !(await binding.session.publishAgentPresence(
+                status,
+                agents.slice(at, at + PRESENCE_BATCH),
+                binding.controller.signal,
+              ))
+            )
+              return false;
+        return true;
+      })()
+        .then((ok) => {
+          if (ok || this.presence.get(origin) !== sent) return;
+          console.warn("Agent presence cannot be sent on this connection");
+          this.presence.set(origin, { ...sent, unable: true });
+        })
+        .catch((error) => {
+          if (binding.controller.signal.aborted) return;
+          console.warn("Agent presence was not sent", error);
+          // Try again sooner than the minute, but not every tick.
+          if (this.presence.get(origin) === sent)
+            this.presence.set(origin, {
+              ...sent,
+              at: Date.now() - PRESENCE_MS + RETRY_MS,
+            });
+        })
+        .finally(() => this.announcing.delete(origin));
+    }
+  }
+  /** Whether this copy runs the agent: its type can run it, and no other
+   * copy of the app holds it. */
+  private runs(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    return !!runner?.type?.run && !!runner.asked && runner.mayHold;
+  }
+  /** Whether another copy of the app runs an agent this one could. */
+  private yielded(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    return !!runner?.type?.run && !runner.mayHold && !!this.ready(pubkey);
   }
   private notify() {
     for (const listener of this.listeners) listener();
@@ -2126,6 +2234,7 @@ export class AgentsService extends Service implements Agents {
       seen: new Set(),
       wrote: new Set(),
       working: 0,
+      typing: new Map(),
       transitioning: false,
       mayHold: true,
       epoch: 0,
@@ -2444,7 +2553,7 @@ export class AgentsService extends Service implements Agents {
           this.require().remember(agent.pubkey, slug, body, after),
         attention: this.attention(agent.pubkey),
       });
-      const working = this.working(runner, job);
+      const working = this.working(runner, job, agent.owner);
       const completion = Promise.resolve().then(async () => {
         const pick = await pickFor(job.trigger, agent, type);
         const team = teamPrompt(
@@ -2497,28 +2606,36 @@ export class AgentsService extends Service implements Agents {
 
   /** Counts a run as working until it and everything it handed to
    * `workingUntil` have settled, however long that takes. A
-   * mention run is shown typing on this device meanwhile; no public
-   * activity is published. */
-  private working(runner: Runner, { trigger, channelId, work }: Job) {
+   * mention run is shown typing in its thread meanwhile, from its first
+   * `workingUntil`: a runtime that ignores the mention never shows it. Its
+   * activity stays on this device. */
+  private working(
+    runner: Runner,
+    { trigger, channelId, work }: Job,
+    owner: string,
+  ) {
     work?.started();
     const event = trigger.type === "mention" ? trigger.event : undefined;
     const channel =
       event && (channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1]);
-    const done =
-      event && channel
-        ? [
-            // STOPGAP(agent-local-typing): delete with local-typing.ts.
-            typeLocally(
-              () => {
-                const relay = this.relay(runner.pubkey)?.snapshot();
-                return relay?.status === "ready" ? relay.session : undefined;
-              },
-              runner.pubkey,
-              event,
-              channel,
-            ),
-          ]
-        : [];
+    let typing: (() => void) | undefined;
+    const beginTyping = () => {
+      if (typing || !event || !channel) return;
+      typing = pulseTyping(
+        // Straight to native, so pulses stay out of what it wrote.
+        async (pulse) => this.require().publish(runner.pubkey, pulse),
+        // Where its turn answers, read the same way.
+        meChat(
+          () => this.relay(runner.pubkey),
+          owner,
+          channel,
+          runner.controller.signal,
+        ),
+        event,
+        channel,
+        runner.typing,
+      );
+    };
     let holds = 1;
     let outcome: WorkOutcome = { ok: true };
     const lifetime = runner.controller.signal;
@@ -2528,7 +2645,7 @@ export class AgentsService extends Service implements Agents {
       holds = -1;
       lifetime.removeEventListener("abort", abort);
       runner.working--;
-      for (const end of done) end();
+      typing?.();
     };
     const abort = () => {
       work?.remove();
@@ -2560,6 +2677,7 @@ export class AgentsService extends Service implements Agents {
       hold(pending: PromiseLike<unknown>) {
         if (holds <= 0) return;
         holds++;
+        beginTyping();
         Promise.resolve(pending).then(release, (error) =>
           release({ ok: false, error: message(error) }),
         );
@@ -2571,9 +2689,11 @@ export class AgentsService extends Service implements Agents {
   private async claim(runner: Runner) {
     try {
       runner.mayHold = (await this.native?.claim(runner.pubkey)) ?? false;
+      runner.asked = true;
       return runner.mayHold;
     } catch (error) {
       runner.mayHold = true;
+      runner.asked = true;
       // Answering twice beats not answering at all.
       console.warn(
         `Agent ${this.agent(runner.pubkey)?.name} was not claimed`,

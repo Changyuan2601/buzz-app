@@ -413,6 +413,15 @@ historical activity remain accessible from the activity panel rather
 than lingering above the composer. Compact status labels omit raw arguments and
 full paths; the transcript retains the detail.
 
+While an agent this app runs works on a mention, the app publishes kind-20002
+typing signed by the agent every three seconds through its HTTP event route, in
+the mention's thread (in the channel itself for a chat in the owner's Me), so
+the owner's other devices and everyone else in the channel see it working. It
+waits for the same Me-chat read as the turn, and shows nothing if the turn
+cannot tell where to answer. It stops with the turn, after three refused pulses
+in a row, or after 30 minutes; clients drop it when the agent replies or eight
+seconds after the last pulse. On the device running the agent, activity replaces that typing.
+
 Thread indicators consume the existing kind-20002 typing signal with the resolved
 NIP-10 root, not inferred observer turn IDs. The existing per-channel live route
 carries it; typing bypasses ordinary history, unread and persistent caches.
