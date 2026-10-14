@@ -31,13 +31,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     sharedProviderEnv(config.provider, config.model, Boolean(shared)),
   );
   const spawn = host.spawn?.bind(host);
-  const {
-    Create,
-    CreateModelMenu,
-    createModelLabel,
-    SettingsTab,
-    ActivityTab,
-  } = createTabs({
+  const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
     setup: new GooseSetup(spawn, shared),
     runtime,
     history: new GooseHistory(spawn),
@@ -64,8 +58,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
-    CreateModelMenu,
-    createModelLabel,
+    CreateModel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

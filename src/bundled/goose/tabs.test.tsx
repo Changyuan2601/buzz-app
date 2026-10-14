@@ -16,11 +16,6 @@ import {
 } from "../../features/providers/shared";
 import type { Agent } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
-import {
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
 import { fakeSpawn } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
@@ -89,11 +84,10 @@ function created(
     saved,
     reply: options.reply ?? "OK",
   });
-  const { Create, CreateModelMenu } = createTabs({
+  const { Create, CreateModel } = createTabs({
     setup: options.spawn?.(fake) ?? new GooseSetup(fake.spawn),
     ...unused,
   });
-  if (!CreateModelMenu) throw new Error("no model menu");
   const changes: Config[] = [];
   function Harness() {
     const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
@@ -104,17 +98,7 @@ function created(
     return (
       <>
         <Create config={config} disabled={false} onChange={onChange} />
-        <MenuRoot>
-          <MenuTrigger render={<Button>Goose</Button>} />
-          <MenuPopup>
-            <CreateModelMenu
-              config={config}
-              disabled={false}
-              onChange={onChange}
-              requestCustomModel={() => {}}
-            />
-          </MenuPopup>
-        </MenuRoot>
+        <CreateModel config={config} disabled={false} onChange={onChange} />
       </>
     );
   }
@@ -128,27 +112,23 @@ async function choose(label: string, option: string) {
   await user.click(await screen.findByRole("option", { name: option }));
 }
 
-/** Opens the provider dialog from the type menu. */
+/** Opens the provider dialog from the Model field. */
 async function openChoices() {
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Goose" }));
-  await user.click(
-    await screen.findByRole("menuitem", {
-      name: /Choose provider and model/,
-    }),
-  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Provider…" }));
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
-it("keeps New agent's card to instructions; goose's default leads the menu", async () => {
+it("starts New agent's Model field on goose's default, with the provider kept to its dialog", async () => {
   created();
   expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
-  await userEvent.setup().click(screen.getByRole("button", { name: "Goose" }));
-  expect(
-    await screen.findByRole("menuitemradio", {
-      name: /goose default \(Databricks · goose-claude\)/,
-    }),
-  ).toHaveAttribute("aria-checked", "true");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "goose default (Databricks · goose-claude)",
+    ),
+  );
+  expect(screen.getByLabelText("Describe what I should do")).toBeVisible();
 });
 
 it("chooses a provider in its dialog, saves its key into goose, and tests it", async () => {
@@ -191,7 +171,7 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
     GOOSE_MODEL: "claude-opus-5-5",
   });
   // Nothing reaches the agent until the choice is used.
-  expect(changes.at(-1)).toMatchObject({ provider: "", model: "" });
+  expect(changes).toEqual([]);
   await user.click(within(dialog).getByRole("button", { name: "Use" }));
   expect(changes.at(-1)).toMatchObject({
     provider: "anthropic",
@@ -200,12 +180,11 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
-  await user.click(screen.getByRole("button", { name: "Goose" }));
-  expect(
-    await screen.findByRole("menuitemradio", {
-      name: /Anthropic · claude-opus-5-5/,
-    }),
-  ).toHaveAttribute("aria-checked", "true");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Claude Opus 5.5",
+    ),
+  );
 });
 
 it("shows what the provider said when the test fails", async () => {

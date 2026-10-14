@@ -12,22 +12,15 @@ import {
   useOpenedSession,
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
+import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import type {
-  AgentCreateModelMenuProps,
   AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
-import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
-import {
-  MenuItem,
-  MenuRadioGroup,
-  MenuRadioItem,
-} from "../../shared/design-system/ui/Menu";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
@@ -105,14 +98,6 @@ type Row = Readonly<{
   at?: number;
 }>;
 const RECENT_LIMIT = 30;
-/** `Anthropic · claude-opus-5-5`, or undefined for goose's own default. */
-const choiceLabel = (
-  { provider, model }: Choice,
-  named: (id: string) => string | undefined = (id) => id,
-) =>
-  [provider && named(provider), model || (provider && "default model")]
-    .filter(Boolean)
-    .join(" · ") || undefined;
 const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
   return { channelId, ...(root ? { root } : {}) };
@@ -604,47 +589,16 @@ export function createTabs({
     );
   }
 
-  /** The provider, model and instructions a new agent starts with. */
-  /** Whether New agent's provider dialog is open. The footer menu opens it
-   * and closes before it shows, so Create, which stays, renders it. */
-  const choosing = {
-    open: false,
-    listeners: new Set<() => void>(),
-    set(open: boolean) {
-      choosing.open = open;
-      for (const listener of choosing.listeners) listener();
-    },
-    subscribe(listener: () => void) {
-      choosing.listeners.add(listener);
-      return () => {
-        choosing.listeners.delete(listener);
-      };
-    },
-  };
-
-  /** The instructions a new agent starts with, and the provider dialog its
-   * footer menu opens. */
+  /** The instructions a new agent starts with. */
   function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
     const current = readConfig(config);
-    const open = useSyncExternalStore(choosing.subscribe, () => choosing.open);
     return (
-      <>
-        <AgentInstructions
-          value={current.instructions}
-          disabled={disabled}
-          onChange={(instructions) => onChange({ ...current, instructions })}
-        />
-        {open && (
-          <ChooseDialog
-            value={current}
-            onClose={() => choosing.set(false)}
-            onChange={(choice) => {
-              onChange({ ...current, ...choice });
-              choosing.set(false);
-            }}
-          />
-        )}
-      </>
+      <AgentInstructions
+        creation
+        value={current.instructions}
+        disabled={disabled}
+        onChange={(instructions) => onChange({ ...current, instructions })}
+      />
     );
   }
 
@@ -691,71 +645,85 @@ export function createTabs({
     );
   }
 
-  /** goose's own default and the agent's choice, in New agent's type menu. */
-  function CreateModelMenu({
+  /** The agent's model in New agent and on its library card: its provider's
+   * models, and the provider dialog to set up, test and use another. */
+  function CreateModel({
     config,
     onChange,
-    disabled,
-    active = true,
-  }: AgentCreateModelMenuProps<Config>) {
+    ...props
+  }: AgentCreateProps<Config>) {
     const current = readConfig(config);
-    const [listing] = useRead(() => setup.providers(), "providers");
-    const defaults = listing.value?.defaults;
-    const named = (id: string | undefined) =>
-      listing.value?.providers.find((item) => item.id === id)?.name ?? id;
-    const fallback = [named(defaults?.provider), defaults?.model]
-      .filter(Boolean)
-      .join(" · ");
-    const chosen = current.provider || current.model;
-    const icon = <GooseLogoIcon size={18} aria-hidden="true" />;
+    const [listing, reload] = useRead(() => setup.providers(), "providers");
+    const [choosing, setChoosing] = useState(false);
+    const providers = listing.value;
+    const id = current.provider || providers?.defaults.provider || "";
+    const provider = providers?.providers.find((item) => item.id === id);
+    const [models, retryModels] = useRead(
+      () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
+      `${id}:${provider?.configured ?? false}`,
+    );
+    const named = (key: string | undefined) =>
+      providers?.providers.find((item) => item.id === key)?.name ?? key;
+    const fallback = current.provider
+      ? provider?.defaultModel
+      : [named(providers?.defaults.provider), providers?.defaults.model]
+          .filter(Boolean)
+          .join(" · ");
     return (
       <>
-        <MenuRadioGroup
-          value={active ? (chosen ? "chosen" : "default") : "\0inactive"}
-          onValueChange={(item) => {
-            if (item === "default")
-              onChange({ ...current, provider: "", model: "" });
-            else onChange(current);
-          }}
-        >
-          <MenuRadioItem value="default" disabled={disabled} closeOnClick>
-            <ChoiceRow
-              label={fallback ? `goose default (${fallback})` : "goose default"}
-              description="From ~/.config/goose/config.yaml"
-              leading={icon}
-            />
-          </MenuRadioItem>
-          {chosen && (
-            <MenuRadioItem value="chosen" disabled={disabled} closeOnClick>
-              <ChoiceRow
-                label={choiceLabel(current, named) ?? ""}
-                description="Chosen for this agent"
-                leading={icon}
-              />
-            </MenuRadioItem>
-          )}
-        </MenuRadioGroup>
-        <MenuItem
-          disabled={disabled}
-          closeOnClick
-          onClick={() => {
-            // Choosing goose here also makes it the card's type.
-            onChange(current);
-            choosing.set(true);
-          }}
-        >
-          <ChoiceRow
-            label="Choose provider and model…"
-            description="Set up a provider and its key, and test it"
-            leading={icon}
+        <CreateModelChoices
+          {...props}
+          models={models.value ?? []}
+          value={current.model}
+          // A shared connection has no provider default to fall back on.
+          includeDefault={!provider?.shared}
+          defaultLabel={
+            provider?.shared
+              ? "Choose a model"
+              : current.provider
+                ? fallback
+                  ? `Provider default (${fallback})`
+                  : "Provider default"
+                : fallback
+                  ? `goose default (${fallback})`
+                  : "goose default"
+          }
+          loading={
+            (listing.status === "loading" && !providers) ||
+            models.status === "loading"
+          }
+          {...(listing.status === "error"
+            ? { error: listing.error, retry: reload }
+            : models.status === "error"
+              ? {
+                  error: `Could not list models: ${models.error}`,
+                  retry: retryModels,
+                }
+              : {})}
+          onChange={(model) => onChange({ ...current, model })}
+          action={
+            <Button
+              size="sm"
+              disabled={props.disabled}
+              onClick={() => setChoosing(true)}
+            >
+              Provider…
+            </Button>
+          }
+        />
+        {choosing && (
+          <ChooseDialog
+            value={current}
+            onClose={() => setChoosing(false)}
+            onChange={(choice) => {
+              onChange({ ...current, ...choice });
+              setChoosing(false);
+            }}
           />
-        </MenuItem>
+        )}
       </>
     );
   }
-
-  /** The trigger's detail for a provider or model chosen for this agent. */
-  const createModelLabel = (saved: Config) => choiceLabel(readConfig(saved));
 
   function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
@@ -843,11 +811,5 @@ export function createTabs({
     );
   }
 
-  return {
-    Create,
-    CreateModelMenu,
-    createModelLabel,
-    SettingsTab,
-    ActivityTab,
-  };
+  return { Create, CreateModel, SettingsTab, ActivityTab };
 }
