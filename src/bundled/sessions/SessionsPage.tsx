@@ -17,6 +17,9 @@ import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
+import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -284,6 +287,9 @@ function SessionWork({
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lifecycleAction, setLifecycleAction] =
+    useState<ChannelLifecycleAction>();
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
   const list = useChannelList(session.channels);
@@ -406,15 +412,15 @@ function SessionWork({
             />
             <MenuRoot>
               <MenuTrigger
-                render={(props) => (
+                render={
                   <IconButton
-                    {...props}
+                    ref={menuTrigger}
                     size="toolbar"
                     aria-label="Session actions"
                     title="Session actions"
                     icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
                   />
-                )}
+                }
               />
               <MenuPopup aria-label="Session actions" align="end">
                 <MenuItem
@@ -437,6 +443,15 @@ function SessionWork({
                   </MenuIcon>
                   Session settings…
                 </MenuItem>
+                {!channel.readOnly && !channel.cached && !channel.archived && (
+                  <ChannelLifecycleMenu
+                    channelId={channel.id}
+                    lifecycle={session.channelLifecycle}
+                    disabled={!!lifecycleAction}
+                    separator
+                    choose={setLifecycleAction}
+                  />
+                )}
               </MenuPopup>
             </MenuRoot>
             {!showingPanel && (
@@ -463,6 +478,25 @@ function SessionWork({
               id={channel.id}
               name={channel.name}
               close={() => setRenameOpen(false)}
+            />
+          )}
+          {lifecycleAction && (
+            <ChannelLifecycleDialog
+              channelId={channel.id}
+              channelName={channel.name}
+              action={lifecycleAction}
+              lifecycle={session.channelLifecycle}
+              close={() => {
+                setLifecycleAction(undefined);
+                menuTrigger.current?.focus({ preventScroll: true });
+              }}
+              completed={() => {
+                setLifecycleAction(undefined);
+                // Archive keeps access and the destination; other actions end it.
+                if (lifecycleAction === "archive")
+                  menuTrigger.current?.focus({ preventScroll: true });
+                else void navigator?.open(meTarget(scope));
+              }}
             />
           )}
           {settingsOpen && (

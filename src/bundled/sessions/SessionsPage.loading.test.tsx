@@ -84,8 +84,23 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     rows: [],
   };
   const set = vi.fn(async () => {});
+  const run = vi.fn(async () => {});
   const session = {
     ...owner.session,
+    channelLifecycle: {
+      ...owner.session.channelLifecycle,
+      available: true,
+      load: async () => ({
+        channelId: id,
+        channelType: "stream" as const,
+        canArchive: true,
+        canUnarchive: false,
+        canDelete: true,
+        canLeave: false,
+        canHide: false,
+      }),
+      run,
+    },
     channels: {
       ...owner.session.channels,
       list: () => list,
@@ -151,6 +166,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     mount,
     abort,
     set,
+    run,
     open,
     scope,
     session,
@@ -249,3 +265,32 @@ it("opens an already-moved Me route in Messages without a placement or settings 
   expect(f.set).not.toHaveBeenCalled();
   expect(f.session.channelDetails.load).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["archive", "Archive channel"],
+  ["delete", "Delete channel"],
+] as const)(
+  "runs %s from Session actions and leaves only after access ends",
+  async (action, label) => {
+    const f = fixture();
+    f.mount();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("button", { name: "Session actions" });
+    await user.click(trigger);
+    await user.click(await screen.findByRole("menuitem", { name: label }));
+    const dialog = screen.getByRole("dialog", {
+      name: `${label}: Planning`,
+    });
+    await user.click(within(dialog).getByRole("button", { name: label }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(f.run).toHaveBeenCalledExactlyOnceWith(
+      action,
+      id,
+      expect.any(AbortSignal),
+    );
+    if (action === "archive") {
+      expect(f.open).not.toHaveBeenCalled();
+      expect(trigger).toHaveFocus();
+    } else expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
+  },
+);
