@@ -12,7 +12,11 @@ import type {
 } from "./service";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
-import { hasEventProof, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  type ReadFilter,
+  type RelayEvent,
+} from "../relay/events";
 import { Lanes } from "../agent-harness/lanes";
 import { wake } from "../agent-harness/wakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
@@ -56,13 +60,17 @@ import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord } from "./store";
 import { type Pulses, pulseTyping } from "./typing";
 import {
-  afterPage,
-  nextPage,
+  CATCH_UP_PAGES,
+  delivered,
+  oldestFirst,
+  readWindow,
   streamsOf,
   type Checkpoint,
   type Stream,
 } from "./catch-up";
 
+/** Jobs waiting in each lane: mentions, and watch work (catch-up included),
+ * so watches can never fill the room mentions need, as in Janet. */
 const QUEUE_LIMIT = 32;
 /** The spec asks for at least the agent's 2,048 most recent events. */
 const SEEN_LIMIT = 2_048;
@@ -77,11 +85,18 @@ const BACKLOG_LIMIT = 512;
 /** Channels whose recent ids each agent keeps for replay dedup, the most
  * recently active first. */
 const SEEN_CHANNELS = 128;
-/** Runs per agent per minute; bounds two agents that answer each other. */
+/** Runs per agent per minute in each lane; bounds two agents that answer
+ * each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 /** How long catch-up waits for room in a full queue before it looks again. */
 const CATCH_UP_WAIT_MS = 1_000;
+/** Missed events one catch-up turn reads at most, and their most bytes. */
+const CATCH_UP_BATCH = 16;
+const CATCH_UP_BATCH_BYTES = 256 * 1024;
+/** Live events each watch keeps while it catches up, as Janet stages them. */
+const WAITING_LIMIT = 512;
+const WAITING_BYTES = 4 * 1024 * 1024;
 /** How long a failed catch-up waits before it is tried again. */
 const CATCH_UP_RETRY_MS = 30_000;
 
@@ -101,7 +116,10 @@ async function pickFor(
   agent: Agent,
   type: RegisteredAgentType,
 ): Promise<{ model?: string; effort?: string }> {
-  if (trigger.type === "timer" || trigger.event.pubkey !== agent.owner)
+  if (
+    (trigger.type !== "mention" && trigger.type !== "watch") ||
+    trigger.event.pubkey !== agent.owner
+  )
     return {};
   const asked = (name: string) =>
     trigger.event.tags.find(
@@ -138,6 +156,21 @@ type Job = {
   matched?: { object: AttentionObject; epoch: number };
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
+type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
+/** Mentions and watch work queue and are rate limited apart. */
+type Lane = "mention" | "watch";
+const laneOf = (trigger: Trigger): Lane =>
+  trigger.type === "mention" ? "mention" : "watch";
+const channelOf = (event: RelayEvent) =>
+  event.tags.find(([key]) => key === "h")?.[1];
+/** Classifier calls a trigger's job makes before it queues. */
+const classifications = (trigger: Trigger) =>
+  trigger.type === "watch" && trigger.watch.classifier
+    ? 1
+    : trigger.type === "catch-up" && trigger.watch.classifier
+      ? trigger.events.length
+      : 0;
+const sizeOf = (event: RelayEvent) => JSON.stringify(event).length;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
   filter?: ReturnType<typeof compileFilter>;
 };
@@ -149,11 +182,19 @@ type Runner = {
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
   controller: AbortController;
-  /** Events waiting to run; due timers are found when a run starts instead. */
-  queue: Job[];
+  /** Events waiting to run in each lane, mentions first; due timers are found
+   * when a run starts instead. */
+  readonly queues: Record<Lane, Job[]>;
   running: boolean;
-  windowStart: number;
-  admitted: number;
+  /** Each lane's runs in the current minute. */
+  readonly rates: Record<Lane, { windowStart: number; admitted: number }>;
+  /** Watches catching up now, whose live events wait in `waiting` until they
+   * have, so the older events come first. */
+  catching: ReadonlySet<string>;
+  readonly waiting: Map<string, { jobs: Job[]; bytes: number }>;
+  /** Watch jobs released from `waiting`, oldest first, going into the queue
+   * as it has room. */
+  readonly later: Job[];
   /** Events seen, and events it wrote (so reactions to them reach no watch). */
   readonly seen: Set<string>;
   /** Events seen in each channel, as many as a reconnect replays of it, so
@@ -340,9 +381,7 @@ export class AgentRunners {
         this.host.saved(identity.pubkey)?.attentionEnabled !== true
       ) {
         runner.epoch++;
-        runner.queue = runner.queue.filter(
-          (job) => job.trigger.type !== "watch",
-        );
+        this.dropWatchWork(runner);
         runner.lanes.clear();
       }
       if (!runner)
@@ -364,7 +403,8 @@ export class AgentRunners {
   resume(ready: ReadonlySet<string>) {
     for (const runner of this.runners.values())
       if (
-        runner.queue.length ||
+        runner.queues.mention.length ||
+        runner.queues.watch.length ||
         ready.has(runner.pubkey) !== this.connected.has(runner.pubkey)
       )
         void this.drain(runner);
@@ -437,10 +477,15 @@ export class AgentRunners {
       pubkey: identity.pubkey,
       type,
       controller: new AbortController(),
-      queue: [],
+      queues: { mention: [], watch: [] },
       running: false,
-      windowStart: 0,
-      admitted: 0,
+      rates: {
+        mention: { windowStart: 0, admitted: 0 },
+        watch: { windowStart: 0, admitted: 0 },
+      },
+      catching: new Set(),
+      waiting: new Map(),
+      later: [],
       seen: new Set(),
       seenIn: new Map(),
       backlog: [],
@@ -460,7 +505,8 @@ export class AgentRunners {
     this.passes.get(runner.pubkey)?.controller.abort();
     this.passes.delete(runner.pubkey);
     this.host.activity.clear(undefined, runner.pubkey);
-    runner.queue.length = 0;
+    runner.queues.mention.length = 0;
+    this.dropWatchWork(runner);
     runner.held.clear();
     runner.backlog.length = 0;
     runner.controller.abort();
@@ -549,24 +595,38 @@ export class AgentRunners {
   /** Whether the agent can take `jobs` more jobs, `classified` of them first
    * through the classifier, without dropping any. Events still being
    * classified will take queue and rate room too. */
-  private fits(runner: Runner, jobs: number, classified: number) {
-    const admitted =
-      Date.now() - runner.windowStart >= RATE_WINDOW_MS ? 0 : runner.admitted;
+  private fits(
+    runner: Runner,
+    mentions: number,
+    watches: number,
+    classified: number,
+  ) {
+    const admitted = (lane: Lane) => {
+      const rate = runner.rates[lane];
+      return Date.now() - rate.windowStart >= RATE_WINDOW_MS
+        ? 0
+        : rate.admitted;
+    };
+    const { mention, watch } = runner.queues;
     return (
-      runner.queue.length + runner.classifying + jobs <= QUEUE_LIMIT &&
+      mention.length + mentions <= QUEUE_LIMIT &&
+      admitted("mention") + mentions <= RATE_LIMIT &&
+      watch.length + runner.classifying + watches <= QUEUE_LIMIT &&
       runner.classifying + classified <= CLASSIFY_LIMIT &&
-      admitted + runner.classifying + jobs <= RATE_LIMIT
+      admitted("watch") + runner.classifying + watches <= RATE_LIMIT
     );
   }
   /** Whether the agent has room for every job `triggers` make. One that
    * makes more jobs than an idle agent takes goes when it is idle, and loses
    * the excess as live delivery would. */
   private takes(runner: Runner, triggers: readonly Trigger[]) {
+    const mentions = triggers.filter((t) => t.type === "mention").length;
     return this.fits(
       runner,
-      Math.min(triggers.length, QUEUE_LIMIT),
+      Math.min(mentions, QUEUE_LIMIT),
+      Math.min(triggers.length - mentions, QUEUE_LIMIT),
       Math.min(
-        triggers.filter((t) => t.type === "watch" && t.watch.classifier).length,
+        triggers.reduce((sum, t) => sum + classifications(t), 0),
         CLASSIFY_LIMIT,
       ),
     );
@@ -577,6 +637,13 @@ export class AgentRunners {
   private admit(runner: Runner) {
     const agent = this.host.ready(runner.pubkey);
     if (!agent || !runner.type?.run) return;
+    // First the live events held back while their watch caught up.
+    while (runner.later.length) {
+      const job = runner.later[0] as Job;
+      if (!this.fits(runner, 0, 1, classifications(job.trigger))) return;
+      runner.later.shift();
+      this.submit(runner, agent, job);
+    }
     while (runner.backlog.length) {
       const { event, channelId } = runner.backlog[0] as Runner["backlog"][0];
       const triggers = this.heard(runner, agent, event);
@@ -641,6 +708,7 @@ export class AgentRunners {
       if (!agent || !community || since === undefined || !reading.length) {
         pass?.controller.abort();
         this.passes.delete(runner.pubkey);
+        this.setCatching(runner, new Set());
         continue;
       }
       if (
@@ -665,12 +733,15 @@ export class AgentRunners {
         controller: new AbortController(),
       };
       this.passes.set(runner.pubkey, next);
+      this.setCatching(runner, new Set(reading.map(({ slug }) => slug)));
       void this.readMissed(runner, next, reading, since);
     }
     if (changed) this.saveCheckpoints();
   }
-  /** Reads each stream's missed events, newest page first, through `upper`,
-   * saving its checkpoint after each page once all of it is heard. */
+  /** Reads each stream's missed events through `upper`, a window at a time,
+   * and delivers them oldest first, in batches, saving its checkpoint after
+   * each. A watch's streams are read one after another; once all of them are
+   * read, its live events that waited go on. */
   private async readMissed(
     runner: Runner,
     pass: Pass,
@@ -681,76 +752,95 @@ export class AgentRunners {
       pass.controller.signal,
       pass.community.controller.signal,
     ]);
+    const name = () => this.host.agent(runner.pubkey)?.name;
+    const read = async (filter: ReadFilter) => {
+      const events = await pass.community.session.read([filter], {
+        signal,
+        priority: "background",
+        fresh: true,
+      });
+      signal.throwIfAborted();
+      // Only what the relay signed: a read also returns the owner's own
+      // messages not yet sent, which can be older than its page.
+      return events.filter(hasEventProof) as RelayEvent[];
+    };
+    const progress = (key: string, checkpoint: Checkpoint) => {
+      this.checkpoints = { ...this.checkpoints, [key]: checkpoint };
+      this.saveCheckpoints();
+    };
     try {
-      for (const stream of streams)
-        for (;;) {
-          const page = nextPage(stream, this.checkpoints[stream.key], upper);
-          if (!page) break;
-          const events = await pass.community.session.read([page.filter], {
-            signal,
-            priority: "background",
-            fresh: true,
-          });
-          signal.throwIfAborted();
-          // Only what the relay signed: a read also returns the owner's own
-          // messages not yet sent, which can be older than its page.
-          const signed = events.filter(hasEventProof) as RelayEvent[];
-          const checkpoint = afterPage(page, signed);
-          for (const event of [...signed].reverse())
-            if (
-              event.kind === 9 &&
-              !(await this.caughtUp(runner, pass, event, signal))
-            )
-              return;
-          this.checkpoints = { ...this.checkpoints, [stream.key]: checkpoint };
-          this.saveCheckpoints();
-        }
+      const slugs = [...new Set(streams.map(({ slug }) => slug))];
+      for (const slug of slugs) {
+        for (const stream of streams.filter((item) => item.slug === slug))
+          for (;;) {
+            const window = await readWindow(
+              stream,
+              this.checkpoints[stream.key],
+              upper,
+              read,
+            );
+            if (!window) break;
+            if (window.skipped)
+              console.warn(
+                `Agent ${name()} skipped the oldest events ${slug} missed: catch-up reads at most ${CATCH_UP_PAGES} pages`,
+              );
+            progress(stream.key, window.checkpoint);
+            const events = window.events.filter((event) => event.kind === 9);
+            let skipped = window.skipped;
+            for (let index = 0; index < events.length; ) {
+              const taken = await this.caughtUp(
+                runner,
+                pass,
+                slug,
+                events.slice(index, index + CATCH_UP_BATCH),
+                skipped,
+                signal,
+              );
+              if (!taken) return;
+              skipped = false;
+              index += taken;
+              const last = events[index - 1] as RelayEvent;
+              progress(stream.key, delivered(window.upper, last));
+            }
+            progress(stream.key, delivered(window.upper));
+          }
+        const catching = new Set(runner.catching);
+        catching.delete(slug);
+        this.setCatching(runner, catching);
+      }
       pass.done = true;
     } catch (error) {
       if (signal.aborted) return;
       pass.failedAt = Date.now();
-      console.warn(
-        `Agent ${this.host.agent(runner.pubkey)?.name} could not catch up`,
-        error,
-      );
+      // Live events go on rather than wait for the next try.
+      this.setCatching(runner, new Set());
+      console.warn(`Agent ${name()} could not catch up`, error);
     }
   }
-  /** Gives the agent one caught-up event once it can take every job the
-   * event makes, and once the rosters its watches need are confirmed: a
-   * checkpoint saved past an event never drops or evicts it. One from before
-   * the listener started wakes only watches, so a mention from before the app
-   * listened is not answered late. A later one live would have heard,
-   * mentions too; catch-up may read it before replay does, which then skips
-   * it as seen. False when an edit since ends the pass: the next one reads
-   * the event again. */
+  /** Gives the agent the first of `events` it has room for, at least one,
+   * once the rosters their watches need are confirmed: a checkpoint saved
+   * past an event never drops or evicts it. Each watch they match gets one
+   * job with all of its events, oldest first, so a long absence does not
+   * cost a turn per message. One from before the listener started wakes only
+   * watches, so a mention from before the app listened is not answered late.
+   * A later one live would have heard, mentions too; catch-up may read it
+   * before replay does, which then skips it as seen. Returns how many events
+   * were taken, or 0 when an edit since ends the pass: the next one reads them
+   * again. */
   private async caughtUp(
     runner: Runner,
     pass: Pass,
-    event: RelayEvent,
+    slug: string,
+    events: readonly RelayEvent[],
+    skipped: boolean,
     signal: AbortSignal,
-  ) {
-    const channel = event.tags.find(([key]) => key === "h")?.[1];
+  ): Promise<number> {
     for (;;) {
       signal.throwIfAborted();
       const agent = this.host.ready(runner.pubkey);
-      if (agent?.attention !== pass.attention) return false;
-      if (this.hasSeen(runner, event.id, channel)) return true;
-      if (event.pubkey === agent.pubkey) {
-        this.markSeen(runner, event.id, channel);
-        return this.isOwn(runner, agent, event);
-      }
-      const heard = this.heard(runner, agent, event);
-      if (heard !== "held") {
-        const triggers =
-          event.created_at < pass.community.connection.start
-            ? heard.filter((trigger) => trigger.type === "watch")
-            : heard;
-        if (this.takes(runner, triggers)) {
-          this.markSeen(runner, event.id, channel);
-          this.deliver(runner, agent, event, channel, triggers);
-          return true;
-        }
-      }
+      if (agent?.attention !== pass.attention) return 0;
+      const taken = this.batch(runner, agent, pass, slug, events, skipped);
+      if (taken) return taken;
       await new Promise<void>((resolve) => {
         const done = () => {
           clearTimeout(timer);
@@ -761,6 +851,98 @@ export class AgentRunners {
         signal.addEventListener("abort", done, { once: true });
       });
     }
+  }
+  /** Delivers the longest run of `events`, oldest first, whose jobs the agent
+   * has room for now; returns how many it took, or 0 for none. */
+  private batch(
+    runner: Runner,
+    agent: Agent,
+    pass: Pass,
+    slug: string,
+    events: readonly RelayEvent[],
+    skipped: boolean,
+  ) {
+    const mentions: { trigger: Trigger; channel?: string }[] = [];
+    const watches = new Map<string, WatchTrigger[]>();
+    let taken = 0;
+    let bytes = 0;
+    for (const event of events) {
+      const channel = channelOf(event);
+      const heard =
+        this.hasSeen(runner, event.id, channel) || event.pubkey === agent.pubkey
+          ? []
+          : this.heard(runner, agent, event);
+      if (heard === "held") break;
+      const triggers =
+        event.created_at < pass.community.connection.start
+          ? heard.filter((trigger) => trigger.type === "watch")
+          : heard;
+      const nextMentions = [...mentions];
+      const nextWatches = new Map(
+        [...watches].map(([key, list]) => [key, [...list]]),
+      );
+      for (const trigger of triggers)
+        if (trigger.type === "watch")
+          nextWatches.set(trigger.slug, [
+            ...(nextWatches.get(trigger.slug) ?? []),
+            trigger,
+          ]);
+        else nextMentions.push({ trigger, ...(channel ? { channel } : {}) });
+      const classified = [...nextWatches.values()].reduce(
+        (sum, list) => sum + (list[0]?.watch.classifier ? list.length : 0),
+        0,
+      );
+      const size = sizeOf(event);
+      // The first goes once an idle agent could take it, and loses any
+      // excess as live delivery would.
+      const cap = (count: number, limit: number) =>
+        taken ? count : Math.min(count, limit);
+      if (
+        (taken && bytes + size > CATCH_UP_BATCH_BYTES) ||
+        !this.fits(
+          runner,
+          cap(nextMentions.length, QUEUE_LIMIT),
+          cap(nextWatches.size, QUEUE_LIMIT),
+          cap(classified, CLASSIFY_LIMIT),
+        )
+      )
+        break;
+      mentions.splice(0, mentions.length, ...nextMentions);
+      watches.clear();
+      for (const [key, list] of nextWatches) watches.set(key, list);
+      bytes += size;
+      taken++;
+    }
+    if (!taken) return 0;
+    for (const event of events.slice(0, taken)) {
+      const channel = channelOf(event);
+      if (this.hasSeen(runner, event.id, channel)) continue;
+      this.markSeen(runner, event.id, channel);
+      this.isOwn(runner, agent, event);
+    }
+    for (const { trigger, channel } of mentions)
+      this.enqueue(runner, {
+        trigger,
+        ...(channel ? { channelId: channel } : {}),
+      });
+    for (const [key, list] of watches) {
+      const [{ watch, interest }] = list as [WatchTrigger];
+      this.submit(runner, agent, {
+        trigger: {
+          type: "catch-up",
+          slug: key,
+          watch,
+          ...(interest ? { interest } : {}),
+          events: list.map(({ event }) => ({ event })),
+          ...(skipped && key === slug ? { skipped } : {}),
+        },
+        matched: {
+          object: agent.attention[key] as AttentionObject,
+          epoch: runner.epoch,
+        },
+      });
+    }
+    return taken;
   }
   /** Saves the checkpoints of watches that still exist. Unsaved, catch-up
    * starts from the last saved one again, which `seen` dedupes until a
@@ -825,87 +1007,172 @@ export class AgentRunners {
             }
           : {}),
       };
-      if (trigger.type === "watch" && trigger.watch.classifier)
-        this.classified(runner, agent, { ...job, trigger });
-      else this.enqueue(runner, job);
+      if (trigger.type === "watch" && runner.catching.has(trigger.slug))
+        this.wait(runner, agent, trigger.slug, job);
+      else this.submit(runner, agent, job);
     }
+  }
+  private submit(runner: Runner, agent: Agent, job: Job) {
+    const { trigger } = job;
+    if (
+      (trigger.type === "watch" || trigger.type === "catch-up") &&
+      trigger.watch.classifier
+    )
+      this.classified(runner, agent, { ...job, trigger });
+    else this.enqueue(runner, job);
+  }
+  /** Keeps a live event of a watch catching up until it has, as Janet stages
+   * them. Past Janet's bounds the watch stops waiting: what it kept goes on
+   * now, out of order, rather than be lost. */
+  private wait(runner: Runner, agent: Agent, slug: string, job: Job) {
+    const waiting = runner.waiting.get(slug) ?? { jobs: [], bytes: 0 };
+    runner.waiting.set(slug, waiting);
+    waiting.jobs.push(job);
+    waiting.bytes += sizeOf((job.trigger as WatchTrigger).event);
+    if (waiting.jobs.length <= WAITING_LIMIT && waiting.bytes <= WAITING_BYTES)
+      return;
+    console.warn(
+      `Agent ${agent.name} heard too much for ${slug} while it caught up; it goes on out of order`,
+    );
+    const catching = new Set(runner.catching);
+    catching.delete(slug);
+    this.setCatching(runner, catching);
+  }
+  /** Sets the watches catching up; the live events of any others that
+   * waited go on, oldest first, as the agent has room. */
+  private setCatching(runner: Runner, catching: ReadonlySet<string>) {
+    runner.catching = catching;
+    const released: Job[] = [];
+    for (const [slug, { jobs }] of runner.waiting)
+      if (!catching.has(slug)) {
+        runner.waiting.delete(slug);
+        released.push(...jobs);
+      }
+    if (!released.length) return;
+    const event = (job: Job) => (job.trigger as WatchTrigger).event;
+    runner.later.push(
+      ...released.sort((a, b) => oldestFirst(event(a), event(b))),
+    );
+    this.admit(runner);
+  }
+  /** Voids the agent's queued and waiting watch work. */
+  private dropWatchWork(runner: Runner) {
+    runner.queues.watch.length = 0;
+    runner.later.length = 0;
+    runner.waiting.clear();
   }
   /** Runs a matched watch's classifier, then queues the event if it passes.
    * The classifier runs after the watch's selectors and filter, and before the
    * event takes a queue slot, as in Janet. Without a key, or when it fails,
    * the event passes and its turn is told why. Results queue in the order the
-   * events arrived, whichever call finishes first. */
+   * events arrived, whichever call finishes first. A catch-up's events are
+   * each classified, and the ones that pass queue together. */
   private classified(
     runner: Runner,
     agent: Agent,
-    job: Job & { trigger: WatchTrigger },
+    job: Job & { trigger: WatchTrigger | CatchUpTrigger },
   ) {
     const { trigger } = job;
+    const events =
+      trigger.type === "watch"
+        ? [trigger.event]
+        : trigger.events.map(({ event }) => event);
     // Never bypassed: past the limit the event is dropped, like a full queue.
-    if (runner.classifying >= CLASSIFY_LIMIT) {
+    if (runner.classifying + events.length > CLASSIFY_LIMIT) {
       console.warn(`Agent ${agent.name} dropped an event to classify`);
       return;
     }
-    runner.classifying++;
+    runner.classifying += events.length;
     const lifetime = runner.controller.signal;
     // Whether this runner, as it is now, should still act on the event.
     const live = () =>
       !lifetime.aborted &&
       this.runners.get(runner.pubkey) === runner &&
       this.stillCurrent(runner, job);
-    const outcome = (async (): Promise<ClassifierOutcome | undefined> => {
-      // A saved key is not known to be missing until its status is read.
-      await this.host.jevStatus();
-      const jev = this.host.jev();
-      // While the key cannot be read, native is still asked: it may find one.
-      if (!jev || this.host.classifierKey() === "missing") return notRun();
-      // Only the copy of the app that holds the agent sends its events out.
-      if (!(await this.claim(runner)) || !live()) return undefined;
-      const context = await this.host.context(agent, trigger.event);
-      // Stopped or changed while its context was looked up: nothing is sent.
-      if (!live()) return undefined;
-      const generation = this.host.classifierKeyGeneration();
-      const { pass, result } = await classify(jev, {
-        // Checked as non-null by the caller.
-        classifier: trigger.watch.classifier as NonNullable<
-          EventWatch["classifier"]
-        >,
-        event: trigger.event,
-        author: {
-          role: trigger.event.pubkey === agent.owner ? "owner" : "other",
-          name: this.host.displayName(agent, trigger.event.pubkey),
-        },
-        context,
-      });
-      // The key was removed outside the app since it was read, the service
-      // refused it, or native found one the failed status read could not.
-      if (result.outcome === "not-run")
-        this.host.setClassifierKey("missing", generation);
-      else if (result.outcome === "passed")
-        this.host.setClassifierKey("saved", generation);
-      else if (result.reason === "unauthorized")
-        this.host.setClassifierKey("refused", generation);
-      return pass ? result : undefined;
-    })().catch((error) => {
-      console.warn(`Agent ${agent.name} could not classify an event`, error);
-      return undefined;
-    });
+    // Checked as non-null by the caller.
+    const classifier = trigger.watch.classifier as NonNullable<
+      EventWatch["classifier"]
+    >;
+    const outcomes = Promise.all(
+      events.map((event) =>
+        this.classify(runner, agent, classifier, event, live).catch((error) => {
+          console.warn(
+            `Agent ${agent.name} could not classify an event`,
+            error,
+          );
+          return undefined;
+        }),
+      ),
+    );
     const previous = runner.classified;
     runner.classified = (async () => {
       try {
         await previous;
-        const classifier = await outcome;
+        const results = await outcomes;
         // A retired or replaced runner keeps none of its work.
-        if (
-          classifier &&
-          !lifetime.aborted &&
-          this.runners.get(runner.pubkey) === runner
-        )
-          this.enqueue(runner, { ...job, trigger: { ...trigger, classifier } });
+        if (lifetime.aborted || this.runners.get(runner.pubkey) !== runner)
+          return;
+        if (trigger.type === "watch") {
+          const [result] = results;
+          if (result)
+            this.enqueue(runner, {
+              ...job,
+              trigger: { ...trigger, classifier: result },
+            });
+          return;
+        }
+        const passed = events.flatMap((event, index) => {
+          const result = results[index];
+          return result ? [{ event, classifier: result }] : [];
+        });
+        if (passed.length)
+          this.enqueue(runner, {
+            ...job,
+            trigger: { ...trigger, events: passed },
+          });
       } finally {
-        runner.classifying--;
+        runner.classifying -= events.length;
       }
     })();
+  }
+  /** The classifier's outcome for one event, or undefined when it does not
+   * pass or should no longer be acted on. */
+  private async classify(
+    runner: Runner,
+    agent: Agent,
+    classifier: NonNullable<EventWatch["classifier"]>,
+    event: RelayEvent,
+    live: () => boolean,
+  ): Promise<ClassifierOutcome | undefined> {
+    // A saved key is not known to be missing until its status is read.
+    await this.host.jevStatus();
+    const jev = this.host.jev();
+    // While the key cannot be read, native is still asked: it may find one.
+    if (!jev || this.host.classifierKey() === "missing") return notRun();
+    // Only the copy of the app that holds the agent sends its events out.
+    if (!(await this.claim(runner)) || !live()) return undefined;
+    const context = await this.host.context(agent, event);
+    // Stopped or changed while its context was looked up: nothing is sent.
+    if (!live()) return undefined;
+    const generation = this.host.classifierKeyGeneration();
+    const { pass, result } = await classify(jev, {
+      classifier,
+      event,
+      author: {
+        role: event.pubkey === agent.owner ? "owner" : "other",
+        name: this.host.displayName(agent, event.pubkey),
+      },
+      context,
+    });
+    // The key was removed outside the app since it was read, the service
+    // refused it, or native found one the failed status read could not.
+    if (result.outcome === "not-run")
+      this.host.setClassifierKey("missing", generation);
+    else if (result.outcome === "passed")
+      this.host.setClassifierKey("saved", generation);
+    else if (result.reason === "unauthorized")
+      this.host.setClassifierKey("refused", generation);
+    return pass ? result : undefined;
   }
   /** What `event` wakes in the agent, or "held" while a watch it matches waits
    * for its channel's roster to be confirmed. */
@@ -959,7 +1226,7 @@ export class AgentRunners {
    * queued wakes nothing, even if it now matches again. */
   private current(runner: Runner, agent: Agent, job: Job): Job | undefined {
     const { trigger } = job;
-    if (trigger.type !== "watch") return job;
+    if (trigger.type !== "watch" && trigger.type !== "catch-up") return job;
     if (!agent.attentionEnabled) return undefined;
     if (
       !job.matched ||
@@ -967,6 +1234,26 @@ export class AgentRunners {
       agent.attention[trigger.slug] !== job.matched.object
     )
       return undefined;
+    if (trigger.type === "catch-up") {
+      const match = this.watches(runner, agent).find(
+        ({ slug }) => slug === trigger.slug,
+      );
+      const events = trigger.events.filter(
+        ({ event }) => match && watchMatches(match.watch, event, match.filter),
+      );
+      if (!match || !events.length) return undefined;
+      return {
+        ...job,
+        trigger: {
+          type: "catch-up",
+          slug: trigger.slug,
+          watch: match.watch,
+          ...(match.interest ? { interest: match.interest } : {}),
+          events,
+          ...(trigger.skipped ? { skipped: true } : {}),
+        },
+      };
+    }
     const match = this.watches(runner, agent).find(
       ({ slug, watch, filter }) =>
         slug === trigger.slug && watchMatches(watch, trigger.event, filter),
@@ -991,7 +1278,8 @@ export class AgentRunners {
     if (!agent) return false;
     const { trigger } = job;
     if (trigger.type === "mention") return true;
-    if (trigger.type === "watch") return !!this.current(runner, agent, job);
+    if (trigger.type === "watch" || trigger.type === "catch-up")
+      return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:
     // attention off and on again, or a disable and rearm, voids it.
     const object = agent.attention[trigger.slug];
@@ -1067,11 +1355,14 @@ export class AgentRunners {
 
   private enqueue(runner: Runner, job: Job) {
     const now = Date.now();
-    if (now - runner.windowStart >= RATE_WINDOW_MS) {
-      runner.windowStart = now;
-      runner.admitted = 0;
+    const lane = laneOf(job.trigger);
+    const rate = runner.rates[lane];
+    const queue = runner.queues[lane];
+    if (now - rate.windowStart >= RATE_WINDOW_MS) {
+      rate.windowStart = now;
+      rate.admitted = 0;
     }
-    if (runner.queue.length >= QUEUE_LIMIT || runner.admitted >= RATE_LIMIT) {
+    if (queue.length >= QUEUE_LIMIT || rate.admitted >= RATE_LIMIT) {
       if (runner.activityClaimed) {
         this.showWork(runner, job);
         job.work?.finish({
@@ -1085,9 +1376,9 @@ export class AgentRunners {
       );
       return;
     }
-    runner.admitted++;
+    rate.admitted++;
     if (runner.activityClaimed) this.showWork(runner, job);
-    runner.queue.push(job);
+    queue.push(job);
     void this.drain(runner);
   }
 
@@ -1108,7 +1399,8 @@ export class AgentRunners {
     });
   }
 
-  // One run at a time per agent: events in arrival order, then a due timer.
+  // One run at a time per agent: mentions in arrival order, then watch work in
+  // arrival order, then a due timer.
   // Each job runs the agent as it is when the job starts. While its community's
   // session is not live the queue pauses and update() resumes it; a type that cannot run drops what is queued. A run that ignores
   // its deadline stops holding the queue when the deadline passes; it is not
@@ -1124,7 +1416,8 @@ export class AgentRunners {
       if (!agent || !type || !run) {
         if (agent) {
           this.host.activity.clear(undefined, runner.pubkey);
-          runner.queue.length = 0;
+          runner.queues.mention.length = 0;
+          runner.queues.watch.length = 0;
         }
         await this.release(runner);
         // It may have come back into view, or gained its type, meanwhile.
@@ -1138,7 +1431,8 @@ export class AgentRunners {
       if (!(await this.claim(runner))) {
         this.host.activity.clear(undefined, runner.pubkey);
         runner.activityClaimed = false;
-        runner.queue.length = 0;
+        runner.queues.mention.length = 0;
+        runner.queues.watch.length = 0;
         break;
       }
       // Retype may have reserved this idle runner while claim was pending.
@@ -1147,8 +1441,10 @@ export class AgentRunners {
       if (this.host.ready(runner.pubkey) !== agent || runner.type !== type)
         continue;
       runner.activityClaimed = true;
-      for (const queued of runner.queue) this.showWork(runner, queued);
-      const queued = runner.queue.shift();
+      for (const queued of [...runner.queues.mention, ...runner.queues.watch])
+        this.showWork(runner, queued);
+      const queued =
+        runner.queues.mention.shift() ?? runner.queues.watch.shift();
       const job = queued
         ? this.current(runner, agent, queued)
         : this.dueTimer(runner, agent);

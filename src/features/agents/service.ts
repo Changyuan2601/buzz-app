@@ -236,6 +236,10 @@ export type AgentAttention = Readonly<{
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";
+export type CaughtUp = Readonly<{
+  event: RelayEvent;
+  classifier?: ClassifierOutcome;
+}>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
@@ -251,6 +255,20 @@ export type Trigger =
        * not run or failed. An event the classifier cannot check passes
        * rather than lose a match, and the agent is told why. */
       classifier?: ClassifierOutcome;
+    }>
+  /** Events one watch missed while the agent was offline, delivered together
+   * once it is back: oldest first, from one channel unless it watches "all". */
+  | Readonly<{
+      type: "catch-up";
+      slug: string;
+      watch: EventWatch;
+      /** Absent when the watch names an Interest that does not exist. */
+      interest?: Interest;
+      /** Each with its classifier outcome when the watch has a classifier;
+       * only the events it passed are here. */
+      events: readonly CaughtUp[];
+      /** Older missed events were skipped: catch-up reads a bounded window. */
+      skipped?: boolean;
     }>
   | Readonly<{
       type: "timer";
@@ -2213,7 +2231,10 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
-      const connection: Connection = { epoch: 0, start: Math.floor(Date.now() / 1000) };
+      const connection: Connection = {
+        epoch: 0,
+        start: Math.floor(Date.now() / 1000),
+      };
       entry.binding = live && {
         ...live,
         connection,

@@ -370,7 +370,7 @@ function fixture(
       workingUntil,
       current: () => true,
     };
-    if (result.trigger.type !== "timer")
+    if ("event" in result.trigger)
       events.push(result.trigger.event as EventData);
     return result;
   };
@@ -1042,7 +1042,7 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
 it("cuts delayed history off before the request, including same-second messages and edits", async () => {
   const f = fixture();
   const first = f.delivery("CURRENT_REQUEST");
-  if (first.trigger.type === "timer") throw new Error("Expected a mention");
+  if (!("event" in first.trigger)) throw new Error("Expected a mention");
   first.trigger.event.tags.push(["ms", "300"]);
   const gate = deferred<EventData[]>();
   const previous: EventData = {
@@ -1073,7 +1073,7 @@ it("cuts delayed history off before the request, including same-second messages 
     ]);
   await f.runtime.run(first);
   const later = f.delivery("LATER_REQUEST");
-  if (later.trigger.type === "timer") throw new Error("Expected a mention");
+  if (!("event" in later.trigger)) throw new Error("Expected a mention");
   later.trigger.event.tags.push(["ms", "400"]);
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
@@ -1212,8 +1212,7 @@ it("closes a native process returned after runtime disposal", async () => {
 it("ignores non-owner messages without spawning", async () => {
   const f = fixture();
   const other = f.delivery("work");
-  if (other.trigger.type !== "timer")
-    other.trigger.event.pubkey = "f".repeat(64);
+  if ("event" in other.trigger) other.trigger.event.pubkey = "f".repeat(64);
   const ignored = vi.fn();
   await f.runtime.run({ ...other, ignored });
   expect(ignored).toHaveBeenCalledOnce();
@@ -1391,7 +1390,7 @@ it("answers another agent its owner attested, telling the owner of failures", as
     .update(`nostr:agent-auth:${sibling}:`)
     .digest();
   const ask = f.delivery("work");
-  if (ask.trigger.type !== "timer") {
+  if ("event" in ask.trigger) {
     ask.trigger.event.pubkey = sibling;
     ask.trigger.event.tags.push([
       "auth",

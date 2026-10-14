@@ -146,10 +146,10 @@ function setup(
   const objects = new Map<string, Record<string, unknown>>();
   const deliver = (trigger: Delivery["trigger"]) => {
     if (trigger.type !== "mention") {
-      const value = trigger.type === "watch" ? trigger.watch : trigger.timer;
+      const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
       objects.set(trigger.slug, {
         ...value,
-        type: trigger.type === "watch" ? "event" : "timer",
+        type: trigger.type === "timer" ? "timer" : "event",
         enabled: true,
       });
       if (trigger.interest)

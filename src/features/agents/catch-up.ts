@@ -1,20 +1,26 @@
 // Saved catch-up progress for event watches of kind 9 only, as Janet keeps it:
-// one stream for each watch and channel, read a page at a time from the
-// newest event to the oldest. Only the progress is saved, never an event.
+// one stream for each watch and channel. Each window of missed events is read
+// whole, newest page first, within a bound, and then delivered oldest first.
+// Only the progress is saved, never an event.
 import type { Agent } from "./service";
 import type { EventData, ReadFilter } from "../relay/events";
 
 export const CATCH_UP_KEY = "buzz.agents.catch-up.v1";
 /** Events in one read, as Janet's catch-up pages are. */
 export const CATCH_UP_PAGE = 16;
+/** The most pages one window reads, and its most bytes, as Janet bounds a
+ * named channel's window. Past either, the oldest missed events are skipped. */
+export const CATCH_UP_PAGES = 256;
+export const CATCH_UP_BYTES = 8 * 1024 * 1024;
 
 /** Every kind 9 event of the stream created at or before `through` was
- * delivered. While a window (`through`, `upper`] is being read, `cursor` is
- * the oldest event of the last page delivered, so a restart goes on below it. */
+ * delivered or skipped. While a window (`through`, `upper`] is being
+ * delivered, `after` is the last event delivered of it, in delivery order:
+ * oldest first, ties by id. A restart goes on after it, up to `upper`. */
 export type Checkpoint = Readonly<{
   through: number;
   upper?: number;
-  cursor?: Readonly<{ until: number; before_id: string }>;
+  after?: Readonly<{ created_at: number; id: string }>;
 }>;
 export type Checkpoints = Readonly<Record<string, Checkpoint>>;
 /** One watch's history in one channel, or in every channel it may read. */
@@ -25,10 +31,14 @@ export type Stream = Readonly<{
   since: number;
   enabled: boolean;
 }>;
+type Position = Pick<EventData, "id" | "created_at">;
 
 const time = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) >= 0;
 const ID = /^[0-9a-f]{64}$/;
+/** Delivery order: oldest first, ties by id. */
+export const oldestFirst = (a: Position, b: Position) =>
+  a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 export function readCheckpoints(storage: Storage): Checkpoints {
   let stored: unknown;
@@ -44,25 +54,25 @@ export function readCheckpoints(storage: Storage): Checkpoints {
   if (!streams || typeof streams !== "object") return {};
   const checkpoints: Record<string, Checkpoint> = {};
   for (const [key, value] of Object.entries(streams)) {
-    const { through, upper, cursor } = (value ?? {}) as Checkpoint;
+    const { through, upper, after } = (value ?? {}) as Checkpoint;
     if (
       !time(through) ||
       (upper !== undefined && !(time(upper) && upper > through))
     )
       continue;
     const valid =
-      cursor === undefined ||
+      after === undefined ||
       (upper !== undefined &&
-        time(cursor.until) &&
-        cursor.until > through &&
-        cursor.until <= upper &&
-        ID.test(cursor.before_id));
+        time(after.created_at) &&
+        after.created_at > through &&
+        after.created_at <= upper &&
+        ID.test(after.id));
     if (!valid) continue;
     checkpoints[key] = {
       through,
       ...(upper !== undefined ? { upper } : {}),
-      ...(cursor
-        ? { cursor: { until: cursor.until, before_id: cursor.before_id } }
+      ...(after
+        ? { after: { created_at: after.created_at, id: after.id } }
         : {}),
     };
   }
@@ -97,52 +107,106 @@ export function streamsOf(agent: Pick<Agent, "pubkey" | "attention">) {
   }
   return streams;
 }
-/** The read for the stream's next page, or undefined once it is read through
- * `upper`. A window read only in part goes on below its cursor, up to its own
- * upper bound, which may be older than `upper`. */
-export function nextPage(
+
+/** A stream's missed events to deliver, oldest first, and the checkpoint
+ * that says what of its window is already done. */
+export type Window<Event extends Position> = Readonly<{
+  events: readonly Event[];
+  /** The window's upper bound. */
+  upper: number;
+  /** Delivered or skipped so far; saved before any event is delivered. */
+  checkpoint: Checkpoint;
+  /** Older missed events were skipped: the window passed its bounds. */
+  skipped: boolean;
+}>;
+
+/** Reads the stream's missed events through `upper`, or undefined when there
+ * are none to read. A window read only in part before goes on after the last
+ * event it delivered, up to its own upper bound, which may be older than
+ * `upper`. Pages are read newest first; past `CATCH_UP_PAGES` pages or
+ * `CATCH_UP_BYTES` bytes the read stops, and the oldest second it reached is
+ * skipped with everything older, so no event of a second is left half
+ * delivered. Tags are not sent: the relay applies most tag filters after its
+ * page limit, so a page could come back empty with older matches left. */
+export async function readWindow<Event extends Position>(
   stream: Stream,
   saved: Checkpoint | undefined,
   upper: number,
-): { filter: ReadFilter; window: number; checkpoint: Checkpoint } | undefined {
+  read: (filter: ReadFilter) => Promise<readonly Event[]>,
+): Promise<Window<Event> | undefined> {
   const checkpoint = saved ?? { through: stream.since - 1 };
   const floor = Math.max(stream.since, checkpoint.through + 1);
   const window = checkpoint.upper ?? upper;
   if (floor > window) return undefined;
-  return {
-    window,
-    checkpoint,
-    filter: {
+  const after = checkpoint.after;
+  const pending = (events: Event[]) =>
+    events
+      .sort(oldestFirst)
+      .filter((event) => !after || oldestFirst(event, after) > 0);
+  const events: Event[] = [];
+  let bytes = 0;
+  let cursor: Position | undefined;
+  for (let pages = 0; ; pages++) {
+    const bounded = pages === CATCH_UP_PAGES || bytes > CATCH_UP_BYTES;
+    const filter: ReadFilter = {
       kinds: [9],
       ...(stream.channel ? { "#h": [stream.channel] } : {}),
       since: floor,
-      until: checkpoint.cursor?.until ?? window,
-      ...(checkpoint.cursor ? { before_id: checkpoint.cursor.before_id } : {}),
-      limit: CATCH_UP_PAGE,
+      until: cursor?.created_at ?? window,
+      ...(cursor ? { before_id: cursor.id } : {}),
+      // At its bounds, only whether anything older is left.
+      limit: bounded ? 1 : CATCH_UP_PAGE,
+    };
+    const page = await read(filter);
+    if (!page.length) break;
+    const last = page.at(-1) as Position;
+    // The relay returns the newest first, ties by id ascending; a page that
+    // does not move below the cursor is refused, so a bad relay cannot loop.
+    const below =
+      last.created_at < (filter.until as number) ||
+      (last.created_at === filter.until &&
+        (filter.before_id === undefined || last.id > filter.before_id));
+    if (!below || last.created_at < floor)
+      throw new Error("The relay returned a page out of order");
+    if (bounded) {
+      // The oldest second reached may go on below: it is skipped whole.
+      const reached = (cursor as Position).created_at;
+      return {
+        events: pending(events.filter((event) => event.created_at > reached)),
+        upper: window,
+        checkpoint: {
+          through: Math.max(reached, checkpoint.through),
+          upper: window,
+          ...(after && after.created_at > reached ? { after } : {}),
+        },
+        skipped: true,
+      };
+    }
+    for (const event of page) {
+      events.push(event);
+      bytes += JSON.stringify(event).length;
+    }
+    cursor = last;
+  }
+  return {
+    events: pending(events),
+    upper: window,
+    checkpoint: {
+      through: checkpoint.through,
+      upper: window,
+      ...(after ? { after } : {}),
     },
+    skipped: false,
   };
 }
 
-/** The checkpoint after `page`, which `read` returned for `filter`: below its
- * oldest event, or, after an empty page, through the whole window. The relay
- * returns the newest first, ties by id ascending; a page that does not move
- * below the cursor is refused, so a bad relay cannot loop catch-up. */
-export function afterPage(
-  { filter, window, checkpoint }: NonNullable<ReturnType<typeof nextPage>>,
-  page: readonly Pick<EventData, "id" | "created_at">[],
-): Checkpoint {
-  if (!page.length) return { through: window };
-  const last = page.at(-1) as Pick<EventData, "id" | "created_at">;
-  const until = filter.until as number;
-  const below =
-    last.created_at < until ||
-    (last.created_at === until &&
-      (filter.before_id === undefined || last.id > filter.before_id));
-  if (!below || last.created_at < (filter.since as number))
-    throw new Error("The relay returned a page out of order");
+/** The checkpoint once `last`, the newest event delivered of the window, and
+ * every one before it are; or, with no `last`, once all of it is. */
+export function delivered(window: number, last?: Position): Checkpoint {
+  if (!last) return { through: window };
   return {
-    through: checkpoint.through,
+    through: last.created_at - 1,
     upper: window,
-    cursor: { until: last.created_at, before_id: last.id },
+    after: { created_at: last.created_at, id: last.id },
   };
 }
