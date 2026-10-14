@@ -39,12 +39,17 @@ const matrixValues = (key) => {
 
 test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
   const command = browser.match(
-    /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
+    /^ {8}run: .+ -- (\.\/bin\/node scripts\/browser-shard\.mjs .+)$/m,
   )?.[1];
   assert.ok(command, "functional invocation must exist");
-  const discover = (args) => {
+  const discover = (args, command = "pnpm") => {
     const report = JSON.parse(
-      run("pnpm", ["--silent", ...args, "--list", "--reporter=json"]),
+      run(command, [
+        ...(command === "pnpm" ? ["--silent"] : []),
+        ...args,
+        "--list",
+        "--reporter=json",
+      ]),
     );
     assert.deepEqual(report.errors, []);
     const collect = (suites) =>
@@ -78,8 +83,10 @@ test("Linux shards and macOS recording discover every functional test/project ex
       const expanded = command
         .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
         .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard);
+      // The shard script lists the selected tests when given --list.
       const selected = discover(
-        expanded.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
+        expanded.replace(/^\.\/bin\/node /, "").split(/\s+/),
+        process.execPath,
       );
       assert.ok(selected.length > 0, `${engine}/${shard} must select tests`);
       assert.ok(selected.every((id) => id.startsWith(`${engine}:`)));

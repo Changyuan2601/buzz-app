@@ -131,7 +131,10 @@ measurement ceilings, and the strict `CI required` aggregate remain in place.
 
 CI shards each functional engine across nine runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
-`--shard=N/9`; measurement success is enforced by `CI required`, not job ordering.
+runs `scripts/browser-shard.mjs N/9`, which takes every ninth test in listing
+order. Playwright's `--shard` takes contiguous ranges, which put neighbouring
+costly files on one shard. Measurement success is enforced by `CI required`,
+not job ordering.
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.
