@@ -14,15 +14,21 @@ export const TYPE_ID = "pi";
  * which includes the first install of Pi's packages. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["agents", "host"];
+export const inject = {
+  agents: { required: true },
+  host: { required: true },
+  databricks: { required: false },
+};
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start the Pi host, and file uploads run `base64`,
   // which stock Windows lacks; no unusable type elsewhere.
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
-  const runtime = new PiRuntime(host, (pubkey) =>
-    ownerReads(agents.relay(pubkey), pubkey),
+  const runtime = new PiRuntime(
+    host,
+    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
+    ctx.databricks?.shared,
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,

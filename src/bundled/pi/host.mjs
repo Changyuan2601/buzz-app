@@ -5,7 +5,7 @@
 // in the app, which holds the agent's key: a call to one here is a request
 // back to the plugin. `pi.sh` runs this with Node in the folder its packages
 // are installed in.
-import { execSync } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,8 +16,11 @@ import {
 } from "@earendil-works/chord/context";
 import {
   clampThinkingLevel,
+  createProvider,
   getSupportedThinkingLevels,
 } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AssistantEntry,
@@ -155,6 +158,137 @@ export class AuthFile {
   }
 }
 
+/** How long an access token from Buzz's helper is reused; the helper renews
+ * one a minute before it expires. */
+const TOKEN_MS = 30_000;
+/** Covers the helper's wait for its storage lock and two OAuth requests. */
+const HELPER_TIMEOUT_MS = 45_000;
+/** What Databricks AI Gateway accepts of each API's requests. */
+const GATEWAY_COMPAT = {
+  "openai-responses": {
+    supportsDeveloperRole: false,
+    supportsLongCacheRetention: false,
+    supportsStrictMode: false,
+  },
+  "anthropic-messages": {
+    supportsEagerToolInputStreaming: false,
+    supportsLongCacheRetention: false,
+    supportsCacheControlOnTools: false,
+    supportsStrictTools: false,
+    supportsMidConvoToolChanges: false,
+  },
+};
+/** OpenAI Responses caps item ids at 64 characters; gateway models can mint
+ * longer ones, which it then rejects when they are replayed. Pairing uses
+ * `call_id`, which stays. */
+const shortIds = (options) => ({
+  ...options,
+  onPayload: async (payload, model) => {
+    const next = Array.isArray(payload?.input)
+      ? {
+          ...payload,
+          input: payload.input.map(({ id, ...item }) =>
+            typeof id === "string" && id.length > 64 ? item : { id, ...item },
+          ),
+        }
+      : payload;
+    return options?.onPayload ? options.onPayload(next, model) : next;
+  },
+});
+/** The gateway's Anthropic route takes the token as a bearer, not a key. */
+const bearer = (options) =>
+  options?.apiKey
+    ? {
+        ...options,
+        apiKey: undefined,
+        headers: {
+          ...options.headers,
+          Authorization: `Bearer ${options.apiKey}`,
+        },
+      }
+    : options;
+const wrap = (streams, change) => ({
+  stream: (model, context, options) =>
+    streams.stream(model, context, change(options)),
+  streamSimple: (model, context, options) =>
+    streams.streamSimple(model, context, change(options)),
+});
+/** Pi's own model for a served one, such as `gpt-6.1-sol` for
+ * `databricks-gpt-6-1-sol`: its limits and thinking levels. */
+const canonical = (id) => id.replace(/^databricks-/, "").replaceAll(".", "-");
+
+/** A connection Buzz shares, as a Pi provider. The plugin chose each model's
+ * route; limits and thinking levels are Pi's for the same model. Each request
+ * gets a current access token from Buzz's helper, which holds the sign-in. */
+export function sharedProvider(binding, known) {
+  let token;
+  const fresh = () => {
+    if (token && Date.now() - token.at < TOKEN_MS) return token.value;
+    const value = new Promise((resolve, reject) =>
+      execFile(
+        binding.command,
+        binding.args,
+        { encoding: "utf8", timeout: HELPER_TIMEOUT_MS },
+        (error, stdout, stderr) =>
+          error || !stdout.trim()
+            ? reject(
+                new Error(stderr.trim() || `${binding.name} sent no token`),
+              )
+            : resolve(stdout.trim()),
+      ),
+    );
+    token = { at: Date.now(), value };
+    value.catch(() => {
+      if (token?.value === value) token = undefined;
+    });
+    return value;
+  };
+  return createProvider({
+    id: binding.id,
+    name: binding.name,
+    auth: {
+      apiKey: {
+        name: binding.name,
+        resolve: async () => ({
+          auth: { apiKey: await fresh() },
+          source: binding.name,
+        }),
+      },
+    },
+    models: binding.models.map(({ id, name, api, baseUrl }) => {
+      const found = known(api, canonical(id));
+      return {
+        id,
+        name,
+        api,
+        provider: binding.id,
+        baseUrl,
+        reasoning: found?.reasoning ?? false,
+        ...(found?.thinkingLevelMap
+          ? { thinkingLevelMap: found.thinkingLevelMap }
+          : {}),
+        input: found?.input ?? ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: found?.contextWindow ?? 128_000,
+        maxTokens: found?.maxTokens ?? 16_384,
+        compat: {
+          ...GATEWAY_COMPAT[api],
+          ...(found?.compat?.forceAdaptiveThinking !== undefined && {
+            forceAdaptiveThinking: found.compat.forceAdaptiveThinking,
+          }),
+          ...(found?.compat?.supportsTemperature !== undefined && {
+            supportsTemperature: found.compat.supportsTemperature,
+          }),
+        },
+      };
+    }),
+    api: {
+      "openai-responses": wrap(openAIResponsesApi(), shortIds),
+      "anthropic-messages": wrap(anthropicMessagesApi(), bearer),
+    },
+  });
+}
+
 /** Why a provider that a Pi package adds, which Buzz doesn't load, can't run. */
 const notBuiltIn = (id) =>
   `Buzz can use only Pi's built-in providers, and ${id} isn't one. It may come from a Pi package. Choose another provider in the agent's Settings.`;
@@ -230,11 +364,37 @@ export function serve({
       write({ id, method, params });
     });
 
+  /** Providers Buzz shares, registered by id, and Pi's own models to borrow
+   * limits from. */
+  const bound = new Set();
+  let builtins;
+  const known = (api, id) => {
+    builtins ??= new Map(
+      models
+        .getProviders()
+        .filter((provider) => !bound.has(provider.id))
+        .flatMap((provider) => models.getModels(provider.id))
+        .map((model) => [`${model.api}:${canonical(model.id)}`, model]),
+    );
+    return builtins.get(`${api}:${id}`);
+  };
+  /** Registers a provider Buzz shares, such as Databricks, the first time it
+   * is needed, or `again` for a sign-in or catalog that may have changed. The
+   * plugin answers with nothing for one it doesn't share. */
+  async function bind(id, again = false) {
+    if (models.getProvider(id) && !(again && bound.has(id))) return;
+    const binding = await call("provider", { id });
+    if (!binding.models) return;
+    models.setProvider(sharedProvider({ ...binding, id }, known));
+    bound.add(id);
+  }
+
   /** The model a turn runs on: the owner's pick, the agent's, or else Pi's
    * default. */
   async function choose({ provider, model, pick = {} }) {
     const defaults = await piDefaults(dir);
     const id = provider || defaults.provider;
+    if (id) await bind(id);
     const modelId =
       pick.model ||
       model ||
@@ -497,7 +657,9 @@ export function serve({
     async providers() {
       const providers = [];
       for (const provider of models.getProviders()) {
-        if (!models.getModels(provider.id).length) continue;
+        // The plugin lists the ones Buzz shares itself.
+        if (bound.has(provider.id) || !models.getModels(provider.id).length)
+          continue;
         const auth = await models.checkAuth(provider.id).catch(() => undefined);
         providers.push({
           id: provider.id,
@@ -510,7 +672,8 @@ export function serve({
       providers.sort((a, b) => a.name.localeCompare(b.name));
       return { providers, defaults: await piDefaults(dir) };
     },
-    models({ provider }) {
+    async models({ provider }) {
+      await bind(provider, true);
       return models.getModels(provider).map((model) => ({
         id: model.id,
         name: model.name,

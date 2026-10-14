@@ -1,7 +1,8 @@
 // The Pi host (host.mjs): one process for every Pi agent here, started when
 // something needs it, spoken to over stdio, one JSON message a line. Requests
 // go both ways: the plugin asks the host to run turns, and the host asks the
-// plugin to run the Buzz tools, so the process holds no Buzz key.
+// plugin to run the Buzz tools, so the process holds no Buzz key, and for the
+// providers Buzz shares.
 import type { Context } from "../../buzz-mcp/client";
 import type {
   HostProcess,
@@ -35,9 +36,25 @@ export type PiEvent = Readonly<
     | { type: "step"; tool: string; target?: string }
   )
 >;
+/** A provider Buzz shares, with each model's route; the host gets access
+ * tokens by running `command`. Empty for one Buzz doesn't share. */
+export type Binding =
+  | Readonly<{
+      name: string;
+      command: string;
+      args: readonly string[];
+      models: readonly Readonly<{
+        id: string;
+        name: string;
+        api: "openai-responses" | "anthropic-messages";
+        baseUrl: string;
+      }>[];
+    }>
+  | Readonly<Record<string, never>>;
 type Handlers = Readonly<{
   tool(call: ToolCall): Promise<ToolResult>;
   event(event: PiEvent): void;
+  provider(id: string): Promise<Binding>;
 }>;
 
 /** The host stopped after it started; its runs continue in the next one. */
@@ -138,7 +155,13 @@ export class Pi {
       else if (message.method === "event")
         this.handlers.event(message.params as PiEvent);
       else if (message.method === "tool" && message.id !== undefined)
-        void this.answer(connection, message.id, message.params as ToolCall);
+        void this.answer(connection, message.id, () =>
+          this.handlers.tool(message.params as ToolCall),
+        );
+      else if (message.method === "provider" && message.id !== undefined)
+        void this.answer(connection, message.id, () =>
+          this.handlers.provider((message.params as { id: string }).id),
+        );
       else if (typeof message.id === "number") {
         const call = connection.calls.get(message.id);
         connection.calls.delete(message.id);
@@ -188,15 +211,15 @@ export class Pi {
     return connection;
   }
 
-  /** Runs a Buzz tool the host called, and sends it the result. */
+  /** Answers what the host asked, such as to run a Buzz tool. */
   private async answer(
     connection: Connection,
     id: number | string,
-    call: ToolCall,
+    run: () => Promise<unknown>,
   ) {
     let message: Message;
     try {
-      message = { id, result: await this.handlers.tool(call) };
+      message = { id, result: await run() };
     } catch (error) {
       message = {
         id,

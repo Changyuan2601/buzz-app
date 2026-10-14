@@ -11,6 +11,10 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent } from "../../features/agents/service";
+import {
+  DATABRICKS_ID,
+  type SharedProvider,
+} from "../../features/providers/shared";
 import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
 import { createTabs } from "./tabs";
@@ -38,6 +42,9 @@ const MODELS: Record<
 > = {
   anthropic: [{ id: "claude-x", name: "Claude X", thinking: ["off", "high"] }],
   openai: [{ id: "gpt-x", name: "GPT X", thinking: ["off", "low"] }],
+  [DATABRICKS_ID]: [
+    { id: "databricks-claude-x", name: "Team Claude", thinking: ["off"] },
+  ],
 };
 
 /** The Pi host's answers to setup's requests; `fail` makes one throw. */
@@ -139,9 +146,9 @@ function fakeRuntime() {
   };
 }
 
-function created(pi = fakePi()) {
+function created(pi = fakePi(), shared?: SharedProvider) {
   const { Create, CreateModel } = createTabs({
-    setup: new PiSetup(pi),
+    setup: new PiSetup(pi, shared),
     runtime: fakeRuntime(),
   });
   const changes: Config[] = [];
@@ -258,6 +265,55 @@ it("sends a provider that signs in without a key to the pi command", async () =>
     within(dialog).getByText(/GitHub Copilot signs in through Pi/),
   ).toBeVisible();
   expect(within(dialog).queryByLabelText("API key")).toBeNull();
+});
+
+it("signs in to a connection Buzz shares in place of a key, then lists its models", async () => {
+  let connected = false;
+  const shared: SharedProvider = {
+    id: DATABRICKS_ID,
+    name: "Databricks in Buzz",
+    connected: async () => connected,
+    models: async () => [],
+    connection: async () => ({
+      host: "https://workspace.example",
+      command: "buzz",
+      args: [],
+    }),
+    Connection: ({ onChange }) => (
+      <button
+        type="button"
+        onClick={() => {
+          connected = true;
+          onChange();
+        }}
+      >
+        Connect fixture
+      </button>
+    ),
+  };
+  const { pi, changes } = created(fakePi(), shared);
+  const user = userEvent.setup();
+  const dialog = await openChoices();
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("combobox", { name: "Model provider" }),
+    ).toBeEnabled(),
+  );
+  await choose("Model provider", "Databricks in Buzz");
+  expect(within(dialog).queryByLabelText("API key")).toBeNull();
+  // Signed out, Pi isn't asked for models it can't reach.
+  expect(pi.calls).not.toHaveBeenCalledWith("models", {
+    provider: DATABRICKS_ID,
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Connect fixture" }),
+  );
+  await choose("Model", "Team Claude");
+  await user.click(within(dialog).getByRole("button", { name: "Use" }));
+  expect(changes.at(-1)).toMatchObject({
+    provider: DATABRICKS_ID,
+    model: "databricks-claude-x",
+  });
 });
 
 it("says why Pi could not start, and tries again", async () => {

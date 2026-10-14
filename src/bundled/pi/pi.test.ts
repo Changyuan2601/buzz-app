@@ -2,7 +2,11 @@ import { expect, it, vi } from "vitest";
 import { Pi, PiStopped } from "./pi";
 import { deferred, fakeHost } from "./pi-testing";
 
-const handlers = () => ({ tool: vi.fn(), event: vi.fn() });
+const handlers = () => ({
+  tool: vi.fn(),
+  event: vi.fn(),
+  provider: vi.fn(async () => ({})),
+});
 
 it("starts the host once, with the install script, and pairs each answer with its request", async () => {
   const slow = deferred<object>();
@@ -89,7 +93,7 @@ it("runs the tools the host calls, and sends back each result or error", async (
     .fn()
     .mockResolvedValueOnce({ content: [{ type: "text", text: "sent" }] })
     .mockRejectedValueOnce(new Error("No such channel"));
-  const pi = new Pi(() => host.spawn, { tool, event: vi.fn() });
+  const pi = new Pi(() => host.spawn, { ...handlers(), tool });
   await pi.request("open");
   const process = host.processes[0];
   const call = {
@@ -106,6 +110,30 @@ it("runs the tools the host calls, and sends back each result or error", async (
   await expect(process?.tool(call)).resolves.toMatchObject({
     error: "No such channel",
   });
+});
+
+it("answers the host's provider lookups", async () => {
+  const host = fakeHost();
+  const binding = {
+    name: "Databricks in Buzz",
+    command: "buzz",
+    args: ["--token"],
+    models: [],
+  };
+  const provider = vi
+    .fn()
+    .mockResolvedValueOnce(binding)
+    .mockRejectedValueOnce(new Error("Sign in again"));
+  const pi = new Pi(() => host.spawn, { ...handlers(), provider });
+  await pi.request("open");
+  const process = host.processes[0];
+  await expect(
+    process?.call("provider", { id: "buzz.databricks" }),
+  ).resolves.toMatchObject({ result: binding });
+  expect(provider).toHaveBeenCalledWith("buzz.databricks");
+  await expect(
+    process?.call("provider", { id: "buzz.databricks" }),
+  ).resolves.toMatchObject({ error: "Sign in again" });
 });
 
 it("closes the host's stdin to stop it, and refuses requests after", async () => {

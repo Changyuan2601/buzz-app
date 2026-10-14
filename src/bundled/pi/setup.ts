@@ -2,6 +2,7 @@
 // saving a provider's key, and testing that a model answers. Keys go to Pi's
 // own `~/.pi/agent/auth.json`, shared with the `pi` command, never into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
+import type { SharedProvider } from "../../features/providers/shared";
 import type { Pi } from "./pi";
 
 export type Provider = Readonly<{
@@ -13,6 +14,8 @@ export type Provider = Readonly<{
   signsIn: boolean;
   /** Where Pi finds its credentials, when it has them. */
   configured?: string;
+  /** A connection Buzz shares, signed in to apart from Pi. */
+  shared?: true;
 }>;
 
 export type Providers = Readonly<{
@@ -30,12 +33,42 @@ export class PiSetup {
   private listing: Promise<Providers> | undefined;
   private readonly listed = new Map<string, Promise<readonly PiModel[]>>();
 
-  constructor(private readonly pi: Pick<Pi, "request">) {}
+  constructor(
+    private readonly pi: Pick<Pi, "request">,
+    readonly shared?: SharedProvider,
+  ) {}
 
-  /** Pi's providers, read once until a key is saved. */
+  /** Reads providers and models again, as after signing in. */
+  refresh() {
+    this.listing = undefined;
+    this.listed.clear();
+  }
+
+  /** Pi's providers, and the one Buzz shares first, read once until a key is
+   * saved. */
   providers(): Promise<Providers> {
     if (this.listing) return this.listing;
-    const listing = this.pi.request<Providers>("providers");
+    const listing = this.pi
+      .request<Providers>("providers")
+      .then(async (listed) => {
+        const { shared } = this;
+        if (!shared) return listed;
+        const connected = await shared.connected().catch(() => false);
+        return {
+          ...listed,
+          providers: [
+            {
+              id: shared.id,
+              name: shared.name,
+              key: false,
+              signsIn: false,
+              ...(connected ? { configured: "Buzz" } : {}),
+              shared: true as const,
+            },
+            ...listed.providers,
+          ],
+        };
+      });
     this.listing = listing;
     listing.catch(() => {
       if (this.listing === listing) this.listing = undefined;
@@ -43,21 +76,23 @@ export class PiSetup {
     return listing;
   }
 
-  /** A provider's models, from Pi's catalog. */
+  /** A provider's models, from Pi's catalog; none from a shared connection
+   * before signing in. */
   models(id: string): Promise<readonly PiModel[]> {
     let models = this.listed.get(id);
     if (!models) {
-      models = this.pi
-        .request<{ id: string; name: string; thinking: string[] }[]>("models", {
-          provider: id,
-        })
-        .then((models) =>
-          models.map((model) => ({
-            id: model.id,
-            label: model.name || model.id,
-            thinking: model.thinking,
-          })),
-        );
+      const { shared } = this;
+      models = (async () => {
+        if (id === shared?.id && !(await shared.connected())) return [];
+        const listed = await this.pi.request<
+          { id: string; name: string; thinking: string[] }[]
+        >("models", { provider: id });
+        return listed.map((model) => ({
+          id: model.id,
+          label: model.name || model.id,
+          thinking: model.thinking,
+        }));
+      })();
       const listing = models;
       listing.catch(() => {
         if (this.listed.get(id) === listing) this.listed.delete(id);

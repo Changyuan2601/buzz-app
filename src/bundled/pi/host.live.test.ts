@@ -3,7 +3,7 @@
 // with PI_DEPS set to a folder pi.sh installed Pi's packages in, such as
 // "~/Library/Application Support/Buzz/pi/deps/<sum>".
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -38,6 +38,8 @@ function start() {
       tools.push(message.params);
       const final = message.params.arguments.final === true;
       input.write(JSON.stringify({ id: message.id, result: { content: [{ type: "text", text: "sent" }], ...(final ? { final } : {}) } }) + "\\n");
+    } else if (message.method === "provider") {
+      input.write(JSON.stringify({ id: message.id, result: {} }) + "\\n");
     } else if (message.id !== undefined) {
       const call = pending.get(message.id);
       pending.delete(message.id);
@@ -114,6 +116,67 @@ const auth = new AuthFile(data + "/auth.json");
 const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
 await auth.modify("p", async () => signIn);
 out.auth = { result: await auth.modify("p", async () => undefined), stored: await auth.read("p") };
+console.log(JSON.stringify(out));
+`;
+
+/** Serves Buzz's shared Databricks provider over a fake gateway that records
+ * each request, with a token helper that counts its runs. */
+const SHARED = `
+import { createServer } from "node:http";
+import { PassThrough } from "node:stream";
+import { createInterface } from "node:readline";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { serve } from "./host.mjs";
+const data = process.argv[2];
+const requests = [];
+const server = createServer((request, response) => {
+  let body = "";
+  request.on("data", (chunk) => (body += chunk));
+  request.on("end", () => {
+    requests.push({ path: request.url, authorization: request.headers.authorization, apiKey: request.headers["x-api-key"], model: JSON.parse(body).model });
+    response.writeHead(400, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { type: "invalid_request_error", message: "Gateway says no" } }));
+  });
+});
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const host = "http://127.0.0.1:" + server.address().port;
+const binding = {
+  name: "Databricks in Buzz",
+  command: process.execPath,
+  args: [data + "/token.mjs"],
+  models: [
+    { id: "databricks-claude-opus-5-5", name: "Claude Opus 5.5", api: "anthropic-messages", baseUrl: host + "/ai-gateway/anthropic" },
+    { id: "databricks-o3", name: "o3", api: "openai-responses", baseUrl: host + "/ai-gateway/openai/v1" },
+  ],
+};
+const input = new PassThrough(), output = new PassThrough();
+const pending = new Map();
+let id = 0;
+createInterface({ input: output }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "provider")
+    input.write(JSON.stringify({ id: message.id, result: message.params.id === "buzz.databricks" ? binding : {} }) + "\\n");
+  else if (message.id !== undefined) {
+    const call = pending.get(message.id);
+    pending.delete(message.id);
+    if (message.error) call.reject(new Error(message.error));
+    else call.resolve(message.result);
+  }
+});
+const rpc = (method, params) => new Promise((resolve, reject) => {
+  pending.set(++id, { resolve, reject });
+  input.write(JSON.stringify({ id, method, params }) + "\\n");
+});
+const { stop } = serve({ data, models: builtinModels(), dir: data, input, output, exit: () => {} });
+const out = {};
+out.models = await rpc("models", { provider: "buzz.databricks" });
+out.listed = (await rpc("providers")).providers.map((provider) => provider.id);
+out.tests = [];
+for (const model of ["databricks-claude-opus-5-5", "databricks-o3", "databricks-claude-opus-5-5"])
+  out.tests.push(await rpc("test", { provider: "buzz.databricks", model }));
+out.requests = requests;
+await stop();
+server.close();
 console.log(JSON.stringify(out));
 `;
 
@@ -195,4 +258,61 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
   }, 90_000);
+  it("runs Buzz's shared Databricks provider on the gateway route each model has", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "buzz-pi-shared-"));
+    folders.push(folder);
+    await symlink(
+      join(DEPS ?? "", "node_modules"),
+      join(folder, "node_modules"),
+    );
+    await writeFile(join(folder, "host.mjs"), host);
+    await writeFile(join(folder, "driver.mjs"), SHARED);
+    await writeFile(
+      join(folder, "token.mjs"),
+      `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(join(folder, "runs"))}, "x");\nconsole.log("tok-1");\n`,
+    );
+    const { stdout } = await run(
+      process.execPath,
+      [
+        "--disable-warning=ExperimentalWarning",
+        join(folder, "driver.mjs"),
+        folder,
+      ],
+      { cwd: folder, timeout: 60_000 },
+    );
+    const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
+    // Limits and thinking levels come from Pi's own models.
+    expect(out.models).toMatchObject([
+      { id: "databricks-claude-opus-5-5", name: "Claude Opus 5.5" },
+      { id: "databricks-o3", name: "o3" },
+    ]);
+    for (const model of out.models)
+      expect(model.thinking.length).toBeGreaterThan(1);
+    // The plugin lists the shared provider itself.
+    expect(out.listed).not.toContain("buzz.databricks");
+    expect(out.tests).toEqual([
+      { ok: false, message: expect.stringContaining("Gateway says no") },
+      { ok: false, message: expect.stringContaining("Gateway says no") },
+      { ok: false, message: expect.stringContaining("Gateway says no") },
+    ]);
+    expect(out.requests).toEqual([
+      {
+        path: "/ai-gateway/anthropic/v1/messages?beta=true",
+        authorization: "Bearer tok-1",
+        model: "databricks-claude-opus-5-5",
+      },
+      {
+        path: "/ai-gateway/openai/v1/responses",
+        authorization: "Bearer tok-1",
+        model: "databricks-o3",
+      },
+      {
+        path: "/ai-gateway/anthropic/v1/messages?beta=true",
+        authorization: "Bearer tok-1",
+        model: "databricks-claude-opus-5-5",
+      },
+    ]);
+    // One helper run serves requests close together.
+    expect(await readFile(join(folder, "runs"), "utf8")).toBe("x");
+  });
 });

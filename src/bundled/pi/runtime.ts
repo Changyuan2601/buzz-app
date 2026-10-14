@@ -20,6 +20,7 @@ import type {
   Models,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
+import type { SharedProvider } from "../../features/providers/shared";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import { Lanes } from "../claude-code/lanes";
@@ -43,6 +44,7 @@ import {
   type ToolResult,
 } from "./pi";
 import { PiSetup } from "./setup";
+import { sharedBinding } from "./shared-provider";
 import { readTranscript } from "./transcript";
 
 export type Config = Readonly<{
@@ -147,12 +149,15 @@ export class PiRuntime {
     private readonly host: Pick<Host, "spawn">,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** A connection Buzz shares, such as Databricks, when its plugin is on. */
+    shared?: SharedProvider,
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
       event: (event) => this.event(event),
+      provider: (id) => sharedBinding(shared, id),
     });
-    this.setup = new PiSetup(this.pi);
+    this.setup = new PiSetup(this.pi, shared);
   }
 
   /** Brings the runtime in line with this type's agents. A removed one's

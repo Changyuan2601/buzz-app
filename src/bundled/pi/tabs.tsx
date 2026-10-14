@@ -133,7 +133,7 @@ export function createTabs({
     const provider = providers?.providers.find((item) => item.id === id);
     const [models] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
-      id,
+      `${id}:${provider?.configured ?? ""}`,
     );
     // A result belongs to the choice it tested.
     const choice = `${value.provider}\u0000${value.model}`;
@@ -193,8 +193,21 @@ export function createTabs({
             <Button onClick={reload}>Try again</Button>
           </div>
         )}
-        {provider && (
-          <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
+        {provider?.shared && setup.shared ? (
+          <setup.shared.Connection
+            onChange={() => {
+              setup.refresh();
+              reload();
+            }}
+          />
+        ) : (
+          provider && (
+            <ProviderKey
+              key={provider.id}
+              provider={provider}
+              onSaved={reload}
+            />
+          )
         )}
         <ModelPicker
           allowCustomModel={false}
