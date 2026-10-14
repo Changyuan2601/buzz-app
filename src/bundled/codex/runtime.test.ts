@@ -2241,6 +2241,41 @@ it("lets go of a rejected steering mention without ending the running turn", asy
   ]);
 });
 
+it("keeps a request working when its final send mentions no one, until a corrected send", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    (await f.tool("send", { audience: "everyone", text: "done", final: true }))
+      ?.result,
+  ).toMatchObject({
+    success: false,
+    contentItems: [
+      {
+        type: "inputText",
+        text: expect.stringContaining("A final message must mention"),
+      },
+    ],
+  });
+  expect(f.publish).not.toHaveBeenCalled();
+  const working = f.workingUntil.mock.calls[0]?.[0];
+  const pending = Symbol();
+  expect(await Promise.race([working, Promise.resolve(pending)])).toBe(pending);
+  expect(
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "done",
+        mentions: [owner],
+        final: true,
+      })
+    )?.result,
+  ).toMatchObject({ success: true });
+  expect(f.publish).toHaveBeenCalledTimes(1);
+  await expect(working).resolves.toEqual({ ok: true });
+  expect(f.starts()).toHaveLength(1);
+});
+
 it("finishes final sends normally and preserves the agent's background terminals", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   await f.runtime.run(f.delivery("start server"));
