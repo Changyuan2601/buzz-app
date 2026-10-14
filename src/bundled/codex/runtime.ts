@@ -284,6 +284,10 @@ export class CodexRuntime {
     this.stopping.clear();
     this.close();
   }
+  /** Starts the shared server ahead of the first mention. */
+  warm() {
+    this.open();
+  }
   private close() {
     void this.server?.rpc.close();
     this.server = undefined;

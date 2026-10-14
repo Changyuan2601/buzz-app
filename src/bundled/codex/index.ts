@@ -43,8 +43,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // up to date; that is also when a first copy is downloaded.
     const was = needed;
     needed = running.length > 0;
-    if (spawn && (was === undefined || (needed && !was)))
-      void setup.update(needed);
+    if (spawn && (was === undefined || (needed && !was))) {
+      const updated = setup.update(needed);
+      // Then, after the check that follows it (two first starts of Codex
+      // race on its state), a usable copy's server starts so the first
+      // mention skips its startup. One being installed is left to the mention.
+      if (needed)
+        void updated
+          .then(() => providerController.check())
+          .then(
+            () => {
+              if (
+                needed &&
+                !setup.snapshot().running &&
+                providerController.snapshot().readiness === "ready"
+              )
+                runtime.warm();
+            },
+            () => undefined,
+          );
+    }
   };
   const offAgents = ctx.agents.subscribe(sync);
   const offProvider = providerController.subscribe(sync);
@@ -52,6 +70,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const timer =
     spawn && setInterval(() => void setup.update(needed ?? false), UPDATE_MS);
   ctx.effect(() => () => {
+    needed = false;
     clearInterval(timer);
     offAgents();
     offProvider();
