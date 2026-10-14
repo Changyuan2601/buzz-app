@@ -77,6 +77,8 @@ type ToastCardProps = {
   tone: Tone;
   closeLabel?: string;
   onClose?: (() => void) | undefined;
+  /** Language of host copy rendered outside the originating region. */
+  lang?: string | undefined;
 };
 
 function ToastCard({
@@ -86,12 +88,14 @@ function ToastCard({
   tone,
   closeLabel = "Dismiss notification",
   onClose,
+  lang,
 }: ToastCardProps) {
   const titleId = useId();
   const descriptionId = useId();
   return (
     <div
       role="dialog"
+      lang={lang}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       data-buzz-ui=""
@@ -164,6 +168,7 @@ export function ToastNotice({
   closeLabel = "Dismiss notification",
   timeout = 0,
   tone = "error",
+  lang,
 }: {
   title: string;
   description?: string;
@@ -173,11 +178,12 @@ export function ToastNotice({
   /** Zero keeps recovery visible until its source resolves or explicitly dismisses. */
   timeout?: number;
   tone?: Tone;
+  lang?: string;
 }) {
   const id = useId();
   const toasterId = useContext(ToastHost);
   const [source] = useState(() =>
-    noticeContent({ title, description, tone, children }),
+    noticeContent({ title, description, tone, children, lang }),
   );
   const dismissed = useEffectEvent(() => onDismiss?.());
   const dismissible = timeout > 0 || !!onDismiss;
@@ -218,13 +224,24 @@ export function ToastNotice({
       tone,
       children,
       closeLabel,
+      lang,
       onClose: dismissible
         ? () => {
             toast.dismiss(id);
           }
         : undefined,
     });
-  }, [source, id, title, description, tone, children, closeLabel, dismissible]);
+  }, [
+    source,
+    id,
+    title,
+    description,
+    tone,
+    children,
+    closeLabel,
+    lang,
+    dismissible,
+  ]);
   return null;
 }
 

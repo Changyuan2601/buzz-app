@@ -42,6 +42,7 @@ const nonIconDependencies = new Set([
   "dockview-react",
   "emoji-mart",
   "flexlayout-react",
+  "i18next", // UI string localization, not an icon catalog.
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
@@ -63,6 +64,7 @@ const nonIconDependencies = new Set([
   "react-day-picker", // Calendar behavior; navigation icons use our Tabler gateway.
   "react-diff-view", // Patch tables/parser, not an icon library.
   "react-dom",
+  "react-i18next",
   "react-markdown",
   "remark-breaks",
   "remark-gfm",

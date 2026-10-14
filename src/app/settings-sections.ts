@@ -4,6 +4,7 @@ import {
   BellIcon,
   ChatCircleIcon,
   DownloadIcon,
+  GlobeIcon,
   KeyboardIcon,
   PaletteIcon,
   RobotIcon,
@@ -14,6 +15,7 @@ import {
 } from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
+import type { Localized } from "../features/localization/service";
 
 type Community = { name: string };
 export type SettingsSection = {
@@ -21,10 +23,13 @@ export type SettingsSection = {
   label: string;
   /** Contributed groups leave the icon to each presentation. */
   icon?: typeof UserIcon;
+  /** Set on host-translated labels; contributed labels keep inherited metadata. */
+  lang?: string;
 };
 export type SettingsGroup = {
   id: string;
   label: string;
+  lang?: string;
   sections: readonly SettingsSection[];
 };
 
@@ -34,25 +39,30 @@ export const developerMode =
   import.meta.env.DEV &&
   /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
 
-const profile: SettingsSection = {
-  id: "profile",
-  label: "Profile",
-  icon: UserIcon,
+type BuiltIn = Omit<SettingsSection, "label"> & {
+  id:
+    | "profile"
+    | "appearance"
+    | "notifications"
+    | "shortcuts"
+    | "agents"
+    | "plugins"
+    | "language"
+    | "updates"
+    | "developer";
 };
-const app: readonly SettingsSection[] = [
-  { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "notifications", label: "Notifications", icon: BellIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "agents", label: "Agents", icon: RobotIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
-  { id: "updates", label: "Updates", icon: DownloadIcon },
+const profile: BuiltIn = { id: "profile", icon: UserIcon };
+const app: readonly BuiltIn[] = [
+  { id: "appearance", icon: PaletteIcon },
+  { id: "language", icon: GlobeIcon },
+  { id: "notifications", icon: BellIcon },
+  { id: "shortcuts", icon: KeyboardIcon },
+  { id: "agents", icon: RobotIcon },
+  { id: "plugins", icon: SquaresFourIcon },
+  { id: "updates", icon: DownloadIcon },
 ];
-const developer: SettingsSection = {
-  id: "developer",
-  label: "Developer",
-  icon: WrenchIcon,
-};
-const builtIn = new Set(
+const developer: BuiltIn = { id: "developer", icon: WrenchIcon };
+const builtIn = new Set<string>(
   [profile, ...app, ...(developerMode ? [developer] : [])].map(({ id }) => id),
 );
 
@@ -62,7 +72,13 @@ export const isBuiltInSettingsSection = (id: string) => builtIn.has(id);
 export function settingsSections(
   cards: readonly Contribution<SettingsCard>[],
   community: Community | undefined,
+  { t, lang }: Localized,
 ) {
+  const label = (section: BuiltIn): SettingsSection => ({
+    ...section,
+    label: t(`settings.section.${section.id}`),
+    lang,
+  });
   const section = (
     card: Contribution<SettingsCard>,
     icon?: typeof UserIcon,
@@ -86,7 +102,7 @@ export function settingsSections(
             id: "community",
             label: community.name,
             sections: [
-              profile,
+              label(profile),
               ...cards
                 .filter((card) => !card.group && !card.section)
                 .map((card) => section(card, ChatCircleIcon)),
@@ -98,7 +114,8 @@ export function settingsSections(
       ? [
           {
             id: "administration",
-            label: "Administration",
+            label: t("settings.group.administration"),
+            lang,
             sections: administration,
           },
         ]
@@ -112,11 +129,19 @@ export function settingsSections(
     })),
     {
       id: "app",
-      label: "App",
-      sections: [...(community ? [] : [profile]), ...app],
+      label: t("settings.group.app"),
+      lang,
+      sections: [...(community ? [] : [profile]), ...app].map(label),
     },
     ...(developerMode
-      ? [{ id: "development", label: "Development", sections: [developer] }]
+      ? [
+          {
+            id: "development",
+            label: t("settings.group.development"),
+            lang,
+            sections: [label(developer)],
+          },
+        ]
       : []),
   ];
   return {

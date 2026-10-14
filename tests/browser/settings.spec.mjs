@@ -511,6 +511,10 @@ confirmedPresence(
       ).toBeFocused();
       await tab();
       await expect(
+        sections.getByRole("button", { name: "Language", exact: true }),
+      ).toBeFocused();
+      await tab();
+      await expect(
         sections.getByRole("button", { name: "Notifications", exact: true }),
       ).toBeFocused();
       await tab();
