@@ -632,6 +632,15 @@ v6 manifest; icons/version resources remain Tauri-owned. This addresses
 without disabling IPC tests or native UI features. Non-MSVC builds retain Tauri's
 default resource path. Keep the manifest aligned when upgrading Tauri.
 
+## Verifying the Git tree kernel
+
+`bin/just verify` runs the checksum-pinned Verus toolchain over the production
+`buzz-git-tree` crate through Cargo. It fails if the requested crate has not
+explicitly opted in. See [the kernel contracts and trust boundary](../crates/git-tree/README.md).
+A Cargo cache hit may reuse prior verification; inspect the verifier's output
+before reporting a fresh obligation count. Ordinary Cargo tests execute the
+same bodies with proof annotations erased.
+
 ## Test organization
 
 Keep component and service tests beside their owner, including integration tests

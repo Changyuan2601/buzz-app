@@ -2,6 +2,7 @@
 use crate::{
     artifact_from_text, err, hash, Catalog, Manager, Manifest, Release, ReloadSource, Result, LIMIT,
 };
+use buzz_git_tree::Selection;
 use nostr::event::Event;
 use serde::Serialize;
 use std::{
@@ -430,35 +431,32 @@ impl Git {
             .map_err(err)?
             .trim()
             .to_string();
-        let tree = self.run(
-            &["-C", "repository", "ls-tree", "-rz", "--full-tree", "HEAD"],
+        let bytes = self.run(
+            &[
+                "-C",
+                "repository",
+                "ls-tree",
+                "-r",
+                "-t",
+                "-l",
+                "-z",
+                "--full-tree",
+                &commit,
+            ],
             2 * 1024 * 1024,
         )?;
-        let mut blobs = BTreeMap::new();
-        for (index, entry) in tree
-            .split(|b| *b == 0)
-            .filter(|b| !b.is_empty())
-            .enumerate()
-        {
-            if index >= MAX_ENTRIES {
-                return Err("Repository exceeds 20,000 files; use a smaller repository".into());
-            }
-            let entry =
-                std::str::from_utf8(entry).map_err(|_| "Repository filenames must be UTF-8")?;
-            let (meta, path) = entry.split_once('\t').ok_or("Invalid Git tree")?;
-            let mut meta = meta.split(' ');
-            let mode = meta.next().unwrap_or_default();
-            let kind = meta.next().unwrap_or_default();
-            let oid = meta.next().unwrap_or_default();
-            // Never check out a working tree: symlinks, submodules, attributes/filters and
-            // repository scripts cannot become executable acquisition steps.
-            if kind == "blob" && (mode == "100644" || mode == "100755") {
-                blobs.insert(path.to_string(), oid.to_string());
-            }
-        }
+        let tree = buzz_git_tree::parse(&bytes, MAX_ENTRIES)
+            .map_err(|reason| format!("Invalid Git tree: {reason:?}"))?;
+        let paths = tree
+            .entries()
+            .iter()
+            .map(|entry| {
+                std::str::from_utf8(&entry.path).map_err(|_| "Repository filenames must be UTF-8")
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut prepared = PreparedImport::new(source, Some(commit), None)?;
-        let parents: std::collections::BTreeSet<&str> = blobs
-            .keys()
+        let parents: std::collections::BTreeSet<&str> = paths
+            .iter()
             .filter_map(|path| {
                 [
                     "manifest.json",
@@ -484,57 +482,39 @@ impl Git {
             } else {
                 parent.trim_end_matches('/')
             };
-            let artifact_oid = blobs.get(&format!("{parent}plugin.artifact.json"));
-            let signature_oid = blobs.get(&format!("{parent}plugin.signature.json"));
-            if artifact_oid.is_some() || signature_oid.is_some() {
-                let release = (|| {
-                    let (Some(artifact_oid), Some(signature_oid)) = (artifact_oid, signature_oid)
-                    else {
-                        return Err("Incomplete signed plugin release pair".into());
-                    };
-                    let bytes = self.read_blob(artifact_oid)?;
-                    let signature: Event =
-                        serde_json::from_slice(&self.read_blob(signature_oid)?).map_err(err)?;
+            let blob = |index: usize| {
+                let oid = std::str::from_utf8(&tree.entries()[index].oid).map_err(err)?;
+                self.read_blob(oid)
+            };
+            let artifact = match tree.package(parent.as_bytes(), LIMIT) {
+                Selection::Signed {
+                    artifact,
+                    signature,
+                } => (|| {
                     Ok(Release {
-                        bytes,
-                        signature: Some(signature),
+                        bytes: blob(artifact)?,
+                        signature: Some(
+                            serde_json::from_slice::<Event>(&blob(signature)?).map_err(err)?,
+                        ),
                     })
-                })();
-                prepared.add(display.into(), release)?;
-                continue;
-            }
-            let Some(manifest_oid) = blobs.get(&format!("{parent}manifest.json")) else {
-                continue;
-            };
-            let Some(code_oid) = blobs.get(&format!("{parent}plugin.js")) else {
-                prepared.add(
-                    display.into(),
-                    Err("No built plugin.js beside manifest.json; build the plugin first".into()),
-                )?;
-                continue;
-            };
-            let mut contents = vec![];
-            let mut oversized = false;
-            for oid in [manifest_oid, code_oid] {
-                let size = String::from_utf8(
-                    self.run(&["-C", "repository", "cat-file", "-s", oid], 1024)?,
-                )
-                .map_err(err)?;
-                if size.trim().parse::<u64>().map_err(err)? > LIMIT {
-                    oversized = true;
-                    break;
+                })(),
+                Selection::Unsigned { manifest, module } => (|| {
+                    let manifest = String::from_utf8(blob(manifest)?).map_err(err)?;
+                    let module = String::from_utf8(blob(module)?).map_err(err)?;
+                    artifact_from_text(&manifest, module).map(|bytes| Release {
+                        bytes,
+                        signature: None,
+                    })
+                })(),
+                Selection::InvalidSigned => {
+                    Err("Incomplete or nonregular signed plugin release pair".into())
                 }
-                let bytes = self.run(&["-C", "repository", "cat-file", "blob", oid], LIMIT)?;
-                contents.push(String::from_utf8(bytes).map_err(err)?);
-            }
-            let artifact = if oversized {
-                Err("File exceeds 8 MiB".into())
-            } else {
-                let code = contents.pop().unwrap();
-                artifact_from_text(&contents[0], code).map(|bytes| Release {
-                    bytes,
-                    signature: None,
-                })
+                Selection::MissingModule => {
+                    Err("No built plugin.js beside manifest.json; build the plugin first".into())
+                }
+                Selection::TooLarge => Err("File exceeds 8 MiB".into()),
+                Selection::NoPackage => continue,
+                Selection::InvalidParent => return Err("Invalid Git plugin directory".into()),
             };
             prepared.add(display.into(), artifact)?;
         }
@@ -853,9 +833,12 @@ mod tests {
         let repo = git.scratch.path().join("repository");
         let signed = plugin(&repo, "plugins/one/dist", "example.one");
         crate::sign_release(&signed, &nostr::key::SecretKey::generate().to_secret_hex()).unwrap();
-        fs::remove_file(signed.join("manifest.json")).unwrap();
-        fs::remove_file(signed.join("plugin.js")).unwrap();
+        // Keep unsigned siblings: the signed pair must take precedence.
+
         plugin(&repo, "plugins/two", "example.two");
+        plugin(&repo, ".hidden/three", "example.three");
+        plugin(&repo, "node_modules/skipped", "example.skipped");
+        plugin(&repo, "target/skipped", "example.skipped");
         fs::write(
             repo.join("package.json"),
             r#"{"scripts":{"postinstall":"exit 1"}}"#,
@@ -888,7 +871,12 @@ mod tests {
         )
         .unwrap();
         let prepared = git.read_plugins("fixture".into()).unwrap();
-        assert_eq!(prepared.preview.candidates.len(), 2);
+        assert_eq!(prepared.preview.candidates.len(), 3);
+        assert!(prepared
+            .preview
+            .candidates
+            .iter()
+            .any(|candidate| candidate.path == ".hidden/three"));
         assert!(prepared
             .preview
             .candidates
@@ -916,6 +904,112 @@ mod tests {
             .module("example.one", &installed.revision)
             .unwrap()
             .contains("first"));
+    }
+    #[test]
+    fn git_signed_markers_never_fall_back_when_nonregular() {
+        let git = Git::new().unwrap();
+        git.run(&["init", "--template=", "repository"], LIMIT)
+            .unwrap();
+        let repo = git.scratch.path().join("repository");
+        let cases = [
+            ("artifact-link", "plugin.artifact.json", "120000"),
+            ("signature-link", "plugin.signature.json", "120000"),
+            ("artifact-gitlink", "plugin.artifact.json", "160000"),
+            ("signature-gitlink", "plugin.signature.json", "160000"),
+            ("artifact-directory", "plugin.artifact.json", "directory"),
+            ("signature-directory", "plugin.signature.json", "directory"),
+        ];
+        for (folder, name, mode) in cases {
+            let package = plugin(&repo, folder, &format!("example.{folder}"));
+            if mode == "directory" {
+                fs::create_dir(package.join(name)).unwrap();
+                fs::write(package.join(name).join("note"), "not a release blob").unwrap();
+            }
+        }
+        git.run(&["-C", "repository", "add", "."], LIMIT).unwrap();
+        let commit = || {
+            git.run(
+                &[
+                    "-C",
+                    "repository",
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    "fixture",
+                ],
+                LIMIT,
+            )
+            .unwrap();
+        };
+        commit();
+        let head = String::from_utf8(
+            git.run(&["-C", "repository", "rev-parse", "HEAD"], 1024)
+                .unwrap(),
+        )
+        .unwrap();
+        let blob = String::from_utf8(
+            git.run(
+                &[
+                    "-C",
+                    "repository",
+                    "rev-parse",
+                    "HEAD:artifact-link/plugin.js",
+                ],
+                1024,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for (folder, name, mode) in cases {
+            if mode == "directory" {
+                continue;
+            }
+            let oid = if mode == "160000" {
+                head.trim()
+            } else {
+                blob.trim()
+            };
+            git.run(
+                &[
+                    "-C",
+                    "repository",
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    mode,
+                    oid,
+                    &format!("{folder}/{name}"),
+                ],
+                LIMIT,
+            )
+            .unwrap();
+        }
+        commit();
+        let prepared = git.read_plugins("fixture".into()).unwrap();
+        assert!(
+            prepared.preview.candidates.is_empty(),
+            "signed-marker evidence must forbid unsigned fallback: {:?}",
+            prepared
+                .preview
+                .candidates
+                .iter()
+                .map(|c| &c.path)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(prepared.preview.warnings.len(), cases.len());
+        for (folder, _, _) in cases {
+            assert!(prepared
+                .preview
+                .warnings
+                .iter()
+                .any(|warning| warning.starts_with(&format!("{folder}:"))
+                    && warning.contains("signed")));
+        }
     }
     #[test]
     fn signed_folder_import_load_reload_and_publisher_continuity() {

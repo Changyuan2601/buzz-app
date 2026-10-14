@@ -16,6 +16,7 @@ url = "2"
 dotenvy = "0.15"
 
 [dependencies]
+buzz-git-tree = { path = "../git-tree" }
 bech32 = "0.11"
 buzz-credential-store = { path = "../credential-store" }
 serde = { version = "1", features = ["derive"] }

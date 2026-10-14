@@ -457,25 +457,22 @@ async fn snapshot(git: &Git, read: &GitRead, tip: &str) -> Read<Value> {
     if read.commit.is_some() && shallow.lines().any(|line| line == head) {
         return Err(502);
     }
-    let tree = git.run(&["ls-tree", "-r", "-l", "-z", &head]).await?;
-    let files: Vec<File> = String::from_utf8_lossy(&tree)
-        .split('\0')
-        .filter_map(|record| {
-            let (meta, path) = record.split_once('\t')?;
-            let mut meta = meta.split_whitespace();
-            let (_mode, kind, hash, size) =
-                (meta.next()?, meta.next()?, meta.next()?, meta.next()?);
-            (kind == "blob" && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(())?;
-            Some(File {
-                hash: hash.into(),
-                size: size.parse().ok()?,
-                path: path.into(),
+    let bytes = git
+        .run(&["ls-tree", "-r", "-l", "-z", "--full-tree", &head])
+        .await?;
+    let tree = buzz_git_tree::parse(&bytes, 20_000).map_err(|_| 502u16)?;
+    let files = tree
+        .entries()
+        .iter()
+        .filter(|entry| entry.size.is_some())
+        .map(|entry| {
+            Ok(File {
+                hash: std::str::from_utf8(&entry.oid).map_err(|_| 502u16)?.into(),
+                path: std::str::from_utf8(&entry.path).map_err(|_| 502u16)?.into(),
+                size: entry.size.ok_or(502u16)?,
             })
         })
-        .collect();
-    if files.len() > 20_000 {
-        return Err(502);
-    }
+        .collect::<Read<Vec<File>>>()?;
     let history = git
         .run(&[
             "log",

@@ -77,6 +77,37 @@ fn go(git: &Git, url: &str, read: &GitRead) -> Read<Value> {
         .block_on(fetch_snapshot(git, url, read))
 }
 
+#[cfg(unix)]
+#[test]
+fn repository_paths_never_alias_invalid_utf8_to_unicode() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let (source, url, _) = source();
+    let path = "alias-�.txt";
+    std::fs::write(source.path().join(path), "valid Unicode object").unwrap();
+    sh(source.path(), &["add", "."]);
+    sh(source.path(), &["commit", "-q", "-m", "Unicode path"]);
+    let request = read(json!({ "owner": OWNER, "dtag": "repo", "path": path })).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let snapshot = go(&local_git(directory.path()), &url, &request).unwrap();
+    assert_eq!(snapshot["file"]["content"], "valid Unicode object");
+
+    // This raw name sorts first and used to collapse to the same U+FFFD label.
+    let invalid = OsString::from_vec(b"alias-\x80.txt".to_vec());
+    std::fs::write(source.path().join(invalid), "different raw-path object").unwrap();
+    sh(source.path(), &["add", "."]);
+    sh(
+        source.path(),
+        &["commit", "-q", "-m", "Unrepresentable path"],
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let result = go(&local_git(directory.path()), &url, &request);
+    assert_eq!(
+        result,
+        Err(502),
+        "an unrepresentable path must fail without selecting another object"
+    );
+}
+
 #[test]
 fn first_advertisement_does_not_discover_parent_git_config() {
     let parent = tempfile::tempdir().unwrap();
