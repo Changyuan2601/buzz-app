@@ -5,6 +5,7 @@ export type TextareaProps = Omit<ComponentProps<"textarea">, "className">;
 /** Field.Control supplies the same label/validation behavior as Input. */
 export function Textarea({
   variant = "text",
+  surface = "inset",
   id,
   name,
   value,
@@ -13,7 +14,10 @@ export function Textarea({
   autoFocus,
   ref,
   ...props
-}: TextareaProps & { variant?: "text" | "code" }) {
+}: TextareaProps & {
+  variant?: "text" | "code";
+  surface?: "inset" | "panel";
+}) {
   return (
     <BaseField.Control
       id={id}
@@ -34,6 +38,7 @@ export function Textarea({
       data-buzz-ui=""
       className="buzz-textarea"
       data-variant={variant}
+      data-surface={surface}
     />
   );
 }

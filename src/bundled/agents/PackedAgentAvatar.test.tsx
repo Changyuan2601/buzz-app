@@ -18,11 +18,16 @@ afterEach(() => {
   motion.reduced = false;
 });
 it.each([
-  ["AppleWebKit Safari", ".mp4"],
-  ["AppleWebKit Chrome", ".webm"],
+  ["MacIntel", "AppleWebKit Safari", ".mp4"],
+  ["iPhone", "AppleWebKit Safari", ".mp4"],
+  ["MacIntel", "AppleWebKit Chrome", ".webm"],
+  ["Linux x86_64", "AppleWebKit Safari", ".webm"],
+  ["Linux aarch64", "AppleWebKit Safari", ".webm"],
+  ["Win32", "AppleWebKit Chrome", ".webm"],
 ])(
-  "plays the selected animation on %s and falls back on failure",
-  (userAgent, extension) => {
+  "plays the selected animation on %s / %s and falls back on failure",
+  (platform, userAgent, extension) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
     const avatar = agentAvatars[0];
     if (!avatar) throw new Error("Missing fixture avatar");
@@ -105,6 +110,7 @@ it("keeps animation available after autoplay is blocked and retries on hover", a
 });
 
 it("streams both codecs from the CDN and falls back when the last source fails", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   vi.spyOn(navigator, "userAgent", "get").mockReturnValue("AppleWebKit Safari");
   const avatar = agentAvatars[0];
   if (!avatar) throw new Error("Missing avatar");

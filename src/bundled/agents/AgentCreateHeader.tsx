@@ -11,12 +11,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import {
-  AnimatePresence,
-  LayoutGroup,
-  motion,
-  useReducedMotion,
-} from "motion/react";
+import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { agentAvatars, avatarPacks } from "../../features/agents/avatar-packs";
@@ -57,6 +52,7 @@ export function AgentCreateHeader({
 }) {
   const preview = useAvatarPreview(picture ?? "", community);
   const [view, setView] = useState("selected");
+  const [movingAvatar, setMovingAvatar] = useState<string>();
   useEffect(() => {
     onAvatarActiveChange?.(view !== "selected");
   }, [view, onAvatarActiveChange]);
@@ -69,6 +65,7 @@ export function AgentCreateHeader({
   const reducedMotion = useReducedMotion();
   const root = useRef<HTMLFieldSetElement>(null);
   const previousView = useRef(view);
+  const options = useRef<HTMLFieldSetElement>(null);
   const [representatives] = useState(() =>
     avatarPacks.map((pack) => {
       const members = agentAvatars.filter(
@@ -89,28 +86,31 @@ export function AgentCreateHeader({
         ?.focus({ preventScroll: true });
     previousView.current = view;
   }, [view]);
-  const [gridSize, setGridSize] = useState({ width: 768, height: 432 });
+  const [gridSize, setGridSize] = useState({ width: 768, height: 432, gap: 8 });
   useLayoutEffect(() => {
-    const element = root.current;
+    if (view === "selected" || view === "collections" || view === "image")
+      return;
+    const element = options.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => {
       if (entry)
         setGridSize({
-          width: Math.max(1, entry.contentRect.width - 96),
-          height: Math.max(1, entry.contentRect.height - 32),
+          width: Math.max(1, entry.contentRect.width),
+          height: Math.max(1, entry.contentRect.height),
+          gap: Number.parseFloat(getComputedStyle(element).gap) || 0,
         });
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [view]);
   const choices = agentAvatars.filter((avatar) => avatar.collectionId === view);
   let columns = 1;
   let largestTile = 0;
   for (let candidate = 1; candidate <= choices.length; candidate++) {
     const rows = Math.ceil(choices.length / candidate);
     const size = Math.min(
-      (gridSize.width - (candidate - 1) * 8) / candidate,
-      (gridSize.height - (rows - 1) * 8) / rows,
+      (gridSize.width - (candidate - 1) * gridSize.gap) / candidate,
+      (gridSize.height - (rows - 1) * gridSize.gap) / rows,
     );
     if (size > largestTile) {
       columns = candidate;
@@ -119,13 +119,14 @@ export function AgentCreateHeader({
   }
   const selected = agentAvatars.find((avatar) => avatar.url === picture);
   const transition = {
-    duration: reducedMotion || keyboard ? 0 : 0.24,
+    duration: reducedMotion || keyboard ? 0 : 0.3,
     ease: [0.22, 1, 0.36, 1] as const,
   };
   const artwork = (avatar: (typeof agentAvatars)[number]) => (
     <motion.div
       layoutId={avatar.id}
-      transition={transition}
+      initial={false}
+      transition={avatar.id === movingAvatar ? transition : { duration: 0 }}
       className={styles.artwork}
       aria-hidden="true"
     >
@@ -137,141 +138,148 @@ export function AgentCreateHeader({
       <fieldset
         ref={root}
         aria-label="Agent avatar"
+        data-avatar-active={view !== "selected" || undefined}
         className={styles.identity}
         data-editing={editing || undefined}
         onPointerDown={() => setKeyboard(false)}
         onKeyDown={() => setKeyboard(true)}
       >
         <div className={styles.cover} data-view={view}>
-          <AnimatePresence initial={false} mode="popLayout">
-            <motion.div
-              key={view}
-              data-avatar-view={view}
-              className={styles.view}
-              initial={reducedMotion || keyboard ? false : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{
-                opacity: 0,
-                pointerEvents: "none",
-              }}
-              transition={transition}
-            >
-              {view === "selected" ? (
-                <motion.div
-                  className={styles.choice}
-                  initial={false}
-                  animate={{
-                    scale: editing ? 0.65 : 1,
-                    y: editing ? -112 : -40,
-                  }}
-                  transition={transition}
-                  inert={editing}
-                >
-                  {selected ? (
-                    artwork(selected)
-                  ) : preview ? (
-                    <motion.div
-                      layoutId="agent-uploaded-avatar"
-                      transition={transition}
-                      className={`${styles.artwork} ${styles.uploaded}`}
-                      data-avatar-shape="squircle"
-                    >
-                      <img src={preview} alt="Agent avatar" />
-                    </motion.div>
-                  ) : (
-                    <span className="text-heading">
-                      {name.trim().slice(0, 2) || "?"}
-                    </span>
-                  )}
-                  <div className={styles.choiceAction}>
-                    <Button
-                      variant="primary"
-                      disabled={disabled}
-                      onClick={() => setView("collections")}
-                    >
-                      Choose avatar
-                    </Button>
-                  </div>
-                </motion.div>
-              ) : view === "collections" ? (
-                <div className={styles.collections}>
-                  {representatives.map((pack) => (
-                    <SurfaceButton
-                      className={styles.collection}
-                      key={pack.id}
-                      disabled={disabled}
-                      onClick={() => setView(pack.id)}
-                    >
-                      {selected?.collectionId === pack.id
-                        ? artwork(selected)
-                        : pack.avatar && artwork(pack.avatar)}
-                      <span>{pack.label}</span>
-                    </SurfaceButton>
-                  ))}
+          <motion.div
+            key={view}
+            data-avatar-view={view}
+            className={styles.view}
+            initial={false}
+          >
+            {view === "selected" ? (
+              <motion.div
+                className={styles.choice}
+                initial={false}
+                animate={{
+                  scale: editing ? 0.65 : 1,
+                  y: editing ? -112 : 0,
+                }}
+                transition={transition}
+                inert={editing}
+              >
+                {selected ? (
+                  artwork(selected)
+                ) : preview ? (
+                  <motion.div
+                    layoutId="agent-uploaded-avatar"
+                    transition={transition}
+                    className={`${styles.artwork} ${styles.uploaded}`}
+                    data-avatar-shape="squircle"
+                  >
+                    <img src={preview} alt="Agent avatar" />
+                  </motion.div>
+                ) : (
+                  <span className="text-heading">
+                    {name.trim().slice(0, 2) || "?"}
+                  </span>
+                )}
+                <div className={styles.choiceAction}>
+                  <Button
+                    variant="primary"
+                    disabled={disabled}
+                    onClick={() => {
+                      setMovingAvatar(selected?.id);
+                      setView("collections");
+                    }}
+                  >
+                    Choose avatar
+                  </Button>
+                </div>
+              </motion.div>
+            ) : view === "collections" ? (
+              <div className={styles.collections}>
+                {representatives.map((pack) => (
                   <SurfaceButton
                     className={styles.collection}
+                    key={pack.id}
                     disabled={disabled}
-                    onClick={() => setView("image")}
+                    onClick={() => {
+                      setMovingAvatar(
+                        selected?.collectionId === pack.id
+                          ? selected.id
+                          : pack.avatar?.id,
+                      );
+                      setView(pack.id);
+                    }}
                   >
-                    <CloudUploadIcon size={48} aria-hidden="true" />
-                    <span>Use image</span>
+                    {selected?.collectionId === pack.id
+                      ? artwork(selected)
+                      : pack.avatar && artwork(pack.avatar)}
+                    <span>{pack.label}</span>
                   </SurfaceButton>
-                </div>
-              ) : view === "image" ? (
-                <div className={styles.imageEditor}>
-                  <AvatarEditor
-                    triggerStyle="dotted-squircle"
-                    inlinePicker
-                    imageOnly
-                    actionTarget={avatarActionTarget}
-                    shape="squircle"
-                    value={selected ? "" : (picture ?? "")}
-                    name={name}
-                    community={community}
-                    disabled={disabled}
-                    onBusyChange={onBusyChange}
-                    onChange={(value) => {
-                      // Done with no image keeps the avatar it had.
-                      if (value) onChange({ picture: value });
+                ))}
+                <SurfaceButton
+                  className={styles.collection}
+                  disabled={disabled}
+                  onClick={() => setView("image")}
+                >
+                  <span
+                    className={`${styles.artwork} ${styles.uploadIcon}`}
+                    aria-hidden="true"
+                  >
+                    <CloudUploadIcon size={48} />
+                  </span>
+                  <span>Use image</span>
+                </SurfaceButton>
+              </div>
+            ) : view === "image" ? (
+              <div className={styles.imageEditor}>
+                <AvatarEditor
+                  triggerStyle="dotted-squircle"
+                  inlinePicker
+                  imageOnly
+                  actionTarget={avatarActionTarget}
+                  shape="squircle"
+                  value={selected ? "" : (picture ?? "")}
+                  name={name}
+                  community={community}
+                  disabled={disabled}
+                  onBusyChange={onBusyChange}
+                  onChange={(value) => {
+                    // Done with no image keeps the avatar it had.
+                    if (value) onChange({ picture: value });
+                    setView("selected");
+                  }}
+                />
+              </div>
+            ) : (
+              <fieldset
+                ref={options}
+                className={styles.options}
+                style={{
+                  gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                  gridTemplateRows: `repeat(${Math.max(1, Math.ceil(choices.length / columns))}, minmax(0, 1fr))`,
+                }}
+                disabled={disabled}
+                aria-label={avatarPacks.find((pack) => pack.id === view)?.label}
+              >
+                {choices.map((avatar) => (
+                  <SurfaceButton
+                    key={avatar.id}
+                    className={styles.option}
+                    aria-label={avatar.label}
+                    aria-pressed={picture === avatar.url}
+                    onClick={() => {
+                      setMovingAvatar(avatar.id);
+                      onChange({ picture: avatar.url });
                       setView("selected");
                     }}
-                  />
-                </div>
-              ) : (
-                <fieldset
-                  className={styles.options}
-                  style={{
-                    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                    gridTemplateRows: `repeat(${Math.max(1, Math.ceil(choices.length / columns))}, minmax(0, 1fr))`,
-                  }}
-                  disabled={disabled}
-                  aria-label={
-                    avatarPacks.find((pack) => pack.id === view)?.label
-                  }
-                >
-                  {choices.map((avatar) => (
-                    <SurfaceButton
-                      key={avatar.id}
-                      className={styles.option}
-                      aria-label={avatar.label}
-                      aria-pressed={picture === avatar.url}
-                      onClick={() => {
-                        onChange({ picture: avatar.url });
-                        setView("selected");
-                      }}
-                    >
-                      {artwork(avatar)}
-                    </SurfaceButton>
-                  ))}
-                </fieldset>
-              )}
-            </motion.div>
-          </AnimatePresence>
+                  >
+                    {artwork(avatar)}
+                  </SurfaceButton>
+                ))}
+              </fieldset>
+            )}
+          </motion.div>
         </div>
         <motion.div
           className={styles.title}
           initial={false}
-          style={{ top: "calc(50% + 2.75rem)" }}
           animate={{
             opacity: view === "selected" && !(editing && !name.trim()) ? 1 : 0,
             scale: editing

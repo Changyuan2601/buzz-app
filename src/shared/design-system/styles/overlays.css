@@ -19,6 +19,7 @@
     width: min(31rem, calc(100vw - 2rem));
     max-height: calc(100dvh - 3rem);
     overflow: auto;
+    overscroll-behavior: none;
   }
   .buzz-dialog,
   .buzz-dialog-step {
@@ -52,6 +53,7 @@
     min-width: 0;
     max-height: inherit;
     overflow: auto;
+    overscroll-behavior: none;
   }
   .buzz-dialog-step[inert] {
     pointer-events: none;
@@ -172,6 +174,15 @@
   .buzz-dialog-content[data-footer-gap="compact"] {
     padding-block-end: var(--space-2);
   }
+  .buzz-dialog-header[data-chrome-spacing="padded"] {
+    padding-bottom: var(--space-3);
+  }
+  .buzz-dialog-content[data-chrome-spacing="padded"] {
+    padding-block: 0;
+  }
+  .buzz-dialog-actions[data-chrome-spacing="padded"] {
+    padding-top: var(--dialog-padding);
+  }
   .buzz-dialog-actions {
     min-width: 0;
     flex-shrink: 0;
@@ -187,31 +198,32 @@
      step is content-sized. The transparent popup only owns their shared grid. */
   /* Opt in for searches and switching views, not content-sized forms. */
   :where(
-    .buzz-dialog:not([data-stepped])[data-height="stable"],
-    .buzz-dialog-step[data-height="stable"]
+    .buzz-dialog:not([data-stepped])[data-height^="stable"],
+    .buzz-dialog-step[data-height^="stable"]
   ) {
     height: min(36rem, calc(100dvh - 2 * var(--space-6)));
   }
   :where(
-      .buzz-dialog:not([data-stepped])[data-height="stable"],
-      .buzz-dialog-step[data-height="stable"]
+      .buzz-dialog:not([data-stepped])[data-height^="stable"],
+      .buzz-dialog-step[data-height^="stable"]
     )
     > .buzz-dialog-header,
   :where(
-      .buzz-dialog:not([data-stepped])[data-height="stable"],
-      .buzz-dialog-step[data-height="stable"]
+      .buzz-dialog:not([data-stepped])[data-height^="stable"],
+      .buzz-dialog-step[data-height^="stable"]
     )
     > .buzz-dialog-actions {
     flex-shrink: 0;
   }
   :where(
-      .buzz-dialog:not([data-stepped])[data-height="stable"],
-      .buzz-dialog-step[data-height="stable"]
+      .buzz-dialog:not([data-stepped])[data-height^="stable"],
+      .buzz-dialog-step[data-height^="stable"]
     )
     > .buzz-dialog-body {
     flex: 1;
     min-height: 0;
     overflow: auto;
+    overscroll-behavior: none;
     /* Preserve inset row backgrounds and focus rings inside the scrollport. */
     margin-inline: calc(-1 * var(--dialog-padding));
     padding-inline: var(--dialog-padding);
@@ -221,6 +233,14 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
+    overscroll-behavior: none;
+  }
+  /* Proposed taller frame for agent creation and its avatar catalog. */
+  :where(
+    .buzz-dialog:not([data-stepped])[data-height="stable-tall"],
+    .buzz-dialog-step[data-height="stable-tall"]
+  ) {
+    height: min(44rem, calc(100dvh - 2 * var(--space-6)));
   }
   /* Opt in when fixed controls and one inner scrollport share the body. */
   :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]

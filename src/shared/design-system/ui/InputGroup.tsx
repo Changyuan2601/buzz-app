@@ -5,14 +5,21 @@ export function InputGroup({
   children,
   leading,
   trailing,
+  surface = "inset",
   ...props
 }: Omit<ComponentProps<"div">, "className"> & {
+  surface?: "inset" | "panel";
   children?: ReactNode;
   leading?: ReactNode;
   trailing?: ReactNode;
 }) {
   return (
-    <div {...props} data-buzz-ui="" className="buzz-input-group">
+    <div
+      {...props}
+      data-buzz-ui=""
+      data-surface={surface}
+      className="buzz-input-group"
+    >
       {leading && <span className="buzz-input-leading">{leading}</span>}
       {children}
       {trailing !== undefined && (

@@ -46,7 +46,9 @@ test("reaction previews paint above floating message actions", async ({
 test("video speed options escape the thread and restore focus after selection and Escape", async ({
   page,
 }) => {
-  await page.goto("/tests/fixtures/media-review.html?thread");
+  await page.goto("/tests/fixtures/media-review.html?thread", {
+    waitUntil: "domcontentloaded",
+  });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.dataset.colorMode = "light";
@@ -68,8 +70,16 @@ test("video speed options escape the thread and restore focus after selection an
         height: "400px",
       });
     });
-  // Let the panel's resize correction finish before setting the menu position.
-  await settle(page, page.locator("[data-message-scroller]"));
+  const scroller = page.getByRole("region", {
+    name: "Thread messages",
+    exact: true,
+  });
+  await expect(scroller).toHaveAttribute("aria-busy", "false");
+  // Finish resize-driven positioning before establishing the menu's scroll baseline.
+  await settle(page, scroller);
+  // Mark this as a reader gesture and capture the resized viewport before
+  // assigning the exact clipping geometry used by this paint-order test.
+  await scroller.dispatchEvent("wheel", { deltaY: -1 });
   await trigger.evaluate((button) => {
     const scroller = button.closest("[data-message-scroller]");
     // WebKit truncates fractional scroll requests. Round the final position so
@@ -92,6 +102,11 @@ test("video speed options escape the thread and restore focus after selection an
       }),
     )
     .toBeCloseTo(40, 0);
+  // The scroll event commits reading intent after geometry changes. Opening
+  // the menu first can let a pending render follow the old bottom position.
+  await expect(
+    scroller.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
   await trigger.press("Enter");
   const menu = page.getByRole("menu", { name: /^Playback speed:/ });
   await expect(menu).toBeVisible();
@@ -134,7 +149,15 @@ test("video speed options escape the thread and restore focus after selection an
   await expect(menu).toBeHidden();
   await expect(updated).toBeFocused();
   await updated.click();
-  await page.getByRole("heading", { name: "Video and photo review" }).click();
+  await expect(menu).toBeVisible();
+  // Modal menus intentionally block the page underneath. Send the outside
+  // pointer gesture to that backdrop, rather than waiting for a heading to
+  // receive a click through it.
+  const heading = await page
+    .getByRole("heading", { name: "Video and photo review" })
+    .boundingBox();
+  if (!heading) throw new Error("Media review heading is missing");
+  await page.mouse.click(heading.x + 8, heading.y + heading.height / 2);
   await expect(menu).toBeHidden();
   await page.locator("[data-video-preview]").first().hover();
   await page

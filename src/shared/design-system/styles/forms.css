@@ -71,6 +71,10 @@
     padding: var(--space-control-inset);
     resize: vertical;
   }
+  .buzz-textarea[data-surface="panel"],
+  .buzz-input-group[data-surface="panel"] {
+    background: var(--surface-panel);
+  }
   /* Restyle the native grip, retaining the browser's resize hit target. */
   .buzz-textarea::-webkit-resizer {
     background:
@@ -378,7 +382,8 @@
     outline-offset: 2px;
   }
   /* A title field: the value set as a page title, with no field around it. */
-  .buzz-input[data-appearance="title"] {
+  .buzz-input:where([data-appearance="title"]) {
+    --border: transparent;
     @apply text-title;
     min-height: 3.5rem;
     padding-inline: 0;

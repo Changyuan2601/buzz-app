@@ -872,6 +872,8 @@ function Timeline({
                     media={queries.media}
                     agentPubkeys={agentPubkeys}
                     day={day}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
                   />
                 ) : (
                   <MessageRow

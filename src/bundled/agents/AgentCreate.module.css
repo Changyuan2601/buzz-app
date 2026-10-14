@@ -77,6 +77,9 @@
 .artwork {
   position: relative;
   z-index: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   width: 100%;
   height: 100%;
   pointer-events: none;
@@ -106,19 +109,30 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  min-height: 13rem;
+  min-width: 0;
+  height: 100%;
   padding: var(--space-3);
-  border: 1px solid var(--border-standard);
+  border: 1px solid transparent;
   border-radius: var(--radius-container);
-  background: var(--surface-control);
+  background: transparent;
   cursor: pointer;
 }
 .collection .artwork {
-  height: 9rem;
+  flex: 1;
+  height: 0;
+  max-height: 12rem;
+  min-height: 0;
+}
+.uploadIcon {
+  display: grid;
+  place-items: center;
 }
 .imageEditor {
   align-self: center;
-  width: 50%;
+  width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
   margin-block: auto;
 }
 .options {
@@ -140,7 +154,7 @@
   padding: var(--space-1);
   border: 1px solid transparent;
   border-radius: var(--radius-control);
-  background: var(--surface-hover);
+  background: transparent;
   cursor: pointer;
 }
 .option[aria-pressed="true"] {
@@ -151,27 +165,38 @@
   cursor: default;
 }
 
-/* The name sits just below the avatar; its `top` is set inline. */
+/* The name remains mounted while the avatar picker is open. */
 .title {
   position: absolute;
+  top: calc(50% + 2.75rem);
   inset-inline: 0;
   padding: 0 calc(var(--space-6) * 2);
 }
 .title input {
   text-align: center;
 }
-
+/* The type's compact controls, beside the type choice. */
+.corner {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  width: max-content;
+  max-width: calc(100% - var(--space-4) * 2);
+}
 .details {
   position: absolute;
-  inset: auto calc(var(--space-6) * 2) calc(var(--space-6) + var(--space-8));
+  inset: auto calc(var(--space-6) * 2) calc(var(--space-6) + var(--space-4));
   z-index: 2;
 }
 .identity[data-editing] .details {
   top: 14.75rem;
   bottom: calc(var(--space-6) * 2);
-}
-.footerSelector {
-  display: flex;
 }
 
 @media (max-width: 540px) {
@@ -183,5 +208,77 @@
   }
   .imageEditor {
     width: 100%;
+  }
+}
+
+/* Keep identity compact when the setup fields are visible below it. */
+.setupSurface {
+  container-type: inline-size;
+  background: var(--surface-panel);
+  border-radius: var(--radius-container);
+}
+
+.identity:not([data-avatar-active]) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-4);
+  height: auto;
+  min-height: 20rem;
+  padding-block: var(--space-6);
+}
+.identity:not([data-avatar-active]) .cover {
+  height: auto;
+  padding-block: 0;
+}
+.identity:not([data-avatar-active]) .view {
+  flex: none;
+  padding-bottom: 0;
+}
+.identity:not([data-avatar-active]) .title {
+  position: relative;
+  top: auto;
+}
+.identity:not([data-avatar-active]) .choice {
+  width: min(12rem, 100%);
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.form[data-avatar-active] {
+  flex: 1;
+  min-height: 0;
+}
+.identity[data-avatar-active] {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  border: 0;
+  background: transparent;
+}
+.identity[data-avatar-active] .cover {
+  padding: var(--space-1);
+}
+.collections {
+  height: 100%;
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+.collection {
+  min-height: 0;
+}
+.option {
+  overflow: hidden;
+}
+@media (hover: hover) and (pointer: fine) {
+  .collection:hover:not(:disabled),
+  .option:hover:not(:disabled):not([aria-pressed="true"]) {
+    background: var(--affordance-subtle-hover);
+    border-color: var(--border-prominent);
   }
 }

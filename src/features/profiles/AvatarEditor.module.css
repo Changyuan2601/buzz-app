@@ -289,3 +289,17 @@ html[data-keyboard-navigation] .panelViewport {
     width: 8rem;
   }
 }
+
+.inlineEditor[data-empty-image] {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 30rem;
+  margin-inline: auto;
+}
+.imagePanel[data-surface="panel"] .dropzone {
+  background: var(--surface-panel);
+}
+@media (hover: hover) and (pointer: fine) {
+  .imagePanel[data-surface="panel"] .dropzone:hover:not(:disabled) {
+    background: var(--affordance-subtle-hover);
+  }
+}

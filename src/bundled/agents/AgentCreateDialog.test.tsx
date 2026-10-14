@@ -11,9 +11,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { agentAvatars, avatarPacks } from "../../features/agents/avatar-packs";
-import { ModelPicker } from "../../features/agents/ModelPicker";
 import type {
   Agent,
   Agents,
@@ -26,7 +26,6 @@ afterEach(cleanup);
 
 type Echo = { reply: string };
 type Notes = { notes: string; instructions: string };
-type Modeled = { model: string; instructions: string };
 
 const echo = {
   key: "test/echo",
@@ -84,56 +83,6 @@ const notes = {
         onChange={(instructions) => onChange({ ...config, instructions })}
       />
     </>
-  ),
-} as unknown as RegisteredAgentType;
-
-const modeled = {
-  key: "test/modeled",
-  pluginId: "test",
-  revision: "1",
-  id: "modeled",
-  title: "Modeled",
-  description: "Uses a model.",
-  defaults: () => ({ config: { model: "", instructions: "Start here." } }),
-  createModelLabel: (config: Modeled) =>
-    config.model === "fast" ? "Fast" : config.model || undefined,
-  CreateModelMenu: ({
-    config,
-    disabled,
-    onChange,
-    active,
-  }: {
-    config: Modeled;
-    disabled: boolean;
-    active: boolean;
-    onChange(config: Modeled): void;
-  }) => (
-    <ModelPicker
-      presentation="menu"
-      active={active}
-      models={[{ id: "fast", label: "Fast", description: "Quick answers" }]}
-      allowCustomModel
-      value={config.model}
-      defaultLabel="Modeled default"
-      defaultDescription="Following the provider default"
-      disabled={disabled}
-      onChange={(model) => onChange({ ...config, model })}
-    />
-  ),
-  Create: ({
-    config,
-    disabled,
-    onChange,
-  }: {
-    config: Modeled;
-    disabled: boolean;
-    onChange(config: Modeled): void;
-  }) => (
-    <AgentInstructions
-      value={config.instructions}
-      disabled={disabled}
-      onChange={(instructions) => onChange({ ...config, instructions })}
-    />
   ),
 } as unknown as RegisteredAgentType;
 
@@ -221,58 +170,9 @@ it("starts with a pack picture already chosen", async () => {
   expect(agentAvatars.map((avatar) => avatar.url)).toContain(input.picture);
 });
 
-it("offers no type menu for a single type, only its title", () => {
-  const { dialog } = setup([echo]);
-  expect(within(dialog).getByText("Echo")).toBeInTheDocument();
-  expect(
-    within(dialog).queryByRole("button", { name: /Agent type/ }),
-  ).not.toBeInTheDocument();
-});
-
-it("exposes provider models as a submenu without switching on hover", async () => {
-  const { dialog, user } = setup([echo, modeled]);
-  const trigger = within(dialog).getByRole("button", {
-    name: "Agent provider and model: Echo",
-  });
-  await user.click(trigger);
-  expect(
-    await screen.findByRole("menuitemradio", { name: "Echo" }),
-  ).toBeChecked();
-  const provider = screen.getByRole("menuitemradio", { name: "Modeled" });
-  expect(provider).not.toBeChecked();
-  expect(provider).toHaveAttribute("aria-haspopup", "menu");
-  await user.hover(provider);
-  expect(
-    await screen.findByRole("menuitemradio", { name: /Modeled default/ }),
-  ).not.toBeChecked();
-  expect(within(dialog).getByLabelText("Reply")).toBeInTheDocument();
-});
-
-it("shows only the provider in the Create trigger for its default model", () => {
-  const { dialog } = setup([modeled]);
-  expect(
-    within(dialog).getByRole("button", {
-      name: "Agent provider and model: Modeled",
-    }),
-  ).toHaveTextContent("Modeled");
-  expect(
-    within(dialog).getByRole("button", { name: /Modeled/ }),
-  ).not.toHaveTextContent("default");
-});
-
-it("shows an explicit model in parentheses in the Create trigger", () => {
-  const selected = {
-    ...modeled,
-    defaults: () => ({
-      config: { model: "fast", instructions: "Start here." },
-    }),
-  } as unknown as RegisteredAgentType;
-  const { dialog } = setup([selected]);
-  expect(
-    within(dialog).getByRole("button", {
-      name: "Agent provider and model: Modeled (Fast)",
-    }),
-  ).toHaveTextContent("Modeled (Fast)");
+it("shows the sole harness as a disabled choice", () => {
+  setup([echo]);
+  expect(screen.getByRole("combobox", { name: "Harness" })).toBeDisabled();
 });
 
 it("disables Create agent with an empty name", async () => {
@@ -288,22 +188,16 @@ it("disables Create agent with an empty name", async () => {
   expect(agents.create).not.toHaveBeenCalled();
 });
 
-it("switches provider from the combined menu, resetting its config", async () => {
+it("switches type from the corner menu, resetting the config to the new type's defaults", async () => {
   const { agents, dialog, user } = setup([echo, notes]);
   await user.type(within(dialog).getByLabelText("Reply"), "typed in echo");
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
 
-  await user.click(
-    within(dialog).getByRole("button", {
-      name: "Agent provider and model: Echo",
-    }),
-  );
-  await user.click(await screen.findByRole("menuitemradio", { name: "Notes" }));
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Notes" }));
 
   expect(
-    within(dialog).getByRole("button", {
-      name: "Agent provider and model: Notes",
-    }),
+    within(dialog).getByRole("combobox", { name: "Harness" }),
   ).toBeInTheDocument();
   expect(within(dialog).queryByLabelText("Reply")).not.toBeInTheDocument();
   expect(within(dialog).getByLabelText("Notes")).toHaveValue("start");
@@ -322,16 +216,12 @@ it("switches provider from the combined menu, resetting its config", async () =>
 it("starts over again when switching back to the first type", async () => {
   const { agents, dialog, user } = setup([echo, notes]);
   await user.type(within(dialog).getByLabelText("Reply"), "typed");
-  const switchTo = async (from: string, to: string) => {
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: `Agent provider and model: ${from}`,
-      }),
-    );
-    await user.click(await screen.findByRole("menuitemradio", { name: to }));
+  const switchTo = async (to: string) => {
+    await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+    await user.click(await screen.findByRole("option", { name: to }));
   };
-  await switchTo("Echo", "Notes");
-  await switchTo("Notes", "Echo");
+  await switchTo("Notes");
+  await switchTo("Echo");
   expect(within(dialog).getByLabelText("Reply")).toHaveValue("");
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(createButton());
@@ -340,67 +230,24 @@ it("starts over again when switching back to the first type", async () => {
   );
 });
 
-const editNotes = async (
-  user: ReturnType<typeof userEvent.setup>,
-  dialog: HTMLElement,
-) => {
+it("edits instructions below the identity card without a separate editing step", async () => {
+  const { agents, dialog, user } = setup([notes]);
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
-  await user.click(
-    within(dialog).getByRole("button", { name: "Edit instructions" }),
-  );
-  return await within(dialog).findByRole("textbox", {
-    name: "Agent instructions",
+  const instructions = within(dialog).getByRole("textbox", {
+    name: "Instructions",
   });
-};
-
-it("takes over the card while instructions are edited, and Back restores the earlier text", async () => {
-  const { agents, dialog, user } = setup([notes]);
-  expect(within(dialog).getByText("Be brief.")).toBeInTheDocument();
-  const editor = await editNotes(user, dialog);
-  expect(editor).toHaveValue("Be brief.");
-  // The footer is Back and Done editing instead of Create agent.
   expect(
-    within(dialog).getByRole("button", { name: "Done editing" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Create agent" }),
-  ).not.toBeInTheDocument();
-
-  await user.type(editor, " And kind.");
-  expect(editor).toHaveValue("Be brief. And kind.");
-  await user.click(within(dialog).getByRole("button", { name: "Back" }));
-
-  expect(
-    screen.queryByRole("textbox", { name: "Agent instructions" }),
-  ).not.toBeInTheDocument();
-  expect(within(dialog).getByText("Be brief.")).toBeInTheDocument();
-  expect(
-    within(dialog).queryByRole("button", { name: "Done editing" }),
-  ).not.toBeInTheDocument();
-  await user.click(createButton());
-  expect(agents.create).toHaveBeenCalledWith(
-    expect.objectContaining({
-      config: { notes: "start", instructions: "Be brief." },
-    }),
-  );
-});
-
-it("keeps the new instructions on Done editing", async () => {
-  const { agents, dialog, user } = setup([notes]);
-  const editor = await editNotes(user, dialog);
-  await user.type(editor, " And kind.");
-  await user.click(
-    within(dialog).getByRole("button", { name: "Done editing" }),
-  );
+    within(dialog).getByRole("group", { name: "Agent avatar" }),
+  ).not.toContainElement(instructions);
+  await user.type(instructions, " And kind.{Enter}Keep it short.");
   expect(agents.create).not.toHaveBeenCalled();
-  expect(within(dialog).getByText("Be brief. And kind.")).toBeInTheDocument();
-  expect(
-    within(dialog).queryByRole("button", { name: "Back" }),
-  ).not.toBeInTheDocument();
   await user.click(createButton());
   expect(agents.create).toHaveBeenCalledWith(
     expect.objectContaining({
-      config: { notes: "start", instructions: "Be brief. And kind." },
+      config: {
+        notes: "start",
+        instructions: "Be brief. And kind.\nKeep it short.",
+      },
     }),
   );
 });
@@ -458,4 +305,47 @@ it("blocks a second create while the first is pending", async () => {
   await user.click(createButton());
   expect(agents.create).toHaveBeenCalledTimes(1);
   finish(made);
+});
+
+const withModels = (type: RegisteredAgentType): RegisteredAgentType => ({
+  ...type,
+  CreateModel: ({ config, onChange, ...props }) => {
+    const current = config as Record<string, unknown>;
+    return (
+      <CreateModelChoices
+        {...props}
+        models={[
+          { id: "fast", label: "Fast" },
+          { id: "deep", label: "Deep" },
+        ]}
+        value={String(current.model ?? "")}
+        defaultLabel={`${type.title} default`}
+        onChange={(model) => onChange({ ...current, model })}
+      />
+    );
+  },
+});
+
+it("chooses harness and model separately while retaining instructions", async () => {
+  const { agents, dialog, user } = setup([withModels(echo), withModels(notes)]);
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Notes" }));
+  const instructions = within(dialog).getByLabelText("Instructions");
+  await user.type(instructions, " Keep this.");
+  const model = within(dialog).getByRole("combobox", { name: "Model" });
+  await user.click(model);
+  await user.click(await screen.findByRole("option", { name: "Deep" }));
+  expect(instructions).toHaveValue("Be brief. Keep this.");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: notes.key,
+      config: {
+        notes: "start",
+        instructions: "Be brief. Keep this.",
+        model: "deep",
+      },
+    }),
+  );
 });

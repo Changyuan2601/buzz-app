@@ -38,6 +38,7 @@ export function AgentCard({
   detail,
   icon,
   children,
+  menu,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "children"> & {
   agent: Portrayed;
@@ -47,10 +48,12 @@ export function AgentCard({
   icon?: ReactNode;
   /** Actions below the detail. */
   children?: ReactNode;
+  menu?: ReactNode;
 }) {
   const animated = agentAvatars.some((avatar) => avatar.url === agent.picture);
   return (
     <div {...props} className={styles.card}>
+      {menu && <div className={styles.menu}>{menu}</div>}
       <span
         className={styles.portrait}
         data-animated={animated || undefined}
@@ -58,7 +61,7 @@ export function AgentCard({
       >
         <AgentPortrait agent={agent} community={community} />
       </span>
-      <span className={styles.name}>{agent.name}</span>
+      <span className={`${styles.name} text-label`}>{agent.name}</span>
       {detail && (
         <span className={styles.detail}>
           {icon}

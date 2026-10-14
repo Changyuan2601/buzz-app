@@ -3,6 +3,9 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import type { Transcript } from "../../features/agents/activity-transcript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
@@ -10,7 +13,6 @@ import {
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
-  AgentCreateModelMenuProps,
   AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
@@ -94,6 +96,190 @@ const SCOPES = options([
   ["channel", "One session per channel"],
 ]);
 
+function ClaudeSignIn({
+  setup,
+  disabled,
+}: {
+  setup: ClaudeSetup;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  const missing = state.status?.state === "missing";
+  const outdated = state.status?.state === "outdated";
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="prominent"
+        disabled={disabled || !!state.running}
+        onClick={() => {
+          if (setup.snapshot().running) return;
+          setOpen(true);
+          void setup.run(missing || outdated ? "install" : "login");
+        }}
+      >
+        {missing ? "Install Claude" : outdated ? "Update Claude" : "Sign in"}
+      </Button>
+      <Dialog
+        open={open}
+        title={missing || outdated ? "Set up Claude" : "Sign in to Claude"}
+        description="Continue in your browser. If it gives you a code to paste, choose Enter a code below."
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) void setup.cancel();
+        }}
+      >
+        <ClaudeSetupPanel setup={setup} disabled={disabled} variant="compact" />
+      </Dialog>
+    </>
+  );
+}
+
+function ClaudeSetupPanel({
+  setup,
+  disabled = false,
+  variant = "full",
+}: {
+  setup: ClaudeSetup;
+  disabled?: boolean;
+  variant?: "full" | "compact";
+}) {
+  const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  const [code, setCode] = useState("");
+  useEffect(() => {
+    if (!setup.snapshot().status) void setup.check();
+  }, [setup]);
+  const status = state.status;
+  const line =
+    !status || state.checking
+      ? "Checking Claude…"
+      : status.state === "missing"
+        ? "Claude is not installed."
+        : status.state === "outdated"
+          ? `Claude ${status.version} is older than Buzz needs.`
+          : status.state === "signed-out"
+            ? `Claude ${status.version} needs you to sign in.`
+            : status.state === "ready"
+              ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
+              : status.message;
+  // One button per slot, so focus stays put as Install becomes Sign in and
+  // Cancel becomes Check again.
+  const action =
+    status?.state === "missing"
+      ? ({ step: "install", label: "Install Claude" } as const)
+      : status?.state === "outdated"
+        ? ({ step: "install", label: "Update Claude" } as const)
+        : status?.state === "signed-out"
+          ? ({ step: "login", label: "Sign in" } as const)
+          : undefined;
+  return (
+    <section className="grid gap-2">
+      {!(variant === "compact" && status?.state === "signed-out") && (
+        <p role="status" className="m-0">
+          {line}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {action && (
+          <Button
+            variant="prominent"
+            size={variant === "compact" ? "sm" : "md"}
+            loading={state.running === action.step}
+            disabled={
+              disabled || (!!state.running && state.running !== action.step)
+            }
+            onClick={() => void setup.run(action.step)}
+          >
+            {action.label}
+          </Button>
+        )}
+        {(variant !== "compact" ||
+          status?.state !== "signed-out" ||
+          state.running) && (
+          <Button
+            variant="ghost"
+            disabled={!state.running && state.checking}
+            focusableWhenDisabled
+            onClick={() =>
+              void (state.running ? setup.cancel() : setup.check(true))
+            }
+          >
+            {state.running ? "Cancel" : "Check again"}
+          </Button>
+        )}
+      </div>
+      {status?.state === "missing" && (
+        <p className="m-0 text-body-sm text-subtle">
+          Downloads Buzz's own copy of Claude (about 250 MB) from
+          downloads.claude.ai and keeps it on the latest release. It does not
+          change the <code>claude</code> in your terminal, and uses the same
+          sign-in and settings.
+        </p>
+      )}
+      {state.output && (
+        <Accordion
+          items={[
+            {
+              value: "details",
+              title: "Setup details",
+              content: (
+                <pre
+                  role="log"
+                  aria-label="Setup output"
+                  className="m-0 max-h-60 overflow-auto whitespace-pre-wrap break-all text-caption"
+                >
+                  {state.output}
+                </pre>
+              ),
+            },
+          ]}
+        />
+      )}
+      {state.running === "login" && (
+        <Accordion
+          items={[
+            {
+              value: "code",
+              title: "Enter a code",
+              content: (
+                <div className="flex items-end gap-2">
+                  <Field
+                    label="Sign-in code"
+                    description="If the browser shows a code to paste, enter it here."
+                  >
+                    <Input
+                      disabled={disabled}
+                      value={code}
+                      onValueChange={setCode}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" || !code.trim() || disabled)
+                          return;
+                        event.preventDefault();
+                        void setup.answer(code);
+                        setCode("");
+                      }}
+                    />
+                  </Field>
+                  <Button
+                    disabled={disabled || !code.trim()}
+                    onClick={() => {
+                      void setup.answer(code);
+                      setCode("");
+                    }}
+                  >
+                    Send
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      )}
+    </section>
+  );
+}
+
 export function createTabs({
   setup,
   defaults,
@@ -103,16 +289,6 @@ export function createTabs({
   defaults: ClaudeDefaults;
   runtime: ClaudeRuntime;
 }>) {
-  const createModelLabel = (saved: Config) => {
-    const model = readConfig(saved).model;
-    if (!model) return undefined;
-    return (
-      modelChoices(setup.snapshot().models).find(
-        (choice) => choice.id === model,
-      )?.label ?? model
-    );
-  };
-
   function useSetupCatalog() {
     const state = useSyncExternalStore(
       setup.subscribe,
@@ -122,13 +298,51 @@ export function createTabs({
     useEffect(() => {
       if (!state.status && !state.checking) void setup.check();
     }, [state.status, state.checking]);
-    // Once per change of readiness: a failed load waits for Try again.
-    const readiness = state.status?.state;
     useEffect(() => {
-      if (readiness === "ready" && state.models.length === 0)
+      if (
+        !state.checking &&
+        state.status?.state === "ready" &&
+        state.models.length === 0
+      )
         void setup.loadModels();
-    }, [readiness, state.models.length]);
+    }, [state.status, state.checking, state.models.length]);
     return state;
+  }
+
+  function CreateModel({
+    config,
+    onChange,
+    ...props
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    const state = useSetupCatalog();
+    const providerDefaults = useSyncExternalStore(
+      defaults.subscribe,
+      defaults.snapshot,
+    );
+    if (!state.status)
+      return (
+        <span role="status" className="text-body-sm text-secondary">
+          Checking sign-in…
+        </span>
+      );
+    if (state.status.state !== "ready" || state.running)
+      return <ClaudeSignIn setup={setup} disabled={props.disabled} />;
+    return (
+      <CreateModelChoices
+        {...props}
+        models={modelChoices(state.models)}
+        value={current.model}
+        defaultLabel={providerDefaultLabel(
+          providerDefaults.model,
+          state.models,
+        )}
+        loading={state.modelsChecking}
+        error={state.modelsError}
+        retry={() => void setup.loadModels(true)}
+        onChange={(model) => onChange({ ...current, model })}
+      />
+    );
   }
 
   /** The instructions a new agent starts with. */
@@ -136,43 +350,10 @@ export function createTabs({
     const current = readConfig(config);
     return (
       <AgentInstructions
+        creation
         value={current.instructions}
         disabled={disabled}
         onChange={(instructions) => onChange({ ...current, instructions })}
-      />
-    );
-  }
-
-  /** Claude's model choices inside the New agent provider submenu. */
-  function CreateModelMenu({
-    config,
-    onChange,
-    disabled,
-    active = true,
-    requestCustomModel,
-  }: AgentCreateModelMenuProps<Config>) {
-    const current = readConfig(config);
-    const setupState = useSetupCatalog();
-    const providerDefaults = useSyncExternalStore(
-      defaults.subscribe,
-      defaults.snapshot,
-      defaults.snapshot,
-    );
-    return (
-      <ModelPicker
-        presentation="menu"
-        active={active}
-        allowCustomModel
-        models={modelChoices(setupState.models)}
-        value={current.model}
-        defaultLabel={providerDefaultLabel(
-          providerDefaults.model,
-          setupState.models,
-        )}
-        defaultDescription="Following the provider's model default"
-        disabled={disabled}
-        requestCustomModel={requestCustomModel}
-        onChange={(model) => onChange({ ...current, model })}
       />
     );
   }
@@ -359,7 +540,7 @@ export function createTabs({
               },
             ]}
             {...(draftDefault === "" ? { valueLabel: nativeLabel } : {})}
-            {...(state.loadingModels
+            {...(state.modelsChecking
               ? { description: "Loading Claude's models…" }
               : {})}
             {...(state.modelsError
@@ -369,7 +550,10 @@ export function createTabs({
           />
           {state.modelsError && (
             <div>
-              <Button variant="ghost" onClick={() => void setup.loadModels()}>
+              <Button
+                variant="ghost"
+                onClick={() => void setup.loadModels(true)}
+              >
                 Try again
               </Button>
             </div>
@@ -713,9 +897,8 @@ export function createTabs({
   }
 
   return {
+    CreateModel,
     Create,
-    CreateModelMenu,
-    createModelLabel,
     ProviderDialogBody,
     SettingsTab,
     ActivityTab,
