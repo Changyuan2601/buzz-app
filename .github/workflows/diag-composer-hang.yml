@@ -1,0 +1,58 @@
+name: Diag composer hang
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  diag:
+    name: Diag (${{ matrix.variant }}, ${{ matrix.copy }})
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOME: /root
+      CI: "true"
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [main, css1068, notrace, shard8]
+        copy: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Trust this container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/setup
+        with:
+          browsers: "true"
+          browser-engine: webkit
+      - name: Install gdb
+        run: apt-get update -qq && apt-get install -y -qq gdb >/dev/null
+      - name: Revert 1068 CSS
+        if: matrix.variant == 'css1068'
+        run: |
+          f=src/features/messages/ComposerAttachments.module.css
+          perl -0pi -e 's/(\.list \{\n  display: flex;\n  flex-wrap: nowrap;\n  gap: )var\(--space-3\)/$1var(--space-2)/; s/transform: translate\(calc\(var\(--space-5\) \/ 2\), -50%\);/transform: translate(50%, -50%);/' $f
+          git diff
+      - name: Focused repeats
+        if: matrix.variant != 'shard8'
+        run: |
+          extra=""
+          if [ "${{ matrix.variant }}" = notrace ]; then extra="--trace off"; fi
+          ./bin/pnpm test:browser:ci --project webkit --no-deps --workers=2 --repeat-each=16 --timeout 60000 -g "local previews stay interactive" --reporter=list $extra
+      - name: Shard 8 replica
+        if: matrix.variant == 'shard8'
+        run: ./bin/pnpm test:browser:ci --project webkit --no-deps --shard=8/9 --timeout 60000 --reporter=list
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diag-${{ matrix.variant }}-${{ matrix.copy }}
+          path: test-results/browser
+          retention-days: 3

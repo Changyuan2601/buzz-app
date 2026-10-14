@@ -1174,3 +1174,32 @@ test("PNG and JPEG preparation uploads metadata-free browser-encoded bytes", asy
     await server.close();
   }
 });
+
+// DIAGNOSTIC ONLY: capture WebKit process state when a test times out.
+import { execSync as diagExec } from "node:child_process";
+import { writeFileSync as diagWrite } from "node:fs";
+test.afterEach(async ({}, testInfo) => {
+  if (testInfo.status !== "timedOut" || process.platform !== "linux") return;
+  const run = (cmd) => {
+    try {
+      return diagExec(cmd, { timeout: 60_000, maxBuffer: 64 << 20 }).toString();
+    } catch (error) {
+      return `ERR ${cmd}: ${error.message}\n${error.stdout ?? ""}`;
+    }
+  };
+  let out = run("ps -eo pid,ppid,stat,pcpu,time,etime,comm,args --sort=pid | cut -c1-220");
+  const pids = run("pgrep -f 'WPEWebProcess|MiniBrowser|WPENetworkProcess|WPEGPUProcess' || true")
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  for (const pid of pids) {
+    out += `\n===== PID ${pid} ${run(`cat /proc/${pid}/cmdline | tr '\\0' ' '`)}\n`;
+    out += run(`head -c 300 /proc/${pid}/stat; echo`);
+    out += run(`sleep 2; head -c 300 /proc/${pid}/stat; echo`);
+    out += run(
+      `for t in /proc/${pid}/task/*; do echo "$t $(cat $t/comm) $(cut -d' ' -f3,14,15 $t/stat) wchan=$(cat $t/wchan) sys=$(cut -d' ' -f1 $t/syscall 2>/dev/null)"; done`,
+    );
+    out += run(`gdb -p ${pid} -batch -ex "info sharedlibrary" -ex "thread apply all bt 60" 2>&1 | grep -v '^\\[New LWP'`);
+  }
+  diagWrite(testInfo.outputPath("hang-diag.txt"), out);
+});
