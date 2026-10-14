@@ -54,34 +54,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 pub const KIND_PAIRING: u16 = 24134;
 const PAIRING_KIND: u16 = KIND_PAIRING;
 
-/// Which role this device plays in the pairing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    /// The device that holds the secret and initiates pairing.
-    Source,
-    /// The device that scans the QR code and receives the secret.
-    Target,
-}
-
-/// Protocol state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionState {
-    /// Session created, QR displayed (source) or offer sent (target).
-    Waiting,
-    /// SAS code displayed, awaiting user confirmation (source side).
-    Confirming,
-    /// Target received `sas-confirm`, awaiting explicit user approval.
-    /// The target must call [`PairingSession::confirm_target_sas`] to proceed.
-    AwaitingConfirmation,
-    /// SAS confirmed, payload in transit.
-    Transferring,
-    /// Payload has been sent (source) or received (target); awaiting completion.
-    PayloadExchanged,
-    /// Protocol completed successfully.
-    Completed,
-    /// Session aborted by either side.
-    Aborted,
-}
+use buzz_pairing_policy::{Authorization, Protocol};
+pub use buzz_pairing_policy::{Role, SessionState};
 
 /// A NIP-AB device pairing session.
 ///
@@ -89,8 +63,8 @@ pub enum SessionState {
 /// produce [`Event`]s return them for the caller to publish; all methods
 /// that consume events take a reference. No I/O happens inside.
 pub struct PairingSession {
-    role: Role,
-    state: SessionState,
+    policy: Protocol,
+    acknowledgement: Option<buzz_pairing_policy::Completion>,
     /// Ephemeral keypair for this session (discarded after).
     keys: Keys,
     /// 32-byte session secret from the QR code.
@@ -113,9 +87,30 @@ pub struct PairingSession {
     created_at: Instant,
     /// Maximum session lifetime.
     timeout: Duration,
-    desktop_code_requested: bool,
     desktop_code: Option<Zeroizing<String>>,
-    code_attempts: u8,
+}
+
+/// A single encrypted event together with its source authorization.
+/// Native publication cannot infer authorization from an event-list position.
+pub struct EncryptedPayload {
+    event: Event,
+    authorization: Authorization,
+}
+impl EncryptedPayload {
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+    pub fn proposal(
+        &self,
+        binding: buzz_pairing_policy::IdentityBinding,
+    ) -> buzz_pairing_policy::PayloadProposal {
+        use nostr::JsonUtil;
+        buzz_pairing_policy::PayloadProposal::encrypted(
+            binding,
+            self.authorization,
+            format!("[\"EVENT\",{}]", self.event.as_json()).into_bytes(),
+        )
+    }
 }
 
 impl PairingSession {
@@ -136,8 +131,8 @@ impl PairingSession {
         };
 
         let session = Self {
-            role: Role::Source,
-            state: SessionState::Waiting,
+            policy: Protocol::source(session_id),
+            acknowledgement: None,
             keys,
             session_secret,
             relay_urls: vec![relay_url],
@@ -148,9 +143,7 @@ impl PairingSession {
             processed_ids: HashSet::new(),
             created_at: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
-            desktop_code_requested: false,
             desktop_code: None,
-            code_attempts: 0,
         };
 
         (session, qr)
@@ -211,7 +204,6 @@ impl PairingSession {
 
         // Lock to this peer.
         let peer = event.pubkey;
-        self.peer_pubkey = Some(peer);
 
         // Compute ECDH and SAS. Zero the ECDH shared secret after derivation.
         let mut ecdh = nostr::util::generate_shared_key(self.keys.secret_key(), &peer)
@@ -220,10 +212,15 @@ impl PairingSession {
         ecdh.zeroize();
         self.sas_code = Some(code);
         self.sas_input = Some(sas_input);
-        self.state = SessionState::Confirming;
+        if !self
+            .policy
+            .offer(self.session_id, peer.to_bytes(), code_entry)
+        {
+            return Err(PairingError::InvalidSessionId);
+        }
+        self.peer_pubkey = Some(peer);
         self.record_event(event);
 
-        self.desktop_code_requested = code_entry;
         Ok((format_sas(code), code_entry))
     }
 
@@ -234,6 +231,21 @@ impl PairingSession {
         self.expect_state(SessionState::Confirming)?;
         self.expect_role(Role::Source)?;
 
+        if !self.policy.legacy() {
+            return Err(PairingError::SasMismatch);
+        }
+        self.source_proof()
+    }
+
+    fn source_proof(&mut self) -> Result<Event, PairingError> {
+        let result = self.build_source_proof();
+        if result.is_err() {
+            self.policy.abort();
+        }
+        result
+    }
+
+    fn build_source_proof(&self) -> Result<Event, PairingError> {
         let sas_input = self.sas_input.ok_or(PairingError::SasMismatch)?;
         let peer = self
             .peer_pubkey
@@ -251,7 +263,6 @@ impl PairingSession {
             transcript_hash: hex::encode(transcript_hash),
         };
         let event = self.build_event(&msg)?;
-        self.state = SessionState::Transferring;
         Ok(event)
     }
 
@@ -274,7 +285,9 @@ impl PairingSession {
                 payload_type,
                 payload,
             } => {
-                self.state = SessionState::PayloadExchanged;
+                if !self.policy.receive_payload(event.pubkey.to_bytes()) {
+                    return Err(PairingError::SasMismatch);
+                }
                 self.record_event(event);
                 Ok((payload_type, Zeroizing::new(payload)))
             }
@@ -289,24 +302,28 @@ impl PairingSession {
         self.expect_role(Role::Source)?;
 
         let event = self.build_event(&PairingMessage::Complete { success })?;
-        self.state = if success {
-            SessionState::Completed
-        } else {
-            SessionState::Aborted
-        };
+        if !self.policy.complete(
+            self.peer_pubkey
+                .ok_or(PairingError::SasMismatch)?
+                .to_bytes(),
+            success,
+        ) {
+            return Err(PairingError::SasMismatch);
+        }
         Ok(event)
     }
 
     /// (Source) Build the payload event carrying the secret.
-    pub fn send_payload(
+    pub fn send_authorized_payload(
         &mut self,
         payload_type: PayloadType,
         payload: Zeroizing<String>,
-    ) -> Result<Event, PairingError> {
+    ) -> Result<EncryptedPayload, PairingError> {
         self.check_expired()?;
         self.expect_state(SessionState::Transferring)?;
         self.expect_role(Role::Source)?;
 
+        let authorization = self.policy.payload().ok_or(PairingError::SasMismatch)?;
         let mut msg = PairingMessage::Payload {
             payload_type,
             payload: (*payload).clone(),
@@ -319,9 +336,26 @@ impl PairingSession {
         {
             payload.zeroize();
         }
-        let event = result?;
-        self.state = SessionState::PayloadExchanged;
-        Ok(event)
+        match result {
+            Ok(event) => Ok(EncryptedPayload {
+                event,
+                authorization,
+            }),
+            Err(error) => {
+                self.policy.abort();
+                Err(error)
+            }
+        }
+    }
+
+    /// Compatibility API for non-native protocol consumers.
+    pub fn send_payload(
+        &mut self,
+        payload_type: PayloadType,
+        payload: Zeroizing<String>,
+    ) -> Result<Event, PairingError> {
+        self.send_authorized_payload(payload_type, payload)
+            .map(|payload| payload.event)
     }
 
     /// (Source) Process the `complete` event from the target.
@@ -334,12 +368,16 @@ impl PairingSession {
         let msg = self.decrypt_message(event)?;
         match msg {
             PairingMessage::Complete { success: true } => {
-                self.state = SessionState::Completed;
+                self.acknowledgement = Some(
+                    self.policy
+                        .acknowledge(event.pubkey.to_bytes())
+                        .ok_or(PairingError::SasMismatch)?,
+                );
                 self.record_event(event);
                 Ok(())
             }
             PairingMessage::Complete { success: false } => {
-                self.state = SessionState::Aborted;
+                self.policy.abort();
                 // Not recorded: the message was received but not "successfully
                 // processed" per NIP-AB §Duplicate Event Handling. The session
                 // is terminal (Aborted) so no future handler can accept events.
@@ -368,9 +406,9 @@ impl PairingSession {
         let (code, sas_input) = derive_sas(&ecdh, &qr.session_secret);
         ecdh.zeroize();
 
-        let mut session = Self {
-            role: Role::Target,
-            state: SessionState::Waiting,
+        let session = Self {
+            policy: Protocol::target(session_id, qr.source_pubkey.to_bytes()),
+            acknowledgement: None,
             keys,
             session_secret: qr.session_secret,
             relay_urls: qr.relays.clone(),
@@ -381,9 +419,7 @@ impl PairingSession {
             processed_ids: HashSet::new(),
             created_at: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
-            desktop_code_requested: false,
             desktop_code: None,
-            code_attempts: 0,
         };
 
         // Build and return the offer event.
@@ -393,7 +429,6 @@ impl PairingSession {
             confirmation: None,
         };
         let event = session.build_event(&msg)?;
-        session.state = SessionState::Confirming;
 
         Ok((session, event))
     }
@@ -439,11 +474,13 @@ impl PairingSession {
             .as_ref()
             .is_some_and(|rb| ct_eq(rb, &expected_hash));
         if !matches {
-            self.state = SessionState::Aborted;
+            self.policy.transcript(event.pubkey.to_bytes(), false);
             return Err(PairingError::TranscriptMismatch);
         }
 
-        self.state = SessionState::AwaitingConfirmation;
+        if !self.policy.transcript(event.pubkey.to_bytes(), true) {
+            return Err(PairingError::SasMismatch);
+        }
         self.record_event(event);
         let code = self.sas_code.ok_or(PairingError::SasMismatch)?;
         Ok(format_sas(code))
@@ -455,7 +492,9 @@ impl PairingSession {
         self.check_expired()?;
         self.expect_state(SessionState::AwaitingConfirmation)?;
         self.expect_role(Role::Target)?;
-        self.state = SessionState::Transferring;
+        if !self.policy.approve_target() {
+            return Err(PairingError::SasMismatch);
+        }
         Ok(())
     }
 
@@ -478,7 +517,9 @@ impl PairingSession {
                 payload_type,
                 payload,
             } => {
-                self.state = SessionState::PayloadExchanged;
+                if !self.policy.receive_payload(event.pubkey.to_bytes()) {
+                    return Err(PairingError::SasMismatch);
+                }
                 self.record_event(event);
                 Ok((payload_type, Zeroizing::new(payload)))
             }
@@ -494,7 +535,14 @@ impl PairingSession {
 
         let msg = PairingMessage::Complete { success: true };
         let event = self.build_event(&msg)?;
-        self.state = SessionState::Completed;
+        if !self.policy.complete(
+            self.peer_pubkey
+                .ok_or(PairingError::SasMismatch)?
+                .to_bytes(),
+            true,
+        ) {
+            return Err(PairingError::SasMismatch);
+        }
         Ok(event)
     }
 }
@@ -506,29 +554,35 @@ impl PairingSession {
     /// Rejects calls from terminal states ([`SessionState::Completed`] /
     /// [`SessionState::Aborted`]) — a finished session cannot be regressed.
     pub fn abort(&mut self, reason: AbortReason) -> Result<Option<Event>, PairingError> {
-        if matches!(self.state, SessionState::Completed | SessionState::Aborted) {
+        if matches!(
+            self.policy.state(),
+            SessionState::Completed | SessionState::Aborted
+        ) {
             return Err(PairingError::UnexpectedMessage {
                 expected: "non-terminal state".into(),
-                got: format!("state {:?}", self.state),
+                got: format!("state {:?}", self.policy.state()),
             });
         }
+        self.policy.abort();
+        self.desktop_code = None;
         if self.peer_pubkey.is_none() {
-            self.state = SessionState::Aborted;
             return Ok(None);
         }
         let msg = PairingMessage::Abort { reason };
         let event = self.build_event(&msg)?;
-        self.state = SessionState::Aborted;
         Ok(Some(event))
     }
 
     /// Process an abort event from the peer.
     pub fn handle_abort(&mut self, event: &Event) -> Result<AbortReason, PairingError> {
         // Terminal states are final — ignore late aborts.
-        if matches!(self.state, SessionState::Completed | SessionState::Aborted) {
+        if matches!(
+            self.policy.state(),
+            SessionState::Completed | SessionState::Aborted
+        ) {
             return Err(PairingError::UnexpectedMessage {
                 expected: "non-terminal state".into(),
-                got: format!("state {:?}", self.state),
+                got: format!("state {:?}", self.policy.state()),
             });
         }
         // Require a known peer — an anonymous abort before the offer is
@@ -542,7 +596,7 @@ impl PairingSession {
         let msg = self.decrypt_message(event)?;
         match msg {
             PairingMessage::Abort { reason } => {
-                self.state = SessionState::Aborted;
+                self.policy.abort();
                 self.record_event(event);
                 Ok(reason)
             }
@@ -554,8 +608,8 @@ impl PairingSession {
     /// transport may spend time connecting and subscribing before this point.
     /// Buffered offers have not been processed yet, so the session is still waiting.
     pub fn start_source_lifetime(&mut self) {
-        assert_eq!(self.role, Role::Source);
-        assert_eq!(self.state, SessionState::Waiting);
+        assert_eq!(self.policy.role(), Role::Source);
+        assert_eq!(self.policy.state(), SessionState::Waiting);
         self.created_at = Instant::now();
     }
 
@@ -572,12 +626,23 @@ impl PairingSession {
 
     /// Current protocol state.
     pub fn state(&self) -> SessionState {
-        self.state
+        self.policy.state()
     }
 
     /// This device's role.
     pub fn role(&self) -> Role {
-        self.role
+        self.policy.role()
+    }
+
+    pub fn session_id(&self) -> [u8; 32] {
+        self.session_id
+    }
+    pub fn peer(&self) -> Option<PublicKey> {
+        self.peer_pubkey
+    }
+
+    pub fn completion(&self) -> Option<&buzz_pairing_policy::Completion> {
+        self.acknowledgement.as_ref()
     }
 
     /// This session's ephemeral public key.
@@ -608,7 +673,7 @@ impl PairingSession {
 
     /// The QR URI for this session (source only).
     pub fn qr_uri(&self) -> Option<String> {
-        if self.role != Role::Source {
+        if self.policy.role() != Role::Source {
             return None;
         }
         Some(qr::encode_qr(&QrPayload {
@@ -656,14 +721,13 @@ impl PairingSession {
             .peer_pubkey
             .ok_or_else(|| PairingError::InvalidPubkey("no peer pubkey set".into()))?;
 
-        let mut plaintext = serde_json::to_string(message)?;
+        let plaintext = Zeroizing::new(serde_json::to_string(message)?);
         let encrypted = nip44::encrypt(
             self.keys.secret_key(),
             &peer,
             &plaintext,
             nip44::Version::V2,
         )?;
-        plaintext.zeroize(); // Zero serialized JSON before drop
 
         // NIP-AB §: Implementations SHOULD set created_at to the current time
         // minus a random value between 0 and 30 seconds for metadata privacy.
@@ -775,7 +839,7 @@ impl PairingSession {
         self.validate_event_basics(event)?;
 
         if let Some(expected) = self.peer_pubkey {
-            if event.pubkey != expected {
+            if !self.policy.accepts_peer(&event.pubkey.to_bytes()) {
                 return Err(PairingError::InvalidPubkey(format!(
                     "event from {} but expected {}",
                     event.pubkey.to_hex(),
@@ -797,10 +861,10 @@ impl PairingSession {
 
     /// Check that we're in the expected state.
     fn expect_state(&self, expected: SessionState) -> Result<(), PairingError> {
-        if self.state != expected {
+        if self.policy.state() != expected {
             return Err(PairingError::UnexpectedMessage {
                 expected: format!("state {:?}", expected),
-                got: format!("state {:?}", self.state),
+                got: format!("state {:?}", self.policy.state()),
             });
         }
         Ok(())
@@ -808,10 +872,10 @@ impl PairingSession {
 
     /// Check that we're playing the expected role.
     fn expect_role(&self, expected: Role) -> Result<(), PairingError> {
-        if self.role != expected {
+        if self.policy.role() != expected {
             return Err(PairingError::UnexpectedMessage {
                 expected: format!("role {:?}", expected),
-                got: format!("role {:?}", self.role),
+                got: format!("role {:?}", self.policy.role()),
             });
         }
         Ok(())

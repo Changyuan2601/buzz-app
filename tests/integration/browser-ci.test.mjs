@@ -226,12 +226,13 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser, media_recorder\]$/m,
+    /^ {4}needs: \[javascript, native, pairing_proof, measurements, browser_fixture, browser, media_recorder\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
   const lanes = [
     "JAVASCRIPT",
     "NATIVE",
+    "PAIRING_PROOF",
     "MEASUREMENTS",
     "FIXTURE",
     "BROWSER",

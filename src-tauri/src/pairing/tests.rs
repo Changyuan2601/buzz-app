@@ -20,7 +20,7 @@ fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload, String) {
     let target = Keys::generate();
     let mut exchange = Exchange {
         session,
-        payload: Some(Zeroizing::new("identity-fixture".into())),
+        payload: Some(prepared()),
         code_entry: false,
     };
     let offer = message(
@@ -106,32 +106,26 @@ fn transcript_alone_never_exports_and_guess_budget_cannot_be_reset() {
 }
 #[test]
 fn timeout_preserves_possible_import_only_after_payload_publication() {
-    let manager = Pairing::default();
-    let (tx, _) = mpsc::channel(1);
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: CancellationToken::new(),
-        finished: CancellationToken::new(),
-        confirm: tx,
-        status: Status::Transferring,
-        payload_sent: false,
-    });
-    manager.expire("live");
-    assert_eq!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
-        Status::Expired
-    );
-    manager.mark_payload_sent("live");
-    manager.expire("stale");
-    assert_eq!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
-        Status::Expired
-    );
-    manager.expire("live");
-    assert_eq!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
-        Status::Uncertain
-    );
+    for released in [false, true] {
+        let manager = Pairing::default();
+        let attempt = register(&manager, active("live", Status::Transferring));
+        if released {
+            grant(&manager, &attempt);
+        }
+        manager.expire(&attempt);
+        assert_eq!(
+            visible(&manager),
+            if released {
+                Status::Uncertain
+            } else {
+                Status::Expired
+            }
+        );
+        assert!(
+            try_grant(&manager, &attempt).is_none(),
+            "terminal attempts cannot obtain a new grant"
+        );
+    }
 }
 #[test]
 fn entry_requires_phone_proof_and_real_completion() {
@@ -144,19 +138,20 @@ fn entry_requires_phone_proof_and_real_completion() {
         .receive(&submission(&exchange, &target, &code, 1))
         .unwrap();
     assert_eq!(output.status, Some(Status::Transferring));
-    assert_eq!(output.events.len(), 2);
+    assert_eq!(output.events.len(), 1);
+    assert!(output.payload.is_some());
     let plain = Zeroizing::new(
         nostr_pairing::nips::nip44::decrypt(
             target.secret_key(),
             &qr.source_pubkey,
-            &output.events[1].content,
+            &output.payload.as_ref().unwrap().event().content,
         )
         .unwrap(),
     );
-    assert!(plain.contains("identity-fixture"));
+    assert!(plain.contains("nsec"));
     assert!(!serde_json::to_string(&output.status)
         .unwrap()
-        .contains("identity-fixture"));
+        .contains("nsec"));
     let done = message(
         &target,
         &exchange.session,
@@ -199,7 +194,7 @@ fn legacy_phone_still_needs_explicit_desktop_confirmation() {
     let (mut phone, offer) = PairingSession::new_target(&qr).unwrap();
     let mut exchange = Exchange {
         session,
-        payload: Some(Zeroizing::new("fixture".into())),
+        payload: Some(prepared()),
         code_entry: false,
     };
     assert!(matches!(
@@ -212,10 +207,12 @@ fn legacy_phone_still_needs_explicit_desktop_confirmation() {
     let output = exchange.confirm().unwrap();
     phone.handle_sas_confirm(&output.events[0]).unwrap();
     phone.confirm_target_sas().unwrap();
-    assert_eq!(
-        &*phone.handle_payload(&output.events[1]).unwrap().1,
-        "fixture"
-    );
+    let imported = phone
+        .handle_payload(output.payload.as_ref().unwrap().event())
+        .unwrap()
+        .1;
+    let imported: serde_json::Value = serde_json::from_str(&imported).unwrap();
+    assert_eq!(imported["pubkey"], hex::encode(human()));
     assert_eq!(
         exchange
             .receive(&phone.send_complete().unwrap())
@@ -227,104 +224,94 @@ fn legacy_phone_still_needs_explicit_desktop_confirmation() {
 #[tokio::test]
 async fn old_session_cleanup_cannot_cancel_or_overwrite_replacement() {
     let manager = Pairing::default();
-    let (tx, _) = mpsc::channel(1);
-    let cancel = CancellationToken::new();
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "new".into(),
-        cancel: cancel.clone(),
-        finished: CancellationToken::new(),
-        confirm: tx,
-        status: Status::Connecting,
-        payload_sent: false,
-    });
-    manager.cancel("old").await.unwrap();
-    manager.update("old", Status::Complete);
-    assert!(!cancel.is_cancelled());
-    assert_eq!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
-        Status::Connecting
-    );
-    manager
+    let old = register(&manager, active("same", Status::Transferring));
+    let new = register(&manager, active("same", Status::Connecting));
+    manager.update(&old, Status::Complete);
+    manager.expire(&old);
+    assert_eq!(visible(&manager), Status::Connecting);
+    assert!(try_grant(&manager, &old).is_none());
+    assert!(try_grant(&manager, &new).is_some());
+    assert_eq!(manager.cancel("same").await.unwrap(), Status::Uncertain);
+    manager.update(&new, Status::Complete);
+    assert_eq!(visible(&manager), Status::Uncertain);
+}
+
+#[test]
+fn window_reload_or_destruction_cancels_the_live_attempt() {
+    let manager = Pairing::default();
+    let attempt = register(&manager, active("live", Status::Connecting));
+    let cancel = manager
         .0
         .lock()
         .unwrap()
+        .active
         .as_ref()
         .unwrap()
-        .finished
-        .cancel();
-    manager.cancel("new").await.unwrap();
-    assert!(cancel.is_cancelled());
-    manager.update("new", Status::Complete);
-    assert!(manager.0.lock().unwrap().is_none());
-}
-
-#[tokio::test]
-async fn window_reload_or_destruction_cancels_the_live_attempt() {
-    let manager = Pairing::default();
-    let (tx, _) = mpsc::channel(1);
-    let cancel = CancellationToken::new();
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: cancel.clone(),
-        finished: CancellationToken::new(),
-        confirm: tx,
-        status: Status::Connecting,
-        payload_sent: false,
-    });
+        .cancel
+        .clone();
     manager.cancel_all();
     assert!(cancel.is_cancelled());
-    assert!(manager.0.lock().unwrap().is_none());
+    assert!(manager.0.lock().unwrap().active.is_none());
+    assert!(try_grant(&manager, &attempt).is_none());
 }
 
 #[test]
 fn cancellation_preserves_post_publication_outcomes() {
-    for (before, after) in [
-        (Status::Transferring, Status::Uncertain),
-        (Status::Complete, Status::Complete),
-        (
-            Status::Error {
-                message: "Your phone couldn’t save the account. Try pairing again.".into(),
-            },
-            Status::Error {
-                message: "Your phone couldn’t save the account. Try pairing again.".into(),
-            },
-        ),
-    ] {
+    for outcome in [Outcome::Pending, Outcome::Complete, Outcome::Rejected] {
         let manager = Pairing::default();
-        let (tx, _) = mpsc::channel(1);
-        *manager.0.lock().unwrap() = Some(Active {
-            id: "live".into(),
-            cancel: CancellationToken::new(),
-            finished: CancellationToken::new(),
-            confirm: tx,
-            status: before,
-            payload_sent: true,
-        });
-        // Window close, reload, and macOS hide all use this path.
+        let attempt = register(&manager, active("live", Status::Transferring));
+        let (mut exchange, target, _, code) = entry();
+        manager.bind_session(&attempt, &exchange.session);
+        let output = exchange
+            .receive(&submission(&exchange, &target, &code, 1))
+            .unwrap();
+        let payload = output.payload.unwrap();
+        manager
+            .release(&attempt, &payload, &exchange.session, future())
+            .unwrap();
+        let expected = match outcome {
+            Outcome::Complete => {
+                let done = message(
+                    &target,
+                    &exchange.session,
+                    PairingMessage::Complete { success: true },
+                );
+                exchange.receive(&done).unwrap();
+                assert!(manager.complete(&attempt, exchange.session.completion().unwrap()));
+                Status::Complete
+            }
+            Outcome::Rejected => {
+                let failure = Status::Error {
+                    message: "phone rejected".into(),
+                };
+                manager.fail(&attempt, failure.clone(), false);
+                failure
+            }
+            _ => Status::Uncertain,
+        };
         manager.cancel_all();
-        let active = manager.0.lock().unwrap();
-        let active = active.as_ref().unwrap();
-        assert!(active.cancel.is_cancelled());
-        assert_eq!(active.status, after);
+        assert_eq!(visible(&manager), expected);
+        assert!(try_grant(&manager, &attempt).is_none());
     }
+}
+
+#[tokio::test]
+async fn replacement_retains_possible_delivery_for_the_retired_id() {
+    let manager = Pairing::default();
+    let old = register(&manager, active("old", Status::Transferring));
+    grant(&manager, &old);
+    register(&manager, active("new", Status::Connecting));
+    assert_eq!(manager.cancel("old").await.unwrap(), Status::Uncertain);
+    assert_eq!(visible(&manager), Status::Connecting);
 }
 
 #[test]
 fn cancellation_before_publication_blocks_the_payload() {
     let manager = Pairing::default();
-    let (tx, _) = mpsc::channel(1);
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: CancellationToken::new(),
-        finished: CancellationToken::new(),
-        confirm: tx,
-        status: Status::Transferring,
-        payload_sent: false,
-    });
+    let attempt = register(&manager, active("live", Status::Transferring));
     manager.cancel_all();
-    assert!(!manager.mark_payload_sent("live"));
+    assert!(try_grant(&manager, &attempt).is_none());
 }
-
 #[tokio::test]
 async fn unexpected_connection_failure_becomes_a_visible_error() {
     let result = guard(async { panic!("simulated connection setup failure") }).await;
@@ -339,40 +326,31 @@ async fn unexpected_connection_failure_becomes_a_visible_error() {
 
 #[test]
 fn transport_failure_is_uncertain_after_publication_but_phone_rejection_is_definite() {
-    let manager = Pairing::default();
-    let (tx, _) = mpsc::channel(1);
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: CancellationToken::new(),
-        finished: CancellationToken::new(),
-        confirm: tx,
-        status: Status::Transferring,
-        payload_sent: false,
-    });
-    let error = Status::Error {
-        message: "connection lost".into(),
-    };
-    manager.fail("live", error.clone(), true);
-    assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
-    manager.mark_payload_sent("live");
-    manager.fail("stale", error.clone(), true);
-    assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
-    manager.fail("live", error.clone(), true);
-    assert_eq!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
-        Status::Uncertain
-    );
-    manager.fail("live", error.clone(), false);
-    assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
+    for released in [false, true] {
+        let manager = Pairing::default();
+        let attempt = register(&manager, active("live", Status::Transferring));
+        if released {
+            grant(&manager, &attempt);
+        }
+        let error = Status::Error {
+            message: "connection lost".into(),
+        };
+        manager.fail(&attempt, error.clone(), true);
+        assert_eq!(
+            visible(&manager),
+            if released { Status::Uncertain } else { error }
+        );
+        manager.update(&attempt, Status::Complete);
+        assert_ne!(visible(&manager), Status::Complete);
+    }
 }
-
 #[test]
 fn mismatched_legacy_code_sends_user_denied_without_exporting() {
     let (session, qr) = PairingSession::new_source("wss://relay.test".into());
     let (mut phone, offer) = PairingSession::new_target(&qr).unwrap();
     let mut exchange = Exchange {
         session,
-        payload: Some(Zeroizing::new("fixture".into())),
+        payload: Some(prepared()),
         code_entry: false,
     };
     exchange.receive(&offer).unwrap();
@@ -425,17 +403,20 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
     let manager = Pairing::default();
     let cancel = CancellationToken::new();
     let finished = CancellationToken::new();
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: cancel.clone(),
-        finished: finished.clone(),
-        confirm: tx,
-        status: Status::Code {
-            code: "000000".into(),
-            code_entry: true,
+    let attempt = register(
+        &manager,
+        Active {
+            id: "live".into(),
+            cancel: cancel.clone(),
+            finished: finished.clone(),
+            confirm: tx,
+            status: Status::Code {
+                code: "000000".into(),
+                code_entry: true,
+            },
         },
-        payload_sent: false,
-    });
+    );
+    assert!(manager.bind_session(&attempt, &exchange.session));
     let owner = manager.clone();
     let task = tokio::spawn(async move {
         let mut exchange = exchange;
@@ -443,7 +424,8 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
         let result = exchange_until_deadline(
             ExchangeContext {
                 pairing: &owner,
-                id: "live",
+                attempt: &attempt,
+                deadline: tokio::time::Instant::now() + Duration::from_secs(120),
                 relay_url: &url::Url::parse("wss://relay.test").unwrap(),
                 pending: vec![],
             },
@@ -452,7 +434,6 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
             &mut auth,
             &mut rx,
             &cancel,
-            tokio::time::Instant::now() + Duration::from_secs(120),
         )
         .await;
         finished.cancel();
@@ -490,17 +471,20 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
     let manager = Pairing::default();
     let cancel = CancellationToken::new();
     let finished = CancellationToken::new();
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: cancel.clone(),
-        finished: finished.clone(),
-        confirm: tx,
-        status: Status::Code {
-            code: code.clone(),
-            code_entry: true,
+    let attempt = register(
+        &manager,
+        Active {
+            id: "live".into(),
+            cancel: cancel.clone(),
+            finished: finished.clone(),
+            confirm: tx,
+            status: Status::Code {
+                code: code.clone(),
+                code_entry: true,
+            },
         },
-        payload_sent: false,
-    });
+    );
+    assert!(manager.bind_session(&attempt, &exchange.session));
     let owner = manager.clone();
     let owner_cancel = cancel.clone();
     let task = tokio::spawn(async move {
@@ -510,7 +494,8 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
         let result = exchange_until_deadline(
             ExchangeContext {
                 pairing: &owner,
-                id: "live",
+                attempt: &attempt,
+                deadline: tokio::time::Instant::now() + Duration::from_secs(120),
                 relay_url: &url::Url::parse("wss://relay.test").unwrap(),
                 pending: vec![],
             },
@@ -519,7 +504,6 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
             &mut auth,
             &mut rx,
             &owner_cancel,
-            tokio::time::Instant::now() + Duration::from_secs(120),
         )
         .await;
         finished.cancel();
@@ -553,7 +537,7 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
     assert_eq!(manager.cancel("live").await.unwrap(), Status::Uncertain);
     assert!(task.await.unwrap().is_ok());
     assert_eq!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
+        manager.0.lock().unwrap().active.as_ref().unwrap().status,
         Status::Uncertain,
         "a later status read must not report an unsent cancellation"
     );
@@ -573,10 +557,13 @@ async fn native_deadline_expires_without_a_peer_or_an_abort() {
     let (mut socket, mut server) = local_sockets().await;
     let (_tx, mut rx) = mpsc::channel(1);
     let mut auth = relay::Authentication::default();
+    let manager = Pairing::default();
+    let attempt = register(&manager, active("live", Status::Connecting));
     let result = exchange_until_deadline(
         ExchangeContext {
-            pairing: &Pairing::default(),
-            id: "live",
+            pairing: &manager,
+            attempt: &attempt,
+            deadline: tokio::time::Instant::now(),
             relay_url: &url::Url::parse("wss://relay.test").unwrap(),
             pending: vec![],
         },
@@ -585,7 +572,6 @@ async fn native_deadline_expires_without_a_peer_or_an_abort() {
         &mut auth,
         &mut rx,
         &CancellationToken::new(),
-        tokio::time::Instant::now(),
     )
     .await;
     assert!(matches!(result, Err(Failure::Expired)));
@@ -600,32 +586,34 @@ async fn native_deadline_expires_without_a_peer_or_an_abort() {
 fn denial_keeps_native_code_until_abort_has_finished() {
     let manager = Pairing::default();
     let (tx, mut rx) = mpsc::channel(1);
-    *manager.0.lock().unwrap() = Some(Active {
-        id: "live".into(),
-        cancel: CancellationToken::new(),
-        finished: CancellationToken::new(),
-        confirm: tx,
-        status: Status::Code {
-            code: "123456".into(),
-            code_entry: false,
+    let attempt = register(
+        &manager,
+        Active {
+            id: "live".into(),
+            cancel: CancellationToken::new(),
+            finished: CancellationToken::new(),
+            confirm: tx,
+            status: Status::Code {
+                code: "123456".into(),
+                code_entry: false,
+            },
         },
-        payload_sent: false,
-    });
+    );
     decide(&manager, "live", Decision::Deny).unwrap();
     assert!(matches!(rx.try_recv(), Ok(Decision::Deny)));
     assert!(matches!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
+        manager.0.lock().unwrap().active.as_ref().unwrap().status,
         Status::Code { .. }
     ));
     manager.fail(
-        "live",
+        &attempt,
         Status::Error {
             message: "Pairing was canceled.".into(),
         },
         false,
     );
     assert!(matches!(
-        manager.0.lock().unwrap().as_ref().unwrap().status,
+        manager.0.lock().unwrap().active.as_ref().unwrap().status,
         Status::Error { .. }
     ));
 }
@@ -671,14 +659,17 @@ async fn delayed_subscription_expires_before_sidecar_connection_cap() {
     let task = tokio::spawn(async move {
         let mut exchange = Exchange {
             session,
-            payload: Some(Zeroizing::new("fixture".into())),
+            payload: Some(prepared()),
             code_entry: false,
         };
         let (_tx, mut rx) = mpsc::channel(1);
+        let manager = Pairing::default();
+        let attempt = register(&manager, active("live", Status::Connecting));
         exchange_until_deadline(
             ExchangeContext {
-                pairing: &Pairing::default(),
-                id: "live",
+                pairing: &manager,
+                attempt: &attempt,
+                deadline,
                 relay_url: &relay_url,
                 pending,
             },
@@ -687,7 +678,6 @@ async fn delayed_subscription_expires_before_sidecar_connection_cap() {
             &mut auth,
             &mut rx,
             &CancellationToken::new(),
-            deadline,
         )
         .await
     });
@@ -710,28 +700,34 @@ async fn early_connection_loss_is_error_before_publication_and_uncertain_after()
         let manager = Pairing::default();
         let (tx, mut rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        *manager.0.lock().unwrap() = Some(Active {
-            id: "live".into(),
-            cancel: cancel.clone(),
-            finished: CancellationToken::new(),
-            confirm: tx,
-            status: Status::Qr {
-                svg: "fixture".into(),
-                uri: "fixture".into(),
+        let attempt = register(
+            &manager,
+            Active {
+                id: "live".into(),
+                cancel: cancel.clone(),
+                finished: CancellationToken::new(),
+                confirm: tx,
+                status: Status::Qr {
+                    svg: "fixture".into(),
+                    uri: "fixture".into(),
+                },
             },
-            payload_sent,
-        });
+        );
+        if payload_sent {
+            grant(&manager, &attempt);
+        }
         let deadline = exchange_deadline(&session, tokio::time::Instant::now());
         let mut exchange = Exchange {
             session,
-            payload: Some(Zeroizing::new("fixture".into())),
+            payload: Some(prepared()),
             code_entry: false,
         };
         drop(server);
         let result = exchange_until_deadline(
             ExchangeContext {
                 pairing: &manager,
-                id: "live",
+                attempt: &attempt,
+                deadline,
                 relay_url: &url::Url::parse("wss://relay.test").unwrap(),
                 pending: vec![],
             },
@@ -740,15 +736,14 @@ async fn early_connection_loss_is_error_before_publication_and_uncertain_after()
             &mut relay::Authentication::default(),
             &mut rx,
             &cancel,
-            deadline,
         )
         .await;
         let Err(Failure::Transport(message)) = result else {
             panic!("unexpected result: {result:?}");
         };
-        manager.fail("live", Status::Error { message }, true);
+        manager.fail(&attempt, Status::Error { message }, true);
         let active = manager.0.lock().unwrap();
-        let status = &active.as_ref().unwrap().status;
+        let status = &active.active.as_ref().unwrap().status;
         if payload_sent {
             assert_eq!(status, &Status::Uncertain);
         } else {
@@ -767,7 +762,7 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
     let manager = Pairing::default();
     let cancel = CancellationToken::new();
     let finished = CancellationToken::new();
-    let attempt = |id: &str, cancel: CancellationToken, finished, confirm| Active {
+    let make_active = |id: &str, cancel: CancellationToken, finished, confirm| Active {
         id: id.into(),
         cancel,
         finished,
@@ -776,12 +771,13 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
             code: code.clone(),
             code_entry: true,
         },
-        payload_sent: false,
     };
-    manager
-        .admit(attempt("live", cancel.clone(), finished.clone(), tx))
-        .unwrap();
+    let attempt = register(
+        &manager,
+        make_active("live", cancel.clone(), finished.clone(), tx),
+    );
     // The payload is prepared and waits only for the phone's code.
+    assert!(manager.bind_session(&attempt, &exchange.session));
     manager.close();
     let owner = manager.clone();
     let task = tokio::spawn(async move {
@@ -791,7 +787,8 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
         let result = exchange_loop(
             ExchangeContext {
                 pairing: &owner,
-                id: "live",
+                attempt: &attempt,
+                deadline: future(),
                 relay_url: &url::Url::parse("wss://relay.test").unwrap(),
                 pending: vec![],
             },
@@ -812,9 +809,7 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
         ))
         .await
         .unwrap();
-    while let Ok(Some(Ok(frame))) =
-        tokio::time::timeout(Duration::from_millis(500), server.next()).await
-    {
+    while let Some(Ok(frame)) = server.next().await {
         let Ok(text) = frame.to_text() else { continue };
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         let event = Event::from_json(json[1].to_string()).unwrap();
@@ -835,7 +830,330 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
     let (tx, _) = mpsc::channel(1);
     let late = CancellationToken::new();
     assert!(manager
-        .admit(attempt("late", late.clone(), CancellationToken::new(), tx))
+        .admit(
+            make_active("late", late.clone(), CancellationToken::new(), tx),
+            human(),
+            b"https://relay.test".to_vec()
+        )
         .is_err());
-    assert!(!manager.mark_payload_sent("late"));
+    assert!(manager.0.lock().unwrap().policy.outcome() == Outcome::Cancelled);
+}
+
+fn human() -> [u8; 32] {
+    Keys::new(nostr_pairing::SecretKey::from_slice(&[1; 32]).unwrap())
+        .public_key()
+        .to_bytes()
+}
+fn prepared() -> identity::Prepared {
+    let keys = Keys::new(nostr_pairing::SecretKey::from_slice(&[1; 32]).unwrap());
+    let binding = buzz_pairing_policy::Custody::Ready(())
+        .pairing_binding(human(), human(), b"https://relay.test".to_vec())
+        .unwrap();
+    identity::payload(
+        &keys,
+        &keys.public_key().to_hex(),
+        "https://relay.test",
+        binding,
+    )
+    .unwrap()
+}
+
+fn future() -> tokio::time::Instant {
+    tokio::time::Instant::now() + Duration::from_secs(120)
+}
+fn active(id: &str, status: Status) -> Active {
+    let (tx, _) = mpsc::channel(1);
+    let finished = CancellationToken::new();
+    finished.cancel();
+    Active {
+        id: id.into(),
+        cancel: CancellationToken::new(),
+        finished,
+        confirm: tx,
+        status,
+    }
+}
+fn register(manager: &Pairing, active: Active) -> Attempt {
+    manager
+        .admit(active, human(), b"https://relay.test".to_vec())
+        .unwrap()
+}
+fn visible(manager: &Pairing) -> Status {
+    manager
+        .0
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .status
+        .clone()
+}
+fn try_grant(manager: &Pairing, attempt: &Attempt) -> Option<Release> {
+    let (mut exchange, target, _, code) = entry();
+    manager.bind_session(attempt, &exchange.session);
+    let output = exchange
+        .receive(&submission(&exchange, &target, &code, 1))
+        .unwrap();
+    let payload = output.payload.unwrap();
+    manager.release(attempt, &payload, &exchange.session, future())
+}
+fn grant(manager: &Pairing, attempt: &Attempt) {
+    assert!(try_grant(manager, attempt).is_some());
+}
+
+// The release clock is checked under the registry lock, independently of the
+// protocol timer. Reusing the same proposal isolates each provenance guard.
+#[tokio::test(start_paused = true)]
+async fn release_checks_pinned_provenance_deadline_and_single_transfer() {
+    for denial in [
+        "human",
+        "community",
+        "session",
+        "deadline",
+        "revoked",
+        "closed",
+        "second",
+    ] {
+        let manager = Pairing::default();
+        let (mut exchange, target, _, code) = entry();
+        let pinned = if denial == "human" { [2; 32] } else { human() };
+        let community = if denial == "community" {
+            b"https://other.test".to_vec()
+        } else {
+            b"https://relay.test".to_vec()
+        };
+        let attempt = manager
+            .admit(
+                active("same-renderer-id", Status::Transferring),
+                pinned,
+                community,
+            )
+            .unwrap();
+        if denial == "session" {
+            let (other, _) = PairingSession::new_source("wss://relay.test".into());
+            assert!(manager.bind_session(&attempt, &other));
+        } else {
+            assert!(manager.bind_session(&attempt, &exchange.session));
+        }
+        let output = exchange
+            .receive(&submission(&exchange, &target, &code, 1))
+            .unwrap();
+        let payload = output.payload.unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        match denial {
+            "deadline" => tokio::time::advance(Duration::from_secs(1)).await,
+            "revoked" => manager.cancel_all(),
+            "closed" => manager.close(),
+            "second" => {
+                assert!(manager
+                    .release(&attempt, &payload, &exchange.session, deadline)
+                    .is_some());
+            }
+            _ => {}
+        }
+        assert!(
+            manager
+                .release(&attempt, &payload, &exchange.session, deadline)
+                .is_none(),
+            "{denial} admitted a payload"
+        );
+    }
+}
+
+// Real TCP/WebSocket frames exercise the production custody -> crypto -> native
+// grant -> AUTH replay -> authenticated success boundary in both product modes.
+#[tokio::test]
+async fn native_identity_socket_flow_replays_exact_ciphertext_and_requires_peer_success() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    for code_entry in [true, false] {
+        let host = crate::identity::IdentityHost::fixture();
+        let viewer = host.viewer().await.unwrap();
+        let payload = identity::prepare(&host, viewer.clone(), "https://relay.test".into())
+            .await
+            .unwrap();
+        let (session, qr) = PairingSession::new_source("wss://relay.test".into());
+        let mut exchange = Exchange {
+            session,
+            payload: Some(payload),
+            code_entry: false,
+        };
+        let target = Keys::generate();
+        let offer = message(
+            &target,
+            &exchange.session,
+            PairingMessage::Offer {
+                session_id: hex::encode(crypto::derive_session_id(&qr.session_secret)),
+                version: 1,
+                confirmation: code_entry.then(|| "desktop-code-v1".into()),
+            },
+        );
+        let output = exchange.receive(&offer).unwrap();
+        let Some(Status::Code { code, .. }) = output.status else {
+            panic!("missing code");
+        };
+        let request = submission(&exchange, &target, &code, 1);
+        let completion = message(
+            &target,
+            &exchange.session,
+            PairingMessage::Complete { success: true },
+        );
+        let ephemeral = exchange.session.pubkey();
+        let (mut socket, mut server) = local_sockets().await;
+        let (tx, mut rx) = mpsc::channel(1);
+        let manager = Pairing::default();
+        let attempt = register(
+            &manager,
+            Active {
+                id: "socket-flow".into(),
+                cancel: CancellationToken::new(),
+                finished: CancellationToken::new(),
+                confirm: tx.clone(),
+                status: Status::Code { code, code_entry },
+            },
+        );
+        assert!(manager.bind_session(&attempt, &exchange.session));
+        let owner = manager.clone();
+        let task = tokio::spawn(async move {
+            exchange_loop(
+                ExchangeContext {
+                    pairing: &owner,
+                    attempt: &attempt,
+                    deadline: future(),
+                    relay_url: &url::Url::parse("wss://relay.test").unwrap(),
+                    pending: vec![],
+                },
+                &mut exchange,
+                &mut socket,
+                &mut relay::Authentication::default(),
+                &mut rx,
+            )
+            .await
+        });
+        if code_entry {
+            server
+                .send(Message::Text(
+                    serde_json::json!(["EVENT", "pair", request])
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+        } else {
+            decide(&manager, "socket-flow", Decision::Confirm).unwrap();
+        }
+        let proof_frame = server.next().await.unwrap().unwrap();
+        let proof_json: serde_json::Value =
+            serde_json::from_str(proof_frame.to_text().unwrap()).unwrap();
+        let proof = Event::from_json(proof_json[1].to_string()).unwrap();
+        let first = server.next().await.unwrap().unwrap().into_text().unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(frame[0], "EVENT");
+        let event = Event::from_json(frame[1].to_string()).unwrap();
+        assert!(event.verify().is_ok());
+        assert_eq!(event.pubkey, ephemeral);
+        assert_ne!(event.pubkey.to_hex(), viewer);
+        let plain = Zeroizing::new(
+            nostr_pairing::nips::nip44::decrypt(target.secret_key(), &ephemeral, &event.content)
+                .unwrap(),
+        );
+        let PairingMessage::Payload { payload: data, .. } = serde_json::from_str(&plain).unwrap()
+        else {
+            panic!("missing identity");
+        };
+        let identity: serde_json::Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(identity["pubkey"], viewer);
+        assert_eq!(identity["relayUrl"], "https://relay.test");
+        assert_eq!(
+            Keys::parse(identity["nsec"].as_str().unwrap())
+                .unwrap()
+                .public_key()
+                .to_hex(),
+            viewer
+        );
+        // Retire the control proof, leaving the original admitted payload unacked.
+        for value in [
+            serde_json::json!(["OK", proof.id.to_hex(), true, ""]),
+            serde_json::json!(["AUTH", "late-challenge"]),
+        ] {
+            server
+                .send(Message::Text(value.to_string().into()))
+                .await
+                .unwrap();
+        }
+        let authentication = server.next().await.unwrap().unwrap();
+        let authentication: serde_json::Value =
+            serde_json::from_str(authentication.to_text().unwrap()).unwrap();
+        assert_eq!(authentication[0], "AUTH");
+        let authentication = Event::from_json(authentication[1].to_string()).unwrap();
+        assert!(authentication.verify().is_ok());
+        assert_eq!(authentication.pubkey, ephemeral);
+        server
+            .send(Message::Text(
+                serde_json::json!(["OK", authentication.id.to_hex(), true, ""])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        let req = server.next().await.unwrap().unwrap();
+        let req: serde_json::Value = serde_json::from_str(req.to_text().unwrap()).unwrap();
+        assert_eq!(req[0], "REQ");
+        assert_eq!(
+            server.next().await.unwrap().unwrap().into_text().unwrap(),
+            first
+        );
+        assert_ne!(
+            visible(&manager),
+            Status::Complete,
+            "delivery receipt is not peer success"
+        );
+        server
+            .send(Message::Text(
+                serde_json::json!(["OK", event.id.to_hex(), true, ""])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        server
+            .send(Message::Text(
+                serde_json::json!(["EVENT", "pair", completion])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        assert!(task.await.unwrap().is_ok());
+        assert_eq!(visible(&manager), Status::Complete);
+    }
+}
+
+#[tokio::test]
+async fn renderer_id_reuse_cannot_alias_a_retained_delivery_outcome() {
+    let manager = Pairing::default();
+    let attempt = register(&manager, active("retained", Status::Transferring));
+    grant(&manager, &attempt);
+    assert!(manager
+        .admit(
+            active("retained", Status::Connecting),
+            human(),
+            b"https://relay.test".to_vec()
+        )
+        .is_err());
+    assert_eq!(manager.cancel("retained").await.unwrap(), Status::Uncertain);
+    register(&manager, active("new", Status::Connecting));
+    assert!(manager
+        .admit(
+            active("retained", Status::Connecting),
+            human(),
+            b"https://relay.test".to_vec()
+        )
+        .is_err());
+    assert_eq!(manager.cancel("retained").await.unwrap(), Status::Uncertain);
+    assert_eq!(
+        manager.0.lock().unwrap().retired.get("retained"),
+        Some(&Status::Uncertain)
+    );
 }

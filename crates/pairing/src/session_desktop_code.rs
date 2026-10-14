@@ -1,5 +1,4 @@
 use super::*;
-use subtle::ConstantTimeEq;
 
 impl PairingSession {
     /// Start source-only code verification once, after capability negotiation.
@@ -9,13 +8,20 @@ impl PairingSession {
         self.check_expired()?;
         self.expect_role(Role::Source)?;
         self.expect_state(SessionState::Confirming)?;
-        if !self.desktop_code_requested || self.desktop_code.is_some() {
+        let value = rand::random_range(0..1_000_000u32);
+        if !self.policy.issue(value) {
             return Err(PairingError::SasMismatch);
         }
-        let code = format!("{:06}", rand::random_range(0..1_000_000u32));
-        let challenge = self.build_event(&PairingMessage::DesktopCode {})?;
-        self.desktop_code = Some(Zeroizing::new(code.clone()));
-        Ok((code, challenge))
+        let code = Zeroizing::new(format!("{value:06}"));
+        let challenge = match self.build_event(&PairingMessage::DesktopCode {}) {
+            Ok(event) => event,
+            Err(error) => {
+                self.policy.abort();
+                return Err(error);
+            }
+        };
+        self.desktop_code = Some(code.clone());
+        Ok((code.to_string(), challenge))
     }
 
     /// Verify a signed submission from the locked peer. Only a separate random
@@ -27,27 +33,28 @@ impl PairingSession {
         self.expect_role(Role::Source)?;
         self.expect_state(SessionState::Confirming)?;
         self.validate_event_from_peer(event)?;
-        let expected = self
-            .desktop_code
-            .as_ref()
-            .ok_or(PairingError::SasMismatch)?;
         let (mut code, request_id) = match self.decrypt_message(event)? {
             PairingMessage::CodeSubmit { code, request_id } => (code, request_id),
             other => return Err(unexpected("code-submit", &other)),
         };
-        let correct: bool = code.as_bytes().ct_eq(expected.as_bytes()).into();
+        let candidate = (code.len() == 6 && code.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| code.parse::<u32>().ok())
+            .flatten();
         code.zeroize();
-        self.code_attempts += 1;
+        let correct = self
+            .policy
+            .guess(event.pubkey.to_bytes(), candidate)
+            .ok_or(PairingError::SasMismatch)?;
         self.record_event(event);
         if correct {
             self.desktop_code = None;
-            return self.confirm_sas().map(|proof| (proof, true));
+            return self.source_proof().map(|proof| (proof, true));
         }
-        let remaining_attempts = 5u8.saturating_sub(self.code_attempts);
+        let remaining_attempts = 5u8.saturating_sub(self.policy.guesses());
         // Exhaustion is terminal even if serializing the rejection fails.
         if remaining_attempts == 0 {
             self.desktop_code = None;
-            self.state = SessionState::Aborted;
+            self.policy.abort();
         }
         let rejection = self.build_event(&PairingMessage::CodeRejected {
             request_id,

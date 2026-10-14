@@ -274,16 +274,7 @@ pub(crate) fn remove_saved_key() -> Result<()> {
     remove_key(&OsStore)
 }
 
-#[derive(Default)]
-enum State {
-    #[default]
-    Unread,
-    Missing,
-    Ready(Key),
-    /// Signing out: the key is dropped and nothing reads, saves or uses one
-    /// again until Buzz restarts.
-    Closed,
-}
+type State = buzz_pairing_policy::Custody<Key>;
 struct Identity {
     state: State,
     store: Box<dyn Store>,
@@ -294,13 +285,16 @@ impl Identity {
             return Err("Buzz is signing out".into());
         }
         if matches!(self.state, State::Unread) {
-            self.state = match self.store.read()? {
-                None => State::Missing,
+            let candidate = match self.store.read()? {
+                None => None,
                 Some(bytes) => {
                     let text = std::str::from_utf8(&bytes).map_err(|_| MALFORMED)?;
-                    State::Ready(Key::parse(text).map_err(|_| MALFORMED)?)
+                    Some(Key::parse(text).map_err(|_| MALFORMED)?)
                 }
             };
+            if !self.state.restore(candidate, true) {
+                return Err("Buzz is signing out".into());
+            }
         }
         match &self.state {
             State::Ready(key) => key.viewer().map(Some),
@@ -319,11 +313,13 @@ impl Identity {
         let viewer = key.viewer()?;
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
-        self.state = State::Ready(key); // Commit in memory only after secure persistence.
+        if !self.state.save(key, true) {
+            return Err("Buzz is signing out".into());
+        }
         Ok(viewer)
     }
     fn close(&mut self) {
-        self.state = State::Closed;
+        self.state.close();
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -745,6 +741,37 @@ impl IdentityHost {
             identity.restore()?;
             match &identity.state {
                 State::Ready(key) => action(&key.0, &key.viewer()?),
+                _ => Err("Set up your identity first".into()),
+            }
+        })
+        .await
+    }
+
+    /// Pairing's only identity-material adapter. Custody, pin validation and
+    /// serialization execute under the same mutex; the binding travels with it.
+    pub(crate) async fn with_pairing_key<T: Send + 'static>(
+        &self,
+        requested: [u8; 32],
+        community: Vec<u8>,
+        action: impl FnOnce(&[u8; 32], &str, buzz_pairing_policy::IdentityBinding) -> Result<T>
+            + Send
+            + 'static,
+    ) -> Result<T> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            match &identity.state {
+                State::Ready(key) => {
+                    let viewer = key.viewer()?;
+                    let actual = nostr_pairing::PublicKey::from_hex(&viewer)
+                        .ok()
+                        .map(|key| key.to_bytes())
+                        .ok_or("Couldn’t read your Buzz account.")?;
+                    let binding = identity
+                        .state
+                        .pairing_binding(actual, requested, community)
+                        .ok_or("The active account changed. Reopen Pair mobile.")?;
+                    action(&key.0, &viewer, binding)
+                }
                 _ => Err("Set up your identity first".into()),
             }
         })

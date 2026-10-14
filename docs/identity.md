@@ -6,7 +6,10 @@ validates its checksum and secp256k1 scalar, and persists that exact key before
 adopting its public identity. It never generates a replacement after an import,
 read or write failure. Denied/unavailable/corrupt storage is not first run.
 
-One native owner keeps the key in memory after successful restore. The new
+One native owner keeps the key in memory after successful restore. Its actual
+`Custody<Key>` state is part of the [verified pairing release](pairing.md#verified-native-secret-release):
+Closed is absorbing, persistence precedes Ready installation, and pairing
+bindings require the pinned Ready identity. The new
 create-only secure-storage item is service `dev.local.buzz.foundation.identity` in release
 builds, or `dev.local.buzz.foundation.identity.debug` with Rust debug assertions,
 account `human`. Debug worktrees share the debug item, not the release identity;

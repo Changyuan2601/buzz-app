@@ -69,7 +69,7 @@ async fn late_auth_uses_ephemeral_key_and_retries_only_unacknowledged_events() {
             "encrypted-fixture",
         ))
         .unwrap();
-    auth.unacknowledged.push(event.clone());
+    auth.retain_control(event.clone());
     send_server(&mut server, serde_json::json!(["AUTH", "challenge"])).await;
     let message = next(&mut client).await.unwrap();
     assert!(auth

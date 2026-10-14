@@ -2,15 +2,13 @@ mod identity;
 mod qr;
 mod relay;
 
-use buzz_pairing::{AbortReason, PairingSession, PayloadType, SessionState};
+use buzz_pairing::{AbortReason, PairingSession, SessionState};
+use buzz_pairing_policy::{Attempt, Completion, Native, Outcome, Release};
 use futures_util::FutureExt;
 use nostr_pairing::Event;
 use serde::Serialize;
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -50,113 +48,177 @@ struct Active {
     confirm: mpsc::Sender<Decision>,
     finished: CancellationToken,
     status: Status,
-    payload_sent: bool,
 }
-/// The live attempt, and whether sign-out has closed pairing for good. The flag
-/// is only read and written under the attempt lock.
+#[derive(Default)]
+struct Registry {
+    active: Option<Active>,
+    policy: Native,
+    // Preserve possible delivery when a new attempt replaces the visible one.
+    retired: std::collections::HashMap<String, Status>,
+}
 #[derive(Clone, Default)]
-pub struct Pairing(Arc<Mutex<Option<Active>>>, Arc<AtomicBool>);
-// Cancels the attempt and returns its teardown signal and visible outcome. After
-// possible publication, the attempt stays registered as its terminal outcome so
-// later status reads cannot report an unsent cancellation.
-fn stop(active: &mut Option<Active>) -> Option<(CancellationToken, Status)> {
-    let old = active.as_mut()?;
-    old.cancel.cancel();
-    if !old.payload_sent {
-        return active.take().map(|old| (old.finished, Status::Cancelled));
+pub struct Pairing(Arc<Mutex<Registry>>);
+fn status(outcome: Outcome, fallback: Status) -> Status {
+    match outcome {
+        Outcome::Cancelled => Status::Cancelled,
+        Outcome::Uncertain => Status::Uncertain,
+        Outcome::Complete => Status::Complete,
+        Outcome::Expired => Status::Expired,
+        _ => fallback,
     }
-    if !matches!(
-        old.status,
-        Status::Complete | Status::Uncertain | Status::Error { .. }
-    ) {
-        old.status = Status::Uncertain;
+}
+fn stop(registry: &mut Registry) -> Option<(CancellationToken, Status)> {
+    let outcome = registry.policy.revoke();
+    let active = registry.active.as_mut()?;
+    active.cancel.cancel();
+    active.status = status(outcome, active.status.clone());
+    let stopped = (active.finished.clone(), active.status.clone());
+    if active.status == Status::Cancelled {
+        registry.active = None;
     }
-    Some((old.finished.clone(), old.status.clone()))
+    Some(stopped)
 }
 impl Pairing {
     pub fn cancel_all(&self) {
         stop(&mut self.0.lock().unwrap_or_else(|error| error.into_inner()));
     }
-
-    /// Signing out: cancel the live attempt before it can publish the key, and
-    /// admit none until Buzz restarts. A payload already published stays uncertain.
     pub(crate) fn close(&self) {
-        let mut active = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        self.1.store(true, Ordering::Relaxed);
-        stop(&mut active);
+        let mut registry = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        registry.policy.close();
+        stop(&mut registry);
     }
-
-    /// Replace any live attempt, unless sign-out has closed pairing.
-    fn admit(&self, attempt: Active) -> Result<(), String> {
-        let mut active = self
+    fn admit(
+        &self,
+        active: Active,
+        human: [u8; 32],
+        community: Vec<u8>,
+    ) -> Result<Attempt, String> {
+        let mut registry = self
             .0
             .lock()
             .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
-        if self.1.load(Ordering::Relaxed) {
-            return Err("Buzz is signing out.".into());
+        if registry.retired.contains_key(&active.id)
+            || registry
+                .active
+                .as_ref()
+                .is_some_and(|old| old.id == active.id)
+                && (registry.policy.has_release() || registry.policy.outcome() != Outcome::Pending)
+        {
+            return Err("Create a new pairing request before trying again.".into());
         }
-        if let Some(old) = active.take() {
+        // Admit checks absorbing close and generation exhaustion before replacing.
+        // Retiring first records the exact previous terminal/uncertain outcome.
+        let previous = registry.policy.outcome();
+        let released = registry.policy.has_release();
+        let attempt = registry
+            .policy
+            .admit(human, community)
+            .ok_or("Buzz is signing out or pairing is unavailable. Restart Buzz.")?;
+        if let Some(old) = registry.active.take() {
             old.cancel.cancel();
+            let terminal = status(
+                if previous == Outcome::Pending {
+                    if released {
+                        Outcome::Uncertain
+                    } else {
+                        Outcome::Cancelled
+                    }
+                } else {
+                    previous
+                },
+                old.status.clone(),
+            );
+            if matches!(
+                terminal,
+                Status::Uncertain | Status::Complete | Status::Expired | Status::Error { .. }
+            ) {
+                registry.retired.insert(old.id, terminal);
+            }
         }
-        *active = Some(attempt);
-        Ok(())
+        registry.active = Some(active);
+        Ok(attempt)
     }
-
-    fn update(&self, id: &str, status: Status) {
-        if let Ok(mut active) = self.0.lock() {
-            if let Some(active) = active
-                .as_mut()
-                .filter(|a| a.id == id && !a.cancel.is_cancelled())
-            {
-                active.status = status;
+    fn update(&self, attempt: &Attempt, next: Status) {
+        if let Ok(mut registry) = self.0.lock() {
+            if registry.policy.current(attempt) {
+                if let Some(active) = registry.active.as_mut() {
+                    active.status = next;
+                }
             }
         }
     }
-    // Serialized with cancellation: false means cancellation won and the payload
-    // must not be published.
-    fn mark_payload_sent(&self, id: &str) -> bool {
-        let Ok(mut active) = self.0.lock() else {
+    fn bind_session(&self, attempt: &Attempt, session: &PairingSession) -> bool {
+        self.0
+            .lock()
+            .is_ok_and(|mut registry| registry.policy.bind_session(attempt, session.session_id()))
+    }
+    /// Linearization point for a NEW grant. Clock, revocation and replacement
+    /// checks run under the same mutex as cancellation and sign-out.
+    fn release(
+        &self,
+        attempt: &Attempt,
+        payload: &identity::Transfer,
+        session: &PairingSession,
+        deadline: tokio::time::Instant,
+    ) -> Option<Release> {
+        let mut registry = self.0.lock().ok()?;
+        registry.policy.release(
+            attempt,
+            payload.proposal(),
+            session.session_id(),
+            session.peer()?.to_bytes(),
+            tokio::time::Instant::now() < deadline,
+        )
+    }
+    fn complete(&self, attempt: &Attempt, ack: &Completion) -> bool {
+        let Ok(mut registry) = self.0.lock() else {
             return false;
         };
-        match active
-            .as_mut()
-            .filter(|a| a.id == id && !a.cancel.is_cancelled())
+        if !registry
+            .policy
+            .finish(attempt, Some(ack), Outcome::Complete)
         {
-            Some(active) => {
-                active.payload_sent = true;
-                true
+            return false;
+        }
+        if let Some(active) = registry.active.as_mut() {
+            active.status = Status::Complete;
+        }
+        true
+    }
+    fn expire(&self, attempt: &Attempt) {
+        self.fail(attempt, Status::Expired, true);
+    }
+    fn fail(&self, attempt: &Attempt, failure: Status, ambiguous: bool) {
+        if let Ok(mut registry) = self.0.lock() {
+            let outcome = if failure == Status::Expired {
+                Outcome::Expired
+            } else if ambiguous {
+                Outcome::Failed
+            } else {
+                Outcome::Rejected
+            };
+            if registry.policy.finish(attempt, None, outcome) {
+                let next = status(registry.policy.outcome(), failure);
+                if let Some(active) = registry.active.as_mut() {
+                    active.status = next;
+                }
             }
-            None => false,
         }
     }
-    fn expire(&self, id: &str) {
-        self.fail(id, Status::Expired, true);
-    }
-    fn fail(&self, id: &str, status: Status, ambiguous: bool) {
-        if let Ok(mut active) = self.0.lock() {
-            if let Some(active) = active
-                .as_mut()
-                .filter(|a| a.id == id && !a.cancel.is_cancelled())
-            {
-                active.status = if active.payload_sent && ambiguous {
-                    Status::Uncertain
-                } else {
-                    status
-                };
-            }
-        }
-    }
-
     async fn cancel(&self, id: &str) -> Result<Status, String> {
         let stopped = {
-            let mut active = self
+            let mut registry = self
                 .0
                 .lock()
                 .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
-            if active.as_ref().is_some_and(|a| a.id == id) {
-                stop(&mut active)
+            if registry.active.as_ref().is_some_and(|a| a.id == id) {
+                stop(&mut registry)
             } else {
-                None
+                return Ok(registry
+                    .retired
+                    .get(id)
+                    .cloned()
+                    .unwrap_or(Status::Cancelled));
             }
         };
         let Some((finished, status)) = stopped else {
@@ -182,10 +244,17 @@ pub fn pairing_status(pairing: tauri::State<'_, Pairing>, id: String) -> Result<
         .lock()
         .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
     Ok(active
+        .active
         .as_ref()
         .filter(|a| a.id == id)
         .map(|a| a.status.clone())
-        .unwrap_or(Status::Cancelled))
+        .unwrap_or_else(|| {
+            active
+                .retired
+                .get(&id)
+                .cloned()
+                .unwrap_or(Status::Cancelled)
+        }))
 }
 #[tauri::command]
 pub async fn pairing_cancel(
@@ -200,9 +269,11 @@ fn decide(pairing: &Pairing, id: &str, decision: Decision) -> Result<(), String>
         .lock()
         .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
     let active = active
+        .active
         .as_mut()
         .filter(|a| {
             a.id == id
+                && !a.cancel.is_cancelled()
                 && matches!(
                     a.status,
                     Status::Code {
@@ -249,27 +320,33 @@ pub fn pairing_start(
     let (tx, rx) = mpsc::channel(1);
     let cancel = CancellationToken::new();
     let finished = CancellationToken::new();
-    pairing.admit(Active {
-        id: id.clone(),
-        cancel: cancel.clone(),
-        finished: finished.clone(),
-        confirm: tx,
-        status: Status::Connecting,
-        payload_sent: false,
-    })?;
+    let human = nostr_pairing::PublicKey::from_hex(&viewer)
+        .map_err(|_| "Choose your Buzz account before pairing.")?
+        .to_bytes();
+    let attempt = pairing.admit(
+        Active {
+            id: id.clone(),
+            cancel: cancel.clone(),
+            finished: finished.clone(),
+            confirm: tx,
+            status: Status::Connecting,
+        },
+        human,
+        origin.as_str().trim_end_matches('/').as_bytes().to_vec(),
+    )?;
     let host = host.inner().clone();
     let pairing = pairing.inner().clone();
     tauri::async_runtime::spawn(async move {
-        let result = guard(run(&pairing, &host, &id, viewer, origin, rx, &cancel)).await;
+        let result = guard(run(&pairing, &host, &attempt, viewer, origin, rx, &cancel)).await;
         match result {
-            Ok(()) => pairing.update(&id, Status::Complete),
-            Err(Failure::Expired) => pairing.expire(&id),
+            Ok(()) => {}
+            Err(Failure::Expired) => pairing.expire(&attempt),
             Err(failure) => {
                 let ambiguous = matches!(failure, Failure::Transport(_));
                 let (Failure::Transport(message) | Failure::Rejected(message)) = failure else {
                     unreachable!()
                 };
-                pairing.fail(&id, Status::Error { message }, ambiguous);
+                pairing.fail(&attempt, Status::Error { message }, ambiguous);
             }
         }
         finished.cancel();
@@ -308,7 +385,7 @@ async fn guard(
 async fn run(
     pairing: &Pairing,
     host: &crate::identity::IdentityHost,
-    id: &str,
+    attempt: &Attempt,
     viewer: String,
     origin: url::Url,
     mut confirm: mpsc::Receiver<Decision>,
@@ -351,12 +428,16 @@ async fn run(
     };
     // Keep protocol expiry aligned with display, but renew before the transport cap.
     exchange.session.start_source_lifetime();
+    if !pairing.bind_session(attempt, &exchange.session) {
+        return Ok(());
+    }
     let deadline = exchange_deadline(&exchange.session, connection_started);
-    pairing.update(id, Status::Qr { svg, uri });
+    pairing.update(attempt, Status::Qr { svg, uri });
     exchange_until_deadline(
         ExchangeContext {
             pairing,
-            id,
+            attempt,
+            deadline,
             relay_url: &relay_url,
             pending,
         },
@@ -365,7 +446,6 @@ async fn run(
         &mut auth,
         &mut confirm,
         cancel,
-        deadline,
     )
     .await
 }
@@ -384,7 +464,8 @@ fn exchange_deadline(
 
 struct ExchangeContext<'a> {
     pairing: &'a Pairing,
-    id: &'a str,
+    attempt: &'a Attempt,
+    deadline: tokio::time::Instant,
     relay_url: &'a url::Url,
     pending: Vec<Event>,
 }
@@ -396,8 +477,8 @@ async fn exchange_until_deadline(
     auth: &mut relay::Authentication,
     confirm: &mut mpsc::Receiver<Decision>,
     cancel: &CancellationToken,
-    deadline: tokio::time::Instant,
 ) -> Result<(), Failure> {
+    let deadline = context.deadline;
     tokio::select! {
         biased;
         _ = cancel.cancelled() => {
@@ -429,7 +510,8 @@ async fn exchange_loop(
 ) -> Result<(), Failure> {
     let ExchangeContext {
         pairing,
-        id,
+        attempt,
+        deadline,
         relay_url,
         pending,
     } = context;
@@ -461,39 +543,61 @@ async fn exchange_loop(
                 break output;
             }
         };
-        let payload_index = output.events.len().checked_sub(1);
-        for (index, event) in output.events.into_iter().enumerate() {
-            if output.status == Some(Status::Transferring) && Some(index) == payload_index {
-                // Once publication begins, cancellation of the await cannot prove
-                // that the phone did not receive and import this payload.
-                if !pairing.mark_payload_sent(id) {
-                    abort(exchange, socket).await;
-                    return Ok(());
-                }
-            }
+        for event in output.events {
             relay::send(socket, &event).await?;
-            auth.unacknowledged.push(event);
+            auth.retain_control(event);
+        }
+        if let Some(payload) = output.payload {
+            let Some(release) = pairing.release(attempt, &payload, &exchange.session, deadline)
+            else {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(Failure::Expired);
+                }
+                // Revoked/replaced workers may finish cleanup, but a current
+                // provenance denial is a terminal source error.
+                let current = pairing
+                    .0
+                    .lock()
+                    .is_ok_and(|registry| registry.policy.current(attempt));
+                if current {
+                    return Err(Failure::Rejected(
+                        "Couldn’t authorize the pairing transfer.".into(),
+                    ));
+                }
+                abort(exchange, socket).await;
+                return Ok(());
+            };
+            // Record possible delivery BEFORE awaiting the socket. Every replay
+            // owns this same immutable grant and exact signed ciphertext bytes.
+            auth.publish_payload(socket, payload.event().id.to_hex(), release)
+                .await?;
         }
         if let Some(status) = output.status {
             if status == Status::Complete {
+                let ack = exchange
+                    .session
+                    .completion()
+                    .ok_or("Missing pairing acknowledgement.")?;
+                pairing.complete(attempt, ack);
                 return Ok(());
             }
             if let Status::Error { message } = status {
                 return Err(Failure::Rejected(message));
             }
-            pairing.update(id, status);
+            pairing.update(attempt, status);
         }
     }
 }
 
 struct Exchange {
     session: PairingSession,
-    payload: Option<Zeroizing<String>>,
+    payload: Option<identity::Prepared>,
     code_entry: bool,
 }
 #[derive(Default)]
 struct Output {
     events: Vec<Event>,
+    payload: Option<identity::Transfer>,
     status: Option<Status>,
 }
 impl Exchange {
@@ -502,12 +606,10 @@ impl Exchange {
             .payload
             .take()
             .ok_or("This pairing code has already been used.")?;
-        let event = self
-            .session
-            .send_payload(PayloadType::Custom, payload)
-            .map_err(|_| "Couldn’t prepare the pairing transfer.")?;
+        let event = payload.encrypt(&mut self.session)?;
         Ok(Output {
-            events: vec![proof, event],
+            events: vec![proof],
+            payload: Some(event),
             status: Some(Status::Transferring),
         })
     }
@@ -538,6 +640,7 @@ impl Exchange {
             };
             return Ok(Output {
                 events,
+                payload: None,
                 status: Some(Status::Code { code, code_entry }),
             });
         }
@@ -552,8 +655,14 @@ impl Exchange {
                     });
                 return Ok(Output {
                     events: vec![reply],
+                    payload: None,
                     status,
                 });
+            } else if self.session.state() == SessionState::Aborted {
+                return Err(
+                    "Couldn’t verify the desktop code. Create a new pairing code and try again."
+                        .into(),
+                );
             }
         }
 
@@ -561,6 +670,7 @@ impl Exchange {
             Ok(()) => {
                 return Ok(Output {
                     events: vec![],
+                    payload: None,
                     status: Some(Status::Complete),
                 })
             }

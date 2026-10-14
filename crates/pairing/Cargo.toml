@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Buzz NIP-AB device pairing protocol"
 
 [dependencies]
+buzz-pairing-policy = { path = "../pairing-policy" }
 nostr = { version = "0.44", features = ["nip44"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

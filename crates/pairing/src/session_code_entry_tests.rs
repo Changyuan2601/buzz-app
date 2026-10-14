@@ -138,7 +138,7 @@ fn wrong_peer_tampering_and_expiry_cannot_authorize() {
     let mut tampered = submission(&target, &code, 2);
     tampered.content.push('x');
     assert!(source.handle_target_code(&tampered).is_err());
-    assert_eq!(source.code_attempts, 0);
+    assert_eq!(source.policy.guesses(), 0);
     source.created_at = Instant::now() - source.timeout - Duration::from_secs(1);
     assert!(source
         .handle_target_code(&submission(&target, &code, 3))
@@ -234,4 +234,51 @@ fn oversized_rejection_cannot_bypass_the_guess_budget() {
     assert!(source
         .send_payload(PayloadType::Custom, Zeroizing::new("secret".into()))
         .is_err());
+}
+
+#[test]
+fn negotiated_code_mode_cannot_use_public_legacy_approval() {
+    let (mut source, _, _) = setup();
+    assert!(source.confirm_sas().is_err());
+    assert_eq!(source.state(), SessionState::Confirming);
+    assert!(source
+        .send_payload(PayloadType::Custom, Zeroizing::new("secret".into()))
+        .is_err());
+}
+
+#[test]
+fn failed_accepted_code_proof_is_terminal_and_cannot_reissue() {
+    let (mut source, target, code) = setup();
+    // Hold the actual source-proof prerequisite unavailable. This exercises its
+    // fallible construction path without replacing the protocol or signer.
+    source.sas_input = None;
+    assert!(source
+        .handle_target_code(&submission(&target, &code, 1))
+        .is_err());
+    assert_eq!(source.state(), SessionState::Aborted);
+    assert_eq!(source.policy.guesses(), 1);
+    assert!(source.start_desktop_code().is_err());
+    assert!(source.confirm_sas().is_err());
+    assert!(source
+        .send_payload(PayloadType::Custom, Zeroizing::new("secret".into()))
+        .is_err());
+}
+
+#[test]
+fn failed_challenge_issuance_is_terminal_even_without_a_notification() {
+    let (mut source, qr) = PairingSession::new_source("wss://relay.test".into());
+    let (target, _) = PairingSession::new_target(&qr).unwrap();
+    let offer = target
+        .build_event(&PairingMessage::Offer {
+            session_id: hex::encode(target.session_id),
+            version: 1,
+            confirmation: Some("desktop-code-v1".into()),
+        })
+        .unwrap();
+    source.handle_offer(&offer).unwrap();
+    source.peer_pubkey = None; // Actual encryption adapter rejects missing recipient.
+    assert!(source.start_desktop_code().is_err());
+    assert_eq!(source.state(), SessionState::Aborted);
+    source.peer_pubkey = Some(target.pubkey());
+    assert!(source.start_desktop_code().is_err());
 }

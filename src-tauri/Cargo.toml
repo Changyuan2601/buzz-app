@@ -14,6 +14,7 @@ url = "2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+buzz-pairing-policy = { path = "../crates/pairing-policy" }
 buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
 tokio-util = "0.7"

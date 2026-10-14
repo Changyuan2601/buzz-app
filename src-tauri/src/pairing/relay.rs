@@ -136,9 +136,57 @@ pub(super) async fn send(socket: &mut Socket, event: &Event) -> Result<(), Strin
 pub(super) struct Authentication {
     id: Option<String>,
     challenges: usize,
-    pub unacknowledged: Vec<Event>,
+    pub(super) unacknowledged: Vec<Publication>,
+}
+enum PublicationBytes {
+    Control(Vec<u8>),
+    Payload(buzz_pairing_policy::Release),
+}
+pub(super) struct Publication {
+    id: String,
+    bytes: PublicationBytes,
+}
+impl Publication {
+    fn frame(&self) -> Vec<u8> {
+        match &self.bytes {
+            PublicationBytes::Control(bytes) => bytes.clone(),
+            PublicationBytes::Payload(release) => release.frame(),
+        }
+    }
+    async fn send(&self, socket: &mut Socket) -> Result<(), String> {
+        let frame = String::from_utf8(self.frame()).map_err(|_| "Invalid pairing publication.")?;
+        socket
+            .send(Message::Text(frame.into()))
+            .await
+            .map_err(|_| "The pairing connection closed. Try again.".into())
+    }
 }
 impl Authentication {
+    pub fn retain_control(&mut self, event: Event) {
+        self.unacknowledged.push(Publication {
+            id: event.id.to_hex(),
+            bytes: PublicationBytes::Control(
+                format!("[\"EVENT\",{}]", event.as_json()).into_bytes(),
+            ),
+        });
+    }
+    pub async fn publish_payload(
+        &mut self,
+        socket: &mut Socket,
+        id: String,
+        release: buzz_pairing_policy::Release,
+    ) -> Result<(), String> {
+        self.unacknowledged.push(Publication {
+            id,
+            bytes: PublicationBytes::Payload(release),
+        });
+        self.unacknowledged
+            .last()
+            .ok_or("Missing pairing publication.")?
+            .send(socket)
+            .await
+    }
+
     pub async fn handle(
         &mut self,
         socket: &mut Socket,
@@ -184,7 +232,7 @@ impl Authentication {
                 request(socket, session).await?;
                 // Replay only signed events awaiting receipts. Peer event IDs deduplicate them.
                 for event in &self.unacknowledged {
-                    send(socket, event).await?;
+                    event.send(socket).await?;
                 }
                 Ok(true)
             }
@@ -192,7 +240,7 @@ impl Authentication {
                 if let Some(index) = self
                     .unacknowledged
                     .iter()
-                    .position(|e| Some(e.id.to_hex().as_str()) == message[1].as_str())
+                    .position(|e| Some(e.id.as_str()) == message[1].as_str())
                 {
                     if message[2].as_bool() == Some(true) {
                         self.unacknowledged.remove(index);
