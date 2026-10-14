@@ -2749,7 +2749,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
    preview was, so expanding only lets it run on. */
 .audienceBody {
   min-inline-size: 0;
-  padding-block-start: calc(
+  padding-block: calc(
     (
       var(--size-control-sm) *
       0.75 -
@@ -2761,6 +2761,8 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   color: var(--text-subtle);
 }
 .audienceBody .message[data-layout="continuation"] {
+  /* Coordination keeps its own balanced insets, not a grouped-message seam. */
+  padding-block: var(--space-half);
   padding-inline-end: var(--space-1);
 }
 .audienceBody .message[data-layout="continuation"] .text {
