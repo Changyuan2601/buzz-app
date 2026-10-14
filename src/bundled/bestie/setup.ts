@@ -3,12 +3,6 @@ import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Builderlab } from "../builderlab/service";
 import { bestieInstructions, PROMPT_VERSION } from "./prompt";
-import {
-  installRhythms,
-  rhythmsComplete,
-  validRhythms,
-  type RhythmInstalls,
-} from "./rhythms";
 
 /** The Builderlab hosted type's Agents key, `pluginId/typeId`. */
 export const BUILDERLAB_TYPE = "block.builderlab/builderlab";
@@ -26,7 +20,6 @@ type Record = {
   welcomeId?: string | undefined;
   welcomeFailed?: boolean | undefined;
   complete?: boolean;
-  rhythms?: RhythmInstalls;
 };
 type State = Readonly<{
   status: "unavailable" | "idle" | "busy" | "choose-agent" | "ready" | "error";
@@ -61,7 +54,6 @@ function read(key: string, owner: string): Record | undefined {
     !UUID.test(record.channelId) ||
     (record.agent !== undefined && !HEX.test(record.agent)) ||
     (record.complete && (!record.agent || !record.promptVersion)) ||
-    (record.rhythms !== undefined && !validRhythms(record.rhythms)) ||
     [record.channelOperation, record.welcomeId].some(
       (id) => id !== undefined && !HEX.test(id),
     )
@@ -136,14 +128,11 @@ export function createRemoteBestie(
         return;
       }
       const record = read(current.key, current.owner);
-      const ready = record?.complete && rhythmsComplete(record.rhythms);
       publish({
-        status: ready ? "ready" : "idle",
-        message: ready
+        status: record?.complete ? "ready" : "idle",
+        message: record?.complete
           ? "Your Bestie is set up."
-          : record?.complete
-            ? "Add Bestie's paused workflows to your private channel."
-            : "Set up Bestie in this community.",
+          : "Set up Bestie in this community.",
         record,
         connection: current.connection,
       });
@@ -447,19 +436,6 @@ export function createRemoteBestie(
     await delivered("welcomeId", "welcomeFailed");
     record.complete = true;
     save();
-
-    progress("Saving Bestie's paused workflows…");
-    record.rhythms ??= {};
-    await installRhythms({
-      session,
-      channelId: record.channelId,
-      owner,
-      agent: pubkey,
-      installs: record.rhythms,
-      persist: save,
-      check,
-    });
-    check();
     publish({
       status: "ready",
       message: "Your Bestie is set up.",
