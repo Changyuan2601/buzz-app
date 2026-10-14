@@ -19,6 +19,15 @@ import {
   transferAttachmentDraft,
 } from "./attachment-draft";
 
+// Page rendering needs pdf.js and a canvas; the draft owns only the handoff.
+const rasterize = vi.hoisted(() => ({
+  pdfPageImage: vi.fn(
+    async (_file: globalThis.File, _signal: AbortSignal) =>
+      undefined as globalThis.File | undefined,
+  ),
+}));
+vi.mock("./rasterize-pdf", () => rasterize);
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -67,7 +76,10 @@ function uploaded(name = "notes.txt"): UploadedAttachment {
     sha256: "a".repeat(64),
   };
 }
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  rasterize.pdfPageImage.mockClear();
+});
 
 it("starts uploading on add and send preparation reuses the in-flight upload", async () => {
   const h = fixture();
@@ -90,6 +102,52 @@ it("starts uploading on add and send preparation reuses the in-flight upload", a
     expect(await work).toEqual([uploaded()]);
   });
   expect(draft.result.current.items[0]?.status).toBe("ready");
+});
+
+it("uploads a rendered PDF page as the item's image, keeps other PDFs, and aborts a pending render on removal", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "pdf", "one"));
+  const page = new File(["png"], "diagram.png", {
+    type: "image/png",
+  }) as unknown as globalThis.File;
+  const gate = deferred<globalThis.File | undefined>();
+  let seen: AbortSignal | undefined;
+  rasterize.pdfPageImage.mockImplementationOnce((_file, signal) => {
+    seen = signal;
+    return gate.promise;
+  });
+  act(() => draft.result.current.store.add([file("diagram.pdf")]));
+  await waitFor(() => expect(rasterize.pdfPageImage).toHaveBeenCalledTimes(1));
+  expect(draft.result.current.items[0]?.status).toBe("preparing");
+  expect(draft.result.current.items[0]?.file.name).toBe("diagram.pdf");
+  await act(async () => gate.resolve(page));
+  expect(draft.result.current.items[0]?.status).toBe("uploading");
+  expect(draft.result.current.items[0]?.file).toBe(page);
+  expect(h.calls[0]?.file).toBe(page);
+  await act(async () => h.calls[0]?.result.resolve(uploaded("diagram.png")));
+
+  // Multi-page or unreadable documents keep today's file upload.
+  act(() => draft.result.current.store.add([file("manual.pdf")]));
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  expect(h.calls[1]?.file.name).toBe("manual.pdf");
+  await act(async () => h.calls[1]?.result.resolve(uploaded("manual.pdf")));
+
+  const held = deferred<globalThis.File | undefined>();
+  rasterize.pdfPageImage.mockImplementationOnce((_file, signal) => {
+    seen = signal;
+    return held.promise;
+  });
+  act(() => draft.result.current.store.add([file("cancel.pdf")]));
+  await waitFor(() => expect(rasterize.pdfPageImage).toHaveBeenCalledTimes(3));
+  assert.exists(seen);
+  expect(seen.aborted).toBe(false);
+  const item = draft.result.current.items[2];
+  assert.exists(item);
+  act(() => draft.result.current.store.remove(item.id));
+  expect(seen.aborted).toBe(true);
+  await act(async () => held.resolve(page));
+  expect(h.calls).toHaveLength(2);
+  expect(draft.result.current.items).toHaveLength(2);
 });
 
 it.each(["preparing", "uploading"] as const)(

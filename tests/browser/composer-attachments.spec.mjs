@@ -184,6 +184,106 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
   }
 });
 
+// Browser-only boundary: the real pdf.js module worker, canvas rendering and PNG encoding.
+test("a single-page PDF attaches as its page image while a multi-page PDF stays a file", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    optimizeDeps: { include: ["pdfjs-dist"] },
+    plugins: [
+      react(),
+      {
+        name: "pdf-upload-fixture",
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url !== "/api/relay/upload" || req.method !== "POST")
+              return next();
+            req.resume();
+            res.writeHead(204, { "X-Content-Type-Options": "nosniff" });
+            res.end();
+          });
+        },
+      },
+    ],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    const uploads = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/relay/upload")
+        uploads.push(request.headers()["content-type"]);
+    });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests`,
+    );
+    const form = page.getByRole("form", {
+      name: "Send a message to General",
+      exact: true,
+    });
+    await expect(
+      form.getByRole("button", { name: "Attach files", exact: true }),
+    ).toBeEnabled();
+    const fixture = (name) =>
+      readFile(
+        new URL(`../fixtures/attachment-media/${name}`, import.meta.url),
+      );
+    await form.getByLabel("Choose attachments").setInputFiles([
+      {
+        name: "diagram.pdf",
+        mimeType: "application/pdf",
+        buffer: await fixture("one-page.pdf"),
+      },
+      {
+        name: "manual.pdf",
+        mimeType: "application/pdf",
+        buffer: await fixture("two-pages.pdf"),
+      },
+    ]);
+    const image = form
+      .getByRole("button", { name: "Preview diagram.png", exact: true })
+      .locator("img");
+    await expect(image).toBeVisible();
+    await expect(form.getByText(/Ready$/)).toHaveCount(2);
+    // 200x100 pt page at 2x, white background, red rectangle filling the centre.
+    expect(
+      await image.evaluate(async (img) => {
+        await img.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const context = canvas.getContext("2d");
+        context.drawImage(img, 0, 0);
+        const at = (x, y) => Array.from(context.getImageData(x, y, 1, 1).data);
+        return {
+          size: [img.naturalWidth, img.naturalHeight],
+          centre: at(200, 100),
+          corner: at(10, 10),
+        };
+      }),
+    ).toEqual({
+      size: [400, 200],
+      centre: [255, 0, 0, 255],
+      corner: [255, 255, 255, 255],
+    });
+    const manual = form.getByRole("button", {
+      name: "Preview manual.pdf",
+      exact: true,
+    });
+    await expect(manual).toBeVisible();
+    await expect(manual.locator("img")).toHaveCount(0);
+    expect(uploads).toEqual(["image/png", "application/pdf"]);
+    await expect(
+      form.getByRole("button", { name: /diagram\.pdf/ }),
+    ).toHaveCount(0);
+  } finally {
+    await server.close();
+  }
+});
+
 // Browser-only boundary: a held upload outlives its composer across real navigation.
 test("a sent attachment keeps uploading after navigation and publishes to its original channel", async ({
   page,

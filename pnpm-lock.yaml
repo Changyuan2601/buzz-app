@@ -100,6 +100,9 @@ importers:
       nostr-tools:
         specifier: 2.25.2
         version: 2.25.2(typescript@7.0.2)
+      pdfjs-dist:
+        specifier: 6.4.299
+        version: 6.4.299
       prosemirror-commands:
         specifier: 1.7.1
         version: 1.7.1
@@ -1669,6 +1672,10 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
+  pdfjs-dist@6.4.299:
+    resolution: {integrity: sha512-AVl138zALtfaAPvADulE0PZThbYzCBS79nL4pOSL/6Sm/4AH5A21BD9VHt97OlCuzJuCpmeZtAtkinisF4Vb1g==}
+    engines: {node: '>=22.13.0 || >=24'}
+
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -2097,6 +2104,9 @@ packages:
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
+
+ignoredOptionalDependencies:
+  - '@napi-rs/canvas'
 
 snapshots:
 
@@ -3477,6 +3487,8 @@ snapshots:
       entities: 8.1.0
 
   pathe@2.0.3: {}
+
+  pdfjs-dist@6.4.299: {}
 
   picocolors@1.1.1: {}
 

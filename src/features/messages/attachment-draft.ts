@@ -7,6 +7,7 @@ import {
   type UploadedAttachment,
 } from "../relay/attachments";
 import { prepareAttachment } from "./prepare-attachment";
+import { pdfPageImage } from "./rasterize-pdf";
 
 export type DraftAttachment = Readonly<{
   id: string;
@@ -170,9 +171,11 @@ export function attachmentDraft(
       transfer: undefined,
     });
     try {
-      const prepared = await prepareAttachment(item.file, combined);
+      // A single-page PDF becomes its page image; the swapped file flips the chip.
+      const page = await pdfPageImage(item.file, combined);
+      const prepared = page ?? (await prepareAttachment(item.file, combined));
       combined.throwIfAborted();
-      task.update(item.id, { status: "uploading" });
+      task.update(item.id, { status: "uploading", file: page ?? item.file });
       const result = await abortable(
         attachments.upload(prepared, channelId, combined, (sent, total) => {
           if (

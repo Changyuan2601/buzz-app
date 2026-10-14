@@ -52,6 +52,7 @@ const nonIconDependencies = new Set([
   "micromark-extension-gfm-table",
   "motion",
   "nostr-tools",
+  "pdfjs-dist", // Renders attached PDF pages to images, not an icon catalog.
   "postcss",
   "prosemirror-commands",
   "prosemirror-history",
