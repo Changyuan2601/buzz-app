@@ -141,9 +141,11 @@ type Lifecycle = {
   channel: ChannelSummary;
   action: ChannelLifecycleAction;
   trigger?: HTMLElement | undefined;
+  origin?: AbortSignal | undefined;
 };
 
-// Delete and Leave remove the conversation, so its dialog outlives the view.
+// Delete and Leave remove the conversation, so its dialog outlives the view
+// but not the visit that opened it.
 function LiveSessions(props: LiveProps) {
   const { session, scope, navigator } = props;
   const [lifecycle, setLifecycle] = useState<Lifecycle>();
@@ -154,7 +156,7 @@ function LiveSessions(props: LiveProps) {
   return (
     <>
       <SessionsView {...props} chooseLifecycle={setLifecycle} />
-      {lifecycle && (
+      {lifecycle && !lifecycle.origin?.aborted && (
         <ChannelLifecycleDialog
           channelId={lifecycle.channel.id}
           channelName={lifecycle.channel.name}
@@ -243,7 +245,12 @@ function SessionsView({
     return (
       <SessionWork
         chooseLifecycle={(action, trigger) =>
-          chooseLifecycle({ channel: selectedSession, action, trigger })
+          chooseLifecycle({
+            channel: selectedSession,
+            action,
+            trigger,
+            origin: navigation?.signal,
+          })
         }
         relay={relay}
         panels={panels}

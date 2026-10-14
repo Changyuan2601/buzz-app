@@ -167,18 +167,19 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const mount = () =>
-    render(
-      <SessionsPage
-        relay={relay}
-        panels={{ ...contribution, register() {}, resolve: () => undefined }}
-        extensions={extensions}
-        navigation={navigation}
-        navigator={{ open } as unknown as Navigation}
-      />,
-    );
+  const page = () => (
+    <SessionsPage
+      relay={relay}
+      panels={{ ...contribution, register() {}, resolve: () => undefined }}
+      extensions={extensions}
+      navigation={navigation}
+      navigator={{ open } as unknown as Navigation}
+    />
+  );
+  const mount = () => render(page());
   return {
     mount,
+    page,
     abort,
     set,
     run,
@@ -310,3 +311,33 @@ it.each([
     } else expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
   },
 );
+
+it("drops a pending Delete confirmation when its visit ends", async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const settled = f.run.getMockImplementation();
+  f.run.mockImplementation(async (action) => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await settled?.(action);
+  });
+  const view = f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: "Delete channel: Planning",
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Delete channel" }),
+  );
+  await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+  f.abort.abort();
+  view.rerender(f.page());
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await act(async () => finish());
+  expect(f.open).not.toHaveBeenCalled();
+});
