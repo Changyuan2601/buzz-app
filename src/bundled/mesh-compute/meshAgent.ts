@@ -181,6 +181,7 @@ export function gooseEnv(
     OPENAI_API_KEY: "mesh-local",
     GOOSE_MODE: "auto",
     GOOSE_PATH_ROOT: root,
+    GOOSE_DISABLE_KEYRING: "true",
     GOOSE_DISABLE_SESSION_NAMING: "true",
     EXTENSIONS: JSON.stringify(
       Object.fromEntries(

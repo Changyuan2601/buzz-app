@@ -865,6 +865,7 @@ describe("Mesh agent runtime", () => {
       "/r",
     );
     expect(env.OPENAI_BASE_PATH).toBe("chat/completions");
+    expect(env.GOOSE_DISABLE_KEYRING).toBe("true");
     expect(JSON.parse(String(env.EXTENSIONS))).toMatchObject({
       extensionmanager: { enabled: false },
       summon: { enabled: false },
