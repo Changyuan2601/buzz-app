@@ -572,6 +572,51 @@ async function virtuaIdle(page) {
 }
 
 readingTest(
+  "simultaneous row shrink above and growth below preserve bottom follow",
+  async ({ page, app }) => {
+    await open(page, app);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const expectBottom = () =>
+      expect
+        .poll(() =>
+          history.evaluate(
+            (element) =>
+              element.scrollHeight - element.scrollTop - element.clientHeight,
+          ),
+        )
+        .toBeLessThan(4);
+    await settle(page);
+    await expectBottom();
+    const rows = await history.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      const mounted = [...element.querySelectorAll("[data-message-id]")];
+      const above = mounted.findLast(
+        (row) => row.getBoundingClientRect().bottom <= top,
+      );
+      const newest = mounted.at(-1);
+      if (!above || !newest || above === newest) return null;
+      above.style.paddingBottom = "100px";
+      return {
+        above: above.dataset.messageId,
+        newest: newest.dataset.messageId,
+      };
+    });
+    expect(rows).not.toBeNull();
+    await settle(page);
+    await expectBottom();
+    await history.evaluate((element, ids) => {
+      const row = (id) =>
+        element.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+      row(ids.above).style.removeProperty("padding-bottom");
+      row(ids.newest).style.paddingBottom = "120px";
+    }, rows);
+    await settle(page);
+    await expectBottom();
+  },
+);
+readingTest(
   "panel resizing preserves bottom follow and the visible reading anchor",
   async ({ page, app }) => {
     await open(page, app);

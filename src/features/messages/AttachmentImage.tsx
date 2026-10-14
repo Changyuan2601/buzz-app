@@ -2,7 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import { validatedBlurhash } from "../relay/blurhash";
@@ -15,10 +15,8 @@ export function AttachmentImage({
   cached = false,
   onOpenReview,
   keepMounted,
-  thumbnail = false,
   label = "Open image attachment",
 }: {
-  thumbnail?: boolean;
   label?: string;
   attachment: Attachment;
   source: string | undefined;
@@ -35,18 +33,46 @@ export function AttachmentImage({
   useEffect(() => {
     const release = viewerOpen ? keepMounted?.() : undefined;
     // The modal boundary restores focus on the next frame; releasing after it
-    // lets the restored thumbnail keep the row mounted instead.
+    // lets the restored preview keep the row mounted instead.
     return release && (() => void requestAnimationFrame(release));
   }, [viewerOpen, keepMounted]);
+  const [decoded, setDecoded] = useState<{
+    source: string | undefined;
+    dimensions?: NonNullable<Attachment["dimensions"]>;
+  }>({ source });
+  if (decoded.source !== source) setDecoded({ source });
+  const onDecoded = useCallback(
+    (dimensions: NonNullable<Attachment["dimensions"]>) => {
+      if (source) setDecoded({ source, dimensions });
+    },
+    [source],
+  );
+  const decodedDimensions =
+    decoded.source === source ? decoded.dimensions : undefined;
+  const dimensions = decodedDimensions ?? attachment.dimensions;
+  const width = dimensions
+    ? Math.min(
+        360,
+        dimensions.width,
+        (320 * dimensions.width) / dimensions.height,
+      )
+    : 0;
+  const height = dimensions
+    ? (width * dimensions.height) / dimensions.width
+    : 0;
+  const previewWidth = decodedDimensions ? Math.max(1, width) : width;
+  const previewHeight = decodedDimensions ? Math.max(1, height) : height;
   const style =
-    !thumbnail && attachment.dimensions
+    dimensions &&
+    Number.isFinite(previewWidth) &&
+    Number.isFinite(previewHeight) &&
+    previewWidth >= 1 &&
+    previewHeight >= 1
       ? {
-          width: Math.min(
-            360,
-            attachment.dimensions.width,
-            (320 * attachment.dimensions.width) / attachment.dimensions.height,
-          ),
-          aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
+          width: previewWidth,
+          aspectRatio: decodedDimensions
+            ? `${previewWidth} / ${previewHeight}`
+            : `${dimensions.width} / ${dimensions.height}`,
         }
       : undefined;
   if (!source)
@@ -54,15 +80,14 @@ export function AttachmentImage({
       <span
         ref={corners}
         className={`${styles.attachmentImage} ${styles.mediaPlaceholder}`}
-        data-thumbnail={thumbnail || undefined}
         style={style}
         aria-hidden="true"
       />
     ) : (
       <span
-        className={
-          thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable
-        }
+        ref={corners}
+        className={`${styles.attachmentImage} ${styles.mediaPlaceholder} ${styles.attachmentImageUnavailable}`}
+        style={style}
         role="status"
       >
         Image unavailable
@@ -73,13 +98,13 @@ export function AttachmentImage({
       <a
         ref={corners}
         className={styles.attachmentImage}
-        data-thumbnail={thumbnail || undefined}
         style={style}
         href={source}
         target="_blank"
         rel="noreferrer"
         aria-label={label}
         data-media-preview=""
+        data-image-ready={decodedDimensions ? true : undefined}
         onClick={(event) => {
           // Every activation stays in-app, modifiers included: the desktop
           // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
@@ -97,6 +122,7 @@ export function AttachmentImage({
             key={JSON.stringify([source, attachment.blurhash])}
             source={source}
             blurhash={attachment.blurhash}
+            onDecoded={onDecoded}
           />
         </span>
         <svg
@@ -129,9 +155,11 @@ export function AttachmentImage({
 function ImagePixels({
   source,
   blurhash,
+  onDecoded,
 }: {
   source: string;
   blurhash: string | undefined;
+  onDecoded: (dimensions: NonNullable<Attachment["dimensions"]>) => void;
 }) {
   const image = useRef<HTMLImageElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -154,6 +182,11 @@ function ImagePixels({
         decoded = true;
         observer?.disconnect();
         setReady(true);
+        if (original.naturalWidth > 0 && original.naturalHeight > 0)
+          onDecoded({
+            width: original.naturalWidth,
+            height: original.naturalHeight,
+          });
       } catch {
         // Keep the blur preview on original failure, including decode rejection.
       } finally {
@@ -187,7 +220,7 @@ function ImagePixels({
       original.removeEventListener("load", loaded);
       observer?.disconnect();
     };
-  }, [hash]);
+  }, [hash, onDecoded]);
   return (
     <>
       {hash && !ready && (

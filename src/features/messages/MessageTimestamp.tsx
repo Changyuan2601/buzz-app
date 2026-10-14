@@ -19,32 +19,35 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
   return (
     <div className={styles.day}>
       <span className={styles.dayLabel}>
-        {/* Decorative calendar artwork; the adjacent label owns the date. */}
-        <svg
-          className={styles.dayCalendar}
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
-          <path
-            d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
-            fill="#f00"
-          />
-          <rect
-            x="0.5"
-            y="0.5"
-            width="23"
-            height="23"
-            rx="5.5"
-            fill="none"
-            stroke="var(--border-standard)"
-            strokeWidth="0.5"
-          />
-          <text x="12" y="19" textAnchor="middle" fontSize="12" fill="#111">
+        {/* Decorative calendar artwork; the adjacent label owns the date.
+            The numeral is HTML, not SVG <text>: Linux WebKit's SVG text cost
+            doubled every thread-pane interaction in browser journeys. */}
+        <span className={styles.dayCalendar} aria-hidden="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
+            <path
+              d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
+              fill="#f00"
+            />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="23"
+              height="23"
+              rx="5.5"
+              fill="none"
+              stroke="var(--border-standard)"
+              strokeWidth="0.5"
+            />
+          </svg>
+          {/* Artwork ink, like the SVG fills: the tile is white in both themes. */}
+          <span
+            data-calendar-date
+            style={{ color: "#111", fontSize: "calc(var(--space-5) / 2)" }}
+          >
             {date.getDate()}
-          </text>
-        </svg>
+          </span>
+        </span>
         <span data-day={day}>{formatDayGroupLabel(createdAt)}</span>
       </span>
     </div>

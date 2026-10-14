@@ -456,7 +456,7 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
-it("keeps seeded rows usable but unread until the initial legacy walk settles", async () => {
+it("holds seeded rows behind the loader until the first page, and unread until the legacy walk settles", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());
   h.resize(600);
@@ -482,8 +482,8 @@ it("keeps seeded rows usable but unread until the initial legacy walk settles", 
   h.snapshot.readKind = "refresh";
   h.render();
   h.element.focus();
-  expect(h.element).not.toHaveAttribute("data-positioning");
-  expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
+  expect(h.element).toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).toHaveAttribute(
     "inert",
   );
   await act(() => vi.advanceTimersByTimeAsync(300));

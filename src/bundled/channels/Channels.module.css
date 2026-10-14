@@ -58,17 +58,6 @@
   /* An open pane shares the selected tab fill, rather than a held press. */
   --interaction-pressed: var(--affordance-subtle);
 }
-.sidebarScroll {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  /* Keep row focus outlines inside the scrollport without shifting content.
-     The end padding exceeds the 4px ring because scroll offsets snap to
-     whole pixels while content height can be fractional. */
-  margin-inline: calc(-1 * var(--sidebar-padding))
-    calc(-1 * var(--sidebar-padding-end));
-  padding: 0 var(--sidebar-padding-end) var(--space-1h) var(--sidebar-padding);
-}
 .sidebarBrand {
   height: var(--space-6);
   display: flex;
@@ -211,6 +200,11 @@
   flex-direction: column;
   gap: var(--space-half);
   padding-block-end: var(--sidebar-padding);
+}
+/* Inset Retry like a row, so its focus ring stays inside the scrollport. */
+.channelListContent > button {
+  align-self: flex-start;
+  margin-inline-start: var(--channel-row-fill-start);
 }
 /* Keep the prominent unread cue while matching the timeline reveal motion. */
 .unreadEdge {

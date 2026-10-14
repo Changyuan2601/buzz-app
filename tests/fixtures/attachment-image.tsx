@@ -20,6 +20,9 @@ function Fixture() {
       <button type="button" onClick={() => setSource("next")}>
         Retarget
       </button>
+      <button type="button" onClick={() => setSource("first")}>
+        Restore original
+      </button>
       <button type="button" onClick={() => setSource("failed")}>
         Fail original
       </button>

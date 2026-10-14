@@ -847,16 +847,20 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect
       .poll(() => video.evaluate((el) => el.readyState))
       .toBeGreaterThanOrEqual(2);
-    await dialog
-      .getByRole("button", { name: "Play video", exact: true })
-      .click();
-    await expect
-      .poll(() => video.evaluate((el) => el.currentTime))
-      .toBeGreaterThan(0);
+    // Own the playback boundary; the short fixture's autoplay may still be
+    // running or may already have ended when WebKit reaches this assertion.
     await video.evaluate((el) => {
       window.openDraftVideo = el;
       el.loop = true;
+      el.pause();
     });
+    await dialog
+      .getByRole("button", { name: "Play video", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("button", { name: "Pause video", exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => video.evaluate((el) => el.paused)).toBe(false);
     const openedSource = await video.getAttribute("src");
     // Finish the held eager queue while the local video is actually playing.
     release();
@@ -1026,8 +1030,19 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "0");
     await clipRemove.focus();
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "1");
+    const firstSlot = await photoRemove.evaluate(
+      (el) => el.getBoundingClientRect().left,
+    );
     await photoRemove.click();
-    await form.getByRole("button", { name: "Remove clip.mp4" }).click();
+    await expect(photoRemove).toHaveCount(0);
+    // The removed tile leaves the accessibility tree when its exit starts but
+    // keeps its slot until the exit finishes; only then does the clip slide
+    // left. Press the clip only once it has settled into the first slot.
+    await expect
+      .poll(() => clipRemove.evaluate((el) => el.getBoundingClientRect().left))
+      .toBe(firstSlot);
+    await clipRemove.click();
+    await expect(clipRemove).toHaveCount(0);
     await expect(form.getByRole("region", { name: "Attachments" })).toHaveCount(
       0,
     );

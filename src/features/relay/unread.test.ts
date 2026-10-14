@@ -1241,6 +1241,11 @@ it.each([
       attentionCount: test.mentioned ? 1 : 0,
     });
     expect(h.session.unread.inbox().items).toHaveLength(test.mentioned ? 1 : 0);
+    expect(
+      h.session.unread.inbox().items.flatMap((item) => item.messages),
+    ).toEqual(
+      test.mentioned ? [{ id: row.id, createdAt: 11, mentioned: true }] : [],
+    );
   },
 );
 
@@ -1666,6 +1671,26 @@ it("reopening waits for the prior visit's queued unread and reconciles its sideb
   await expect(pending).rejects.toThrow("Reading observation expired");
   await h.session.unread.enterChannel("room");
   expect(h.snapshot().manual).toBe("none");
+});
+
+it("leaving a channel during its catch-up save withdraws the read without a sync error", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([bottom]);
+  const lease = h.session.unread.reading("room");
+  const { started, release } = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  await started; // The visit ends while its storage update is held.
+  try {
+    lease.dispose();
+  } finally {
+    release();
+  }
+  await expect(pending).rejects.toThrow("Reading observation expired");
+  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.session.unread.sync().error).toBeUndefined();
+  expect(h.session.unread.sync().status).not.toBe("error");
 });
 
 it("without a signer, own descendants do not require read frontiers to clear a forced peer subtree", async () => {
@@ -2440,6 +2465,82 @@ it.each(["channel", "thread", "message"] as const)(
     expect(h.journal()?.localUnread).toEqual({});
   },
 );
+
+it("exposes immutable verified member facts through the shared session without Inbox policy", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.viewer, "room", "My thread", 20);
+  const reply = message(h.alice, "room", "Ordinary reply", 21, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const mention = message(h.alice, "room", "Mentioned reply", 22, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const deleted = message(h.alice, "room", "Deleted mention", 23, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const self = message(h.viewer, "room", "Own mention", 24, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([
+    root,
+    mention,
+    reply,
+    deleted,
+    self,
+    message(h.alice, "room", "Unrelated message", 25),
+    message(h.alice, "no-access", "Inaccessible mention", 26, [
+      ["p", h.viewer.pubkey],
+    ]),
+    signed(h.alice, {
+      kind: 5,
+      created_at: 27,
+      content: "",
+      tags: [["e", deleted.id]],
+    }),
+  ]);
+  const unread = h.session.unread;
+  const before = unread.inbox();
+  expect(before.items).toHaveLength(1);
+  const item = before.items[0];
+  assert(item);
+  const facts = [
+    { id: reply.id, createdAt: 21, mentioned: false },
+    { id: mention.id, createdAt: 22, mentioned: true },
+  ];
+  expect(item.messages).toEqual(facts);
+  expect(item.messageIds).toEqual(item.messages.map((message) => message.id));
+  expect(Object.isFrozen(item.messages)).toBe(true);
+  expect(item.messages.every(Object.isFrozen)).toBe(true);
+  const listener = vi.fn();
+  const stop = unread.subscribeInbox(listener);
+  h.emit([mention]);
+  expect(unread.inbox()).toBe(before);
+  expect(listener).not.toHaveBeenCalled();
+  await unread.markThrough(item.target, mention.id);
+  expect(unread.inbox().items[0]?.messages).toEqual(facts);
+  h.emit([
+    signed(h.alice, {
+      kind: 5,
+      created_at: 28,
+      content: "",
+      tags: [["e", mention.id]],
+    }),
+  ]);
+  expect(unread.inbox().items[0]?.messages).toEqual([facts[0]]);
+  const revoked: unknown[] = [];
+  const unsubscribe = unread.subscribeInbox(() =>
+    revoked.push(unread.inbox().items.flatMap((row) => row.messages)),
+  );
+  h.emit([roster(h.relay, "room", [], 30)]);
+  expect(revoked.at(-1)).toEqual([]);
+  expect(unread.inbox().items).toEqual([]);
+  unsubscribe();
+  stop();
+});
 
 it("inbox groups relevant conversations, preserves read rows and exact unread resume points", async () => {
   const h = setup();

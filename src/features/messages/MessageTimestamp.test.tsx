@@ -141,11 +141,10 @@ it.each([
     expect(container.querySelector(`[data-day="${day}"]`)).toHaveTextContent(
       new RegExp(`^${label}$`),
     );
-    expect(container.querySelector("svg")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(container.querySelector("svg text")).toHaveTextContent(
+    expect(
+      container.querySelector("[data-calendar-date]")?.closest("[aria-hidden]"),
+    ).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector("[data-calendar-date]")).toHaveTextContent(
       new RegExp(`^${date.getDate()}$`),
     );
   },
@@ -167,7 +166,7 @@ function renderQuietRow() {
   const { container } = render(<QuietRow createdAt={createdAt} />);
   const divider = () => container.querySelector("[data-day]");
   const byline = () => container.querySelector('time [aria-hidden="true"]');
-  const calendar = () => container.querySelector("svg text");
+  const calendar = () => container.querySelector("[data-calendar-date]");
   expect(divider()).toHaveTextContent(/^Today$/);
   expect(byline()).toHaveTextContent(/^9:05 AM$/);
   return { divider, byline, calendar };

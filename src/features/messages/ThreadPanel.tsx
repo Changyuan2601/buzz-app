@@ -313,11 +313,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           }
         />
       ) : (
-        !error && (
-          <p className={styles.empty} role="status">
-            Loading thread…
-          </p>
-        )
+        !error && <ThreadLoading />
       )}
     </>
   );
@@ -415,9 +411,7 @@ function OwnedThreadPanel({
       canOpenLink={canOpenLink}
     />
   ) : (
-    <p className={styles.empty} role="status">
-      Loading thread…
-    </p>
+    <ThreadLoading />
   );
 }
 function ThreadMessages({
@@ -900,13 +894,11 @@ function ThreadMessages({
     if (
       (revealSelected && !inlineReveal) ||
       (revealSignal && revealed.current !== revealSignal) ||
+      // Seeded rows are not yet the thread: hold the loader until this view's
+      // first page lands. Later pages and repairs keep presented rows showing.
       (!positioned.current &&
-        ((snapshot.status !== "ready" &&
-          !(
-            snapshot.status === "loading" &&
-            snapshot.readKind === "refresh" &&
-            snapshot.root
-          )) ||
+        !(snapshot.root && snapshot.direction) &&
+        (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
@@ -1395,7 +1387,7 @@ function ThreadMessages({
             </p>
           )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <p role="status">Loading thread…</p>
+          <ThreadLoading />
         ) : null}
         {snapshot.targetStatus === "unavailable" && !selectionNotice && (
           <p role="status">Selected message unavailable.</p>
@@ -1524,5 +1516,20 @@ function ThreadMessages({
           />
         )}
     </MessageEditScope>
+  );
+}
+/** Holds the thread's area with the Buzz mark until its first page can show. */
+function ThreadLoading() {
+  return (
+    <div className={styles.threadLoading} role="status">
+      <picture>
+        <source
+          media="(prefers-reduced-motion: reduce)"
+          srcSet="/buzz-mark.svg"
+        />
+        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
+      </picture>
+      <span className="sr-only">Loading thread…</span>
+    </div>
   );
 }

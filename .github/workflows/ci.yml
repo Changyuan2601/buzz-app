@@ -289,6 +289,8 @@ jobs:
     outputs:
       vitest: ${{ steps.select.outputs.vitest }}
       browser: ${{ steps.select.outputs.browser }}
+      browser_shards: ${{ steps.select.outputs.browser_shards }}
+      browser_shard_total: ${{ steps.select.outputs.browser_shard_total }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -306,7 +308,7 @@ jobs:
     needs: [flake_select]
     if: needs.flake_select.outputs.vitest != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -327,7 +329,7 @@ jobs:
           retention-days: 7
 
   flake_browser:
-    name: Flake check (${{ matrix.engine }})
+    name: Flake check (${{ matrix.engine }}, ${{ matrix.shard }}/${{ needs.flake_select.outputs.browser_shard_total }})
     needs: [flake_select, browser_fixture]
     if: needs.flake_select.outputs.browser != ''
     runs-on: ubuntu-24.04
@@ -341,11 +343,13 @@ jobs:
     env:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         engine: [chromium, webkit]
+        # flake-check.mjs sizes this so a whole-file selection fits the timeout.
+        shard: ${{ fromJSON(needs.flake_select.outputs.browser_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -373,12 +377,12 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
           SELECTED: ${{ needs.flake_select.outputs.browser }}
-        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Flake check (${{ matrix.engine }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --repeat-each=10 --reporter=list,json $SELECTED
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Flake check (${{ matrix.engine }}, ${{ matrix.shard }}/${{ needs.flake_select.outputs.browser_shard_total }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --repeat-each=10 --shard=${{ matrix.shard }}/${{ needs.flake_select.outputs.browser_shard_total }} --reporter=list,json $SELECTED
       - name: Browser repetition evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: flake-browser-${{ matrix.engine }}
+          name: flake-browser-${{ matrix.engine }}-${{ matrix.shard }}
           path: test-results/browser
           retention-days: 7
 

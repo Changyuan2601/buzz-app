@@ -120,7 +120,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     // persistent radio selection styling.
     await filter.hover();
     const radios = filters.getByRole("menuitemradio");
-    await expect(radios).toHaveCount(5);
+    await expect(radios).toHaveCount(7);
     await expect(radios.locator("svg")).toHaveCount(0);
     const selected = filters.getByRole("menuitemradio", {
       name: selectedLabel,
@@ -143,7 +143,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       await expect(checkbox.locator("svg")).toHaveCount(1);
       await expect(checkbox.locator("svg")).toBeVisible();
     }
-    for (const label of ["From", "Show"]) {
+    for (const label of ["Status", "Type", "From"]) {
       const metadata = filters.getByText(label, { exact: true });
       await expect(metadata).toHaveAttribute("data-emphasis", "quiet");
       await expect(metadata).not.toHaveCSS(
@@ -158,6 +158,12 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       );
     }
   };
+  await expect(
+    filters.getByRole("menuitemcheckbox", { name: "Agents", exact: true }),
+  ).toBeInViewport();
+  await expect(
+    filters.getByRole("menuitemradio", { name: "Drafts", exact: true }),
+  ).toBeInViewport();
   await expectMenuSelection("All");
   await page.keyboard.press("Escape");
   await expect(filter).toBeFocused();
@@ -258,30 +264,32 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     await expect(unread).toBeVisible();
     const toolbar = inbox.locator('[class*="toolbar"]').first();
     const layout = await toolbar.evaluate((element) => {
-      const filters = element.querySelector('[aria-label="Inbox filters"]');
-      const unread = element.querySelector('[aria-label="Unread only"]');
-      if (!filters || !unread) return;
-      const f = filters.getBoundingClientRect();
-      const u = unread.getBoundingClientRect();
-      const t = element.getBoundingClientRect();
+      const bounds = element.getBoundingClientRect();
+      const controls = [
+        ...element.querySelectorAll(
+          '[aria-label="Inbox filters"], [aria-label="Unread only"]',
+        ),
+      ].map((control) => {
+        const { left, right, top, bottom } = control.getBoundingClientRect();
+        return { left, right, top, bottom };
+      });
       return {
-        gap: u.left - f.right,
-        centerY: u.top + u.height / 2 - (f.top + f.height / 2),
-        left: t.left,
-        right: t.right,
-        bottom: t.bottom,
-        filtersLeft: f.left,
-        unreadRight: u.right,
-        unreadBottom: u.bottom,
+        left: bounds.left,
+        right: bounds.right,
+        top: bounds.top,
+        bottom: bounds.bottom,
+        controls,
       };
     });
-    // The combined filter and unread toggle stay on one compact row, including
-    // 390px; the old pair of selects no longer forces unread onto a second row.
-    expect(layout?.centerY).toBeCloseTo(0, 0);
-    expect(layout?.gap).toBeGreaterThan(0);
-    expect(layout?.filtersLeft).toBeGreaterThanOrEqual(layout.left);
-    expect(layout?.unreadRight).toBeLessThanOrEqual(layout.right);
-    expect(layout?.unreadBottom).toBeLessThanOrEqual(layout.bottom);
+    expect(layout.controls.length).toBe(2);
+    for (const control of layout.controls) {
+      expect(control.left).toBeGreaterThanOrEqual(layout.left);
+      expect(control.right).toBeLessThanOrEqual(layout.right);
+      expect(control.top).toBeGreaterThanOrEqual(layout.top);
+      expect(control.bottom).toBeLessThanOrEqual(layout.bottom);
+    }
+    // The consolidated filter and Unread only remain usable when the toolbar wraps.
+
     const opener = mentionRow.getByRole("button", { name: /^Open / });
     const dot = opener.getByRole("img", { name: "Unread", exact: true });
     await expect(dot).toBeVisible();

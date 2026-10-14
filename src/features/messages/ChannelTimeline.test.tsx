@@ -263,6 +263,7 @@ function setup({
     children: unknown[];
     onScroll: (event: unknown) => void;
     onPointerDown: () => void;
+    onPointerUp: () => void;
     onWheel: (event: { deltaY: number; ctrlKey: boolean }) => void;
     onFocus: (event: unknown) => void;
     onBlur: (event: unknown) => void;
@@ -419,6 +420,7 @@ function setup({
       render();
       if (user) section.props.onPointerDown();
       section.props.onScroll({ currentTarget: element });
+      if (user) section.props.onPointerUp();
     },
     edit(runFrames = true) {
       rows = rows.map((row) =>
@@ -924,6 +926,99 @@ it("initial bottom and ordinary appends follow late measured list reflow", () =>
     align: "end",
   });
   h.unmount();
+});
+
+it("keeps bottom follow through an upward virtualizer correction during late growth", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.element.scrollHeight += 120;
+  h.element.scrollTop -= 3;
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  h.dispatchScroll();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("keeps bottom follow when the virtualizer correction scrolls after its height commit", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.element.scrollHeight += 120;
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  // The browser delivers the correction's scroll before the restore frame.
+  h.element.scrollTop -= 1;
+  h.dispatchScroll();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("a reader drag after a height commit still stops bottom follow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.element.scrollHeight += 120;
+  h.measureRows(false);
+  h.element.scrollTop -= 200;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.flush();
+  h.append();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
+it("keeps bottom follow when a rows change lands between the height commit and its correction scroll", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.element.scrollHeight += 120;
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  h.edit(false);
+  h.element.scrollTop -= 1;
+  h.dispatchScroll();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("keeps bottom follow when a measured correction scrolls before its height commit", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 1400;
+  h.resize();
+  h.handle.scrollToIndex.mockClear();
+  // Virtua's scrollBy correction lands before the committed list height.
+  h.handle.scrollSize -= 118;
+  h.element.scrollTop -= 118;
+  h.dispatchScroll();
+  // Rows below grew in the same measurement, so only a restore reaches bottom.
+  h.element.scrollHeight += 200;
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
 });
 
 it("honors one cached top-edge gesture when the replacement head becomes verified", () => {

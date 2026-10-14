@@ -82,6 +82,38 @@ fn leave_requests_sign_only_the_protected_empty_shape() {
 }
 
 #[test]
+fn agent_presence_signs_only_a_status_and_agent_keys() {
+    let presence = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
+        kind: 20003,
+        created_at: 1,
+        content: content.into(),
+        tags,
+    };
+    let agents = |count: usize| {
+        (0..count)
+            .map(|_| vec!["p".to_string(), "a".repeat(64)])
+            .collect::<Vec<_>>()
+    };
+    for accepted in [
+        presence("online", agents(1)),
+        presence("offline", agents(1)),
+        presence("online", agents(256)),
+    ] {
+        assert!(validate_event("https://relay.test", &accepted).is_ok());
+    }
+    for rejected in [
+        presence("away", agents(1)),
+        presence("online", vec![]),
+        presence("online", agents(257)),
+        presence("online", vec![vec!["p".into(), "A".repeat(64)]]),
+        presence("online", vec![vec!["e".into(), "a".repeat(64)]]),
+        presence("online", vec![vec!["p".into(), "a".repeat(64), "x".into()]]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+}
+
+#[test]
 fn member_commands_sign_only_the_broker_shape() {
     let command = |kind: u16, content: &str, tags: &[&[&str]]| EventTemplate {
         kind,

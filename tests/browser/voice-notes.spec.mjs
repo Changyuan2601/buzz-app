@@ -99,6 +99,13 @@ test.beforeEach(async ({ page }) => {
     page.getByRole("button", { name: "Play voice note", exact: true }),
   ).toBeVisible();
 });
+// WebKit defers voice-card media reads until the first click and keeps issuing
+// them until the page closes, so a test that ends just after a click can close
+// the page under a media route still reading bytes from it. Those reads serve
+// no assertion once the test has finished.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
 async function record(page) {
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
