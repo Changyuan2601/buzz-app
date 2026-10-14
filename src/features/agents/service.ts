@@ -21,6 +21,11 @@ import type { ProfileQueries } from "../relay/profile-directory";
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
 import {
+  AGENT_CATALOG_KIND,
+  object,
+  validCatalogEnvelope,
+} from "./catalog-envelope";
+import {
   InstructionStore,
   InstructionSync,
   localOnly,
@@ -799,6 +804,12 @@ type Listing = Readonly<{
   /** The record as read or written, kept by the next one written. */
   prior?: AgentRecordBody | undefined;
 }>;
+/** The `d` of the owner's own definition a record links, if any. */
+function linkedDefinition(tags: readonly (readonly string[])[], owner: string) {
+  const prefix = `${AGENT_CATALOG_KIND}:${owner}:`;
+  const ref = tags.find((tag) => tag[0] === "a" && tag[1]?.startsWith(prefix));
+  return ref?.[1]?.slice(prefix.length) || undefined;
+}
 const RUNTIME = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
 /** The newest record of each agent, read as listings. */
 function listingsOf(events: readonly EventData[], viewer: string) {
@@ -916,6 +927,9 @@ export class AgentsService extends Service implements Agents {
   /** The viewer's agent records in each community, by origin, as last read
    * from its live session and written since. */
   private listings = new Map<string, readonly Listing[]>();
+  /** Per community, the `system_prompt` of each owner definition (kind 30175)
+   * a listing links, by `d`; read with the listings (§2.4(b)). */
+  private definitions = new Map<string, ReadonlyMap<string, string>>();
   /** Agents whose record is being written, so a sync writes each once. */
   private listing = new Set<string>();
   /** By origin until its records are first read: the listings written or
@@ -1768,7 +1782,11 @@ export class AgentsService extends Service implements Agents {
         (row) => !edits?.has(row.pubkey),
       );
       const written = [...(edits?.values() ?? [])].filter((row) => !!row);
-      this.listings.set(origin, Object.freeze([...read, ...written]));
+      const rows = [...read, ...written];
+      const definitions = await this.readDefinitions(rows, binding);
+      if (this.bound.get(origin)?.binding !== binding) return;
+      this.listings.set(origin, Object.freeze(rows));
+      this.definitions.set(origin, definitions);
       this.edits.delete(origin);
     } catch (error) {
       // Its edits stay for the next read, which a sync asks for.
@@ -1780,6 +1798,44 @@ export class AgentsService extends Service implements Agents {
     }
     this.update();
     this.list(origin, binding);
+  }
+  /** One owner-scoped read of the definitions the listings link. A missing
+   * or malformed one is left out, so resolution reaching it is blocked. */
+  private async readDefinitions(
+    rows: readonly Listing[],
+    { session, viewer, controller }: Binding,
+  ) {
+    const wanted = new Set(
+      rows.flatMap((row) => {
+        const d = row.prior && linkedDefinition(row.prior.tags, viewer);
+        return d === undefined ? [] : [d];
+      }),
+    );
+    const found = new Map<string, string>();
+    if (!wanted.size) return found;
+    const events = await session.read(
+      [
+        {
+          kinds: [AGENT_CATALOG_KIND],
+          authors: [viewer],
+          "#d": [...wanted],
+          limit: wanted.size,
+        },
+      ],
+      { signal: controller.signal, priority: "background", fresh: true },
+    );
+    const heads = new Map<string, EventData>();
+    for (const event of events) {
+      const d = event.tags.find((tag) => tag[0] === "d")?.[1];
+      if (event.pubkey !== viewer || !d || !wanted.has(d)) continue;
+      if (!validCatalogEnvelope(event)) continue;
+      heads.set(d, newer(heads.get(d), event));
+    }
+    for (const [d, event] of heads) {
+      const prompt = object(event.content)?.system_prompt;
+      if (typeof prompt === "string") found.set(d, prompt);
+    }
+    return found;
   }
   /** The community's listings: as read, or until the first read finishes,
    * those written since. */
@@ -2483,11 +2539,17 @@ export class AgentsService extends Service implements Agents {
     }
     const listed = this.listings.get(origin);
     const prior = listed?.find((row) => row.pubkey === identity.pubkey)?.prior;
+    const linked = prior && linkedDefinition(prior.tags, binding.viewer);
+    const definition =
+      linked === undefined
+        ? undefined
+        : this.definitions.get(origin)?.get(linked);
     const fallback: Fallback | undefined = prior
       ? {
           linked: prior.tags.some(
             (tag) => tag[0] === "a" && tag[1]?.startsWith("30175:"),
           ),
+          ...(definition === undefined ? {} : { definition }),
           ...(typeof prior.content.system_prompt === "string"
             ? { legacy: prior.content.system_prompt }
             : {}),

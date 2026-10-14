@@ -3254,7 +3254,10 @@ it("T25 a provisional row whose intent is missing or mismatched offers Delete on
 // Real outbox timers under a loaded CI runner need more than the 1 s default.
 const SLOW = { timeout: 5_000 } as const;
 
-async function withInstructions(storage = memoryStorage()) {
+async function withInstructions(
+  storage = memoryStorage(),
+  listed: RelayEvent[] = [],
+) {
   const identities: AgentIdentity[] = [
     {
       pubkey: bot,
@@ -3265,7 +3268,7 @@ async function withInstructions(storage = memoryStorage()) {
       deleted: false,
     },
   ];
-  const harness = await setup({ storage, identities });
+  const harness = await setup({ storage, identities, listed });
   const stored: RelayEvent[] = [];
   const signing: (() => void)[] = [];
   const publish = {
@@ -3526,4 +3529,36 @@ it("a failed staging write leaves nothing staged in memory, so Retry stages it b
     source: "local",
     text: "Triage.",
   });
+});
+
+it("an agent whose record links an owner definition launches with that definition's prompt when it has no version", async () => {
+  const linked = record(bot, {
+    content: JSON.stringify({ name: "Echo" }),
+    tags: [
+      ["d", bot],
+      ["runtime", "example/echo"],
+      ["a", `30175:${viewer}:helper`],
+    ],
+  });
+  const definition = event("def", {
+    pubkey: viewer,
+    kind: 30175,
+    created_at: 50,
+    content: JSON.stringify({
+      display_name: "Helper",
+      system_prompt: "From the definition.",
+    }),
+    tags: [["d", "helper"]],
+  });
+  const h = await withInstructions(memoryStorage(), [linked, definition]);
+  h.connect(false);
+  h.connect(true);
+  await vi.waitFor(
+    () =>
+      expect(h.capture()).toMatchObject({
+        source: "definition",
+        text: "From the definition.",
+      }),
+    SLOW,
+  );
 });
