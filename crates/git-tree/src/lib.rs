@@ -1,6 +1,8 @@
 //! Git's NUL/tab tree protocol and package admission. Cargo executes the same
 //! bodies Verus checks; subprocesses, UTF-8 presentation and signatures stay with callers.
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
+use vstd::string::StringSliceAdditionalSpecFns;
 mod bytes;
 mod index;
 mod package;
@@ -98,6 +100,7 @@ fn equal(a: &[u8], b: &[u8]) -> (yes: bool)
     true
 }
 
+// ASCII helpers lack specifications in this pin; wrapping subtraction has an exact model.
 fn valid_oid(data: &[u8]) -> (yes: bool)
     ensures yes == object_id(data@),
 {
@@ -109,7 +112,7 @@ fn valid_oid(data: &[u8]) -> (yes: bool)
         decreases data.len() - i,
     {
         let b = data[i];
-        if !((b'0' <= b && b <= b'9') || (b'a' <= b && b <= b'f') || (b'A' <= b && b <= b'F')) {
+        if !(b.wrapping_sub(b'0') < 10 || b.wrapping_sub(b'a') < 6 || b.wrapping_sub(b'A') < 6) {
             return false;
         }
         i += 1;
@@ -120,7 +123,7 @@ fn valid_oid(data: &[u8]) -> (yes: bool)
 fn size(data: &[u8]) -> (out: Result<u64, Error>)
     ensures out is Ok ==> decimal(data@, out->Ok_0 as nat),
 {
-    if data.len() == 0 { return Err(Error::Size); }
+    if data.is_empty() { return Err(Error::Size); }
     let mut value = 0u64;
     let mut i = 0;
     while i < data.len()
@@ -129,7 +132,7 @@ fn size(data: &[u8]) -> (out: Result<u64, Error>)
         decreases data.len() - i,
     {
         let b = data[i];
-        if b < b'0' || b > b'9' { return Err(Error::Size); }
+        if b.wrapping_sub(b'0') >= 10 { return Err(Error::Size); }
         let digit = (b - b'0') as u64;
         if value > (u64::MAX - digit) / 10 { return Err(Error::Size); }
         proof {
@@ -179,6 +182,26 @@ fn parse_record(data: &[u8]) -> (out: Result<Entry, Error>)
     requires forall|i: int| 0 <= i < data.len() ==> data@[i] != 0,
     ensures out is Ok ==> well_formed(out->Ok_0) && record(data@, out->Ok_0),
 {
+    proof {
+        reveal_strlit("100644"); vstd::string::is_ascii_spec_bytes("100644");
+        assert("100644".spec_bytes() == seq![b'1',b'0',b'0',b'6',b'4',b'4']);
+        reveal_strlit("100755"); vstd::string::is_ascii_spec_bytes("100755");
+        assert("100755".spec_bytes() == seq![b'1',b'0',b'0',b'7',b'5',b'5']);
+        reveal_strlit("blob"); vstd::string::is_ascii_spec_bytes("blob");
+        assert("blob".spec_bytes() == seq![b'b',b'l',b'o',b'b']);
+        reveal_strlit("120000"); vstd::string::is_ascii_spec_bytes("120000");
+        assert("120000".spec_bytes() == seq![b'1',b'2',b'0',b'0',b'0',b'0']);
+        reveal_strlit("040000"); vstd::string::is_ascii_spec_bytes("040000");
+        assert("040000".spec_bytes() == seq![b'0',b'4',b'0',b'0',b'0',b'0']);
+        reveal_strlit("tree"); vstd::string::is_ascii_spec_bytes("tree");
+        assert("tree".spec_bytes() == seq![b't',b'r',b'e',b'e']);
+        reveal_strlit("160000"); vstd::string::is_ascii_spec_bytes("160000");
+        assert("160000".spec_bytes() == seq![b'1',b'6',b'0',b'0',b'0',b'0']);
+        reveal_strlit("commit"); vstd::string::is_ascii_spec_bytes("commit");
+        assert("commit".spec_bytes() == seq![b'c',b'o',b'm',b'm',b'i',b't']);
+        reveal_strlit("-"); vstd::string::is_ascii_spec_bytes("-");
+        assert("-".spec_bytes() == seq![b'-']);
+    }
     let a = find(data, 0, b' ');
     if a == data.len() { return Err(Error::Metadata); }
     let b = find(data, a + 1, b' ');
@@ -189,17 +212,17 @@ fn parse_record(data: &[u8]) -> (out: Result<Entry, Error>)
     if t == data.len() || t + 1 == data.len() { return Err(Error::Path); }
     let mode = copy(data, 0, a);
     let kind_text = copy(data, a + 1, b);
-    let kind = if equal(&mode, &[b'1',b'0',b'0',b'6',b'4',b'4']) || equal(&mode, &[b'1',b'0',b'0',b'7',b'5',b'5']) {
-        if !equal(&kind_text, &[b'b',b'l',b'o',b'b']) { return Err(Error::Metadata); }
+    let kind = if equal(&mode, "100644".as_bytes()) || equal(&mode, "100755".as_bytes()) {
+        if !equal(&kind_text, "blob".as_bytes()) { return Err(Error::Metadata); }
         Kind::Regular
-    } else if equal(&mode, &[b'1',b'2',b'0',b'0',b'0',b'0']) {
-        if !equal(&kind_text, &[b'b',b'l',b'o',b'b']) { return Err(Error::Metadata); }
+    } else if equal(&mode, "120000".as_bytes()) {
+        if !equal(&kind_text, "blob".as_bytes()) { return Err(Error::Metadata); }
         Kind::Symlink
-    } else if equal(&mode, &[b'0',b'4',b'0',b'0',b'0',b'0']) {
-        if !equal(&kind_text, &[b't',b'r',b'e',b'e']) { return Err(Error::Metadata); }
+    } else if equal(&mode, "040000".as_bytes()) {
+        if !equal(&kind_text, "tree".as_bytes()) { return Err(Error::Metadata); }
         Kind::Tree
-    } else if equal(&mode, &[b'1',b'6',b'0',b'0',b'0',b'0']) {
-        if !equal(&kind_text, &[b'c',b'o',b'm',b'm',b'i',b't']) { return Err(Error::Metadata); }
+    } else if equal(&mode, "160000".as_bytes()) {
+        if !equal(&kind_text, "commit".as_bytes()) { return Err(Error::Metadata); }
         Kind::Gitlink
     } else { return Err(Error::Metadata); };
     proof { assert(a == 6); assert(a < b < c); }
@@ -215,7 +238,7 @@ fn parse_record(data: &[u8]) -> (out: Result<Entry, Error>)
     let size = if kind == Kind::Regular || kind == Kind::Symlink {
         Some(size(&number)?)
     } else {
-        if !equal(&number, &[b'-']) { return Err(Error::Size); }
+        if !equal(&number, "-".as_bytes()) { return Err(Error::Size); }
         None
     };
     let path = copy(data, t + 1, data.len());

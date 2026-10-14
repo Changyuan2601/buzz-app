@@ -2,10 +2,15 @@ use crate::{copy, Kind, Tree};
 use vstd::prelude::*;
 
 verus! {
-// Arrays have exact byte specifications in both compilers, including the literals.
+// Explicit arrays expose exact bytes; this Verus pin treats b"..." as opaque.
+// Scope the style exception to these four constants, rather than add literal adapters.
+#[allow(clippy::byte_char_slices)]
 pub const MANIFEST: [u8;13] = [b'm',b'a',b'n',b'i',b'f',b'e',b's',b't',b'.',b'j',b's',b'o',b'n'];
+#[allow(clippy::byte_char_slices)]
 pub const MODULE: [u8;9] = [b'p',b'l',b'u',b'g',b'i',b'n',b'.',b'j',b's'];
+#[allow(clippy::byte_char_slices)]
 pub const ARTIFACT: [u8;20] = [b'p',b'l',b'u',b'g',b'i',b'n',b'.',b'a',b'r',b't',b'i',b'f',b'a',b'c',b't',b'.',b'j',b's',b'o',b'n'];
+#[allow(clippy::byte_char_slices)]
 pub const SIGNATURE: [u8;21] = [b'p',b'l',b'u',b'g',b'i',b'n',b'.',b's',b'i',b'g',b'n',b'a',b't',b'u',b'r',b'e',b'.',b'j',b's',b'o',b'n'];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Structural)]
@@ -60,7 +65,7 @@ impl Tree {
         },
     {
         if parent.len() > usize::MAX - SIGNATURE.len()
-            || (parent.len() > 0 && parent[parent.len()-1] != b'/') {
+            || (!parent.is_empty() && parent[parent.len()-1] != b'/') {
             return Selection::InvalidParent;
         }
         let artifact_path = join(parent,&ARTIFACT);

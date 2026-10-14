@@ -45,8 +45,11 @@ conversion for presentation, so unsupported names fail instead of aliasing.
 
 ## Boundary of the proof
 
-The verifier, SMT solver, vstd specifications of slices/vectors/multisets and
-ordinary allocation are trusted. There are no `assume`, `admit`, or
+The verifier, SMT solver, vstd specifications of slices/vectors/multisets,
+string bytes, integer wrapping and ordinary allocation are trusted. Four package-name arrays have a local byte-string
+style exception because the pinned verifier treats byte-string literals as opaque;
+parser strings use the existing vstd ASCII specification. There are no
+`assume`, `admit`, or
 `external_body` declarations in this kernel. Git's command output and object
 store authenticity, subprocess limits/cleanup, authentication, UTF-8 adapters,
 artifact parsing, hashing/signatures and installation/rollback remain with their
