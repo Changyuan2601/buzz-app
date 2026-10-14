@@ -590,8 +590,10 @@ the complete suite still runs with `pnpm test` / `just scan`:
   before, between or after tests, or the file is new; removed lines are judged
   against the base revision's test bodies). `flake_vitest`
   then runs that selection ten times with the JavaScript lane's two workers, and
-  `flake_browser` runs `--repeat-each=10` once per engine (Chromium and WebKit)
-  on the shard container with the same native fixture. Measurement specs and
+  `flake_browser` runs `--repeat-each=10` per engine (Chromium and WebKit)
+  on the shard container with the same native fixture, spreading the
+  repetitions over one shard per five journeys (at most eight) so a whole-file
+  selection fits the job timeout. Measurement specs and
   journeys tagged `@classic-scrollbars`, `@local-webkit` or `@media-recorder`
   are excluded; their own lanes cover them. The step summary shows a test ×
   iteration table. The lanes skip when no test changed and report as their own

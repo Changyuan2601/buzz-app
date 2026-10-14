@@ -11,6 +11,12 @@ import { parseVitest } from "./ci-test-report.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const pnpm = `${root}bin/pnpm`;
 export const ITERATIONS = 10;
+// Repetitions spread across shards, so a whole-file selection stays inside
+// the flake lane's job timeout. Small selections keep a single runner.
+const JOURNEYS_PER_SHARD = 5;
+const MAX_SHARDS = 8;
+export const browserShards = (journeys) =>
+  Math.min(MAX_SHARDS, Math.max(1, Math.ceil(journeys / JOURNEYS_PER_SHARD)));
 // Journeys that need their own project or platform: the measurements job and
 // the macOS recorder own them, so the engine lanes never repeat them.
 const excludedTags = ["classic-scrollbars", "local-webkit", "media-recorder"];
@@ -309,9 +315,14 @@ function select(base = "HEAD^1", head = "HEAD") {
       "",
     ].join("\n"),
   );
-  const text = Object.entries(outputs)
-    .map(([key, entries]) => `${key}=${entries.join(" ")}\n`)
-    .join("");
+  const shards = browserShards(outputs.browser.length);
+  const text = [
+    ...Object.entries(outputs).map(
+      ([key, entries]) => `${key}=${entries.join(" ")}\n`,
+    ),
+    `browser_shards=${JSON.stringify(Array.from({ length: shards }, (_, i) => i + 1))}\n`,
+    `browser_shard_total=${shards}\n`,
+  ].join("");
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(process.env.GITHUB_OUTPUT, text);
   else process.stdout.write(text);
