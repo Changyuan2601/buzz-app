@@ -244,15 +244,20 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   });
   app.relay.emptyRoster();
   app.relay.quotaNextRoster(2);
+  // The app times its cooldown on the page clock, which keeps running after
+  // install. Hold the first roster read until the clock is paused, so the
+  // refusal and ignored clicks below stay inside the cooldown however slowly
+  // the test reaches them.
+  let roster;
+  await page.route("**/api/relay/primary/query", (route) => {
+    if (roster || !route.request().postData()?.includes("39002"))
+      return route.fallback();
+    roster = route;
+  });
   await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Messages");
-  await expect.poll(() => app.relay.rejected.length).toBe(1);
-  await expect(
-    page
-      .getByRole("status", { name: "Live updates need attention", exact: true })
-      .filter({ hasText: "rate-limited" }),
-  ).toBeVisible();
+  await expect.poll(() => roster !== undefined).toBe(true);
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
@@ -288,11 +293,21 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   const sockets = app.relay.sockets.length;
   const rosters = () =>
     app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
+  // Pause ahead of the running page clock, then let the refusal through.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  await roster.fallback();
+  await expect.poll(() => app.relay.rejected.length).toBe(1);
+  await expect(
+    page
+      .getByRole("status", { name: "Live updates need attention", exact: true })
+      .filter({ hasText: "rate-limited" }),
+  ).toBeVisible();
   const calls = rosters().length;
   await retry(page).click();
   await retry(page).click();
   expect(rosters()).toHaveLength(calls);
   await crossCooldown(page, app);
+  await page.clock.resume();
   const previousGeneration = displayGeneration;
   const observerUpdated = page.waitForResponse(
     (response) =>
