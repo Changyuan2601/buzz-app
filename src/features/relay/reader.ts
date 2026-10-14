@@ -7,6 +7,9 @@ import type { ReadTransport } from "./transport";
 import { byteSize } from "./budget";
 import { ReadError } from "./errors";
 
+/** The largest response, in bytes, a single read accepts. */
+export const READ_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+
 export type Priority = "foreground" | "background";
 export type ReadOptions = {
   signal?: AbortSignal;
@@ -157,7 +160,7 @@ export function createRelayReader(
               );
         void query
           .then(async (events) => {
-            if (byteSize(events) > 8 * 1024 * 1024)
+            if (byteSize(events) > READ_RESPONSE_MAX_BYTES)
               throw new ReadError(
                 "invalid-response",
                 "Relay response exceeds the read budget",

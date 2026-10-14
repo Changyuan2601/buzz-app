@@ -16,8 +16,13 @@ import {
   subjectKey,
   HAD_VERSION_KEY,
   INSTRUCTIONS_STORE_KEY,
+  VERSION_PAGE,
 } from "./instructions";
-import { INSTRUCTIONS_KIND } from "./instructions-envelope";
+import {
+  INSTRUCTIONS_EVENT_MAX_BYTES,
+  INSTRUCTIONS_KIND,
+} from "./instructions-envelope";
+import { READ_RESPONSE_MAX_BYTES } from "../relay/reader";
 
 const OWNER = "a".repeat(64);
 const OTHER = "b".repeat(64);
@@ -1158,6 +1163,32 @@ describe("instructions sync", () => {
       expect(kind5(h).map((e) => e.tags[0]?.[1])).toEqual([lost]);
       expect(h.store.cleanupIds(OWNER, COMMUNITY)).toEqual([]);
       expect(h.box.sends.filter((e) => e.id === lost)).toHaveLength(1);
+    });
+
+    it("reads versions and cleanup IDs in pages that fit the reader's limits", async () => {
+      expect(VERSION_PAGE * INSTRUCTIONS_EVENT_MAX_BYTES).toBeLessThan(
+        READ_RESPONSE_MAX_BYTES,
+      );
+      const storage = memory();
+      const h = await setup(storage);
+      const scanReads = h.relay.reads
+        .flat()
+        .filter((f) => f.kinds?.includes(INSTRUCTIONS_KIND));
+      expect(scanReads.length).toBeGreaterThan(0);
+      expect(scanReads.every((f) => f.limit === VERSION_PAGE)).toBe(true);
+      const ids = Array.from({ length: 2 * VERSION_PAGE + 5 }, (_, i) =>
+        i.toString(16).padStart(64, "0"),
+      );
+      for (const id of ids) h.store.addCleanup(OWNER, COMMUNITY, id);
+      h.relay.reads.length = 0;
+      await h.sync.sweepCleanup();
+      const batches = h.relay.reads.map(([f]) => f?.ids ?? []);
+      expect(batches.map((b) => b.length)).toEqual([
+        VERSION_PAGE,
+        VERSION_PAGE,
+        5,
+      ]);
+      expect(batches.flat()).toEqual(ids);
     });
 
     it("T27 device B still holding the agent keeps its history and the late version", async () => {

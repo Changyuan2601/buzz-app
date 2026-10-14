@@ -2,7 +2,9 @@ import type { LiveSnapshot } from "../relay/live";
 import type { PortSource } from "./native";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
+import { READ_RESPONSE_MAX_BYTES } from "../relay/reader";
 import {
+  INSTRUCTIONS_EVENT_MAX_BYTES,
   INSTRUCTIONS_KIND,
   instructionsDeletionTargets,
   instructionsSubject,
@@ -17,7 +19,12 @@ export const HAD_VERSION_KEY = "buzz.agents.instructions.had-version.v1";
 export const CLEANUP_KEY = "buzz.agents.instructions.cleanup.v1";
 /** The relay's timestamp window; a signed event older than this is never re-sent. */
 export const RESEND_WINDOW_SECONDS = 900;
-const PAGE = 100;
+/** Versions per read: a page of maximum-size versions must fit the reader's
+ * response budget, with room for its JSON framing. */
+export const VERSION_PAGE = Math.floor(
+  (READ_RESPONSE_MAX_BYTES * 0.9) / INSTRUCTIONS_EVENT_MAX_BYTES,
+);
+const DELETION_PAGE = 100;
 
 export type Resolved =
   | Readonly<{
@@ -649,7 +656,7 @@ export class InstructionSync {
     for (;;) {
       if (token && !this.current(token)) throw new Error("Scan superseded");
       const page = await this.ports.read(
-        [{ ...filter, limit: PAGE, consistency: "strong", ...cursor }],
+        [{ ...filter, consistency: "strong", ...cursor }],
         this.ports.signal,
       );
       const fresh = page.filter((event) => !out.has(event.id));
@@ -665,7 +672,7 @@ export class InstructionSync {
       kinds: [INSTRUCTIONS_KIND],
       authors: [this.ports.owner],
       ...(agent ? { "#p": [agent] } : {}),
-      limit: PAGE,
+      limit: VERSION_PAGE,
     };
   }
   private deletionsFilter(): ReadFilter {
@@ -673,7 +680,7 @@ export class InstructionSync {
       kinds: [5],
       authors: [this.ports.owner],
       "#k": [String(INSTRUCTIONS_KIND)],
-      limit: PAGE,
+      limit: DELETION_PAGE,
     };
   }
 
@@ -1030,22 +1037,26 @@ export class InstructionSync {
     const { owner, community, store } = this.ports;
     const ids = store.cleanupIds(owner, community);
     if (!ids.length || !this.ports.outbox) return;
-    const found = await this.ports.read(
-      [
-        {
-          kinds: [INSTRUCTIONS_KIND],
-          authors: [owner],
-          ids,
-          limit: ids.length,
-          consistency: "strong",
-        },
-      ],
-      this.ports.signal,
-    );
-    for (const event of found) {
-      if (!ids.includes(event.id)) continue;
-      await this.deleteVersion(event.id);
-      store.dropCleanup(owner, community, event.id);
+    // Cleanup IDs never expire, so read them in pages the reader accepts.
+    for (let at = 0; at < ids.length; at += VERSION_PAGE) {
+      const batch = ids.slice(at, at + VERSION_PAGE);
+      const found = await this.ports.read(
+        [
+          {
+            kinds: [INSTRUCTIONS_KIND],
+            authors: [owner],
+            ids: batch,
+            limit: batch.length,
+            consistency: "strong",
+          },
+        ],
+        this.ports.signal,
+      );
+      for (const event of found) {
+        if (!batch.includes(event.id)) continue;
+        await this.deleteVersion(event.id);
+        store.dropCleanup(owner, community, event.id);
+      }
     }
   }
 
