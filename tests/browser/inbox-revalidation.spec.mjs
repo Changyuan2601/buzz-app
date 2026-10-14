@@ -273,12 +273,9 @@ for (const scenario of [
         ).toBeVisible();
         await expectWithheld();
         await expectNoViewer();
-        const activity = inbox.getByRole("button", {
-          name: "Inbox filters",
-          exact: true,
-        });
+        const view = inbox.getByRole("tab", { selected: true });
         const retry = inbox.getByRole("button", { name: "Retry inbox" });
-        await activity.focus();
+        await view.focus();
         await page.keyboard.press("Shift+Tab");
         await expect(retry).toBeFocused();
 
@@ -290,7 +287,7 @@ for (const scenario of [
         await expectNoViewer();
         await expect(retry).toBeFocused();
         await page.keyboard.press("Tab");
-        await expect(activity).toBeFocused();
+        await expect(view).toBeFocused();
         await page.keyboard.press("Tab");
         await expect(unread).toBeFocused();
         retryClosure.resolve();
