@@ -196,11 +196,19 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
 
   // The built sidebar and broker share one queue: a pending section sort must
   // not conceal an optimistic Move, and both must survive confirmed reload.
+  // Open from the keyboard, like openMove. The menu opens on mousedown and a
+  // mouseup off the trigger cancels it, so a pointer click races startup
+  // notices (Loading Me placement…) that shift the sidebar after a reload.
+  // Pointer opening is covered by navigation-sorting.
   const openSort = async () => {
     await page
       .getByRole("button", { name: "More actions for Channels" })
-      .click();
-    await page.getByRole("menuitem", { name: "Sort", exact: true }).focus();
+      .focus();
+    await page.keyboard.press("Enter");
+    // Keyboard opening highlights the first item, Sort, asynchronously.
+    const sort = page.getByRole("menuitem", { name: "Sort", exact: true });
+    await expect(sort).toHaveAttribute("data-highlighted", "");
+    await sort.focus();
     await page.keyboard.press("ArrowRight");
     return page.getByRole("menu", { name: "Sort", exact: true });
   };
