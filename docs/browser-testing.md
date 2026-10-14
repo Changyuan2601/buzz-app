@@ -478,8 +478,8 @@ can silently use platform fallback fonts.
 
 Concurrent Vite fixture servers must own separate optimizer caches. Use
 `tests/browser/vite-server.mjs` for new fixtures; its `close()` releases the owned
-cache. The existing emoji and conversation fixtures retain their explicitly owned
-temporary caches. Do not share Vite's default `node_modules/.vite`: another server
+cache. The existing conversation fixture retains its explicitly owned
+temporary cache. Do not share Vite's default `node_modules/.vite`: another server
 can invalidate dependency imports and leave a blank fixture with a 504
 `Outdated Optimize Dep`. Keep import failures visible; retries or longer UI waits
 do not repair module loading.
