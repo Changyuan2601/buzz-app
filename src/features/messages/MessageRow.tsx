@@ -19,7 +19,6 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
-import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -43,6 +42,7 @@ import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
+import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import {
@@ -105,6 +105,7 @@ export type MessageRowProps = {
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
+  alignViewer?: boolean;
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -154,6 +155,7 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
+  alignViewer = false,
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -252,16 +254,11 @@ function MessageRowContent({
       profile?.isAgent
     ) &&
     activityView &&
-    canOpenLink?.(activityView) &&
-    canOpenLink(activityTarget(row.authorId, row.channelId));
+    canOpenLink?.(activityView);
   const activityItem = canViewActivity && (
     <MenuItem
       onClick={() => {
-        if (
-          canOpenLink?.(activityView) &&
-          canOpenLink(activityTarget(row.authorId, row.channelId))
-        )
-          onOpenLink(activityView);
+        if (canOpenLink?.(activityView)) onOpenLink(activityView);
       }}
     >
       <MenuIcon>
@@ -416,7 +413,14 @@ function MessageRowContent({
   return (
     <div data-message-id={row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
-      <div ref={rowRef} className={styles.message} data-layout={layout}>
+      <div
+        ref={rowRef}
+        className={styles.message}
+        data-layout={layout}
+        data-viewer-message={
+          alignViewer && row.authorId === session?.viewer ? "" : undefined
+        }
+      >
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />
@@ -488,12 +492,17 @@ function MessageRowContent({
           </span>
         )}
         <div className={styles.messageBody}>
-          {opened && session && (
+          {opened && session && extensions?.actions && (
             <ContributionBoundary key={contributionKey(opened)} fallback={null}>
-              <opened.component
-                message={row}
-                session={session}
-                close={() => setOpenAction(undefined)}
+              <WithTargetOpener
+                component={opened.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={opened}
               />
             </ContributionBoundary>
           )}
@@ -949,10 +958,20 @@ function MessageRowContent({
 export const MessageRow = memo(function AudienceMessageRow(
   props: MessageRowProps,
 ) {
-  return props.row.audience === "agents" ? (
-    <AgentsMessageRow {...props} />
-  ) : (
-    <FullMessageRow {...props} />
+  const { onOpenLink, canOpenLink, row } = props;
+  const rootId = row.threadRootId ?? row.id;
+  // Plugin content in this row opens targets as the row's own links do.
+  return (
+    <TargetOpenerProvider
+      canOpen={(target) => canOpenLink?.(target) ?? false}
+      open={(target) => onOpenLink(target, { rootId })}
+    >
+      {row.audience === "agents" ? (
+        <AgentsMessageRow {...props} />
+      ) : (
+        <FullMessageRow {...props} />
+      )}
+    </TargetOpenerProvider>
   );
 });
 

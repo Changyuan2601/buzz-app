@@ -127,6 +127,8 @@ export type ChannelTimelineProps = {
   launchPending?: boolean | undefined;
   /** Sessions page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
+  /** Me's quieter centered transcript and viewer-message alignment. */
+  chatPresentation?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -180,6 +182,7 @@ function Timeline({
   navigation,
   onOpenThread,
   onOpenMediaReview,
+  chatPresentation = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -738,6 +741,7 @@ function Timeline({
     <section
       ref={scroller}
       data-message-scroller
+      data-chat-presentation={chatPresentation || undefined}
       className={styles.feed}
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
@@ -868,9 +872,12 @@ function Timeline({
                     media={queries.media}
                     agentPubkeys={agentPubkeys}
                     day={day}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
                   />
                 ) : (
                   <MessageRow
+                    alignViewer={chatPresentation}
                     layout={
                       continuesMessageGroup(rows[index - 1], row)
                         ? "continuation"

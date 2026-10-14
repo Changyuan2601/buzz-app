@@ -65,13 +65,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
-  const {
-    Create,
-    CreateModelMenu,
-    createModelLabel,
-    ProviderDialogBody,
-    SettingsTab,
-  } = createTabs({ setup, defaults: providerDefaults, runtime });
+  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
+    createTabs({
+      setup,
+      defaults: providerDefaults,
+      runtime,
+    });
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",
@@ -80,8 +79,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
-    CreateModelMenu,
-    createModelLabel,
+    CreateModel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -95,9 +93,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     describeMigration: (saved) => {
-      const { model, scope } = config(saved);
+      const { model, effort, scope } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+        { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
         {
           id: "sessions",
           label: "Sessions",
@@ -129,6 +128,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     // A mention during the first download waits for it, within its deadline.

@@ -1,5 +1,9 @@
+// @vitest-environment jsdom
 import { assert, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import "@testing-library/jest-dom/vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { profileTarget } from "../profiles/target";
 import type { ChannelMessage, MembershipChange } from "../relay/contracts";
 import { membershipRows, membershipDescription } from "./membership-rows";
 import { MembershipRow } from "./MembershipRow";
@@ -57,6 +61,20 @@ it("matches the grouped invitation wording and keeps pronouns grammatical", () =
   expect(
     membershipDescription([row("1", joined(pinky, wes))], profiles, wes).text,
   ).toBe("You were added by Pinky");
+  // Every member name, and only a member name, is tagged with its identity.
+  expect(
+    membershipDescription(
+      [row("1", joined(wes, pinky)), row("2", joined(wes, brain))],
+      profiles,
+      wes,
+    ).parts,
+  ).toEqual([
+    { id: pinky, text: "Pinky" },
+    { text: " added by " },
+    { id: wes, text: "you" },
+    { text: ", along with " },
+    { id: brain, text: "Brain" },
+  ]);
   expect(
     membershipDescription(
       [row("1", joined(pinky, pinky)), row("2", joined(brain, brain))],
@@ -218,4 +236,71 @@ it("actor/subject profile enrichment invalidates cached system-row geometry", ()
       new Map([...profiles, [wes, { name: "Longer Wes" }]]),
     ),
   ).not.toBe(original);
+});
+it("member names open the subject's and the actor's profiles when the host can", () => {
+  const open = vi.fn(() => true);
+  const group = membershipRows([
+    row("1", joined(wes, pinky)),
+    row("2", joined(wes, brain)),
+  ])[0];
+  assert.exists(group);
+  const mount = (canOpenLink: (target: string) => boolean) =>
+    render(
+      <MembershipRow
+        row={group}
+        profiles={profiles}
+        agentPubkeys={new Set([brain])}
+        media={() => undefined}
+        viewer={wes}
+        day={false}
+        onOpenLink={open}
+        canOpenLink={canOpenLink}
+      />,
+    );
+  mount(() => true);
+  const paragraph = screen.getByTitle("Pinky and Brain");
+  expect(paragraph.textContent).toBe("Pinky added by you, along with Brain");
+  const subject = screen.getByRole("button", { name: "View Pinky profile" });
+  fireEvent.click(subject);
+  expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
+  // jsdom clicks never focus, so this proves the explicit focus that keeps a
+  // return target for the profile tab under WebKit.
+  expect(subject).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "View your profile" }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(wes));
+  const agent = screen.getByRole("button", { name: "View Brain profile" });
+  expect(agent).toHaveAttribute("data-mention-kind", "agent");
+  fireEvent.click(agent);
+  expect(open).toHaveBeenLastCalledWith(profileTarget(brain, { agent: true }));
+  expect(screen.getAllByRole("button")).toHaveLength(3);
+  cleanup();
+  // A host that cannot open a profile keeps that name as plain prose.
+  mount((target) => target === profileTarget(pinky));
+  expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
+    "Pinky",
+  ]);
+  expect(screen.getByTitle("Pinky and Brain").textContent).toBe(
+    "Pinky added by you, along with Brain",
+  );
+  cleanup();
+  render(
+    <MembershipRow
+      row={row("1", removed(pinky, brain))}
+      profiles={profiles}
+      media={() => undefined}
+      viewer={wes}
+      day={false}
+      onOpenLink={open}
+      canOpenLink={() => true}
+    />,
+  );
+  expect(screen.getByTitle("Brain").textContent).toBe(
+    "Brain was removed by Pinky",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "View Pinky profile" }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
+  expect(
+    screen.getByRole("button", { name: "View Brain profile" }),
+  ).toHaveAttribute("data-mention-kind", "person");
+  expect(document.querySelector("[data-profile-target]")).toBeNull();
 });

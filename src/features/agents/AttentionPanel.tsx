@@ -541,6 +541,12 @@ function WatchRow({
           value={value}
           save={save}
           onDone={() => setEditing(false)}
+          note={
+            value.type === "timer"
+              ? // The schedule keeps its next due time; the agent's watch_rearm moves it.
+                "A changed interval_secs starts after the next run."
+              : undefined
+          }
         />
       )}
     </>
@@ -621,11 +627,13 @@ function JsonEditor({
   value,
   save,
   onDone,
+  note,
 }: {
   slug: string;
   value: unknown;
   save: Save;
   onDone(): void;
+  note?: string | undefined;
 }) {
   const [text, setText] = useState(JSON.stringify(value ?? {}, null, 2));
   const action = useAction();
@@ -646,7 +654,12 @@ function JsonEditor({
   };
   return (
     <div className="grid gap-2 p-3">
-      <Field label={slug} description="agent-attention/v1">
+      <Field
+        label={slug}
+        description={
+          note ? `agent-attention/v1. ${note}` : "agent-attention/v1"
+        }
+      >
         <Textarea
           variant="code"
           rows={10}

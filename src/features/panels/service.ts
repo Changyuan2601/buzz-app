@@ -16,7 +16,10 @@ export type PanelContext = Readonly<{
   /** Thread root of the message the panel was opened from, when there is one. */
   rootId?: string;
   canOpen(target: string): boolean;
-  /** Replace this panel through its host. False after this opening is retired. */
+  /**
+   * Open a target through the host. A tab replaces itself; a channel drawer or
+   * side column opens the target as a tab. False after this opening is retired.
+   */
   open(target: string): boolean;
   /** Drill into a child while the channel host retains the previous view. */
   push?(target: string): boolean;
@@ -37,6 +40,11 @@ export type ChannelLauncherProps = {
   toggle(target: string): void;
   /** False after this page binding or exact contribution is retired. */
   available(): boolean;
+  /** Presentation only; the page re-resolves targets when opening. */
+  canOpen(target: string): boolean;
+  /** Open another target, such as a panel URL, as a tab in this channel.
+   * False after this page binding or exact contribution is retired. */
+  open(target: string): boolean;
 };
 export type PanelProps = {
   /** Supplied only by a channel presentation; sessions decide when to capture it. */
@@ -60,8 +68,11 @@ export type Panel = Readonly<{
     label: string;
     eligible(channel: ChannelSummary, session: RelaySession): boolean;
   }>;
-  /** Channel launchers default to the bottom drawer; side reuses the companion column. */
-  channelPlacement?: "bottom" | "side";
+  /**
+   * Channel launchers default to the bottom drawer; side reuses the companion
+   * column; tab opens a tab in the channel's side pane beside its threads.
+   */
+  channelPlacement?: "bottom" | "side" | "tab";
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
@@ -130,9 +141,10 @@ export class PanelsService extends Service implements Panels {
     if (
       panel.channelPlacement !== undefined &&
       panel.channelPlacement !== "bottom" &&
-      panel.channelPlacement !== "side"
+      panel.channelPlacement !== "side" &&
+      panel.channelPlacement !== "tab"
     )
-      throw new Error("A channel placement must be bottom or side");
+      throw new Error("A channel placement must be bottom, side or tab");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

@@ -522,10 +522,11 @@ it("hands over promptly and runs conversations independently on one server", asy
       },
     },
   });
+  // The thread already carries the static prompt; turns carry only what changes.
   expect(f.starts()[1]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
-        value: expect.stringContaining(
+        value: expect.not.stringContaining(
           "Your `core` memory is auto-injected into your context every turn",
         ),
       },
@@ -592,6 +593,15 @@ it("serves every agent from one server and routes each tool call to its own agen
   expect(contents(f.publish)).toEqual(["FROM CODEX"]);
   expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
   expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
+});
+it("warms the server before a mention, which then reuses it", async () => {
+  const f = fixture();
+  f.runtime.warm();
+  f.runtime.warm();
+  expect(servers(f)).toHaveLength(1);
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(servers(f)).toHaveLength(1);
 });
 it("stops a removed agent's turn without ending the server the others share", async () => {
   const f = fixture();
@@ -1918,6 +1928,77 @@ it("gives a turn no memory read through a connection that was replaced", async (
   expect(freshRead).toHaveBeenCalledTimes(1);
   expect(instructions(1)).toContain("I am the new owner's.");
   warn.mockRestore();
+});
+
+it("splits turn context into ordered values that Codex does not truncate", async () => {
+  const f = fixture();
+  // Codex truncates the middle of any value over 4,000 UTF-8 bytes.
+  const instructions = `${Array.from({ length: 400 }, (_, line) => `Rule ${line}.`).join("\n")}\n${"é".repeat(3_000)}`;
+  await f.remember("core", `CORE START ${"c".repeat(6_000)} CORE END`, 0);
+  await f.runtime.run({
+    ...f.delivery("@Codex big"),
+    config: {
+      workspace: "/tmp/codex-test",
+      model: "test-model",
+      effort: "low",
+      instructions,
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const context =
+    (
+      f.starts()[0]?.params as
+        | {
+            additionalContext: Record<string, { kind: string; value: string }>;
+          }
+        | undefined
+    )?.additionalContext ?? {};
+  const keys = Object.keys(context).sort();
+  expect(keys.length).toBeGreaterThan(3);
+  expect(keys.slice(0, 2)).toEqual([
+    "buzz.instructions",
+    "buzz.instructions.001",
+  ]);
+  for (const key of keys) {
+    expect(context[key]?.kind).toBe("application");
+    expect(
+      new TextEncoder().encode(context[key]?.value).length,
+    ).toBeLessThanOrEqual(4_000);
+  }
+  const text = keys.map((key) => context[key]?.value).join("");
+  expect(text).toContain(
+    `<agent-instructions>\n${instructions}\n</agent-instructions>`,
+  );
+  expect(text).toContain(`CORE START ${"c".repeat(6_000)} CORE END`);
+  expect(context["buzz.instructions.001"]?.value).toMatch(/^Rule \d+\.\n/);
+});
+
+it("gives a resumed conversation the agent's current name", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const renamed = f.delivery("@Renamed second");
+  await f.runtime.run({
+    ...renamed,
+    agent: { ...renamed.agent, name: "Renamed" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // Codex keeps a resumed thread's original developer instructions.
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({
+    threadId: (f.starts()[0]?.params as { threadId?: string } | undefined)
+      ?.threadId,
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringMatching(/^You are Renamed \(pubkey /),
+      },
+    },
+  });
 });
 
 it("does not declare core missing when the owner listing is partial", async () => {

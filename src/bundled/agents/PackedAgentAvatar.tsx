@@ -38,11 +38,13 @@ export function PackedAgentAvatar({
   const media = avatarAnimation(avatar.id);
   if (reducedMotion || failed === avatar.id)
     return <img src={avatar.preview} alt={avatar.label} />;
-  // WebKit supports Apple's alpha HEVC; Chromium preserves alpha in WebM.
-  const webkit =
+  // Prefer Apple's alpha HEVC only on Apple WebKit. Linux WebKit can
+  // advertise HEVC decoding without Apple's alpha-video support.
+  const appleWebkit =
+    /^(Mac|iPhone|iPad|iPod)/.test(navigator.platform) &&
     /AppleWebKit/.test(navigator.userAgent) &&
     !/Chrome|Chromium|Edg/.test(navigator.userAgent);
-  const sources = webkit
+  const sources = appleWebkit
     ? [
         { src: media.hevc, type: 'video/mp4; codecs="hvc1"' },
         { src: media.webm, type: "video/webm" },

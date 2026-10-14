@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import { AgentChoice } from "./AgentChoice";
-import { sessionAgents } from "./recipients";
 
 /** The selected target is a composer choice; only relay membership grants access. */
 export function SessionAgentControl({
@@ -21,14 +20,6 @@ export function SessionAgentControl({
     session.channels.subscribeList,
     session.channels.list,
   );
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-  );
-  const library = useSyncExternalStore(
-    session.agentChoices.subscribe,
-    session.agentChoices.snapshot,
-  );
   const channel = list.channels.find((item) => item.id === channelId);
   const parent = list.channels.find(
     (item) => item.id === channel?.parentChannelId,
@@ -40,14 +31,14 @@ export function SessionAgentControl({
         .ensure(memberKey.split(":"), "background")
         .catch(() => {});
   }, [session, memberKey]);
-  const agents = sessionAgents(channel, profiles, library, session.viewer);
-  const implicit = agents?.length === 1 ? agents[0] : "";
   return (
     <AgentChoice
       session={session}
-      value={value || implicit || ""}
+      value={value}
       onChange={onChange}
       disabled={disabled}
+      emptyLabel="Choose follow-up assistant"
+      clearLabel="No assistant"
       sessionMembers={channel?.members ?? []}
       parentMembers={
         channel?.parentChannelId ? (parent?.members ?? []) : undefined

@@ -18,6 +18,10 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await server?.close();
 });
+test.afterEach(async ({ page }) => {
+  // Media routes read fixture blobs from the page; finish them before it closes.
+  await page.unrouteAll({ behavior: "wait" });
+});
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/relay/media?*", async (route) => {
     const url = new URL(route.request().url()).searchParams.get("url");
@@ -411,4 +415,24 @@ test("rejects a full attachment draft before opening the microphone", async ({
     page.getByText("Attach at most 10 files per message."),
   ).toBeVisible();
   expect(await page.evaluate(() => window.voiceMic.started)).toBe(0);
+  await expect(
+    page.getByRole("status").filter({ hasText: /file-\d+\.txt:.*Ready/ }),
+  ).toHaveCount(10);
+  const uploaded = await page.evaluate(async () => {
+    const { attachmentDraft } = await import(
+      "/src/features/messages/attachment-draft.ts"
+    );
+    return attachmentDraft(
+      window.voiceFixture.session,
+      "voice-fixture:draft:general",
+      "general",
+    )
+      .snapshot()
+      .map((item) => item.uploaded);
+  });
+  expect(uploaded.map((item) => item.type)).toEqual(
+    Array(10).fill("text/plain"),
+  );
+  expect(new Set(uploaded.map((item) => item.url)).size).toBe(10);
+  expect(uploaded.every((item) => !item.voice)).toBe(true);
 });

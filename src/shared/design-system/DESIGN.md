@@ -158,7 +158,9 @@ close button, body padding, or footer with feature-specific markup.
 
 These are starting choices, not permission to combine every option. Default to
 content height; reserve stable height when changing results would otherwise make
-the task jump. Do not hardcode a screen-sized modal or add header/body gaps on top
+the task jump. Proposed `height="stable-tall"` reserves up to 44rem for agent
+creation and its avatar catalog, with the same viewport cap and scrolling as
+`stable`. Do not hardcode a screen-sized modal or add header/body gaps on top
 of the shared padding. [`ChannelMembersDialog`](../../bundled/channels/ChannelMembersDialog.tsx)
 shows bounded search/results; [`RemindDialog`](../../bundled/reminders/RemindDialog.tsx)
 shows a short form; [`DiffMessage`](../../bundled/diffs/DiffMessage.tsx) shows expanded
@@ -706,6 +708,8 @@ text-body (14px / 20px), and the 16px control inset. Derive vertical padding fro
 size, text line height, and boundary; do not force a fixed height that clips
 larger text or wrapped Select values. Textarea uses the control inset on all four
 sides (16px at the default scale), with manual vertical resizing and a code variant.
+Use `surface="panel"` when a standalone textarea needs an opaque surface over a
+floating dialog; the default inset surface remains for fields on panels.
 In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px
 (space-1) inside the corner. Keep it visible at rest. Preserve the native resize hit target and
 leave the browser grip unchanged where custom resizer styling is unsupported.
@@ -1488,7 +1492,14 @@ viewer includes enabled and disabled examples.
 ### Chip and title fields (proposed)
 
 `Combobox.Control appearance="chip"` drops the field's surface and browse
-button until the control is hovered or open, so a choice reads as a label, such
-as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+button, so an editable choice reads as a compact label. Keyboard focus keeps a ring.
 `Input appearance="title"` sets its value at title size with no field around it,
-for a name that is also the heading, such as the new agent's name.
+for a name that is also the heading, such as the new agent's name. It keeps
+the field border transparent at rest and uses the shared perimeter stroke on focus.
+
+Proposed: `InputGroup surface="panel"` uses the panel fill for image URL entry
+on a contrasting modal surface, retaining the shared field focus treatment.
+
+Proposed: `Dialog chromeSpacing="padded"` keeps a 12px bottom gutter on the
+fixed header and a footer top gutter matching the modal bottom padding. The
+body omits its vertical gutters; agent creation uses this for scrolling steps.

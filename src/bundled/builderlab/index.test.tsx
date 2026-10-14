@@ -116,12 +116,13 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("button", { name: "New agent" }),
+      );
       expect(
-        await screen.findByText("Enable an agent type plugin to make one."),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "New agent" }),
-      ).not.toBeInTheDocument();
+        await screen.findByRole("menuitem", { name: "Create a new agent" }),
+      ).toHaveAttribute("aria-disabled", "true");
     } finally {
       cleanup();
       await runtime.dispose();
@@ -498,8 +499,13 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     // preserves the draft and sends no provisioning request; retry completes it.
     render(<AgentsPage agents={agents} relay={community.relay} />);
     await user.click(screen.getByRole("button", { name: "New agent" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Create a new agent" }),
+    );
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
-    expect(within(createDialog).getByText("Builderlab")).toBeInTheDocument();
+    expect(
+      within(createDialog).getByRole("combobox", { name: "Harness" }),
+    ).toHaveTextContent("Builderlab (hosted)");
     expect(
       within(createDialog).getByText(/Its provider keeps its key and runs it/),
     ).toBeInTheDocument();

@@ -458,3 +458,6 @@ export const CircleHalfIcon = defineIcon("tabler", TablerCircleHalfIcon);
 
 import TablerGaugeIcon from "@tabler/icons-react/dist/esm/icons/IconGauge.mjs";
 export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);
+
+import TablerStorefrontIcon from "@tabler/icons-react/dist/esm/icons/IconBuildingStore.mjs";
+export const StorefrontIcon = defineIcon("tabler", TablerStorefrontIcon);

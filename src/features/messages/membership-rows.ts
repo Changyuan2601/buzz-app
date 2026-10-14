@@ -69,6 +69,9 @@ export function membershipRows(
   return result.reverse();
 }
 
+/** A prose segment; `id` marks a member name that may open that profile. */
+export type MembershipPart = { text: string; id?: string };
+
 export function membershipDescription(
   rows: readonly ChannelMessage[],
   profiles: ReadonlyMap<string, Profile>,
@@ -79,54 +82,84 @@ export function membershipDescription(
     row.membership ? [row.membership] : [],
   );
   const first = changes[0];
-  if (!first) return { targets: [], text: "", title: "" };
+  if (!first) return { targets: [], parts: [], text: "", title: "" };
   const targets = [...new Set(changes.map((change) => change.target))];
-  const name = (id: string, subject = false) =>
-    id === viewer
-      ? subject
-        ? "You"
-        : "you"
-      : (resolveName?.(id, profiles.get(id)?.name ?? id.slice(0, 10)) ??
-        profiles.get(id)?.name ??
-        id.slice(0, 10));
-  const joinNames = (ids: readonly string[]) =>
-    new Intl.ListFormat(undefined, { type: "conjunction" }).format(
-      ids.map((id) => name(id)),
-    );
+  const name = (id: string, subject = false): MembershipPart => ({
+    id,
+    text:
+      id === viewer
+        ? subject
+          ? "You"
+          : "you"
+        : (resolveName?.(id, profiles.get(id)?.name ?? id.slice(0, 10)) ??
+          profiles.get(id)?.name ??
+          id.slice(0, 10)),
+  });
+  const plain = (text: string): MembershipPart => ({ text });
+  const list = (items: readonly MembershipPart[]) => {
+    let next = 0;
+    return new Intl.ListFormat(undefined, { type: "conjunction" })
+      .formatToParts(items.map((item) => item.text))
+      .map((part) =>
+        part.type === "element"
+          ? (items[next++] ?? plain(part.value))
+          : plain(part.value),
+      );
+  };
   const lead = name(first.target, true);
   const others = targets.slice(1, 3);
   const overflow =
     targets.length > 3
       ? `${targets.length - 3} ${targets.length === 4 ? "other" : "others"}`
       : undefined;
-  const rest = new Intl.ListFormat(undefined, { type: "conjunction" }).format([
+  const rest = list([
     ...others.map((id) => name(id)),
-    ...(overflow ? [overflow] : []),
+    ...(overflow ? [plain(overflow)] : []),
   ]);
-  const subjects = rest ? `${lead}, along with ${rest},` : lead;
-  let text: string;
+  const alongWith = (separator = "") =>
+    rest.length ? [plain(`${separator} along with `), ...rest] : [];
+  let parts: MembershipPart[];
   if (
     first.type === "member_joined" &&
     changes.at(-1)?.type === "member_left"
   ) {
-    text = `${lead} joined and left the channel`;
+    parts = [lead, plain(" joined and left the channel")];
   } else if (first.type === "member_left") {
-    text = `${subjects} left the channel`;
+    parts = [
+      lead,
+      ...(rest.length ? [...alongWith(","), plain(",")] : []),
+      plain(" left the channel"),
+    ];
   } else if (first.type === "member_removed") {
-    text = `${lead} ${first.target === viewer ? "were" : "was"} removed by ${name(first.actor)}${rest ? `, along with ${rest}` : ""}`;
+    parts = [
+      lead,
+      plain(` ${first.target === viewer ? "were" : "was"} removed by `),
+      name(first.actor),
+      ...alongWith(","),
+    ];
   } else {
     const allSelf = changes.every(({ actor, target }) => actor === target);
     const allAdded = changes.every(({ actor, target }) => actor !== target);
     const sameAdder =
       allAdded && changes.every(({ actor }) => actor === first.actor);
     const action = allSelf
-      ? "joined"
+      ? [plain(" joined")]
       : sameAdder
-        ? `${first.target === viewer ? "were added" : "added"} by ${name(first.actor)}`
+        ? [
+            plain(` ${first.target === viewer ? "were added" : "added"} by `),
+            name(first.actor),
+          ]
         : allAdded
-          ? `${first.target === viewer ? "were" : "was"} added`
-          : "arrived";
-    text = `${lead} ${action}${rest ? `${sameAdder ? "," : ""} along with ${rest}` : ""}`;
+          ? [plain(` ${first.target === viewer ? "were" : "was"} added`)]
+          : [plain(" arrived")];
+    parts = [lead, ...action, ...alongWith(sameAdder ? "," : "")];
   }
-  return { targets, text, title: joinNames(targets) };
+  return {
+    targets,
+    parts,
+    text: parts.map((part) => part.text).join(""),
+    title: list(targets.map((id) => name(id)))
+      .map((part) => part.text)
+      .join(""),
+  };
 }

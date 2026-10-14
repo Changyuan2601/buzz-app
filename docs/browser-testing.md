@@ -96,6 +96,19 @@ Results go to ignored `test-results/browser/`: each built-app test writes `evide
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.
+
+On local macOS runs, WebKit traces omit the screenshot filmstrip. macOS
+WindowServer leaks the IOSurfaces that WebKit trace screenshots use (about 55 per
+traced WebKit test), and it crashes and logs the user out near 65,536 surfaces.
+DOM snapshots, logs and failure screenshots are still retained. CI keeps the
+filmstrip. To restore it for one local run:
+
+```sh
+BUZZ_WEBKIT_TRACE_SCREENSHOTS=1 bin/pnpm test:browser --project webkit ...
+```
+
+> **Warning:** this leaks WindowServer surfaces until you log out. Use it only
+> for a single diagnostic run, never in a loop or with `--repeat-each`.
 The one exception is the `chromium-classic-scrollbars` project, whose `evidence.json`,
 failure screenshots and traces land in `test-results/browser-classic-scrollbars/`
 so that its separate invocation cannot clear the measurement evidence.

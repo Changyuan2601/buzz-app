@@ -9,6 +9,10 @@ import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import {
+  RecoveryNotice,
+  useRecoveryShown,
+} from "../../features/relay/RecoveryNotice";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { useMePlacement } from "../../features/sessions/personal";
@@ -57,6 +61,7 @@ function PersonalHistory({
 }) {
   const list = useChannelList(session.channels);
   const placement = useMePlacement(session);
+  const recoveryShown = useRecoveryShown(session.recovery);
   const selected = meSelection(target);
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
@@ -144,25 +149,23 @@ function PersonalHistory({
         )}
       />
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
-      {list.status === "error" && (
-        <div role="alert">
-          <p>{list.error}</p>
-          <Button
-            onClick={() => {
-              session.channels.refreshList?.();
-            }}
-          >
-            Retry
-          </Button>
-        </div>
+      {list.status === "error" && !recoveryShown && (
+        <p role="alert">{list.error}</p>
       )}
-      {placement.status !== "ready" && (
+      {/* Network and relay outages for the channel list and Me placement
+          recover through one automatic owner; its notice is the single Retry.
+          Other failures need the user and keep their own Retry. */}
+      <RecoveryNotice recovery={session.recovery} />
+      {placement.status === "error" && !placement.transient ? (
         <p role="status">
-          {placement.error ?? "Loading Me placement…"}{" "}
+          {placement.error}{" "}
           <Button onClick={() => void session.mePlacement.refresh()}>
             Retry Me
           </Button>
         </p>
+      ) : (
+        placement.status !== "ready" &&
+        !recoveryShown && <p role="status">Loading Me placement…</p>
       )}
       {!conversations.length &&
         list.status === "ready" &&

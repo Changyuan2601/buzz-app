@@ -266,7 +266,7 @@ it("knows the agent's own model once one of its sessions has begun", async () =>
   // Before then nothing says which model it runs, nor what else it could.
   expect(await runtime.models(self)).toEqual({
     current: "",
-    models: [{ id: "", label: "Claude", efforts: EFFORTS }],
+    models: [{ id: "", label: "Claude", efforts: [] }],
   });
   await deliver({ type: "mention", event: mention });
   await flush(10);
@@ -310,6 +310,8 @@ it("still offers a configured model Claude does not list", async () => {
       "Haiku 5.5",
       "Legacy 1",
     ]);
+    // It runs at any effort a listed model has.
+    expect(models[0]?.efforts).toEqual(EFFORTS);
   } finally {
     runtime.dispose();
   }
@@ -480,6 +482,47 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
   expect(first?.killed).toBe(true);
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).toContain(`You are Pollen (pubkey ${self}).`);
+  runtime.dispose();
+});
+
+it("resumes an idle session at a newly saved effort", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (event: typeof root, effort: string) => {
+    const config = { ...DEFAULT_CONFIG, effort };
+    runtime.sync([{ pubkey: self, config } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  };
+  await run(root, "");
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.args).not.toContain("--effort");
+  await run(reply, "low");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toEqual(
+    expect.arrayContaining(["--resume", "--effort", "low"]),
+  );
   runtime.dispose();
 });
 
@@ -1165,6 +1208,18 @@ it("replaces the spare when no agent runs where it was started", async () => {
     expect.arrayContaining(["--model", "sonnet"]),
   );
   expect(claudes()).toHaveLength(2);
+  runtime.sync([
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, model: "sonnet", effort: "low" },
+    } as Agent,
+  ]);
+  await flush(10);
+  const [, sonnet, low] = claudes();
+  expect(sonnet?.killed).toBe(true);
+  expect(low?.options.args).toEqual(
+    expect.arrayContaining(["--model", "sonnet", "--effort", "low"]),
+  );
 });
 
 it("tells the owner, not the asking sibling, when a sibling's turn fails", async () => {

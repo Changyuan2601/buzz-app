@@ -805,6 +805,71 @@ it("filters the completed directory immediately without loading or searching aga
   expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
 });
 
+it("searches again for people added after a completed directory when New message reopens", async () => {
+  const t = setup();
+  const view = t.mount();
+  await screen.findByRole("option", { name: "Person 10" });
+  view.unmount();
+  const requests = t.directMessages.people.mock.calls.length;
+  const colleague = { pubkey: "c".repeat(64), name: "New colleague" };
+  t.directMessages.people.mockImplementation(async (query) => ({
+    people: [...people, colleague].filter((person) =>
+      person.name.toLowerCase().startsWith(query.trim().toLowerCase()),
+    ),
+    hasMore: false,
+  }));
+  vi.useFakeTimers();
+  try {
+    t.mount();
+    fireEvent.change(recipient(), { target: { value: "New colleague" } });
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(screen.getByRole("option", { name: "New colleague" })).toBeVisible();
+    // The reopened list is reused; a completed search is not read again.
+    fireEvent.change(recipient(), { target: { value: "" } });
+    fireEvent.change(recipient(), { target: { value: "New colleague" } });
+    await act(() => vi.advanceTimersByTimeAsync(200));
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(screen.getByRole("option", { name: "New colleague" })).toBeVisible();
+  expect(t.directMessages.people.mock.calls.slice(requests)).toEqual([
+    ["New colleague", 1, expect.any(AbortSignal)],
+  ]);
+});
+
+it("repeats a search completed during an earlier visit while the directory is incomplete", async () => {
+  const t = setup();
+  const source = [...people];
+  t.directMessages.people.mockImplementation(async (query, page) => {
+    if (!query && page === 1)
+      return { people: people.slice(0, 1), hasMore: true };
+    if (!query) return new Promise(() => {});
+    return {
+      people: source.filter((person) => person.name.startsWith(query)),
+      hasMore: false,
+    };
+  });
+  const view = t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  fireEvent.change(recipient(), { target: { value: "Ali" } });
+  await screen.findByText("No matching people.");
+  view.unmount();
+  const requests = t.directMessages.people.mock.calls.length;
+  source.push({ pubkey: "c".repeat(64), name: "Alice" });
+  vi.useFakeTimers();
+  try {
+    t.mount();
+    fireEvent.change(recipient(), { target: { value: "Ali" } });
+    await act(() => vi.advanceTimersByTimeAsync(200));
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(screen.getByRole("option", { name: "Alice" })).toBeVisible();
+  expect(t.directMessages.people.mock.calls.slice(requests)).toEqual([
+    ["Ali", 1, expect.any(AbortSignal)],
+  ]);
+});
+
 it("keeps local matches visible while an incomplete directory searches in the background", async () => {
   const t = setup();
   let release: (value: { people: typeof people; hasMore: boolean }) => void =

@@ -158,9 +158,8 @@ export function WorkspaceSettings({
           canvas,
           type: "template",
           id: recipeId,
-          name: `${target.name.slice(0, 100)} sessions`,
-          description:
-            "Starting workspace and Canvas for new sessions in this section.",
+          name: `${target.name.slice(0, 100)} ${personal ? "chats" : "sessions"}`,
+          description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
         };
         // Validate the complete encrypted recipe budget before publication.
         parseKitRecord(
@@ -196,7 +195,7 @@ export function WorkspaceSettings({
       }}
       preventClose={busy}
       dismissOnOutsideClick
-      title="Session settings"
+      title={personal ? "Project settings" : "Session settings"}
       actions={
         <>
           <Button disabled={busy} onClick={close}>
@@ -264,7 +263,7 @@ export function WorkspaceSettings({
               (lineup.agents.length > 0 || lineup.teamIds.length > 0) && (
                 <p className="text-secondary">
                   The selected template’s agents and teams are also included in
-                  new sessions.
+                  new {personal ? "chats" : "sessions"}.
                 </p>
               )}
             {error && (

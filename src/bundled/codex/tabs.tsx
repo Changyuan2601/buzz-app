@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
@@ -10,7 +11,6 @@ import {
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
-  AgentCreateModelMenuProps,
   AgentCreateProps,
   AgentProviderSnapshot,
   AgentViewProps,
@@ -288,20 +288,55 @@ const modelChange = (model: string, data?: Catalog) => ({
       ?.defaultReasoningEffort ?? "",
 });
 
+function CodexSignIn({
+  login,
+  disabled,
+}: {
+  login: CodexSetup;
+  disabled: boolean;
+}) {
+  const { running, output } = useSyncExternalStore(
+    login.subscribe,
+    login.snapshot,
+  );
+  return (
+    <div className="grid gap-2">
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="prominent"
+          size="sm"
+          disabled={disabled}
+          loading={Boolean(running)}
+          onClick={() => void login.run("login")}
+        >
+          Sign in
+        </Button>
+        {running && (
+          <Button size="sm" onClick={() => void login.cancel()}>
+            Cancel
+          </Button>
+        )}
+      </div>
+      {output && (
+        <pre
+          role="log"
+          aria-label="Sign-in output"
+          className="m-0 max-h-40 max-w-sm overflow-auto whitespace-pre-wrap break-all text-caption"
+        >
+          {output}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 export function createTabs(
   provider: CodexProvider,
   runtime: CodexRuntime,
   spawn: Spawn,
   setup: CodexSetup,
 ) {
-  const createModelLabel = (saved: Config) => {
-    const model = readConfig(saved).model;
-    if (!model) return undefined;
-    return (
-      choices(provider.snapshot().data).find((choice) => choice.id === model)
-        ?.label ?? model
-    );
-  };
+  const login = setup;
 
   function useProvider() {
     const state = useSyncExternalStore(
@@ -314,6 +349,33 @@ export function createTabs(
         void provider.check();
     }, [state.readiness, state.checking]);
     return state;
+  }
+
+  function CreateModel({
+    config,
+    onChange,
+    ...props
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    const { data, checking, error, defaults: providerDefaults } = useProvider();
+    const signedOut = error === SIGN_IN_ERROR;
+    const retry = () => void provider.check();
+    if (signedOut)
+      return <CodexSignIn login={login} disabled={props.disabled} />;
+    return (
+      <CreateModelChoices
+        {...props}
+        models={choices(data)}
+        value={current.model}
+        defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
+        loading={checking}
+        error={error}
+        retry={retry}
+        onChange={(model) =>
+          onChange(readConfig({ ...current, ...modelChange(model, data) }))
+        }
+      />
+    );
   }
 
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
@@ -497,38 +559,11 @@ export function createTabs(
     const current = readConfig(config);
     return (
       <AgentInstructions
+        creation
         value={current.instructions}
         disabled={disabled}
         onChange={(instructions) =>
           onChange(readConfig({ ...current, instructions }))
-        }
-      />
-    );
-  }
-
-  /** Codex's model choices inside the New agent provider submenu. */
-  function CreateModelMenu({
-    config,
-    onChange,
-    disabled,
-    active = true,
-  }: AgentCreateModelMenuProps<Config>) {
-    const current = readConfig(config);
-    const state = useProvider();
-    const { data, checking } = state;
-    return (
-      <ModelPicker
-        presentation="menu"
-        active={active}
-        allowCustomModel={false}
-        models={choices(data)}
-        value={current.model}
-        defaultLabel={providerDefaultLabel(state.defaults.model, data)}
-        defaultDescription="Following the provider's model default"
-        loading={checking}
-        disabled={disabled}
-        onChange={(model) =>
-          onChange(readConfig({ ...current, ...modelChange(model, data) }))
         }
       />
     );
@@ -613,7 +648,9 @@ export function createTabs(
     );
   }
 
-  function Conversations({
+  /** The agent's sessions: the one it was opened from, recent ones, and their
+   * transcripts. */
+  function ActivityTab({
     agent,
     conversation,
   }: {
@@ -720,12 +757,7 @@ export function createTabs(
   }
 
   /** What the agent runs with. Saving applies to the next turn. */
-  function SettingsTab({
-    agent,
-    save,
-    settingsHost,
-    conversation,
-  }: AgentViewProps<Config>) {
+  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
@@ -878,21 +910,15 @@ export function createTabs(
             {saving ? "Saving…" : "Save"}
           </Button>
         </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
       </form>
     );
   }
 
   return {
+    CreateModel,
     Create,
-    CreateModelMenu,
-    createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   };
 }

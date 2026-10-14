@@ -280,16 +280,20 @@ it("offers unread thread navigation and mark-read through the shared activity po
     }),
   );
 });
-it("does not offer a disabled activity panel for typing-only agents", async () => {
+it("opens a typing-only agent's profile activity in its Me conversation", async () => {
   const f = fixture();
   f.typing([{ channelId: id, pubkey: agent }]);
   const user = userEvent.setup();
   screen.getByRole("button", { name: /^Planning/ }).focus();
   await user.keyboard("{Enter}");
-  const popup = screen.getByRole("dialog", { name: "Activity in Planning" });
-  expect(
-    within(popup).queryByRole("button", { name: /View .+ activity/ }),
-  ).toBeNull();
+  let popup = screen.getByRole("dialog", { name: "Activity in Planning" });
+  await user.click(
+    within(popup).getByRole("button", { name: "View Owned Agent activity" }),
+  );
+  expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, id));
+  screen.getByRole("button", { name: /^Planning/ }).focus();
+  await user.keyboard("{Enter}");
+  popup = screen.getByRole("dialog", { name: "Activity in Planning" });
   await user.click(
     within(popup).getByRole("button", {
       name: "Open conversation for Owned Agent in Planning",

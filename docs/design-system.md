@@ -316,7 +316,7 @@ Use the same lightweight container with three compositions:
   rows share the same insets. The default `SettingsGroup` layout separates its
   direct children with inset dividers; sound choices use the same row layout.
   Rows retain 12px vertical padding with 14px labels and 12px helper copy,
-  separated by 2px. Compact Select controls use the shared outlined capsule button.
+  separated by 2px. Compact Select controls use the shared outlined button with control-radius corners.
 - **Forms:** `SettingsGroup layout="form"` with stacked `Field` controls with a trailing, wrapping action row: secondary
   action first, primary Save last, with 12px between controls and 24px above the row.
   Keep validation and save feedback nearby. Preserve each form's draft, pending,

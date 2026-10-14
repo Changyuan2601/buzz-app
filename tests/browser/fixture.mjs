@@ -33,6 +33,9 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  /** The production broker's live setup deadline. It runs in Node, so the
+   * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
+  liveSetupTimeoutMs: [undefined, { option: true }],
   archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
@@ -90,6 +93,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      liveSetupTimeoutMs,
       archiveOnDisk,
       actionProfile,
       agentMessageDeletion,
@@ -204,8 +208,10 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    const meAgentKeys = [];
     const meAgents = [...meAgentNames, ...meOutsideAgentNames].map((name) => {
       const key = generateSecretKey();
+      meAgentKeys.push(key);
       const pubkey = getPublicKey(key);
       servedProfiles.set(
         pubkey,
@@ -2002,6 +2008,7 @@ export const test = base.extend({
                       }),
                   upstreamFetch: relay.fetch,
                   socketFactory: relay.socket,
+                  liveSetupTimeoutMs,
                 });
                 await broker.configureServer(server);
               } else server.middlewares.use(middleware);
@@ -2206,6 +2213,22 @@ export const test = base.extend({
         },
         participants,
         meAgents,
+        meAgentMessage(channelId, content) {
+          const agent = meAgents[0];
+          expect(agent).toBeTruthy();
+          const history = histories.get(`primary/${channelId}`);
+          expect(history).toBeTruthy();
+          const event = sign(
+            9,
+            [["h", channelId]],
+            content,
+            meAgentKeys[0],
+            (history.at(-1)?.created_at ?? 1700000100) + 1,
+          );
+          history.push(event);
+          relay.publish("primary", event);
+          return event;
+        },
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {
@@ -2442,7 +2465,11 @@ export const test = base.extend({
         sidebarFailures.splice(match, 1);
         return true;
       };
-      const githubFailures = [...(report.githubFailures ?? [])];
+      // Edge 403 pages (e.g. a VPN reconnecting) injected on relay reads.
+      const githubFailures = [
+        ...(report.githubFailures ?? []),
+        ...(report.relayFailures ?? []),
+      ];
       const injectedGitHubFailure = (message, index) => {
         if (
           !/^Failed to load resource: the server responded with a status of 403/.test(

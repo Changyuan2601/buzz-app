@@ -1,6 +1,6 @@
 // Owner actions on an agent that every surface showing it offers: the
 // Agents Build view and the profile panel.
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { TrashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -14,10 +14,12 @@ export function AgentDelete({
   agents,
   agent,
   onRemoved,
+  trigger,
 }: {
   agents: Agents;
   agent: Agent;
   onRemoved(): void;
+  trigger?: (open: () => void) => ReactNode;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -36,13 +38,17 @@ export function AgentDelete({
   };
   return (
     <>
-      <Button
-        size="compact"
-        variant="ghost"
-        onClick={() => setConfirming(true)}
-      >
-        <TrashIcon size={14} aria-hidden="true" /> Delete agent
-      </Button>
+      {trigger ? (
+        trigger(() => setConfirming(true))
+      ) : (
+        <Button
+          size="compact"
+          variant="ghost"
+          onClick={() => setConfirming(true)}
+        >
+          <TrashIcon size={14} aria-hidden="true" /> Delete agent
+        </Button>
+      )}
       <Dialog
         open={confirming}
         onOpenChange={setConfirming}

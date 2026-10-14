@@ -1,7 +1,7 @@
+import { profileActivityViewTarget } from "../../features/profiles/target";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import type { Agents } from "../../features/agents/service";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
@@ -757,12 +757,9 @@ function ChannelWorkspace({
     }
     const activityAgent = handoff?.activityAgent.current;
     if (activityAgent && activityAgent.channelId === current?.id) {
-      const target = activityTarget(
-        activityAgent.agent,
-        activityAgent.channelId,
-      );
-      const panel = panels.resolve(target);
-      if (panel) {
+      const target = profileActivityViewTarget(activityAgent.agent);
+      const panel = target && panels.resolve(target);
+      if (target && panel) {
         panelTrigger.current = activityAgent.trigger;
         open({ channelId: activityAgent.channelId, panel, target }, true);
       }
@@ -1201,10 +1198,12 @@ function ChannelWorkspace({
       {!cached && (
         <LiveStatus
           live={queries.live}
+          recovery={queries.recovery}
           channelId={current?.id}
           partialRoster={list.coverage === "partial"}
-          // Retry removes this control; previews have no composer.
-          onRetry={
+          // Recovery removes the focused retry control. Hand focus on
+          // explicitly; previews have no composer, so use their history.
+          onRecovered={
             current
               ? () => {
                   if (current.readOnly && !current.cached) {

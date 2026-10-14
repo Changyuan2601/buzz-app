@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import type {
+  ChannelLauncherProps,
   PanelContext,
   Panels,
   RegisteredPanel,
@@ -237,4 +246,244 @@ it("the current verified read-only preview owns its thread host, but unrelated p
   expect(h.result.current.workspace.hosts).toHaveLength(1);
   h.rerender({ cached: true });
   expect(h.result.current.workspace.hosts).toHaveLength(0);
+});
+
+it("a tab-placed channel launcher opens one tab beside the threads and toggles it", async () => {
+  const user = userEvent.setup();
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: {
+      list: () => ({ channels }),
+      window: () => ({ rows: [{ id: "root", content: "A thread" }] }),
+    },
+  } as unknown as RelaySession;
+  const panel: RegisteredPanel = {
+    id: "work",
+    key: "fixture:work",
+    pluginId: "fixture",
+    revision: "1",
+    title: "Work",
+    channelPlacement: "tab",
+    matches: () => false,
+    channelLauncher: ({ toggle, pressed, context }) => (
+      <button
+        type="button"
+        aria-pressed={pressed}
+        onClick={() => toggle(context.channelId)}
+      >
+        Work
+      </button>
+    ),
+    component: () => null,
+  };
+  const available = [panel];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    resolve: () => undefined,
+  } as unknown as Panels;
+  const snapshot = { status: "ready", session };
+  const relay = { snapshot: () => snapshot } as unknown as RelayData;
+  let workspace!: ReturnType<typeof useConversationTabs>;
+  let state!: ReturnType<typeof useChannelTabState>;
+  function Harness() {
+    state = useChannelTabState(session, "alpha");
+    workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "wss://relay.example:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return <>{workspace.drawer.launchers}</>;
+  }
+  render(<Harness />);
+  act(() => state.openThreadTab("alpha", "root", "root", undefined, "side"));
+  const launcher = screen.getByRole("button", { name: "Work" });
+  expect(launcher).toHaveAttribute("aria-pressed", "false");
+  await user.click(launcher);
+  expect(workspace.items.map((item) => item.label)).toEqual([
+    "A thread",
+    "Work",
+  ]);
+  expect(workspace.selectedTab).toBe(workspace.items[1]?.id);
+  expect(state.paneOpen).toBe(true);
+  expect(launcher).toHaveAttribute("aria-pressed", "true");
+  // The tab gets the full tab context, so the panel can push its own tabs.
+  const work = workspace.items[1];
+  if (!work) throw new Error("no Work tab");
+  const { props } = work.content as {
+    props: { context: PanelContext; channelContext: unknown };
+  };
+  expect(props.channelContext).toMatchObject({ channelId: "alpha" });
+  expect(typeof props.context.push).toBe("function");
+  // Selecting another tab leaves Work open; the launcher reselects it.
+  act(() => workspace.selectPanelTab(workspace.items[0]?.id ?? ""));
+  expect(launcher).toHaveAttribute("aria-pressed", "false");
+  await user.click(launcher);
+  expect(workspace.items).toHaveLength(2);
+  expect(launcher).toHaveAttribute("aria-pressed", "true");
+  await user.click(launcher);
+  expect(workspace.items.map((item) => item.label)).toEqual(["A thread"]);
+  expect(launcher).toHaveAttribute("aria-pressed", "false");
+});
+
+function launcherHarness() {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  let launcher!: ChannelLauncherProps;
+  const panel: RegisteredPanel = {
+    id: "work",
+    key: "fixture:work",
+    pluginId: "fixture",
+    revision: "1",
+    title: "Work",
+    channelPlacement: "tab",
+    matches: (target) => target.startsWith("work:"),
+    channelLauncher: (props) => {
+      launcher = props;
+      return null;
+    },
+    component: () => null,
+  };
+  const available = [panel];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    resolve: (target: string) => (panel.matches(target) ? panel : undefined),
+  } as unknown as Panels;
+  const snapshot = { status: "ready", session };
+  const relay = { snapshot: () => snapshot } as unknown as RelayData;
+  let workspace!: ReturnType<typeof useConversationTabs>;
+  let state!: ReturnType<typeof useChannelTabState>;
+  function Harness() {
+    state = useChannelTabState(session, "alpha");
+    workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "wss://relay.example:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return <>{workspace.drawer.launchers}</>;
+  }
+  render(<Harness />);
+  return {
+    panel,
+    toggle: (target: string) => act(() => launcher.toggle(target)),
+    pressed: () => launcher.pressed,
+    entries: () => state.entries,
+    workspace: () => workspace,
+  };
+}
+
+it("a launcher takes over a tab a link already opened for its target", () => {
+  const h = launcherHarness();
+  act(() => {
+    h.workspace().openConversationLink("alpha", "work:a");
+  });
+  h.toggle("work:a");
+  expect(h.entries()).toHaveLength(1);
+  expect(h.entries()[0]?.channelContext).toMatchObject({ channelId: "alpha" });
+  expect(h.pressed()).toBe(true);
+  h.toggle("work:a");
+  expect(h.entries()).toHaveLength(0);
+});
+
+it.each([
+  [
+    "a tab's link",
+    (h: ReturnType<typeof launcherHarness>) =>
+      h.workspace().openConversationLink("alpha", "work:a", { rootId: "root" }),
+  ],
+  [
+    "the timeline",
+    (h: ReturnType<typeof launcherHarness>) =>
+      h.workspace().open({
+        channelId: "alpha",
+        rootId: "root",
+        panel: h.panel,
+        target: "work:a",
+      }),
+  ],
+])(
+  "a launcher's tab stays retained when %s reopens its target",
+  (_, reopen) => {
+    const h = launcherHarness();
+    h.toggle("work:a");
+    act(() => {
+      reopen(h);
+    });
+    expect(h.entries()).toHaveLength(1);
+    expect(h.entries()[0]?.channelContext).toMatchObject({
+      channelId: "alpha",
+    });
+    expect(h.pressed()).toBe(true);
+    // A later timeline link elsewhere keeps the retained tab.
+    act(() =>
+      h
+        .workspace()
+        .open({ channelId: "alpha", panel: h.panel, target: "work:other" }),
+    );
+    expect(h.entries().map((entry) => entry.target)).toEqual([
+      "work:a",
+      "work:other",
+    ]);
+  },
+);
+
+it("a launcher's tab keeps its channel when another conversation opens its target", () => {
+  const h = launcherHarness();
+  h.toggle("work:a");
+  act(() => {
+    h.workspace().openConversationLink("beta", "work:a", { rootId: "r" });
+  });
+  expect(h.entries()).toHaveLength(1);
+  expect(h.entries()[0]).toMatchObject({
+    channelId: "alpha",
+    channelContext: { channelId: "alpha" },
+  });
+  expect(h.entries()[0]?.rootId).toBeUndefined();
+  expect(h.pressed()).toBe(true);
+  // A later non-append opening keeps the retained tab.
+  act(() => h.workspace().open(undefined));
+  expect(h.entries().map((entry) => entry.target)).toEqual(["work:a"]);
+});
+
+it("a launcher whose target changes replaces its one tab in place", () => {
+  const h = launcherHarness();
+  h.toggle("work:a");
+  act(() => {
+    h.workspace().openConversationLink("alpha", "work:b");
+  });
+  act(() => {
+    h.workspace().openConversationLink("alpha", "work:c");
+  });
+  expect(h.pressed()).toBe(false);
+  h.toggle("work:b");
+  // The link tab for work:b merges into the launcher's tab.
+  expect(h.entries().map((entry) => entry.target)).toEqual([
+    "work:b",
+    "work:c",
+  ]);
+  expect(h.entries()[0]?.channelContext).toMatchObject({ channelId: "alpha" });
+  expect(h.pressed()).toBe(true);
 });

@@ -4,14 +4,16 @@ import type {
   AttachmentRenderer,
   AttachmentRendererProps,
   ContributionReader,
+  TargetOpener,
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
+import { WithTargetOpener } from "./opener";
 
 export function AttachmentView({
   registry,
   fallback,
   ...props
-}: AttachmentRendererProps & {
+}: Omit<AttachmentRendererProps, keyof TargetOpener> & {
   registry: ContributionReader<AttachmentRenderer>;
   fallback: ReactNode;
 }) {
@@ -28,10 +30,14 @@ export function AttachmentView({
     }
   });
   if (!entry) return fallback;
-  const Renderer = entry.component;
   return (
     <ContributionBoundary key={contributionKey(entry)} fallback={fallback}>
-      <Renderer {...props} />
+      <WithTargetOpener
+        component={entry.component}
+        props={props}
+        registry={registry}
+        entry={entry}
+      />
     </ContributionBoundary>
   );
 }

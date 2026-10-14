@@ -11,7 +11,6 @@ import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import type { activityRecords } from "../../features/agents/activity-records";
-import { activityTarget } from "../../features/agents/activity-target";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -92,9 +91,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
     ),
   );
   const visible = entries.filter((entry) =>
-    entry.lifecycle
-      ? canOpen(profileActivityViewTarget(entry.agent) ?? "")
-      : canOpen(activityTarget(entry.agent, channelId)),
+    canOpen(profileActivityViewTarget(entry.agent) ?? ""),
   );
   const shown: Entry[] = visible.map((entry) => {
     const name = names[keys.indexOf(entry.agent)] ?? "Agent";
@@ -292,8 +289,7 @@ function ActivityBubble({
         {expanded && (
           <div className={styles.previews}>
             {entries.map((entry) => {
-              // Both open the agent's profile on its activity: a plugin
-              // agent's own session tab, or the harness Activity tab.
+              // Opens the agent's profile on its Activity tab.
               const target = profileActivityViewTarget(entry.agent);
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)

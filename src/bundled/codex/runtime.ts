@@ -24,6 +24,7 @@ import {
   developerInstructions,
   rootOf,
   sessionName,
+  turnContext,
   turnInput,
   type Conversation,
 } from "./prompt";
@@ -282,6 +283,10 @@ export class CodexRuntime {
     this.views.clear();
     this.stopping.clear();
     this.close();
+  }
+  /** Starts the shared server ahead of the first mention. */
+  warm() {
+    this.open();
   }
   private close() {
     void this.server?.rpc.close();
@@ -982,12 +987,7 @@ export class CodexRuntime {
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: {
-          "buzz.instructions": {
-            kind: "application",
-            value: developerInstructions(agent, settings, request.team, memory),
-          },
-        },
+        additionalContext: turnContext(agent, settings, request.team, memory),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);

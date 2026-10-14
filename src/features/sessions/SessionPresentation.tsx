@@ -25,13 +25,11 @@ export function NewSessionView({
         parentName
           ? `New session in ${parentName}`
           : personal
-            ? "New conversation"
+            ? "New chat"
             : "New session"
       }
     >
-      <SessionHeading
-        channel={{ name: personal ? "New conversation" : "New session" }}
-      >
+      <SessionHeading channel={{ name: personal ? "New chat" : "New session" }}>
         {actions}
       </SessionHeading>
       <div className={styles.start}>

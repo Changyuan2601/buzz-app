@@ -107,6 +107,9 @@ export function AvatarEditor(props: Props) {
     <div
       className={props.inlinePicker ? styles.inlineEditor : undefined}
       data-editing={open || undefined}
+      data-empty-image={
+        props.inlinePicker && props.imageOnly && !preview ? "" : undefined
+      }
     >
       <Popover.Root
         open={open}
@@ -114,7 +117,9 @@ export function AvatarEditor(props: Props) {
           if (!props.inlinePicker || next) setOpen(next);
         }}
       >
-        {props.triggerStyle === "dotted-squircle" ? (
+        {props.inlinePicker &&
+        props.imageOnly &&
+        !preview ? null : props.triggerStyle === "dotted-squircle" ? (
           <Popover.Trigger
             render={
               <button
@@ -387,7 +392,10 @@ function AvatarDraft({
 
   const renderPanel = (tab: string) =>
     tab === "image" ? (
-      <div className={styles.imagePanel}>
+      <div
+        className={styles.imagePanel}
+        data-surface={inlinePicker && imageOnly ? "panel" : undefined}
+      >
         <button
           type="button"
           className={styles.dropzone}
@@ -422,7 +430,10 @@ function AvatarDraft({
           labelVisibility="hidden"
           error={pictureError}
         >
-          <InputGroup leading={<LinkIcon size={18} aria-hidden="true" />}>
+          <InputGroup
+            surface={inlinePicker && imageOnly ? "panel" : "inset"}
+            leading={<LinkIcon size={18} aria-hidden="true" />}
+          >
             <Input
               type="url"
               placeholder="Paste an image URL"

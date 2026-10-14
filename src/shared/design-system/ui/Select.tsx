@@ -34,6 +34,7 @@ export function Select({
   valueTitle,
   leading,
   align = "start",
+  appearance = "outlined",
 }: {
   label: string;
   description?: ReactNode;
@@ -50,6 +51,7 @@ export function Select({
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact";
+  appearance?: "outlined" | "subtle";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -118,7 +120,11 @@ export function Select({
             render={(props) => (
               <Button
                 {...props}
-                variant={variant === "compact" ? "outline" : "ghost"}
+                variant={
+                  variant === "compact" && appearance !== "subtle"
+                    ? "outline"
+                    : "ghost"
+                }
                 size={variant === "compact" ? "sm" : "md"}
               >
                 <span className="buzz-select-value-content">
@@ -145,13 +151,15 @@ export function Select({
                     {valueLabel}
                   </BaseSelect.Value>
                 </span>
-                <BaseSelect.Icon>
-                  <CaretDownIcon
-                    size={14}
-                    className="buzz-dropdown-chevron"
-                    aria-hidden="true"
-                  />
-                </BaseSelect.Icon>
+                {!(variant === "compact" && appearance === "subtle") && (
+                  <BaseSelect.Icon>
+                    <CaretDownIcon
+                      size={14}
+                      className="buzz-dropdown-chevron"
+                      aria-hidden="true"
+                    />
+                  </BaseSelect.Icon>
+                )}
               </Button>
             )}
           />

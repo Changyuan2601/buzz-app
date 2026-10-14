@@ -95,12 +95,14 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
+import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
   ComposerFormat,
 } from "./composer-dom";
+import { TargetOpenerProvider } from "../conversation/opener";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -196,6 +198,9 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
+  /** Me's explicit default recipient. Authored mentions still take precedence. */
+  selectedAgent?: string | undefined;
+  chatPresentation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
@@ -204,7 +209,9 @@ export type MessageComposerProps = {
   onDraftSaved?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
-  onOpenLink?: ((target: string) => boolean) | undefined;
+  onOpenLink?:
+    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
   replyParentId?: string | undefined;
@@ -240,11 +247,13 @@ export function MessageComposer(props: MessageComposerProps) {
   )}`;
   return (
     <TypingPresentation active key={key}>
-      {props.personalConversation ? (
-        <PersonalComposer {...props} />
-      ) : (
-        <Composer {...props} />
-      )}
+      <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
+        {props.personalConversation ? (
+          <PersonalComposer {...props} />
+        ) : (
+          <Composer {...props} />
+        )}
+      </TargetOpenerProvider>
     </TypingPresentation>
   );
 }
@@ -301,6 +310,8 @@ function Composer({
   submission,
   sessionConversation,
   personalConversation = false,
+  selectedAgent,
+  chatPresentation = false,
   activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
@@ -971,10 +982,26 @@ function Composer({
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId &&
     (!personalConversation || session.mePlacement.has(channelId));
-  async function prepareRecipients(explicit: readonly string[]) {
+  async function prepareRecipients(
+    explicit: readonly string[],
+    selected: string | undefined,
+  ) {
     const channel = await session.workSessions.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
+    if (selected) {
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      if (
+        !session.agentChoices
+          .snapshot()
+          .selectable.some((agent) => agent.pubkey === selected)
+      )
+        throw new Error(
+          "The selected assistant is no longer available. Choose another assistant and retry.",
+        );
+    }
     const recipients = personalConversation
       ? [...explicit]
       : [
@@ -1104,11 +1131,17 @@ function Composer({
       }
       requireCompletedSessionStart();
       let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
+      const selected =
+        personalConversation && !captured.recipients.length
+          ? selectedAgent
+          : undefined;
+      let recipients = selected
+        ? [selected]
+        : captured.recipients.map((item) => item.pubkey);
       if (sessionConversation || personalConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
+        recipients = await prepareRecipients(recipients, selected);
       } else if (recipients.length) {
         const channel = session.channels
           .list()
@@ -1166,7 +1199,7 @@ function Composer({
         session.agentChoices.snapshot(),
       );
       const next = followupDraft(
-        rememberAgentsPreference()
+        !personalConversation && rememberAgentsPreference()
           ? captured.recipients.filter(
               (item) =>
                 agents.has(item.pubkey) &&
@@ -1402,6 +1435,7 @@ function Composer({
       <form
         ref={form}
         className={styles.composer}
+        data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
         onKeyDown={(event) => {
@@ -1642,76 +1676,89 @@ function Composer({
           )}
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
-          {active && (
-            <ComposerFormattingTools
-              disabled={editingDisabled}
-              activeFormats={activeFormats}
-              toggleFormat={(format) => input.current?.toggleFormat(format)}
-              editLink={() => {
-                const edit = input.current?.editLink();
-                if (edit) setLinkEdit(edit);
-              }}
-            >
-              {extensions ? (
-                <ComposerTools
-                  registry={extensions.tools}
-                  capture={voice.begin}
-                  renderLeading={renderLeadingTools}
-                  session={session}
-                  scope={scope}
-                  channelId={channelId}
-                  threadRootId={threadRootId}
-                  disabled={editingDisabled}
-                  inviteAgents={agentChoices && !editing.target}
-                  insertText={(text) => insert(text)}
-                  insertMention={insertMention}
-                  insertMentions={insertMentions}
-                  insertResource={insertResource}
-                  focus={() => input.current?.focus()}
-                />
-              ) : (
-                renderLeadingTools(null)
-              )}
-            </ComposerFormattingTools>
-          )}
-          {active && !editing.target && trailingTool}
-          {active &&
-            !editing.target &&
-            !submission &&
-            !!value.recipients.length && (
-              <ComposerModels
-                pubkeys={value.recipients.map((item) => item.pubkey)}
-                value={picks}
+          <div className={styles.composerToolRow}>
+            {active && (
+              <ComposerFormattingTools
                 disabled={editingDisabled}
-                onChange={setPicks}
-              />
+                singleRow={chatPresentation || !!trailingTool}
+                activeFormats={activeFormats}
+                toggleFormat={(format) => input.current?.toggleFormat(format)}
+                editLink={() => {
+                  const edit = input.current?.editLink();
+                  if (edit) setLinkEdit(edit);
+                }}
+              >
+                {extensions ? (
+                  <ComposerTools
+                    registry={extensions.tools}
+                    capture={voice.begin}
+                    renderLeading={renderLeadingTools}
+                    session={session}
+                    scope={scope}
+                    channelId={channelId}
+                    threadRootId={threadRootId}
+                    disabled={editingDisabled}
+                    inviteAgents={agentChoices && !editing.target}
+                    insertText={(text) => insert(text)}
+                    insertMention={insertMention}
+                    insertMentions={insertMentions}
+                    insertResource={insertResource}
+                    focus={() => input.current?.focus()}
+                  />
+                ) : (
+                  renderLeadingTools(null)
+                )}
+              </ComposerFormattingTools>
             )}
-          <IconButton
-            variant={
-              draft.trim() || attachments.items.length ? "primary" : "ghost"
-            }
-            size="toolbar"
-            type="submit"
-            aria-label={editing.target ? "Save changes" : "Send message"}
-            title={editing.target ? "Save changes" : "Send message"}
-            disabled={
-              disabled ||
-              (!editing.target && (!!accepted || conflict || sendPending)) ||
-              (!!editing.target && (editing.locked || editDisabled)) ||
-              admitting ||
-              sending ||
-              submission?.disabled ||
-              (!editing.target && attachments.blocked) ||
-              (!draft.trim() &&
-                !attachments.items.length &&
-                !(
-                  editing.target &&
-                  requestDeletion &&
-                  session.outbox?.supports(5)
-                ))
-            }
-            icon={<ArrowUpIcon size={16} />}
-          />
+            {active &&
+              !editing.target &&
+              !submission &&
+              (!!value.recipients.length || !!selectedAgent) && (
+                <ComposerModels
+                  pubkeys={
+                    value.recipients.length
+                      ? value.recipients.map((item) => item.pubkey)
+                      : selectedAgent
+                        ? [selectedAgent]
+                        : []
+                  }
+                  value={picks}
+                  disabled={editingDisabled}
+                  onChange={setPicks}
+                />
+              )}
+            <IconButton
+              variant={
+                draft.trim() || attachments.items.length ? "primary" : "ghost"
+              }
+              size="toolbar"
+              type="submit"
+              aria-label={editing.target ? "Save changes" : "Send message"}
+              title={editing.target ? "Save changes" : "Send message"}
+              disabled={
+                disabled ||
+                (!editing.target && (!!accepted || conflict || sendPending)) ||
+                (!!editing.target && (editing.locked || editDisabled)) ||
+                admitting ||
+                sending ||
+                submission?.disabled ||
+                (!editing.target && attachments.blocked) ||
+                (!draft.trim() &&
+                  !attachments.items.length &&
+                  !(
+                    editing.target &&
+                    requestDeletion &&
+                    session.outbox?.supports(5)
+                  ))
+              }
+              icon={<ArrowUpIcon size={16} />}
+            />
+          </div>
+          {active && !editing.target && trailingTool && (
+            <div className={styles.composerConversationControls}>
+              {trailingTool}
+            </div>
+          )}
         </div>
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>

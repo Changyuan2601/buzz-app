@@ -19,7 +19,7 @@ import type {
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { Settled, Spawn, ToolServer } from "./claude";
+import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
 import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
 import { Lanes } from "./lanes";
@@ -36,18 +36,25 @@ import {
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { readTranscript, type Conversation } from "./transcript";
 
-/** What a session can switch to between turns. Claude runs `max` as
- * `xhigh` in a stream-json session, so it is not offered. */
-const EFFORTS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra high" },
-];
+/** The effort levels Claude lists, which a session can switch to between
+ * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
+ * offered. */
+export const effortChoices = (levels: readonly string[]): Effort[] =>
+  [...new Set(levels)]
+    .filter((id) => id !== "max")
+    .map((id) => ({ id, label: effortLabel(id) }));
+export const effortLabel = (id: string) =>
+  id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+
+/** The effort levels a listed model takes. */
+export const effortLevels = (model: ClaudeModel) =>
+  model.supportsEffort === false ? [] : (model.supportedEffortLevels ?? []);
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude's own default. */
   model: string;
+  /** An effort level the model lists; empty uses Claude's own default. */
+  effort: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
@@ -56,6 +63,7 @@ export type Config = Readonly<{
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
+  effort: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
@@ -102,10 +110,11 @@ type Entry = {
   >;
 };
 
-/** Where an agent's processes run, and with which model. */
-const where = ({ workspace, model }: Config) => ({
+/** Where an agent's processes run, and with which model and effort. */
+const where = ({ workspace, model, effort }: Config) => ({
   cwd: workspace,
   ...(model.trim() ? { model: model.trim() } : {}),
+  ...(effort ? { effort } : {}),
 });
 
 export class ClaudeRuntime {
@@ -194,40 +203,35 @@ export class ClaudeRuntime {
     const own = configured || reported || "";
     const offered = listed.filter((model) => model.value !== "default");
     const models = offered.map((model) => {
-      const efforts =
-        model.supportsEffort === false
-          ? []
-          : EFFORTS.filter(
-              (level) =>
-                !model.supportedEffortLevels ||
-                model.supportedEffortLevels.includes(level.id),
-            );
+      const offeredEfforts = effortChoices(effortLevels(model));
       return {
         id: model.value,
         label: modelName(model.resolvedModel ?? model.value),
-        efforts,
-        ...resting(efforts),
+        efforts: offeredEfforts,
+        ...resting(offeredEfforts),
       };
     });
     const current =
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
       )?.value ?? own;
-    // An own model Claude does not list is still the one it runs.
-    return models.some((model) => model.id === current)
-      ? { current, models }
-      : {
-          current,
-          models: [
-            {
-              id: current,
-              label: current ? modelName(current) : "Claude",
-              efforts: EFFORTS,
-              ...resting(EFFORTS),
-            },
-            ...models,
-          ],
-        };
+    if (models.some((model) => model.id === current))
+      return { current, models };
+    // An own model Claude does not list is still the one it runs, at any
+    // effort a listed model has.
+    const ownEfforts = effortChoices(offered.flatMap(effortLevels));
+    return {
+      current,
+      models: [
+        {
+          id: current,
+          label: current ? modelName(current) : "Claude",
+          efforts: ownEfforts,
+          ...resting(ownEfforts),
+        },
+        ...models,
+      ],
+    };
   }
 
   /** Conversations each agent has running, for its status view. */
@@ -712,6 +716,7 @@ export class ClaudeRuntime {
       fingerprint: () =>
         JSON.stringify([
           entry.config.model,
+          entry.config.effort,
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,

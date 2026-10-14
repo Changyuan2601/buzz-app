@@ -512,7 +512,8 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-@media (max-width: 62.5rem) {
+/* Match the shell's physical navigation breakpoint, regardless of interface size. */
+@media (max-width: 650px) {
   .board,
   .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
@@ -532,7 +533,7 @@
     box-shadow: var(--elevation-dock);
   }
 }
-/* A widened persistent sidebar can leave less room than viewport width implies. */
+/* Otherwise use available workspace width, including sidebar and interface sizing. */
 @container (max-width: 40.6875rem) {
   .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);

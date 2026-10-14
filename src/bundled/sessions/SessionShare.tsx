@@ -851,7 +851,9 @@ export function SessionShare({
           {directShare && (
             <p>
               Move this conversation to Messages with its full history, Canvas
-              and existing agents. No new conversation is created.
+              and existing agents. No new conversation is created. Later agent
+              conversations use Messages threads; the private provider session
+              from Me does not transfer.
             </p>
           )}
           {directShare &&

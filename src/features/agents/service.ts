@@ -153,25 +153,18 @@ export type AgentViewProps<Config = unknown> = {
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
+  /** Model fields may use the compact card treatment in the library. */
+  modelAppearance?: "subtle";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
 };
-export type AgentCreateModelMenuProps<Config = unknown> =
-  AgentCreateProps<Config> & {
-    /** Whether this provider is the create form's current selection. */
-    active?: boolean;
-    /** Opens Create's host-owned model-ID dialog after its menu closes. */
-    requestCustomModel(
-      initialValue: string,
-      onChange: (model: string) => void,
-    ): void;
-  };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
   title: string;
-  /** Lets the Agents build view place host-owned Type controls in this tab. */
-  role?: "settings";
+  /** `settings` lets the Agents build view place host-owned Type controls in
+   * this tab; `activity` makes it the agent's Activity tab in its profile. */
+  role?: "settings" | "activity";
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
@@ -355,10 +348,8 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
-  /** Model rows contributed to this type's submenu in the New agent dialog. */
-  CreateModelMenu?: ComponentType<AgentCreateModelMenuProps<Config>>;
-  /** Non-default model detail appended to this type's New agent trigger. */
-  createModelLabel?(config: Config): string | undefined;
+  /** Compact model field for creation and library cards; the type owns discovery and configuration. */
+  CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;
