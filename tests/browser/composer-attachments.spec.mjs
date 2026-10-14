@@ -1031,7 +1031,9 @@ test("local previews stay interactive during eager upload and removal collapses 
     await clipRemove.focus();
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "1");
     await photoRemove.click();
-    await form.getByRole("button", { name: "Remove clip.mp4" }).click();
+    await expect(photoRemove).toHaveCount(0);
+    await clipRemove.click();
+    await expect(clipRemove).toHaveCount(0);
     await expect(form.getByRole("region", { name: "Attachments" })).toHaveCount(
       0,
     );
