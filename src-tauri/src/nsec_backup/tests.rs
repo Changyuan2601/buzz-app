@@ -1,6 +1,4 @@
 use super::*;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicBool, Ordering},
@@ -20,6 +18,11 @@ fn pubkey(secret: [u8; 32]) -> String {
     .0
     .to_string()
 }
+fn recovery(keys: &[[u8; 32]], failed: usize) -> serde_json::Value {
+    serde_json::json!({"backups":keys.iter().map(|key| serde_json::json!({
+        "backup_id":uuid::Uuid::new_v4().to_string(), "nostr_pubkey":pubkey(*key), "secret_key":URL_SAFE_NO_PAD.encode(key)
+    })).collect::<Vec<_>>(), "failed_backup_ids":(0..failed).map(|_|uuid::Uuid::new_v4().to_string()).collect::<Vec<_>>()})
+}
 struct FixtureState {
     mapping: Option<String>,
     mapping_status: u16,
@@ -29,6 +32,8 @@ struct FixtureState {
     receipt_stored: bool,
     receipt_matches: bool,
     upload_status: u16,
+    recovery_status: u16,
+    recovery: serde_json::Value,
     requests: HashMap<String, usize>,
     uploads: Vec<Vec<u8>>,
     rows: HashMap<String, Vec<u8>>,
@@ -60,6 +65,8 @@ impl Service {
             receipt_stored: true,
             receipt_matches: true,
             upload_status: 200,
+            recovery_status: 200,
+            recovery: recovery(&[[1; 32]], 0),
             requests: HashMap::new(),
             uploads: Vec::new(),
             rows: HashMap::new(),
@@ -111,7 +118,7 @@ impl Service {
     }
     fn session(&self) -> Session {
         Session {
-            source: Source::Hosted,
+            source: Some(Source::Hosted),
             credential: Zeroizing::new("synthetic-cli-credential".into()),
         }
     }
@@ -173,6 +180,7 @@ async fn serve(
         let mut state = shared.lock().unwrap();
         *state.requests.entry(path.clone()).or_default() += 1;
         match path.as_str() {
+            "/v1/auth/login/exchange" => (200, serde_json::json!({"session_credential":"synthetic-cli-credential"})),
             "/v1/auth/me" => (200, serde_json::json!({"subject":state.subject,"expires_at":"2999-01-01T00:00:00Z"})),
             "/v1/buzz/nostr-identities/current" => (state.mapping_status,state.mapping_body.clone().unwrap_or_else(||serde_json::json!({"correlation_id":"synthetic-correlation","identity":state.mapping.as_ref().map(|key|serde_json::json!({"pubkey_hex":key}))}))),
             "/v1/buzz/nsec-backups/enrollment" => {
@@ -190,10 +198,12 @@ async fn serve(
                 state.uploads.push(body);
                 (state.upload_status,serde_json::json!({"backup_id":if state.receipt_matches { id } else { uuid::Uuid::new_v4().to_string() },"stored":state.receipt_stored}))
             },
+            "/v1/buzz/nsec-backups/recovery" => (state.recovery_status,state.recovery.clone()),
             _ => panic!("unexpected synthetic route {path}"),
         }
     };
-    if path == "/v1/buzz/nsec-backups" && pause.load(Ordering::SeqCst)
+    if (path == "/v1/buzz/nsec-backups" || path == "/v1/buzz/nsec-backups/recovery")
+        && pause.load(Ordering::SeqCst)
         || path == "/v1/buzz/nostr-identities/current" && pause_current.load(Ordering::SeqCst)
     {
         started.notify_one();
@@ -402,6 +412,184 @@ async fn competing_workers_and_signout_keep_an_admitted_upload_pending() {
     assert_eq!(state.rows.len(), 1);
 }
 
+#[test]
+fn recovery_validates_scalars_and_metadata_and_deduplicates_public_choices() {
+    let mut value = recovery(&[[1; 32], [2; 32], [1; 32]], 2);
+    value["backups"].as_array_mut().unwrap().push(serde_json::json!({"backup_id":uuid::Uuid::new_v4().to_string(),"nostr_pubkey":pubkey([3;32]),"secret_key":URL_SAFE_NO_PAD.encode([1;32])}));
+    value["backups"].as_array_mut().unwrap().push(serde_json::json!({"backup_id":uuid::Uuid::new_v4().to_string(),"nostr_pubkey":pubkey([1;32]),"secret_key":URL_SAFE_NO_PAD.encode([0;32])}));
+    let (keys, failed) = candidates(serde_json::from_value(value).unwrap());
+    assert_eq!(
+        keys.iter()
+            .map(|key| key.pubkey.clone())
+            .collect::<Vec<_>>(),
+        vec![pubkey([1; 32]), pubkey([2; 32])]
+    );
+    assert_ne!(keys[0].handle, keys[1].handle);
+    assert_eq!(failed, 4);
+}
+
+async fn recover_with(service: &Service, host: &NsecBackupHost) -> Result<RestoreResult> {
+    let callback = OAuthCallbackHost::default();
+    let authorization = Arc::new(Mutex::new(String::new()));
+    let capture = authorization.clone();
+    let oauth = callback
+        .begin(
+            OAuthRequest {
+                authorization_url: "https://signin.example/login".into(),
+                callback_path: "/synthetic".into(),
+                use_state: Some(true),
+            },
+            move |url| {
+                *capture.lock().unwrap() = url.into();
+                Ok(())
+            },
+        )
+        .unwrap();
+    let callback_url = oauth.callback_url.clone();
+    let state = url::Url::parse(&authorization.lock().unwrap())
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .to_string();
+    let id = "synthetic-attempt";
+    let (_send, receive) = oneshot::channel();
+    host.state.lock().unwrap().restore = Some(Restore {
+        id: id.into(),
+        admission: Arc::new(Mutex::new(true)),
+        callback: callback.clone(),
+        callback_id: oauth.id.clone(),
+        task: tauri::async_runtime::spawn(std::future::pending()),
+        result: Some(receive),
+        candidates: Vec::new(),
+        current: None,
+        credential: None,
+        subject: None,
+        installing: false,
+    });
+    let task_host = host.clone();
+    let task = tokio::spawn(async move {
+        task_host
+            .recover(
+                0,
+                id,
+                callback,
+                oauth.id,
+                callback_url,
+                Zeroizing::new("synthetic-verifier".into()),
+            )
+            .await
+    });
+    let callback_url = url::Url::parse(&oauth.callback_url).unwrap();
+    let authority = format!("127.0.0.1:{}", callback_url.port().unwrap());
+    let mut stream = TcpStream::connect(&authority).await.unwrap();
+    stream.write_all(format!("GET /synthetic?state={state}&code=synthetic-code HTTP/1.1\r\nHost: {authority}\r\n\r\n").as_bytes()).await.unwrap();
+    let result = task.await.unwrap();
+    // Keep the service borrowed through completion; no OS credential store is involved.
+    assert_eq!(
+        service.state.lock().unwrap().requests.get("/v1/auth/me"),
+        Some(&1)
+    );
+    result
+}
+
+#[tokio::test]
+async fn native_recovery_preserves_empty_partial_all_failed_and_unavailable_distinctions() {
+    for (keys, failed, status) in [
+        (vec![], 0, 200),
+        (vec![], 2, 200),
+        (vec![[1; 32], [2; 32]], 1, 200),
+        (vec![], 0, 404),
+    ] {
+        let service = Service::new().await;
+        let directory = tempfile::tempdir().unwrap();
+        let host = service.host(directory.path());
+        service.state.lock().unwrap().recovery = recovery(&keys, failed);
+        service.state.lock().unwrap().recovery_status = status;
+        let result = recover_with(&service, &host).await;
+        if status == 404 {
+            assert_eq!(result.err().as_deref(), Some(UNAVAILABLE));
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result.candidates.len(), keys.len());
+            assert_eq!(result.failed_count, failed);
+            assert_eq!(result.current_pubkey, Some(pubkey([1; 32])));
+        }
+        host.cancel("synthetic-attempt");
+        host.cancel("synthetic-attempt");
+    }
+}
+
+#[tokio::test]
+async fn mapping_failure_never_becomes_a_missing_binding() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    service.state.lock().unwrap().mapping_status = 404;
+    let result = recover_with(&service, &service.host(directory.path())).await;
+    assert_eq!(result.err().as_deref(), Some(RETRY));
+    assert!(!service
+        .state
+        .lock()
+        .unwrap()
+        .requests
+        .contains_key("/v1/buzz/nsec-backups/recovery"));
+}
+
+#[tokio::test]
+async fn recovered_completion_survives_restart_and_does_not_backup_again_after_binding() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let host = service.host(directory.path());
+    let config = host.config.as_ref().as_ref().unwrap();
+    let recovered_id = uuid::Uuid::new_v4().to_string();
+    persistence::remember_restored(
+        directory.path(),
+        config,
+        "synthetic-account",
+        &pubkey([1; 32]),
+        &recovered_id,
+    )
+    .unwrap();
+    service.state.lock().unwrap().mapping = Some(pubkey([2; 32]));
+    assert!(service
+        .host(directory.path())
+        .backup(&IdentityHost::fixture(), &service.session(), 0)
+        .await
+        .is_err());
+    service.state.lock().unwrap().mapping = Some(pubkey([1; 32]));
+    service
+        .host(directory.path())
+        .backup(&IdentityHost::fixture(), &service.session(), 0)
+        .await
+        .unwrap();
+    assert!(service.state.lock().unwrap().uploads.is_empty());
+    assert_eq!(
+        persistence::LockedRecord::open(
+            directory.path(),
+            config,
+            "synthetic-account",
+            &pubkey([1; 32])
+        )
+        .unwrap()
+        .read()
+        .unwrap()
+        .unwrap()
+        .backup_id,
+        recovered_id
+    );
+    assert!(persistence::LockedRecord::open(
+        directory.path(),
+        config,
+        "other-account",
+        &pubkey([1; 32])
+    )
+    .unwrap()
+    .read()
+    .unwrap()
+    .is_none());
+}
+
 #[tokio::test]
 async fn known_missing_mapping_accepts_omitted_identity_but_malformed_success_is_retryable() {
     for response in [
@@ -420,6 +608,24 @@ async fn known_missing_mapping_accepts_omitted_identity_but_malformed_success_is
             assert!(result.is_err());
         }
     }
+}
+
+#[tokio::test]
+async fn canceled_recovery_drops_candidates_and_a_late_response_cannot_publish_them() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let host = service.host(directory.path());
+    service.pause_upload.store(true, Ordering::SeqCst);
+    let recovering = recover_with(&service, &host);
+    tokio::pin!(recovering);
+    tokio::select! {
+        _ = service.upload_started.notified() => {},
+        _ = &mut recovering => panic!("recovery completed before the fixture released it"),
+    }
+    host.cancel("synthetic-attempt");
+    service.release_upload.add_permits(1);
+    assert_eq!(recovering.await.err().as_deref(), Some(CANCELED));
+    assert!(host.state.lock().unwrap().restore.is_none());
 }
 
 #[tokio::test]
@@ -490,6 +696,14 @@ fn source_generations_and_teardown_fence_retired_work_without_another_sources_lo
     )
     .unwrap();
     let epoch = host.state.lock().unwrap().epoch;
+    // An allowed caller's logout cannot retire a separately owned native recovery session.
+    host.state.lock().unwrap().session = Some(Session {
+        source: None,
+        credential: Zeroizing::new("synthetic-native-session".into()),
+    });
+    host.session(Source::Hosted, 6, None, IdentityHost::fixture())
+        .unwrap();
+    assert!(host.valid(epoch).is_ok());
     host.document_load();
     assert!(host.valid(epoch).is_err());
     assert!(host.state.lock().unwrap().session.is_none());
@@ -509,4 +723,172 @@ async fn finish_background(host: &NsecBackupHost) {
     if let Some(worker) = worker {
         worker.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn explicit_current_and_historical_install_commit_selected_key_and_durable_completion() {
+    for selected in [[1; 32], [2; 32]] {
+        let service = Service::new().await;
+        service.state.lock().unwrap().recovery = recovery(&[[2; 32], [1; 32], [1; 32]], 0);
+        let directory = tempfile::tempdir().unwrap();
+        let host = service.host(directory.path());
+        let identity = crate::identity::tests::missing_fixture();
+        let recovered = recover_with(&service, &host).await.unwrap();
+        let chosen = recovered
+            .candidates
+            .iter()
+            .find(|key| key.pubkey == pubkey(selected))
+            .unwrap();
+        assert_eq!(
+            host.install(identity.clone(), "synthetic-attempt", &chosen.handle)
+                .await
+                .unwrap(),
+            pubkey(selected)
+        );
+        assert_eq!(identity.viewer().await.unwrap(), pubkey(selected));
+        assert_eq!(
+            host.wait("synthetic-attempt").await.err().as_deref(),
+            Some(CANCELED)
+        );
+        finish_background(&host).await;
+        let config = host.config.as_ref().as_ref().unwrap();
+        let record = persistence::LockedRecord::open(
+            directory.path(),
+            config,
+            "synthetic-account",
+            &pubkey(selected),
+        )
+        .unwrap()
+        .read()
+        .unwrap()
+        .unwrap();
+        assert!(record.envelope.is_none());
+        assert!(service.state.lock().unwrap().uploads.is_empty());
+        assert_eq!(service.state.lock().unwrap().mapping, Some(pubkey([1; 32])));
+    }
+}
+
+#[tokio::test]
+async fn install_mapping_change_leaves_candidate_retryable_without_key_adoption() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("records");
+    let host = service.host(&root);
+    let identity = crate::identity::tests::missing_fixture();
+    let recovered = recover_with(&service, &host).await.unwrap();
+    let handle = &recovered.candidates[0].handle;
+    service.state.lock().unwrap().mapping = Some(pubkey([2; 32]));
+    assert!(host
+        .install(identity.clone(), "synthetic-attempt", handle)
+        .await
+        .is_err());
+    identity.require_missing().await.unwrap();
+    service.state.lock().unwrap().mapping = Some(pubkey([1; 32]));
+    assert_eq!(
+        host.install(identity.clone(), "synthetic-attempt", handle)
+            .await
+            .unwrap(),
+        pubkey([1; 32])
+    );
+    finish_background(&host).await;
+    assert_eq!(identity.viewer().await.unwrap(), pubkey([1; 32]));
+}
+
+#[tokio::test]
+async fn completion_bookkeeping_failure_does_not_block_selected_secure_store_installation() {
+    for corrupt_json in [false, true] {
+        let service = Service::new().await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("records");
+        let host = service.host(&root);
+        let identity = crate::identity::tests::missing_fixture();
+        let recovered = recover_with(&service, &host).await.unwrap();
+        if corrupt_json {
+            let _slot = persistence::LockedRecord::open(
+                &root,
+                host.config.as_ref().as_ref().unwrap(),
+                "synthetic-account",
+                &pubkey([1; 32]),
+            )
+            .unwrap();
+            let path = std::fs::read_dir(&root)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path()
+                .with_extension("json");
+            std::fs::write(path, b"synthetic corrupt JSON").unwrap();
+        } else {
+            std::fs::write(&root, b"synthetic unavailable backup directory").unwrap();
+        }
+        assert_eq!(
+            host.install(
+                identity.clone(),
+                "synthetic-attempt",
+                &recovered.candidates[0].handle
+            )
+            .await
+            .unwrap(),
+            pubkey([1; 32])
+        );
+        finish_background(&host).await;
+        assert_eq!(identity.viewer().await.unwrap(), pubkey([1; 32]));
+        assert!(service.state.lock().unwrap().uploads.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn secure_store_write_failure_keeps_native_candidate_for_retry_after_access_recovers() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let host = service.host(directory.path());
+    let (identity, allow_writes) = crate::identity::tests::write_denied_fixture();
+    let recovered = recover_with(&service, &host).await.unwrap();
+    let handle = &recovered.candidates[0].handle;
+    assert!(host
+        .install(identity.clone(), "synthetic-attempt", handle)
+        .await
+        .is_err());
+    identity.require_missing().await.unwrap();
+    allow_writes();
+    assert_eq!(
+        host.install(identity.clone(), "synthetic-attempt", handle)
+            .await
+            .unwrap(),
+        pubkey([1; 32])
+    );
+    finish_background(&host).await;
+    assert_eq!(identity.viewer().await.unwrap(), pubkey([1; 32]));
+}
+
+#[tokio::test]
+async fn cancel_during_install_mapping_wait_fences_a_late_response_and_invalidates_handle() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let host = service.host(directory.path());
+    let identity = crate::identity::tests::missing_fixture();
+    let recovered = recover_with(&service, &host).await.unwrap();
+    let handle = recovered.candidates[0].handle.clone();
+    service.pause_current.store(true, Ordering::SeqCst);
+    let task_host = host.clone();
+    let task_identity = identity.clone();
+    let task_handle = handle.clone();
+    let installing = tokio::spawn(async move {
+        task_host
+            .install(task_identity, "synthetic-attempt", &task_handle)
+            .await
+    });
+    service.upload_started.notified().await;
+    host.cancel("synthetic-attempt");
+    service.release_upload.add_permits(1);
+    assert_eq!(installing.await.unwrap().err().as_deref(), Some(CANCELED));
+    identity.require_missing().await.unwrap();
+    assert_eq!(
+        host.install(identity, "synthetic-attempt", &handle)
+            .await
+            .err()
+            .as_deref(),
+        Some(CANCELED)
+    );
 }

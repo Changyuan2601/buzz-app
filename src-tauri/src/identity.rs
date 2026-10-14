@@ -322,6 +322,24 @@ impl Identity {
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
         Ok(viewer)
     }
+    fn require_missing(&mut self) -> Result<()> {
+        if self.restore()?.is_some() || self.store.read()?.is_some() {
+            return Err("An identity is already saved; nothing was overwritten".into());
+        }
+        Ok(())
+    }
+    fn install_recovered(&mut self, secret: Zeroizing<[u8; 32]>, expected: &str) -> Result<String> {
+        self.require_missing()?;
+        let key = Key(secret);
+        let viewer = key.viewer()?;
+        if viewer != expected {
+            return Err("The recovered identity could not be verified".into());
+        }
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.store.add(nsec.as_bytes())?;
+        self.state = State::Ready(key);
+        Ok(viewer)
+    }
     fn close(&mut self) {
         self.state = State::Closed;
     }
@@ -616,6 +634,27 @@ impl IdentityHost {
             identity
                 .restore()?
                 .ok_or_else(|| "Set up your identity first".into())
+        })
+        .await
+    }
+
+    pub(crate) async fn require_missing(&self) -> Result<()> {
+        with_identity(self.clone(), |identity| identity.require_missing()).await
+    }
+
+    pub(crate) async fn install_recovered(
+        &self,
+        secret: Zeroizing<[u8; 32]>,
+        expected: String,
+        admission: Arc<Mutex<bool>>,
+    ) -> Result<String> {
+        with_identity(self.clone(), move |identity| {
+            // Keep cancellation serialized with the final create-only storage write.
+            let admitted = admission.lock().map_err(|_| "Restore is unavailable")?;
+            if !*admitted {
+                return Err("Restore was canceled. Try again.".into());
+            }
+            identity.install_recovered(secret, &expected)
         })
         .await
     }
@@ -1060,7 +1099,7 @@ pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<Str
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 impl IdentityHost {
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.

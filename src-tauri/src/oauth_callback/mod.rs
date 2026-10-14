@@ -2,7 +2,10 @@
 //! RFC 8252 §§7.3, 8.3, 8.4, 8.9; RFC 6749 §§4.1.2, 4.1.2.1; RFC 9700 §2.1.
 //! See this folder's README.md for the command contract, ownership, and limits.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tauri_plugin_opener::OpenerExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -14,19 +17,19 @@ use tokio::{
 #[derive(Debug, PartialEq, serde::Serialize)]
 pub(crate) struct OAuthCallback {
     // Preserve ordering and duplicates so the plugin can validate known parameters.
-    parameters: Vec<(String, String)>,
+    pub(crate) parameters: Vec<(String, String)>,
 }
 #[derive(Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OAuthAttempt {
-    id: String,
+    pub(crate) id: String,
     // Reuse this exact redirect_uri in token exchange (RFC 6749 §4.1.3).
-    callback_url: String,
+    pub(crate) callback_url: String,
 }
-struct OAuthRequest {
-    authorization_url: String,
-    callback_path: String,
-    use_state: Option<bool>,
+pub(crate) struct OAuthRequest {
+    pub(crate) authorization_url: String,
+    pub(crate) callback_path: String,
+    pub(crate) use_state: Option<bool>,
 }
 type CallbackResult = Result<OAuthCallback, String>;
 struct Attempt {
@@ -39,8 +42,8 @@ impl Drop for Attempt {
         self.task.abort();
     }
 }
-#[derive(Default)]
-pub(crate) struct OAuthCallbackHost(Mutex<Option<Attempt>>);
+#[derive(Clone, Default)]
+pub(crate) struct OAuthCallbackHost(Arc<Mutex<Option<Attempt>>>);
 
 impl OAuthCallbackHost {
     pub(crate) fn document_load(
@@ -55,7 +58,7 @@ impl OAuthCallbackHost {
         Ok(())
     }
 
-    fn begin(
+    pub(crate) fn begin(
         &self,
         request: OAuthRequest,
         open: impl FnOnce(&str) -> Result<(), String>,
@@ -148,7 +151,7 @@ impl OAuthCallbackHost {
         })
     }
 
-    async fn wait(&self, id: &str) -> CallbackResult {
+    pub(crate) async fn wait(&self, id: &str) -> CallbackResult {
         let receiver = {
             let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
             current
@@ -164,7 +167,7 @@ impl OAuthCallbackHost {
         result
     }
 
-    fn cancel(&self, id: &str) -> Result<(), String> {
+    pub(crate) fn cancel(&self, id: &str) -> Result<(), String> {
         let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
         if current.as_ref().is_some_and(|attempt| attempt.id == id) {
             *current = None;

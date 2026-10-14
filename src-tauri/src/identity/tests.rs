@@ -518,3 +518,84 @@ async fn closing_refuses_every_key_operation_including_a_sign_started_before_it(
         .await
         .is_err());
 }
+
+#[test]
+fn native_recovery_install_is_create_only_and_failed_writes_keep_candidates_unadopted() {
+    let store = Arc::new(Memory::default());
+    let mut owner = identity(&store);
+    let public = fixture().viewer().unwrap();
+    *store.write_denied.lock().unwrap() = true;
+    assert!(owner
+        .install_recovered(Zeroizing::new([1; 32]), &public)
+        .is_err());
+    assert!(matches!(owner.state, State::Missing));
+    assert!(store.saved.lock().unwrap().is_none());
+    *store.write_denied.lock().unwrap() = false;
+    assert_eq!(
+        owner
+            .install_recovered(Zeroizing::new([1; 32]), &public)
+            .unwrap(),
+        public
+    );
+    assert!(owner
+        .install_recovered(Zeroizing::new([2; 32]), &public)
+        .is_err());
+    assert_eq!(identity(&store).restore().unwrap(), Some(public));
+}
+
+#[test]
+fn native_recovery_rechecks_absence_and_never_adopts_mismatched_or_invalid_scalars() {
+    let store = Arc::new(Memory::default());
+    let mut owner = identity(&store);
+    let public = fixture().viewer().unwrap();
+    owner.require_missing().unwrap();
+    for secret in [[0; 32], [2; 32]] {
+        assert!(owner
+            .install_recovered(Zeroizing::new(secret), &public)
+            .is_err());
+        assert!(store.saved.lock().unwrap().is_none());
+    }
+    *store.denied.lock().unwrap() = true;
+    assert!(owner.require_missing().is_err());
+    assert!(owner
+        .install_recovered(Zeroizing::new([1; 32]), &public)
+        .is_err());
+    *store.denied.lock().unwrap() = false;
+    let winner = identity(&store).save(None).unwrap();
+    assert!(owner.require_missing().is_err());
+    assert!(owner
+        .install_recovered(Zeroizing::new([1; 32]), &public)
+        .is_err());
+    assert_eq!(identity(&store).restore().unwrap(), Some(winner));
+}
+
+#[tokio::test]
+async fn canceled_recovery_admission_cannot_commit_a_key_and_closed_identity_refuses_install() {
+    let store = Arc::new(Memory::default());
+    let host = IdentityHost(Arc::new(Mutex::new(identity(&store))));
+    let public = fixture().viewer().unwrap();
+    let admission = Arc::new(Mutex::new(false));
+    assert!(host
+        .install_recovered(Zeroizing::new([1; 32]), public.clone(), admission)
+        .await
+        .is_err());
+    assert!(store.saved.lock().unwrap().is_none());
+    host.close();
+    assert!(host
+        .install_recovered(Zeroizing::new([1; 32]), public, Arc::new(Mutex::new(true)))
+        .await
+        .is_err());
+    assert!(store.saved.lock().unwrap().is_none());
+}
+
+// Shared synthetic secure storage for end-to-end native recovery orchestration tests.
+pub(crate) fn missing_fixture() -> IdentityHost {
+    let store = Arc::new(Memory::default());
+    IdentityHost(Arc::new(Mutex::new(identity(&store))))
+}
+pub(crate) fn write_denied_fixture() -> (IdentityHost, impl Fn()) {
+    let store = Arc::new(Memory::default());
+    *store.write_denied.lock().unwrap() = true;
+    let host = IdentityHost(Arc::new(Mutex::new(identity(&store))));
+    (host, move || *store.write_denied.lock().unwrap() = false)
+}

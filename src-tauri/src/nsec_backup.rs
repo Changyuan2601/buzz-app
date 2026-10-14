@@ -1,18 +1,27 @@
-//! Purpose-bound native backup. No key crosses IPC.
+//! Purpose-bound native backup and optional recovery. No key or recovery credential crosses IPC.
 mod crypto;
 mod persistence;
 pub(crate) use persistence::root as storage_root;
 
-use crate::{identity::IdentityHost, nsec_backup_config::Config};
-use buzz_nsec_backup::Client;
-use secp256k1::XOnlyPublicKey;
-use serde::Deserialize;
+use crate::{
+    identity::IdentityHost,
+    nsec_backup_config::Config,
+    oauth_callback::{OAuthCallbackHost, OAuthRequest},
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use buzz_nsec_backup::{Client, Recovery};
+use secp256k1::{PublicKey, Secp256k1, SecretKey, XOnlyPublicKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::async_runtime::JoinHandle;
+use tauri_plugin_opener::OpenerExt;
+use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
 const RETRY: &str = "Could not restore your identity. Try again.";
@@ -37,8 +46,50 @@ impl Source {
 
 #[derive(Clone)]
 struct Session {
-    source: Source,
+    source: Option<Source>,
     credential: Zeroizing<String>,
+}
+struct Candidate {
+    handle: String,
+    pubkey: String,
+    backup_id: String,
+    secret: Box<Zeroizing<[u8; 32]>>,
+}
+#[derive(Serialize)]
+pub(crate) struct PublicCandidate {
+    handle: String,
+    pubkey: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RestoreResult {
+    candidates: Vec<PublicCandidate>,
+    current_pubkey: Option<String>,
+    failed_count: usize,
+}
+#[derive(Serialize)]
+pub(crate) struct RestoreStarted {
+    attempt: String,
+}
+struct Restore {
+    id: String,
+    admission: Arc<Mutex<bool>>,
+    callback: OAuthCallbackHost,
+    callback_id: String,
+    task: JoinHandle<()>,
+    result: Option<oneshot::Receiver<Result<RestoreResult>>>,
+    candidates: Vec<Candidate>,
+    current: Option<String>,
+    credential: Option<Zeroizing<String>>,
+    subject: Option<String>,
+    installing: bool,
+}
+impl Drop for Restore {
+    fn drop(&mut self) {
+        *self.admission.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        self.task.abort();
+        let _ = self.callback.cancel(&self.callback_id);
+    }
 }
 #[derive(Default)]
 struct State {
@@ -48,6 +99,7 @@ struct State {
     session: Option<Session>,
     worker: Option<JoinHandle<()>>,
     rerun: bool,
+    restore: Option<Restore>,
 }
 impl State {
     fn retire(&mut self) {
@@ -56,6 +108,7 @@ impl State {
         if let Some(worker) = self.worker.take() {
             worker.abort();
         }
+        self.restore.take();
     }
 }
 #[derive(Clone)]
@@ -146,11 +199,19 @@ impl NsecBackupHost {
             return Ok(());
         }
         state.generations[source.index()] = Some(generation);
-        if credential.is_none() && state.session.as_ref().is_some_and(|s| s.source != source) {
+        if credential.is_none()
+            && state
+                .session
+                .as_ref()
+                .is_some_and(|s| s.source != Some(source))
+        {
             return Ok(());
         }
         state.retire();
-        state.session = credential.map(|credential| Session { source, credential });
+        state.session = credential.map(|credential| Session {
+            source: Some(source),
+            credential,
+        });
         drop(state);
         self.trigger(identity);
         Ok(())
@@ -278,6 +339,265 @@ impl NsecBackupHost {
         locked.write(&record)?;
         Ok(())
     }
+    async fn begin<R: tauri::Runtime>(
+        &self,
+        identity: IdentityHost,
+        callback: OAuthCallbackHost,
+        app: tauri::AppHandle<R>,
+    ) -> Result<RestoreStarted> {
+        let epoch = {
+            let state = self.state.lock().map_err(|_| RETRY)?;
+            if state.closed {
+                return Err(CANCELED.into());
+            }
+            state.epoch
+        };
+        let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
+        identity.require_missing().await?;
+        let mut random = Zeroizing::new([0u8; 32]);
+        getrandom::fill(random.as_mut()).map_err(|_| RETRY)?;
+        let verifier = Zeroizing::new(URL_SAFE_NO_PAD.encode(random.as_ref()));
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let mut login =
+            url::Url::parse(&format!("{}/v1/auth/login", config.service_url)).map_err(|_| RETRY)?;
+        login
+            .query_pairs_mut()
+            .append_pair("type", "cli")
+            .append_pair("product", "buzz")
+            .append_pair("code_challenge", &challenge)
+            .append_pair("code_challenge_method", "S256");
+        let mut state = self.state.lock().map_err(|_| RETRY)?;
+        if state.closed || state.epoch != epoch {
+            return Err(CANCELED.into());
+        }
+        if state.restore.is_some() {
+            return Err("A restore is already in progress".into());
+        }
+        let oauth = callback.begin(
+            OAuthRequest {
+                authorization_url: login.into(),
+                callback_path: format!("/callback/{}", uuid::Uuid::new_v4()),
+                use_state: Some(true),
+            },
+            |url| {
+                app.opener()
+                    .open_url(url, None::<&str>)
+                    .map_err(|_| RETRY.to_owned())
+            },
+        )?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let (send, receive) = oneshot::channel();
+        let admission = Arc::new(Mutex::new(true));
+        let host = self.clone();
+        let worker_id = id.clone();
+        let oauth_id = oauth.id.clone();
+        let worker_callback = callback.clone();
+        let task = tauri::async_runtime::spawn(async move {
+            let result = host
+                .recover(
+                    epoch,
+                    &worker_id,
+                    worker_callback,
+                    oauth_id,
+                    oauth.callback_url,
+                    verifier,
+                )
+                .await;
+            let _ = send.send(result);
+        });
+        state.restore = Some(Restore {
+            id: id.clone(),
+            admission,
+            callback,
+            callback_id: oauth.id,
+            task,
+            result: Some(receive),
+            candidates: Vec::new(),
+            current: None,
+            credential: None,
+            subject: None,
+            installing: false,
+        });
+        Ok(RestoreStarted { attempt: id })
+    }
+    async fn recover(
+        &self,
+        epoch: u64,
+        id: &str,
+        callback: OAuthCallbackHost,
+        oauth_id: String,
+        redirect: String,
+        verifier: Zeroizing<String>,
+    ) -> Result<RestoreResult> {
+        let parameters = callback.wait(&oauth_id).await.map_err(|_| RETRY)?;
+        self.valid(epoch)?;
+        if parameters
+            .parameters
+            .iter()
+            .any(|(name, _)| name == "error")
+        {
+            return Err(RETRY.into());
+        }
+        let mut codes = parameters
+            .parameters
+            .iter()
+            .filter(|(name, _)| name == "code");
+        let code = codes.next().map(|(_, code)| code.as_str()).ok_or(RETRY)?;
+        if codes.next().is_some() {
+            return Err(RETRY.into());
+        }
+        let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
+        let credential = Api::exchange(&config.service_url, code, &verifier, &redirect).await?;
+        let api = Api::new(&config.service_url, &credential)?;
+        let account = api.me().await?;
+        self.valid(epoch)?;
+        let current = api.current().await?;
+        let client = Client::new(&config.service_url, &credential).map_err(|_| RETRY)?;
+        let recovered = client.recover().await.map_err(|error| match error {
+            buzz_nsec_backup::Error::HttpStatus(404) => UNAVAILABLE.to_owned(),
+            _ => RETRY.to_owned(),
+        })?;
+        let (candidates, failed_count) = candidates(recovered);
+        let summary = RestoreResult {
+            candidates: candidates
+                .iter()
+                .map(|key| PublicCandidate {
+                    handle: key.handle.clone(),
+                    pubkey: key.pubkey.clone(),
+                })
+                .collect(),
+            current_pubkey: current.clone(),
+            failed_count,
+        };
+        let mut state = self.state.lock().map_err(|_| CANCELED)?;
+        if state.closed || state.epoch != epoch {
+            return Err(CANCELED.into());
+        }
+        let attempt = state
+            .restore
+            .as_mut()
+            .filter(|attempt| attempt.id == id)
+            .ok_or(CANCELED)?;
+        attempt.candidates = candidates;
+        attempt.current = current;
+        attempt.credential = Some(credential);
+        attempt.subject = Some(account.subject);
+        Ok(summary)
+    }
+    async fn wait(&self, id: &str) -> Result<RestoreResult> {
+        let receive = self
+            .state
+            .lock()
+            .map_err(|_| CANCELED)?
+            .restore
+            .as_mut()
+            .filter(|attempt| attempt.id == id)
+            .and_then(|attempt| attempt.result.take())
+            .ok_or(CANCELED)?;
+        receive.await.map_err(|_| CANCELED.to_owned())?
+    }
+    fn cancel(&self, id: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state
+            .restore
+            .as_ref()
+            .is_some_and(|attempt| attempt.id == id)
+        {
+            state.restore.take();
+        }
+    }
+    async fn install(&self, identity: IdentityHost, id: &str, handle: &str) -> Result<String> {
+        let (pubkey, backup_id, credential, subject, current, admission, epoch) = {
+            let mut state = self.state.lock().map_err(|_| CANCELED)?;
+            if state.closed {
+                return Err(CANCELED.into());
+            }
+            let epoch = state.epoch;
+            let attempt = state
+                .restore
+                .as_mut()
+                .filter(|attempt| attempt.id == id && !attempt.installing)
+                .ok_or(CANCELED)?;
+            let key = attempt
+                .candidates
+                .iter()
+                .find(|key| key.handle == handle)
+                .ok_or("Choose an identity to restore")?;
+            let credential = attempt.credential.clone().ok_or(CANCELED)?;
+            let subject = attempt.subject.clone().ok_or(CANCELED)?;
+            attempt.installing = true;
+            (
+                key.pubkey.clone(),
+                key.backup_id.clone(),
+                credential,
+                subject,
+                attempt.current.clone(),
+                attempt.admission.clone(),
+                epoch,
+            )
+        };
+        let result = async {
+            let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
+            let api = Api::new(&config.service_url, &credential)?;
+            if api.current().await? != current {
+                return Err("Your account identity changed. Sign in again.".into());
+            }
+            self.valid(epoch)?;
+            let secret = {
+                let state = self.state.lock().map_err(|_| CANCELED)?;
+                let attempt = state
+                    .restore
+                    .as_ref()
+                    .filter(|attempt| attempt.id == id)
+                    .ok_or(CANCELED)?;
+                let key = attempt
+                    .candidates
+                    .iter()
+                    .find(|key| key.handle == handle)
+                    .ok_or(CANCELED)?;
+                if self
+                    .root
+                    .as_ref()
+                    .ok_or_else(|| RETRY.to_owned())
+                    .and_then(|root| {
+                        persistence::remember_restored(root, config, &subject, &pubkey, &backup_id)
+                    })
+                    .is_err()
+                {
+                    eprintln!("Automatic identity backup completion deferred");
+                }
+                Zeroizing::new(**key.secret)
+            };
+            self.valid(epoch)?;
+            identity
+                .install_recovered(secret, pubkey.clone(), admission)
+                .await
+        }
+        .await;
+        if result.is_ok() {
+            let mut state = self.state.lock().map_err(|_| CANCELED)?;
+            if !state.closed
+                && state.epoch == epoch
+                && state
+                    .restore
+                    .as_ref()
+                    .is_some_and(|attempt| attempt.id == id)
+            {
+                state.restore.take();
+                state.session = Some(Session {
+                    source: None,
+                    credential,
+                });
+            }
+            drop(state);
+            self.trigger(identity);
+        } else if let Ok(mut state) = self.state.lock() {
+            if let Some(attempt) = state.restore.as_mut().filter(|attempt| attempt.id == id) {
+                attempt.installing = false;
+            }
+        }
+        result
+    }
 }
 
 fn valid_credential(value: &str) -> bool {
@@ -290,10 +610,62 @@ fn public_key(value: &str) -> Result<String> {
     }
     Ok(value.to_owned())
 }
+fn candidates(recovered: Recovery) -> (Vec<Candidate>, usize) {
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+    let mut failed = recovered.failed_backup_ids.len();
+    for backup in recovered.backups {
+        let verified = (|| -> Result<String> {
+            if uuid::Uuid::parse_str(&backup.backup_id)
+                .map_err(|_| RETRY)?
+                .to_string()
+                != backup.backup_id
+            {
+                return Err(RETRY.into());
+            }
+            let mut scalar = SecretKey::from_byte_array(*backup.secret_key()).map_err(|_| RETRY)?;
+            let derived = PublicKey::from_secret_key(&Secp256k1::signing_only(), &scalar)
+                .x_only_public_key()
+                .0
+                .to_string();
+            scalar.non_secure_erase();
+            if derived != public_key(&backup.nostr_pubkey)? {
+                return Err(RETRY.into());
+            }
+            Ok(derived)
+        })();
+        match verified {
+            Ok(pubkey) if seen.insert(pubkey.clone()) => candidates.push(Candidate {
+                handle: uuid::Uuid::new_v4().to_string(),
+                pubkey,
+                backup_id: backup.backup_id.clone(),
+                secret: Box::new(Zeroizing::new(*backup.secret_key())),
+            }),
+            Ok(_) => {}
+            Err(_) => failed += 1,
+        }
+    }
+    (candidates, failed)
+}
+
 #[derive(Deserialize)]
 struct Account {
     subject: String,
     expires_at: String,
+}
+#[derive(Deserialize)]
+struct Exchange {
+    #[serde(deserialize_with = "credential")]
+    session_credential: Zeroizing<String>,
+}
+fn credential<'de, D: serde::Deserializer<'de>>(
+    input: D,
+) -> std::result::Result<Zeroizing<String>, D::Error> {
+    let value = Zeroizing::new(String::deserialize(input)?);
+    if !valid_credential(&value) {
+        return Err(serde::de::Error::custom("Invalid session"));
+    }
+    Ok(value)
 }
 struct Api {
     http: reqwest::Client,
@@ -319,6 +691,37 @@ impl Api {
             builder = builder.no_proxy();
         }
         builder.build().map_err(|_| RETRY.into())
+    }
+    async fn exchange(
+        root: &str,
+        code: &str,
+        verifier: &str,
+        redirect: &str,
+    ) -> Result<Zeroizing<String>> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            code: &'a str,
+            code_verifier: &'a str,
+            redirect_uri: &'a str,
+        }
+        let body = Zeroizing::new(
+            serde_json::to_vec(&Request {
+                code,
+                code_verifier: verifier,
+                redirect_uri: redirect,
+            })
+            .map_err(|_| RETRY)?,
+        );
+        let response = Self::http(root)?
+            .post(format!("{root}/v1/auth/login/exchange"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(bytes::Bytes::from_owner(body))
+            .send()
+            .await
+            .map_err(|_| RETRY)?;
+        let value: Exchange =
+            serde_json::from_slice(&Self::body(response).await?).map_err(|_| RETRY)?;
+        Ok(value.session_credential)
     }
     async fn request(&self, path: &str, post: bool) -> Result<Zeroizing<Vec<u8>>> {
         let url = format!("{}{path}", self.root);
@@ -424,12 +827,44 @@ pub(crate) fn nsec_backup_retry(
         state
             .session
             .as_ref()
-            .is_some_and(|session| session.source == source)
+            .is_some_and(|session| session.source == Some(source))
     });
     if matching {
         host.trigger(identity.inner().clone());
     }
 }
+#[tauri::command]
+pub(crate) async fn nsec_restore_begin<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    host: tauri::State<'_, NsecBackupHost>,
+    identity: tauri::State<'_, IdentityHost>,
+    callback: tauri::State<'_, OAuthCallbackHost>,
+) -> Result<RestoreStarted> {
+    host.begin(identity.inner().clone(), callback.inner().clone(), app)
+        .await
+}
+#[tauri::command]
+pub(crate) async fn nsec_restore_wait(
+    host: tauri::State<'_, NsecBackupHost>,
+    attempt: String,
+) -> Result<RestoreResult> {
+    host.wait(&attempt).await
+}
+#[tauri::command]
+pub(crate) async fn nsec_restore_install(
+    host: tauri::State<'_, NsecBackupHost>,
+    identity: tauri::State<'_, IdentityHost>,
+    attempt: String,
+    handle: String,
+) -> Result<String> {
+    host.install(identity.inner().clone(), &attempt, &handle)
+        .await
+}
+#[tauri::command]
+pub(crate) fn nsec_restore_cancel(host: tauri::State<'_, NsecBackupHost>, attempt: String) {
+    host.cancel(&attempt);
+}
+
 #[cfg(test)]
 #[path = "nsec_backup/tests.rs"]
 mod tests;

@@ -37,7 +37,7 @@ old Buzz service/account and copy the selected agent key into this app's separat
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
-## Automatic backup
+## Automatic backup and optional recovery
 
 Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
 `BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity silently after an existing
@@ -56,10 +56,20 @@ events retry them, including a coalesced follow-up when an event arrives during 
 active pass. Upload success requires a matching stored receipt. Backup
 failure never replaces or deletes the local identity.
 
+When secure storage confirms absence, native recovery commands support explicit
+browser sign-in. The session and recovered keys remain native; the renderer sees
+only validated public identities and attempt-scoped handles. Recovery prefers the
+account's current associated identity. A previous identity requires explicit
+selection and does not change the account association. Failed mapping requests,
+unavailable endpoints, failed backups and an empty successful result remain distinct.
+Installation uses the existing create-only secure store; cancel, reload, signout
+or a competing create/import prevents stale installation.
+Remembering recovered completion is best effort; retry-file failure does not block
+secure-store installation. Pending uploads still require durable ciphertext before sending.
 Plain signout retains backup records; Sign out and erase removes this credential
 service's records through the existing resumable wipe before clearing its marker.
 
-Rollout requires the backend backup endpoints, private-organization
+Rollout requires the backend backup/recovery endpoints, private-organization
 authorization, database migration, and configured KMS recipient/permissions. The
 client inputs must match that service's namespace. Synthetic HTTP/storage tests
 do not establish live sign-in, KMS or installed-app

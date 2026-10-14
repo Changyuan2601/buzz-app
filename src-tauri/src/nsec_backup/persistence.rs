@@ -64,9 +64,14 @@ impl Record {
         enrollment: &Enrollment,
     ) -> Result<()> {
         self.matches_identity(config, subject, &enrollment.nostr_pubkey)?;
-        if self.owner != enrollment.owner_id
-            || self.recipient_id != enrollment.recipient_key_id
-            || self.recipient_key != enrollment.recipient_public_key
+        let recovered = self.envelope.is_none()
+            && self.owner.is_empty()
+            && self.recipient_id.is_empty()
+            && self.recipient_key.is_empty();
+        if !recovered
+            && (self.owner != enrollment.owner_id
+                || self.recipient_id != enrollment.recipient_key_id
+                || self.recipient_key != enrollment.recipient_public_key)
         {
             return Err(FAILED.into());
         }
@@ -177,4 +182,31 @@ impl LockedRecord {
             .map_err(|_| FAILED)?;
         Ok(())
     }
+}
+
+pub(super) fn remember_restored(
+    root: &Path,
+    config: &Config,
+    subject: &str,
+    pubkey: &str,
+    backup_id: &str,
+) -> Result<()> {
+    let slot = LockedRecord::open(root, config, subject, pubkey)?;
+    if let Some(existing) = slot.read()? {
+        existing.matches_identity(config, subject, pubkey)?;
+    }
+    // Authenticated recovery proves this key is stored, even if an earlier upload is uncertain.
+    let record = Record {
+        version: 1,
+        service: config.service_url.clone(),
+        namespace: config.namespace.clone(),
+        subject: subject.to_owned(),
+        owner: String::new(),
+        recipient_id: String::new(),
+        recipient_key: String::new(),
+        pubkey: pubkey.to_owned(),
+        backup_id: backup_id.to_owned(),
+        envelope: None,
+    };
+    slot.write(&record)
 }
