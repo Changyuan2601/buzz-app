@@ -8,6 +8,7 @@ import {
   INSTRUCTIONS_CONTENT_MAX_BYTES,
   INSTRUCTIONS_KIND,
 } from "../agents/instructions-envelope";
+import deletionContract from "../agents/instructions-deletion-contract.json";
 
 const viewer = keypair(),
   relay = keypair();
@@ -180,4 +181,27 @@ it("T29 a hydrated unsigned entry is reserved before new admissions", async () =
   assert.exists(outbox);
   await outbox.ready();
   expect(() => outbox.send(maxSize(agent(60)))).toThrow("Too many unsent");
+});
+
+it("a version deletion leaves the outbox in the exact shape the native instructions signer admits", async () => {
+  const h = setup();
+  await h.outbox.ready();
+  const target = agent(7);
+  h.outbox.send({
+    kind: 5,
+    content: "",
+    tags: [
+      ["e", target],
+      ["k", String(INSTRUCTIONS_KIND)],
+    ],
+  });
+  await flush();
+  expect(h.signatures).toHaveLength(1);
+  const sent = h.signatures[0].event.tags.map(([name, value]) =>
+    name === "e" && value === target ? [name, "a".repeat(64)] : [name, value],
+  );
+  // The same corpus drives the native `is_deletion` test in src-tauri/src/relay/tests.rs.
+  const admitted = deletionContract.find((c) => "outbox" in c && c.outbox);
+  expect(admitted?.accepted).toBe(true);
+  expect(sent).toEqual(admitted?.tags);
 });

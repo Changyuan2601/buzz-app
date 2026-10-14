@@ -3594,3 +3594,23 @@ fn relay_sign_rejects_instructions_versions_and_their_deletions() {
     );
     assert!(validate_event("https://relay.test", &deletion).is_err());
 }
+
+#[test]
+fn instructions_deletion_shape_matches_shared_contract() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/features/agents/instructions-deletion-contract.json"
+    ))
+    .unwrap();
+    for case in cases.as_array().unwrap() {
+        let event = serde_json::from_value::<EventTemplate>(serde_json::json!({
+            "kind": 5, "created_at": 100, "content": "", "tags": case["tags"]
+        }))
+        .unwrap();
+        assert_eq!(
+            super::instructions::is_deletion(&event),
+            case["accepted"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}

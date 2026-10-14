@@ -827,7 +827,10 @@ export function createOutbox(
         created_at: createdAt,
         tags: [
           ...input.tags.map((tag) => [...tag]),
-          ["client-id", crypto.randomUUID()],
+          // The bounded instructions signer admits a deletion of exactly `e` + `k`.
+          ...(instructionsDeletionTargets(input)
+            ? []
+            : [["client-id", crypto.randomUUID()]]),
           ...(channelId ? [["ms", String(ms % 1000)]] : []),
         ],
       };

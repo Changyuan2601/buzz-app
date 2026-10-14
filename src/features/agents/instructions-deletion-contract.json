@@ -1,0 +1,38 @@
+[
+  {
+    "name": "what the outbox sends",
+    "outbox": true,
+    "tags": [
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["k", "44300"]
+    ],
+    "accepted": true
+  },
+  {
+    "name": "with a client-id",
+    "tags": [
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["k", "44300"],
+      ["client-id", "x"]
+    ],
+    "accepted": false
+  },
+  {
+    "name": "two targets",
+    "tags": [
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["k", "44300"]
+    ],
+    "accepted": false
+  },
+  {
+    "name": "with an h",
+    "tags": [
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["k", "44300"],
+      ["h", "c"]
+    ],
+    "accepted": false
+  }
+]
