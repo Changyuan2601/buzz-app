@@ -3,6 +3,9 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
+import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
 import {
   useEffect,
   useId,
@@ -52,10 +55,12 @@ export function SessionSections({
   onNew,
   personal = false,
   onShared,
+  onRemoved,
   visit,
 }: {
   personal?: boolean;
   onShared?: (id: string) => void;
+  onRemoved?: (id: string) => void;
   visit?: AbortSignal;
   session: RelaySession;
   scope: string;
@@ -118,6 +123,16 @@ export function SessionSections({
   const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
   const [renaming, setRenaming] = useState<SessionListItem>();
   const [deleting, setDeleting] = useState<string>();
+  const [lifecycle, setLifecycle] = useState<{
+    item: SessionListItem;
+    action: ChannelLifecycleAction;
+  }>();
+  const removable = (id: string) => {
+    const channel = channels.channels.find((channel) => channel.id === id);
+    return (
+      !!channel && !channel.readOnly && !channel.cached && !channel.archived
+    );
+  };
   const [deleteError, setDeleteError] = useState("");
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
@@ -409,6 +424,15 @@ export function SessionSections({
                           Chat settings…
                         </MenuItem>
                       )}
+                      {personal && removable(item.id) && (
+                        <ChannelLifecycleMenu
+                          channelId={item.id}
+                          lifecycle={session.channelLifecycle}
+                          disabled={!!lifecycle}
+                          separator
+                          choose={(action) => setLifecycle({ item, action })}
+                        />
+                      )}
                     </>
                   }
                 >
@@ -425,6 +449,22 @@ export function SessionSections({
             </Collapsible.Panel>
           </Collapsible.Root>
         ))}
+      {lifecycle && (
+        <ChannelLifecycleDialog
+          channelId={lifecycle.item.id}
+          channelName={lifecycle.item.title}
+          action={lifecycle.action}
+          lifecycle={session.channelLifecycle}
+          close={() => {
+            setLifecycle(undefined);
+            setRowFocus(lifecycle.item.id);
+          }}
+          completed={() => {
+            setLifecycle(undefined);
+            onRemoved?.(lifecycle.item.id);
+          }}
+        />
+      )}
       {sharing && sharingChannel && (
         <SessionShare
           key={sharing.id}

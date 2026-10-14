@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -61,13 +68,25 @@ function fixture() {
     durability: "saved" as const,
     sync: "pending" as const,
   }));
-  const list = {
-    status: "ready" as const,
+  let list: ReturnType<RelaySession["channels"]["list"]> = {
+    status: "ready",
     channels: [
-      { id, name: "Planning", channelType: "session" as const },
-      { id: other, name: "Other", channelType: "session" as const },
+      { id, name: "Planning", channelType: "session" },
+      { id: other, name: "Other", channelType: "session" },
     ],
   };
+  // The relay confirms archive in the roster; Me hides archived conversations.
+  const run = vi.fn(async (_action: string, channelId: string) => {
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === channelId ? { ...channel, archived: true } : channel,
+        ),
+      };
+      publish();
+    });
+  });
   const placement = {
     ...base.mePlacement.snapshot(),
     status: "ready" as const,
@@ -105,7 +124,26 @@ function fixture() {
   const session: RelaySession = {
     ...base,
     viewer,
-    channels: { ...base.channels, list: () => list, ensureList() {} },
+    channels: {
+      ...base.channels,
+      list: () => list,
+      subscribeList: subscribe,
+      ensureList() {},
+    },
+    channelLifecycle: {
+      ...base.channelLifecycle,
+      available: true,
+      load: async (channelId) => ({
+        channelId,
+        channelType: "stream",
+        canArchive: true,
+        canUnarchive: false,
+        canDelete: true,
+        canLeave: false,
+        canHide: false,
+      }),
+      run,
+    },
     mePlacement: {
       ...base.mePlacement,
       snapshot: () => placement,
@@ -164,6 +202,7 @@ function fixture() {
   );
   return {
     open,
+    run,
     markThrough,
     listeners,
     typing(next: typeof typing) {
@@ -300,4 +339,49 @@ it("opens a typing-only agent's profile activity in its Me conversation", async 
     }),
   );
   expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, id));
+});
+it.each([
+  ["the open conversation and leaves it", "Other", other, true],
+  ["another conversation in place", "Planning", id, false],
+])("archives %s from the row menu", async (_, name, channelId, leaves) => {
+  const f = fixture();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive channel" }),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: `Archive channel: ${name}`,
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Archive channel" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(f.run).toHaveBeenCalledExactlyOnceWith(
+    "archive",
+    channelId,
+    expect.any(AbortSignal),
+  );
+  expect(
+    screen.queryByRole("button", { name: `Actions for ${name}` }),
+  ).toBeNull();
+  if (leaves) expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(scope));
+  else expect(f.open).not.toHaveBeenCalled();
+});
+it("returns focus to the row when its Archive confirmation is cancelled", async () => {
+  fixture();
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Planning" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    document.querySelector(`[data-session-menu-id="${id}"]`),
+  ).toContainElement(document.activeElement as HTMLElement);
 });

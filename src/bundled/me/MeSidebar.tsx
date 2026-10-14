@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ComponentProps } from "react";
+import { useRef, useSyncExternalStore, type ComponentProps } from "react";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { ChannelActivityPopover } from "../channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../channels/useWorkingAgents";
@@ -63,6 +63,9 @@ function PersonalHistory({
   const placement = useMePlacement(session);
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected = meSelection(target);
+  // Lifecycle confirmations finish after later renders; read the live route.
+  const current = useRef(selected);
+  current.current = selected;
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
     session.agentActivity.subscribeWorking,
@@ -124,6 +127,9 @@ function PersonalHistory({
             session.viewer,
           );
           if (destination) void navigator.open(destination);
+        }}
+        onRemoved={(id) => {
+          if (current.current === id) void navigator.open(meTarget(scope));
         }}
         onNew={(sectionId) =>
           void navigator.open(meTarget(scope, "new", sectionId))
