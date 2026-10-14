@@ -8,9 +8,10 @@ minimal PDFs for page rasterization and its multi-page fallback; `jpx-page.pdf`
 wraps a Pillow-encoded red 200x100 JPEG 2000 image (`/JPXDecode`), a decoder
 pdf.js only ships as wasm, and `blank-page.pdf` has an empty content stream;
 both exercise the keep-as-file fallback. `hairline-page.pdf` is a letter page
-whose only ink is a 0.5 pt rule (one pixel row at 2x), the sparse content a
-single-shot downscale can miss in WebKit. Browser tests add snapshot/comment
-metadata themselves, then invoke production preparation.
+whose only ink is a 0.5 pt rule (device row 761 at 2x), the sparse content a
+sampled rather than box-filtered downscale misses in both engines. Browser
+tests add snapshot/comment metadata themselves, then invoke production
+preparation.
 
 These fixtures exercise decoding, structural metadata cleanup, preservation of
 animation containers and the WebKit lossless WebP worker. They are not live

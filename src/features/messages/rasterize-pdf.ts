@@ -49,9 +49,11 @@ function raced<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
  * pdf.js paints nothing for an image XObject or annotation it cannot decode,
  * even with `stopAtErrors`, so a wholly white page means content was lost (an
  * empty page is not worth attaching either). The page is halved until its long
- * edge fits the sample: each 2:1 `drawImage` is an exact box filter in both
- * engines, whereas a single-shot downscale is bilinear in WebKit (depending on
- * the canvas backing) and can sample between a hairline and read pure white.
+ * edge fits the sample, drawing at exactly half size each time (a fractional
+ * trailing pixel blends into the white fill of the ceil-sized scratch canvas):
+ * an exact 2:1 `drawImage` is a box filter in both engines, whereas any other
+ * ratio, a single-shot downscale or a 153:77 odd step, is sampled and can
+ * miss a hairline and read pure white.
  */
 function isBlank(canvas: HTMLCanvasElement): boolean {
   const scratch: HTMLCanvasElement[] = [];
@@ -67,7 +69,7 @@ function isBlank(canvas: HTMLCanvasElement): boolean {
       if (!context) return false;
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, half.width, half.height);
-      context.drawImage(source, 0, 0, half.width, half.height);
+      context.drawImage(source, 0, 0, source.width / 2, source.height / 2);
       source = half;
     }
     context ??= source.getContext("2d");

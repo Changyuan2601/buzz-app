@@ -307,9 +307,12 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
     });
     await expect(empty).toBeVisible();
     await expect(empty.locator("img")).toHaveCount(0);
-    // A letter page whose only ink is a 1 px rule must still convert: a
-    // single-shot downscale is bilinear in WebKit for some canvas backings and
-    // sampled between the rule, reading the page as blank.
+    // A letter page whose only ink is a 1 px rule must still convert: the
+    // blank check's downscale steps must be exact 2:1 box filters, since a
+    // sampled (bilinear) step can land between the rule and read pure white.
+    // Row 761 sits in the band (752-767 at 1224x1584) both engines missed when
+    // the odd steps of the halving chain (153 -> 77, 99 -> 50) were drawn at
+    // the ceil size instead of exactly half.
     const rule = form
       .getByRole("button", { name: "Preview rule.png", exact: true })
       .locator("img");
@@ -322,8 +325,8 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
         canvas.height = img.naturalHeight;
         const context = canvas.getContext("2d");
         context.drawImage(img, 0, 0);
-        // The 0.5 pt rule from y = 700 pt fills exactly row 183 at 2x.
-        const [r, g, b] = context.getImageData(600, 183, 1, 1).data;
+        // The 0.5 pt rule from y = 411 pt fills exactly row 761 at 2x.
+        const [r, g, b] = context.getImageData(600, 761, 1, 1).data;
         return {
           size: [img.naturalWidth, img.naturalHeight],
           white: r === 255 && g === 255 && b === 255,
