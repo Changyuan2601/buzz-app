@@ -258,6 +258,38 @@ it("prefers the associated identity, waits for explicit consent and persistence 
   identity.dispose();
 });
 
+it("describes a previous identity selection accurately when the current identity is also available", async () => {
+  const { identity } = mountRecovery(recovered, (command) =>
+    command === "nsec_restore_install"
+      ? Promise.resolve(previousViewer)
+      : undefined,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Restore from backup" }),
+  );
+  await user.click(
+    await screen.findByRole("radio", {
+      name: (label) => label === formatPublicKey(previousViewer),
+    }),
+  );
+  expect(
+    screen.getByText("Choose the Buzz identity to restore on this device."),
+  ).toBeVisible();
+  expect(
+    screen.getByText("This won’t change the identity linked to your account."),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt",
+    handle: "previous",
+  });
+  expect(await screen.findByText("Restored identity")).toBeVisible();
+  identity.dispose();
+});
+
 it("requires a historical identity choice when the associated key is absent and reports partial recovery", async () => {
   const { identity } = mountRecovery({
     ...recovered,
