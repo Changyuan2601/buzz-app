@@ -244,9 +244,33 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   });
   app.relay.emptyRoster();
   app.relay.quotaNextRoster(2);
+  // The app arms its cooldown when it consumes the refusal, and the ignored
+  // clicks below must land before that deadline. Navigation needs a running
+  // page clock, so hold the first roster read until it is done, then pause the
+  // clock before the refusal arms the deadline: only crossCooldown passes it.
+  const roster = Promise.withResolvers();
+  let rosterHeld = false;
+  await page.route("**/api/relay/primary/query", async (route) => {
+    if (
+      !rosterHeld &&
+      [route.request().postDataJSON()]
+        .flat()
+        .some((filter) => filter.kinds?.includes(39002))
+    ) {
+      rosterHeld = true;
+      await roster.promise;
+    }
+    await route.fallback();
+  });
   await page.clock.install();
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  try {
+    await openPage(page, "Messages");
+    await expect.poll(() => rosterHeld).toBe(true);
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+  } finally {
+    roster.resolve();
+  }
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
     page
