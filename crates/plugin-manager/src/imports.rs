@@ -2,7 +2,7 @@
 use crate::{
     artifact_from_text, err, hash, Catalog, Manager, Manifest, Release, ReloadSource, Result, LIMIT,
 };
-use buzz_git_tree::Selection;
+use buzz_git_tree::{Kind, Selection};
 use nostr::event::Event;
 use serde::Serialize;
 use std::{
@@ -445,8 +445,19 @@ impl Git {
             ],
             2 * 1024 * 1024,
         )?;
-        let tree = buzz_git_tree::parse(&bytes, MAX_ENTRIES)
+        // The existing stdout bound also bounds records; directories retain marker evidence
+        // without consuming the recursive leaf-file allowance.
+        let tree = buzz_git_tree::parse(&bytes, bytes.len())
             .map_err(|reason| format!("Invalid Git tree: {reason:?}"))?;
+        if tree
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind != Kind::Tree)
+            .count()
+            > MAX_ENTRIES
+        {
+            return Err("Repository exceeds 20,000 files; use a smaller repository".into());
+        }
         let paths = tree
             .entries()
             .iter()
@@ -904,6 +915,58 @@ mod tests {
             .module("example.one", &installed.revision)
             .unwrap()
             .contains("first"));
+    }
+    #[test]
+    fn git_directory_records_do_not_consume_the_leaf_file_allowance() {
+        let git = Git::new().unwrap();
+        git.run(&["init", "--template=", "repository"], LIMIT)
+            .unwrap();
+        let repo = git.scratch.path().join("repository");
+        plugin(&repo, "dist", "example.count");
+        git.run(&["-C", "repository", "add", "."], LIMIT).unwrap();
+        let blob = String::from_utf8(
+            git.run(
+                &["-C", "repository", "hash-object", "dist/plugin.js"],
+                LIMIT,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // 10,002 leaves plus 10,001 directories exceeds 20,000 total records.
+        // Reuse one blob; the large fixture exists only for the host count contract.
+        let entries: String = (0..10_000)
+            .map(|i| format!("100644 {}\tdirectory-{i:05}/leaf\0", blob.trim()))
+            .collect();
+        let mut child = git
+            .command()
+            .args(["-C", "repository", "update-index", "-z", "--index-info"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), entries.as_bytes()).unwrap();
+        assert!(child.wait().unwrap().success());
+        git.run(
+            &[
+                "-C",
+                "repository",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+            LIMIT,
+        )
+        .unwrap();
+        let prepared = git
+            .read_plugins("fixture".into())
+            .expect("directories must not consume the leaf allowance");
+        assert_eq!(prepared.preview.candidates.len(), 1);
+        assert_eq!(prepared.preview.candidates[0].path, "dist");
     }
     #[test]
     fn git_signed_markers_never_fall_back_when_nonregular() {

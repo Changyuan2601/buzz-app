@@ -71,6 +71,24 @@ jobs:
           save-if: ${{ github.event_name == 'push' }}
       - name: Rust formatting
         run: ./bin/cargo fmt --all --check
+      - name: Verify Git tree kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VERUS_USE_RUSTUP=0
+          rust_lib="$(./bin/rustc --print sysroot)/lib"
+          export LD_LIBRARY_PATH="$rust_lib:${LD_LIBRARY_PATH:-}"
+          ./bin/cargo metadata --no-deps --format-version 1 --locked | ./bin/node -e '
+            let input = "";
+            process.stdin.on("data", data => input += data);
+            process.stdin.on("end", () => {
+              const owner = JSON.parse(input).packages.find(p => p.name === "buzz-git-tree");
+              if (owner?.metadata?.verus?.verify !== true) {
+                console.error("buzz-git-tree must explicitly opt into Verus verification");
+                process.exit(1);
+              }
+            });'
+          ./bin/cargo verus verify -p buzz-git-tree --locked
       - name: Rust lint
         run: ./bin/cargo clippy --workspace --locked --all-targets -- -D warnings
       # --workspace includes Tauri, unlike the default Cargo member selection.

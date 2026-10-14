@@ -460,7 +460,8 @@ async fn snapshot(git: &Git, read: &GitRead, tip: &str) -> Read<Value> {
     let bytes = git
         .run(&["ls-tree", "-r", "-l", "-z", "--full-tree", &head])
         .await?;
-    let tree = buzz_git_tree::parse(&bytes, 20_000).map_err(|_| 502u16)?;
+    // Stdout bounds records; the browsing limit applies to blobs, including symlinks.
+    let tree = buzz_git_tree::parse(&bytes, bytes.len()).map_err(|_| 502u16)?;
     let files = tree
         .entries()
         .iter()
@@ -473,6 +474,9 @@ async fn snapshot(git: &Git, read: &GitRead, tip: &str) -> Read<Value> {
             })
         })
         .collect::<Read<Vec<File>>>()?;
+    if files.len() > 20_000 {
+        return Err(502);
+    }
     let history = git
         .run(&[
             "log",

@@ -61,24 +61,3 @@ scan: install
     pnpm design:test:browser
     cargo clippy --workspace --locked --all-targets -- -D warnings
     cargo test --manifest-path src-tauri/Cargo.toml --locked
-
-# Verify an opted-in production crate with the pinned Verus/Rust pair.
-[positional-arguments]
-verify package='buzz-git-tree':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export VERUS_USE_RUSTUP=0
-    rust_lib="$(bin/rustc --print sysroot)/lib"
-    export LD_LIBRARY_PATH="$rust_lib:${LD_LIBRARY_PATH:-}"
-    export DYLD_LIBRARY_PATH="$rust_lib:${DYLD_LIBRARY_PATH:-}"
-    bin/cargo metadata --no-deps --format-version 1 --locked | bin/node -e '
-      let input = "";
-      process.stdin.on("data", data => input += data);
-      process.stdin.on("end", () => {
-        const owner = JSON.parse(input).packages.find(p => p.name === process.argv[1]);
-        if (owner?.metadata?.verus?.verify !== true) {
-          console.error("Requested crate must explicitly opt into Verus verification");
-          process.exit(1);
-        }
-      });' "$1"
-    bin/cargo verus verify -p "$1" --locked

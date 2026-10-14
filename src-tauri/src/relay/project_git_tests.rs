@@ -9,7 +9,11 @@ fn read(value: Value) -> std::result::Result<GitRead, String> {
 }
 
 fn sh(dir: &Path, args: &[&str]) -> String {
-    let out = StdCommand::new("git")
+    sh_input(dir, args, &[])
+}
+
+fn sh_input(dir: &Path, args: &[&str], input: &[u8]) -> String {
+    let mut child = StdCommand::new("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -18,8 +22,13 @@ fn sh(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "ada@example.test")
         .env("GIT_COMMITTER_NAME", "Ada")
         .env("GIT_COMMITTER_EMAIL", "ada@example.test")
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), input).unwrap();
+    let out = child.wait_with_output().unwrap();
     assert!(
         out.status.success(),
         "{}",
@@ -80,7 +89,6 @@ fn go(git: &Git, url: &str, read: &GitRead) -> Read<Value> {
 #[cfg(unix)]
 #[test]
 fn repository_paths_never_alias_invalid_utf8_to_unicode() {
-    use std::os::unix::ffi::OsStringExt as _;
     let (source, url, _) = source();
     let path = "alias-�.txt";
     std::fs::write(source.path().join(path), "valid Unicode object").unwrap();
@@ -91,10 +99,16 @@ fn repository_paths_never_alias_invalid_utf8_to_unicode() {
     let snapshot = go(&local_git(directory.path()), &url, &request).unwrap();
     assert_eq!(snapshot["file"]["content"], "valid Unicode object");
 
-    // This raw name sorts first and used to collapse to the same U+FFFD label.
-    let invalid = OsString::from_vec(b"alias-\x80.txt".to_vec());
-    std::fs::write(source.path().join(invalid), "different raw-path object").unwrap();
-    sh(source.path(), &["add", "."]);
+    // Write the raw Git name without requiring filesystem support (macOS rejects it).
+    // It sorts first and used to collapse to the same U+FFFD label with another blob.
+    let blob = sh(source.path(), &["rev-parse", "HEAD:src/main.rs"]);
+    let mut entry = format!("100644 {blob}\t").into_bytes();
+    entry.extend_from_slice(b"alias-\x80.txt\0");
+    sh_input(
+        source.path(),
+        &["update-index", "-z", "--index-info"],
+        &entry,
+    );
     sh(
         source.path(),
         &["commit", "-q", "-m", "Unrepresentable path"],
@@ -106,6 +120,35 @@ fn repository_paths_never_alias_invalid_utf8_to_unicode() {
         Err(502),
         "an unrepresentable path must fail without selecting another object"
     );
+}
+
+#[test]
+fn repository_file_limit_counts_blobs_without_charging_gitlinks() {
+    let (source, url, _) = source();
+    let commit = sh(source.path(), &["rev-parse", "HEAD"]);
+    let blob = sh(source.path(), &["rev-parse", "HEAD:README.md"]);
+    let request = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    for (mode, oid) in [("160000", commit.as_str()), ("100644", blob.as_str())] {
+        // The scale is the actual 20,000-blob host contract, with one shared object.
+        let entries: String = (0..20_001)
+            .map(|i| format!("{mode} {oid}\tentry-{i:05}\0"))
+            .collect();
+        sh_input(
+            source.path(),
+            &["update-index", "-z", "--index-info"],
+            entries.as_bytes(),
+        );
+        sh(source.path(), &["commit", "-q", "-m", mode]);
+        let directory = tempfile::tempdir().unwrap();
+        let result = go(&local_git(directory.path()), &url, &request);
+        if mode == "160000" {
+            let snapshot = result.expect("gitlinks must not consume the blob-file allowance");
+            assert_eq!(snapshot["files"].as_array().unwrap().len(), 3);
+            assert_eq!(snapshot["readme"], "# Hello\n");
+        } else {
+            assert_eq!(result, Err(502), "more than 20,000 blobs must be rejected");
+        }
+    }
 }
 
 #[test]
