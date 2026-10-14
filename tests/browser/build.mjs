@@ -1,15 +1,76 @@
 import { fixtureAliases } from "../relay-config.ts";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-// Playwright owns this worker-scoped build. Only compiled assets are shared;
+// The global setup sets this to a directory that lives for one Playwright run.
+export const buildCacheVariable = "BUZZ_BROWSER_BUILD_CACHE";
+
+export default async function setupBuildCache() {
+  const directory = await mkdtemp(join(tmpdir(), "buzz-browser-builds-"));
+  process.env[buildCacheVariable] = directory;
+  return () => rm(directory, { recursive: true, force: true });
+}
+
+const exists = (path) =>
+  stat(path).then(
+    () => true,
+    () => false,
+  );
+
+// Workers of one run share each build variant. The source does not change
+// during a run, so a variant is built once. One worker takes the lock and
+// builds; the others wait for the finished directory or the failure note.
+async function sharedBuild(cache, options, buildInto) {
+  const key = createHash("sha256")
+    .update(JSON.stringify(options))
+    .digest("hex")
+    .slice(0, 16);
+  const done = join(cache, key);
+  const failed = join(cache, `${key}.failed`);
+  try {
+    await mkdir(join(cache, `${key}.lock`));
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    for (;;) {
+      if (await exists(done)) return done;
+      if (await exists(failed))
+        throw new Error(
+          `Another worker failed to build this app variant:\n${await readFile(failed, "utf8")}`,
+        );
+      await delay(100);
+    }
+  }
+  const staging = join(cache, `${key}.staging`);
+  try {
+    await buildInto(staging);
+    await rename(staging, done);
+    return done;
+  } catch (error) {
+    await writeFile(failed, String(error?.stack ?? error));
+    throw error;
+  }
+}
+
+// Playwright owns this worker-scoped fixture. Only compiled assets are shared;
 // each test still owns its server, identities, relay state and browser storage.
+// With the global setup, workers of one run share each variant's build.
+// Without it (other configs), each worker builds its own.
 export async function buildApp(
   {
     developmentReact,
@@ -20,8 +81,7 @@ export async function buildApp(
   },
   use,
 ) {
-  const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
-  try {
+  const config = (directory) => {
     const config = {
       root,
       mode: "production",
@@ -101,9 +161,33 @@ export async function buildApp(
             );
         },
       });
-    const start = performance.now();
-    await build(config);
-    await use({ config, durationMs: performance.now() - start });
+    return config;
+  };
+  const start = performance.now();
+  const cache = process.env[buildCacheVariable];
+  if (cache) {
+    const directory = await sharedBuild(
+      cache,
+      {
+        developmentReact,
+        pluginFixtures,
+        companionFixture,
+        localAgentActivity,
+        pairingFixture,
+      },
+      (directory) => build(config(directory)),
+    );
+    await use({
+      config: config(directory),
+      durationMs: performance.now() - start,
+    });
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
+  try {
+    const built = config(directory);
+    await build(built);
+    await use({ config: built, durationMs: performance.now() - start });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

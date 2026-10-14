@@ -43,6 +43,8 @@ export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.mjs",
   outputDir: "../../test-results/browser",
+  // Gives all workers of one run a shared app build cache (see build.mjs).
+  globalSetup: "./build.mjs",
   // Functional journeys share two workers; measurements run first and alone.
   // Never hide failures with retries or measure opening under another browser's load.
   workers: 2,
