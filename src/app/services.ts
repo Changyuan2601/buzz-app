@@ -32,6 +32,7 @@ import { PanelsService } from "../features/panels/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
+import { AssistiveUxService } from "../features/assistive-ux/service";
 import { bundledPlugins } from "../bundled";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
@@ -53,6 +54,7 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
+  const assistiveUx = new AssistiveUxService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
@@ -130,6 +132,7 @@ export function createServices() {
     settingsCards,
     pages,
     panels,
+    assistiveUx,
     plugins,
     relay,
     communities,

@@ -30,6 +30,10 @@ Both experiences use real session capabilities. As AI integrations become availa
 | Reusable UI components | Useful rendering and interaction behavior, configured through ordinary props. |
 | Cordis | Dependency availability and resource lifetime across plugin activation, replacement, and disposal. |
 
+[Assistive UX](assistive-ux.md) is an always-on app service for contextual
+eligibility and remembered dismissal. Consumers own copy, UI, actions, and flow
+progress; visible experiences reuse the same design system as other plugin UI.
+
 Bundled and local plugins use the same contribution contracts. Within the source
 tree, shared implementation code remains importable without another registration
 layer; this is not a promise that external artifacts can import host source paths.

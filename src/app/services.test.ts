@@ -3,10 +3,12 @@ import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
 import { createServices, type AppServices } from "./services";
+import type { AssistiveUx } from "../features/assistive-ux/service";
 
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
   host: undefined as Host | undefined,
+  assistiveUx: undefined as AssistiveUx | undefined,
 }));
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
@@ -24,9 +26,10 @@ vi.mock("../bundled", () => ({
     {
       manifest: { id: "test.page", name: "Test", apiVersion: 1 },
       module: {
-        inject: ["pages", "host"],
+        inject: ["pages", "host", "assistiveUx"],
         apply(ctx: Context) {
           plugin.host = ctx.host;
+          plugin.assistiveUx = ctx.assistiveUx;
           ctx.pages.register({
             id: "main",
             title: "Test",
@@ -53,6 +56,7 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   plugin.cleanup.mockReset();
   plugin.host = undefined;
+  plugin.assistiveUx = undefined;
   vi.mocked(isTauri).mockReturnValue(false);
   vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
@@ -156,6 +160,27 @@ function expectHostStopped() {
     ).toHaveLength(1);
   expect(services.pages.snapshot()).toHaveLength(0);
 }
+
+it("provides assistive UX independently of plugin enablement and fences it on shutdown", async () => {
+  await vi.advanceTimersByTimeAsync(0);
+  const facts = {
+    surface: "new-channel-thread" as const,
+    channelType: "stream" as const,
+    isMe: false,
+  };
+  expect(
+    plugin.assistiveUx?.snapshot(viewer, "threads.new-thread-placement", facts),
+  ).toBe(true);
+  await services.plugins.change("disable", "test.page");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(
+    services.assistiveUx.dismiss(viewer, "threads.new-thread-placement"),
+  ).not.toBe("unavailable");
+  await services.dispose();
+  expect(
+    services.assistiveUx.dismiss(viewer, "threads.new-thread-placement"),
+  ).toBe("unavailable");
+});
 
 it("provides the host command service to plugins", async () => {
   await vi.advanceTimersByTimeAsync(0);
