@@ -16,6 +16,7 @@ type KitSnapshot = ReturnType<
   ReturnType<typeof createRelaySession>["session"]["mePlacement"]["snapshot"]
 >;
 import type { RelayData } from "../../features/relay/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -68,23 +69,31 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     entries: [],
   };
   const listeners = new Set<() => void>();
-  const channel = {
+  const channel: ChannelSummary = {
     id,
     name: "Planning",
-    channelType: "session" as const,
+    channelType: "session",
     members: [viewer.pubkey],
   };
-  const list = {
+  let list = {
     status: retained ? ("ready" as const) : ("loading" as const),
     channels: retained ? [channel] : [],
   };
+  const listListeners = new Set<() => void>();
   const window = {
     ...owner.session.channels.window(id),
     status: "ready" as const,
     rows: [],
   };
   const set = vi.fn(async () => {});
-  const run = vi.fn(async () => {});
+  // Like the relay, settle the roster before the confirmed action resolves.
+  const run = vi.fn(async (action: string) => {
+    list = {
+      ...list,
+      channels: action === "archive" ? [{ ...channel, archived: true }] : [],
+    };
+    for (const listener of listListeners) listener();
+  });
   const session = {
     ...owner.session,
     channelLifecycle: {
@@ -104,6 +113,12 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     channels: {
       ...owner.session.channels,
       list: () => list,
+      subscribeList: (listener: () => void) => {
+        listListeners.add(listener);
+        return () => {
+          listListeners.delete(listener);
+        };
+      },
       ensureList() {},
       window: () => window,
       ensure() {},
@@ -289,6 +304,7 @@ it.each([
       expect.any(AbortSignal),
     );
     if (action === "archive") {
+      expect(screen.getByText("Archived")).toBeVisible();
       expect(f.open).not.toHaveBeenCalled();
       expect(trigger).toHaveFocus();
     } else expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
