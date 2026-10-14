@@ -1,13 +1,16 @@
 import type { IdentityNameView } from "../identity-names/service";
 import { useIdentityNames } from "../identity-names/react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { memo } from "react";
+import referenceStyles from "../../shared/InlineReference.module.css";
+import { Fragment, memo } from "react";
+import { profileTarget } from "../profiles/target";
 import type { Profile } from "../relay/contracts";
 import { membershipDescription, type TimelineRow } from "./membership-rows";
 import { DayDivider } from "./MessageTimestamp";
 import styles from "./Messages.module.css";
 
-/** Quiet, non-conversational activity. Avatars are decorative; prose owns the label. */
+/** Quiet, non-conversational activity. Avatars are decorative; prose owns the
+ * label, and each named member opens their profile like a prose mention. */
 export const MembershipRow = memo(function MembershipRow({
   row,
   names,
@@ -17,6 +20,8 @@ export const MembershipRow = memo(function MembershipRow({
   agentPubkeys,
   day,
   resolveName: scopedName,
+  onOpenLink,
+  canOpenLink,
 }: {
   row: TimelineRow;
   names?: IdentityNameView | undefined;
@@ -26,10 +31,12 @@ export const MembershipRow = memo(function MembershipRow({
   agentPubkeys?: ReadonlySet<string> | undefined;
   day: boolean;
   resolveName?: (pubkey: string, fallback: string) => string;
+  onOpenLink?: ((url: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
   const globalName = useIdentityNames(names);
   const resolveName = scopedName ?? globalName;
-  const { targets, text, title } = membershipDescription(
+  const { targets, parts, title } = membershipDescription(
     row.membershipRows ?? [row],
     profiles,
     viewer,
@@ -70,7 +77,39 @@ export const MembershipRow = memo(function MembershipRow({
             </span>
           )}
         </span>
-        <p title={title}>{text}</p>
+        <p title={title}>
+          {parts.map((part) => {
+            // Members appear once per sentence and its literals never repeat.
+            const key = `${part.id ?? ""}:${part.text}`;
+            const agent = !!part.id && !!agentPubkeys?.has(part.id);
+            const target = part.id && profileTarget(part.id, { agent });
+            if (!target || !canOpenLink?.(target))
+              return <Fragment key={key}>{part.text}</Fragment>;
+            // The mention kind keeps link color under the channel host's
+            // button reset; no profile target, so copies stay plain prose.
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`${referenceStyles.link} ${styles.membershipName}`}
+                data-mention-kind={agent ? "agent" : "person"}
+                aria-label={
+                  part.id === viewer
+                    ? "View your profile"
+                    : `View ${part.text} profile`
+                }
+                onClick={(event) => {
+                  // WebKit skips focusing buttons on pointer click, so the
+                  // profile tab's close would have no origin to return to.
+                  event.currentTarget.focus();
+                  onOpenLink?.(target);
+                }}
+              >
+                {part.text}
+              </button>
+            );
+          })}
+        </p>
       </div>
     </div>
   );

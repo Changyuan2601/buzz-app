@@ -9,19 +9,12 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useState } from "react";
-import { CustomModelDialog } from "../../features/agents/ModelPicker";
 import type { Agent, AgentType } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
-import { Button } from "../../shared/design-system/ui/Button";
-import {
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeDefaults } from "./defaults";
@@ -103,11 +96,13 @@ const CATALOG = [
 function applied({
   loggedIn = true,
   available = true,
+  version = "2.1.292",
   files = {},
   catalog = { listed: true },
 }: {
   loggedIn?: boolean;
   available?: boolean;
+  version?: string;
   files?: Record<string, string>;
   /** Whether Claude lists its models when asked. */
   catalog?: { listed: boolean };
@@ -180,7 +175,7 @@ function applied({
             : name === "platform"
               ? "Darwin arm64\n"
               : args === "--version"
-                ? "2.1.292 (Claude Code)\n"
+                ? `${version} (Claude Code)\n`
                 : args === "auth status --json"
                   ? JSON.stringify({ loggedIn, email: "me@example.com" })
                   : "",
@@ -223,7 +218,7 @@ function applied({
         status: 200,
         headers: {},
         body: url.endsWith("/latest")
-          ? "2.1.292"
+          ? version
           : JSON.stringify({
               platforms: { "darwin-arm64": { checksum: "a".repeat(64) } },
             }),
@@ -745,139 +740,42 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it("starts a new agent from a model and instructions, keeping the rest", async () => {
-  const installedType = installed().type;
-  const Create = installedType.Create;
-  const CreateModelMenu = installedType.CreateModelMenu;
-  if (!Create || !CreateModelMenu) throw new Error("no create choices");
-  const CreateView = Create;
-  const ModelMenu = CreateModelMenu;
+it("starts a new agent with finite model choices and preserves its other settings", async () => {
+  const { type } = installed();
+  const Create = type.Create;
+  const Model = type.CreateModel;
+  if (!Create || !Model) throw new Error("Missing creation controls");
   const config = {
     ...DEFAULT_CONFIG,
     workspace: "~/code",
     scope: "channel" as const,
+    instructions: "Triage.",
   };
   const onChange = vi.fn();
-  function CreateChoices() {
-    const [request, setRequest] = useState<{
-      initialValue: string;
-      onChange(model: string): void;
-    } | null>(null);
-    return (
-      <>
-        <CreateView config={config} onChange={onChange} disabled={false} />
-        <MenuRoot>
-          <MenuTrigger render={<Button>Models</Button>} />
-          <MenuPopup>
-            <ModelMenu
-              config={config}
-              onChange={onChange}
-              disabled={false}
-              requestCustomModel={(
-                initialValue: string,
-                commit: (model: string) => void,
-              ) => setRequest({ initialValue, onChange: commit })}
-            />
-          </MenuPopup>
-        </MenuRoot>
-        {request && (
-          <CustomModelDialog
-            initialValue={request.initialValue}
-            onClose={() => setRequest(null)}
-            onSubmit={(model) => {
-              request.onChange(model);
-              setRequest(null);
-            }}
-          />
-        )}
-      </>
-    );
-  }
-  render(<CreateChoices />);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Models" }));
-  const opus = await screen.findByRole("menuitemradio", {
-    name: "Opus 5.5 Best for everyday, complex tasks",
-  });
-  await user.click(opus);
-  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
-  expect(installedType.createModelLabel?.({ ...config, model: "opus" })).toBe(
-    "Opus 5.5",
+  render(
+    <>
+      <Create config={config} onChange={onChange} disabled={false} />
+      <Model config={config} onChange={onChange} disabled={false} />
+    </>,
   );
-  fireEvent.change(screen.getByLabelText("Instructions"), {
-    target: { value: "Triage." },
+  const picker = await screen.findByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  const user = userEvent.setup();
+  await user.click(picker);
+  expect(
+    screen.queryByRole("option", { name: "Custom model" }),
+  ).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("option", { name: "Opus 5.5" }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
+  expect(screen.getByLabelText("Describe what I should do")).toHaveValue(
+    "Triage.",
+  );
+  fireEvent.change(screen.getByLabelText("Describe what I should do"), {
+    target: { value: "Plan." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
     ...config,
-    instructions: "Triage.",
-  });
-});
-
-it("shows a new agent's starting config, and accepts a custom model", async () => {
-  const installedType = installed().type;
-  const Create = installedType.Create;
-  const CreateModelMenu = installedType.CreateModelMenu;
-  if (!Create || !CreateModelMenu) throw new Error("no create choices");
-  const CreateView = Create;
-  const ModelMenu = CreateModelMenu;
-  const config = {
-    ...DEFAULT_CONFIG,
-    model: "sonnet",
-    instructions: "Triage.",
-  };
-  const onChange = vi.fn();
-  function CreateChoices() {
-    const [request, setRequest] = useState<{
-      initialValue: string;
-      onChange(model: string): void;
-    } | null>(null);
-    return (
-      <>
-        <CreateView config={config} onChange={onChange} disabled={false} />
-        <MenuRoot>
-          <MenuTrigger render={<Button>Models</Button>} />
-          <MenuPopup>
-            <ModelMenu
-              config={config}
-              onChange={onChange}
-              disabled={false}
-              requestCustomModel={(initialValue, commit) =>
-                setRequest({ initialValue, onChange: commit })
-              }
-            />
-          </MenuPopup>
-        </MenuRoot>
-        {request && (
-          <CustomModelDialog
-            initialValue={request.initialValue}
-            onClose={() => setRequest(null)}
-            onSubmit={(model) => {
-              request.onChange(model);
-              setRequest(null);
-            }}
-          />
-        )}
-      </>
-    );
-  }
-  render(<CreateChoices />);
-  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Models" }));
-  await user.click(
-    await screen.findByRole("menuitem", {
-      name: "Custom model Enter a model ID",
-    }),
-  );
-  await user.type(
-    await screen.findByRole("textbox", { name: "Model ID" }),
-    "claude-opus-4-1",
-  );
-  await user.click(screen.getByRole("button", { name: "Use model" }));
-  expect(onChange).toHaveBeenLastCalledWith({
-    ...DEFAULT_CONFIG,
-    model: "claude-opus-4-1",
-    instructions: "Triage.",
+    instructions: "Plan.",
   });
 });
 
@@ -885,7 +783,7 @@ it("disables a new agent's controls while it is being created", () => {
   const Create = installed().type.Create;
   if (!Create) throw new Error("no create choices");
   render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
-  expect(screen.getByLabelText("Instructions")).toBeDisabled();
+  expect(screen.getByLabelText("Describe what I should do")).toBeDisabled();
 });
 
 it("edits a custom model and instructions in settings", async () => {
@@ -945,4 +843,157 @@ it("keeps settings editable while a provider change waits for Save", async () =>
   expect(screen.getByRole("textbox", { name: "Workspace" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
+});
+
+it("shares one customization-free discovery across cards and workspace changes", async () => {
+  const { type, spawn } = installed();
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
+  const cards = (workspace: string) => (
+    <StrictMode>
+      {[1, 2, 3].map((id) => (
+        <Model
+          key={id}
+          config={{ ...DEFAULT_CONFIG, workspace }}
+          disabled={false}
+          onChange={vi.fn()}
+        />
+      ))}
+    </StrictMode>
+  );
+  const view = render(cards("/project-with-hooks"));
+  await waitFor(() =>
+    expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(3),
+  );
+  view.rerender(cards("/other-project"));
+  view.unmount();
+  render(cards("/third-project"));
+  await screen.findAllByRole("combobox", { name: "Model" });
+  const probes = spawn.mock.calls.filter(([, options]) =>
+    options?.args?.includes("--input-format"),
+  );
+  expect(probes).toHaveLength(1);
+  expect(probes[0]?.[1]).toMatchObject({
+    cwd: "~",
+    args: expect.arrayContaining([
+      "--safe-mode",
+      "--tools",
+      "",
+      "--strict-mcp-config",
+    ]),
+  });
+  expect(probes[0]?.[1]?.args).not.toContain("bypassPermissions");
+});
+
+it("does not open a competing Claude sign-in or let it cancel the owner", async () => {
+  const { type, spawn } = installed({ loggedIn: false });
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
+  render(
+    [1, 2].map((id) => (
+      <Model
+        key={id}
+        config={DEFAULT_CONFIG}
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    )),
+  );
+  await waitFor(() => {
+    const buttons = screen.getAllByRole("button", { name: "Sign in" });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toBeEnabled();
+  });
+  const buttons = screen.getAllByRole("button", { name: "Sign in" });
+  if (!buttons[0] || !buttons[1]) throw new Error("Missing sign-in");
+  fireEvent.click(buttons[0]);
+  fireEvent.click(buttons[1]);
+  expect(
+    spawn.mock.calls.filter(
+      ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
+    ),
+  ).toHaveLength(1);
+  expect(
+    screen.getAllByRole("dialog", { name: "Sign in to Claude" }),
+  ).toHaveLength(1);
+  expect(buttons[1]).toBeDisabled();
+});
+
+it("offers an update before discovering models on a pre-safe-mode Claude copy", async () => {
+  const { type, spawn } = installed({ version: "2.1.168" });
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
+  render(<Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Update Claude" })).toBeEnabled(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Sign in" }),
+  ).not.toBeInTheDocument();
+  expect(
+    spawn.mock.calls.filter(([, options]) =>
+      options?.args?.includes("--safe-mode"),
+    ),
+  ).toHaveLength(0);
+});
+
+it.each([
+  { available: true, action: "Sign in", title: "Sign in to Claude" },
+  { available: false, action: "Install Claude", title: "Set up Claude" },
+])(
+  "keeps failed Claude $action output in its open dialog",
+  async ({ available, action, title }) => {
+    const { type, spawn } = installed({ loggedIn: false, available });
+    const Model = type.CreateModel;
+    if (!Model) throw new Error("Missing model field");
+    render(
+      <Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />,
+    );
+    const signIn = await screen.findByRole("button", { name: action });
+    await waitFor(() => expect(signIn).toBeEnabled());
+    const original = spawn.getMockImplementation();
+    if (!original) throw new Error("Missing spawn implementation");
+    spawn.mockImplementation(async (id, options = {}) => {
+      if (
+        options.args?.includes("install") ||
+        options.args?.slice(-2).join(" ") === "auth login"
+      )
+        throw new Error("Setup could not start");
+      return original(id, options);
+    });
+    fireEvent.click(signIn);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: action })).toBeEnabled(),
+    );
+    const dialog = await screen.findByRole("dialog", { name: title });
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: "Setup details" }),
+    );
+    expect(await within(dialog).findByRole("log")).toHaveTextContent(
+      "Setup could not start",
+    );
+  },
+);
+
+it("keeps the shared Claude catalog across repeated provider checks", async () => {
+  const { type, spawn } = installed();
+  const Model = type.CreateModel;
+  if (!Model || !type.provider) throw new Error("Missing provider");
+  render(
+    <>
+      <Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />
+      <Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />
+    </>,
+  );
+  await screen.findAllByRole("combobox", { name: "Model" });
+  for (let i = 0; i < 3; i++)
+    await act(async () => {
+      await type.provider?.check();
+    });
+  expect(
+    spawn.mock.calls.filter(([, options]) =>
+      options?.args?.includes("--input-format"),
+    ),
+  ).toHaveLength(1);
+  expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(2);
 });

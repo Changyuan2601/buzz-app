@@ -2,19 +2,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { Button } from "../../shared/design-system/ui/Button";
-import {
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
-import {
-  CustomModelDialog,
-  ModelPicker,
-  type ModelChoice,
-} from "./ModelPicker";
+import { ModelPicker, type ModelChoice } from "./ModelPicker";
 
 afterEach(cleanup);
 
@@ -35,49 +24,6 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
     />,
   );
   return { onChange, view, user: userEvent.setup() };
-}
-
-function setupMenu(value = "", allowCustomModel = true) {
-  const onChange = vi.fn();
-  function View() {
-    const [request, setRequest] = useState<{
-      initialValue: string;
-      onChange(model: string): void;
-    } | null>(null);
-    return (
-      <>
-        <MenuRoot>
-          <MenuTrigger render={<Button>Models</Button>} />
-          <MenuPopup aria-label="Model choices" size="wide">
-            <ModelPicker
-              presentation="menu"
-              models={models}
-              allowCustomModel={allowCustomModel}
-              value={value}
-              defaultLabel="Default model"
-              defaultDescription="Uses the provider default"
-              requestCustomModel={(initialValue, commit) =>
-                setRequest({ initialValue, onChange: commit })
-              }
-              onChange={onChange}
-            />
-          </MenuPopup>
-        </MenuRoot>
-        {request && (
-          <CustomModelDialog
-            initialValue={request.initialValue}
-            onClose={() => setRequest(null)}
-            onSubmit={(model) => {
-              request.onChange(model);
-              setRequest(null);
-            }}
-          />
-        )}
-      </>
-    );
-  }
-  render(<View />);
-  return { onChange, user: userEvent.setup() };
 }
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
@@ -221,31 +167,29 @@ it("shows that models are loading", () => {
   expect(screen.getByText("Loading models…")).toBeVisible();
 });
 
-it("presents rich model rows inside a menu", async () => {
-  const { onChange, user } = setupMenu("sonnet");
-  await user.click(screen.getByRole("button", { name: "Models" }));
+it("keeps compact choices finite and includes rich model descriptions", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      compact
+      allowCustomModel
+      models={models}
+      value="sonnet"
+      defaultLabel="Default model"
+      onChange={onChange}
+    />,
+  );
+  await user.click(control());
   expect(
-    await screen.findByRole("menuitemradio", {
-      name: "Default model Uses the provider default",
-    }),
-  ).not.toBeChecked();
-  expect(screen.getByRole("menuitemradio", { name: "Sonnet" })).toBeChecked();
-  await user.click(
-    screen.getByRole("menuitemradio", { name: "Opus Most capable" }),
+    screen.queryByRole("option", { name: "Custom model" }),
+  ).not.toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "Sonnet" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
+  const opus = screen.getByRole("option", { name: "Opus" });
+  expect(opus).toHaveAccessibleDescription("Most capable");
+  await user.click(opus);
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
-});
-
-it("opens custom model entry from a menu row", async () => {
-  const { onChange, user } = setupMenu("sonnet");
-  await user.click(screen.getByRole("button", { name: "Models" }));
-  await user.click(
-    await screen.findByRole("menuitem", {
-      name: "Custom model Enter a model ID",
-    }),
-  );
-  const modelId = await screen.findByRole("textbox", { name: "Model ID" });
-  await user.type(modelId, "claude-future-1");
-  await user.click(screen.getByRole("button", { name: "Use model" }));
-  expect(onChange).toHaveBeenCalledExactlyOnceWith("claude-future-1");
 });

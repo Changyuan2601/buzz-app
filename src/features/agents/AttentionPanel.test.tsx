@@ -195,6 +195,12 @@ it("keeps an Interest in use, shows skipped objects, and rearms a spent timer", 
 
   expect(screen.getByText(/Done, ran 1 of 1 time/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /^Actions for Every/ }));
+  await user.click(await screen.findByRole("menuitem", { name: "Edit JSON" }));
+  expect(
+    screen.getByText(/A changed interval_secs starts after the next run\./),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: /^Actions for Every/ }));
   await user.click(await screen.findByRole("menuitem", { name: "Run again" }));
   expect(save).toHaveBeenLastCalledWith({
     attention: {

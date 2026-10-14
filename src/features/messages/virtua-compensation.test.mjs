@@ -581,6 +581,96 @@ function resizeHarness() {
   };
 }
 
+// Paging history prepends a page, jumps once, and measures the prepended rows
+// in the next frame's observer batch. The pending jump is flushed only by the
+// Virtualizer layout effect, which every store update commits: scroll events
+// and repeated flushes must not re-apply it, and a batch is one correction.
+it("applies one correction per shift jump and per measurement batch, none from scroll events", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  const corrections = () =>
+    c.calls.map(({ method, options, overflow }) => [
+      method,
+      options.top,
+      overflow,
+    ]);
+  c.store.W(1, 300); // native upward scrolling, as when paging history
+  c.prepend(40); // 20 older rows at the 100px estimate: one 2000px jump
+  expect(corrections()).toEqual([["scrollBy", 2000, ""]]);
+  c.driver.J(); // another commit's layout effect
+  c.store.W(1, 2300); // the jump's own scroll event, rendered through flushSync
+  c.driver.J();
+  expect(c.calls).toHaveLength(1);
+  // The prepended rows measure together: one correction for the whole batch.
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.J();
+  c.driver.J();
+  expect(corrections()).toEqual([
+    ["scrollBy", 2000, ""],
+    ["scrollBy", 200, ""],
+  ]);
+  // Its scroll event and an unchanged measurement add nothing.
+  c.store.W(1, 2500);
+  c.driver.J();
+  c.store.W(3, [[0, 110]]);
+  c.driver.J();
+  expect(c.calls).toHaveLength(2);
+  expect(vi.getTimerCount()).toBe(0); // no Chromium overflow toggle to restore
+  c.driver._();
+});
+
+it("keeps the same rows mounted when a page lands before a flushed correction's scroll event", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  c.store.W(1, 300); // native upward scrolling, as when paging history
+  c.prepend(40);
+  c.store.W(1, c.viewport.scrollTop); // the jump's own scroll event
+  // The prepended rows measure in the next frame: their correction is flushed
+  // and the range is held until that correction's scroll event arrives.
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.J();
+  expect(c.store.i(1600)).toEqual([7, 39]);
+  // The next page lands first. Its 20 rows go in front of every held row, so
+  // the held range must move with them: [7, 39] would mount the new rows and
+  // unmount the rows just below the viewport, to be remounted one frame later.
+  c.store.W(5, [60, true]);
+  expect(c.store.i(1600)).toEqual([27, 59]);
+  c.driver.J();
+  c.store.W(1, c.viewport.scrollTop); // the scroll event: the range is live again
+  // Inside the held range: the rows it kept mounted stay, nothing remounts.
+  expect(c.store.i(1600)).toEqual([29, 59]);
+  c.driver._();
+});
+
+it("holds the top rows when a removal past the held range lands before a flushed correction's scroll event", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  c.store.W(5, [60, false]); // 40 newer rows below the viewport
+  c.store.W(1, 300); // native upward scrolling, as when paging history
+  c.prepend(80);
+  c.store.W(1, c.viewport.scrollTop); // the jump's own scroll event
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 110]),
+  );
+  c.driver.J(); // the measurement's correction is flushed: the range is held
+  expect(c.store.i(1600)).toEqual([7, 44]);
+  // A head removal past every held row lands first. Moved by its delta the
+  // range would name rows above the list, an inverted range that renders no
+  // row for a frame; the rows it keeps are the top ones the offset lands on.
+  c.store.W(5, [30, true]);
+  expect(c.store.i(1600)).toEqual([0, 29]);
+  c.driver.J();
+  // Its scroll event: nothing is left above the viewport, so layout clamps
+  // the corrected offset to the top and the live range lies in the held one.
+  c.store.W(1, 0);
+  expect(c.store.i(1600)).toEqual([0, 21]);
+  c.driver._();
+});
+
 it("delivers the latest resize per target outside native observer delivery", () => {
   const h = resizeHarness();
   const first = h.node(),

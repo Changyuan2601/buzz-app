@@ -1,10 +1,4 @@
-// The Agents page, in three tabs: Your agents, Import and Browse.
-// - Your agents: every agent as a card. Selecting one (click, or arrow keys)
-//   opens its peek beside the grid without leaving it; Enter or a double-click
-//   builds: the identity rail on the left, the type's tabs and the app's
-//   Attention tab on the right. The New agent tile opens the create dialog.
-// - Import: identities earlier agent systems saved on this machine.
-// - Browse: agents shared in the community.
+// Agents and teams, with creation, import and marketplace entry from New agent.
 import {
   useEffect,
   useRef,
@@ -52,6 +46,8 @@ import {
   CircleNotchIcon,
   CopyIcon,
   DotsThreeIcon,
+  DownloadIcon,
+  StorefrontIcon,
   PlusIcon,
   RobotIcon,
   XIcon,
@@ -93,7 +89,6 @@ type Frame =
   | {
       view: "browse";
       selected?: string;
-      side?: "teams";
     }
   | { view: "build"; pubkey: string };
 
@@ -109,11 +104,10 @@ function summaryOf(agent: Agent, type: RegisteredAgentType | undefined) {
   }
 }
 
-type Tab = "yours" | "import" | "browse";
+type Tab = "yours" | "teams";
 const TABS = [
   { value: "yours", label: "Your agents", panelId: "agents-yours" },
-  { value: "import", label: "Import", panelId: "agents-import" },
-  { value: "browse", label: "Browse", panelId: "agents-browse" },
+  { value: "teams", label: "Your teams", panelId: "agents-teams" },
 ] as const;
 
 export function AgentsPage({
@@ -135,6 +129,10 @@ export function AgentsPage({
   const [tab, setTab] = useState<Tab>("yours");
   const [frame, setFrame] = useState<Frame>({ view: "browse" });
   const [creating, setCreating] = useState(false);
+  const [flow, setFlow] = useState<"import" | "browse">();
+  const newAgentButton = useRef<HTMLButtonElement>(null);
+  const newAgentLabel = useRef<HTMLSpanElement>(null);
+  const [importing, setImporting] = useState(false);
   const [localProviderKey, setLocalProviderKey] = useState<string>();
   const routed = !!navigation && !!navigator;
   const providerKey = routed
@@ -168,7 +166,6 @@ export function AgentsPage({
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
   const building = frame.view === "build" ? find(frame.pubkey) : undefined;
   const selected = frame.view === "browse" ? find(frame.selected) : undefined;
-  const side = frame.view === "browse" ? frame.side : undefined;
   const browse = (selected?: string) =>
     setFrame(selected ? { view: "browse", selected } : { view: "browse" });
   const build = (pubkey: string) => {
@@ -177,10 +174,63 @@ export function AgentsPage({
     if (agent?.place !== "elsewhere" && !agent?.unfinished)
       setFrame({ view: "build", pubkey });
   };
-  const ready = types.length > 0 && snapshot.status === "ready";
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
-  const openTeams = () => setFrame({ view: "browse", side: "teams" });
+  const returnToAgents = () => {
+    setFlow(undefined);
+    setTab("yours");
+  };
+
+  const toolbarAction =
+    snapshot.agents.length > 0 ||
+    tab === "teams" ||
+    snapshot.status === "error" ||
+    snapshot.status === "unavailable";
+  const newAgentMenu = (
+    <MenuRoot>
+      <MenuTrigger
+        render={
+          toolbarAction ? (
+            <NewAgentTile ref={newAgentButton} variant="button" />
+          ) : (
+            <NewAgentTile
+              ref={newAgentButton}
+              labelRef={newAgentLabel}
+              fullWidth
+            />
+          )
+        }
+      />
+      <MenuPopup
+        anchor={toolbarAction ? newAgentButton : newAgentLabel}
+        align={toolbarAction ? "end" : "center"}
+      >
+        <MenuItem
+          disabled={snapshot.status !== "ready" || !types.length}
+          onClick={() => setCreating(true)}
+        >
+          <PlusIcon size={16} aria-hidden="true" /> Create a new agent
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            browse();
+            setFlow("import");
+          }}
+        >
+          <DownloadIcon size={16} aria-hidden="true" /> Import an agent
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            browse();
+            setFlow("browse");
+          }}
+        >
+          <StorefrontIcon size={16} aria-hidden="true" /> Browse the marketplace
+        </MenuItem>
+      </MenuPopup>
+    </MenuRoot>
+  );
+  const openTeams = () => setTab("teams");
   const more = useRef<HTMLButtonElement>(null);
 
   const yours = (() => {
@@ -200,29 +250,15 @@ export function AgentsPage({
           description={snapshot.error ?? "Try again."}
         />
       );
-    if (snapshot.status === "ready" && !types.length && !snapshot.agents.length)
-      return (
-        <EmptyState
-          icon="✦"
-          title="No agents yet"
-          description="Enable an agent type plugin to make one."
-        />
-      );
     return (
       <Inventory
+        service={agents}
         agents={snapshot.agents}
         selected={selected?.pubkey}
         typeOf={typeOf}
         onSelect={browse}
         onBuild={build}
-        newAgent={
-          types.length > 0 && (
-            <NewAgentTile
-              disabled={snapshot.status !== "ready"}
-              onClick={() => setCreating(true)}
-            />
-          )
-        }
+        newAgent={!toolbarAction && newAgentMenu}
       />
     );
   })();
@@ -246,14 +282,7 @@ export function AgentsPage({
         />
       );
     const panel =
-      tab !== "yours" ? undefined : side === "teams" ? (
-        <Teams
-          agents={agents}
-          saved={snapshot.agents.filter((agent) => agent.place === "here")}
-          teams={snapshot.teams}
-          onClose={() => browse()}
-        />
-      ) : selected ? (
+      tab !== "yours" ? undefined : selected ? (
         <AgentPeek
           key={selected.pubkey}
           agents={agents}
@@ -268,13 +297,16 @@ export function AgentsPage({
       <div className={styles.browse} data-side={panel ? "" : undefined}>
         <div className={styles.inventory}>
           <div className={styles.content}>
-            <Tabs
-              variant="panel"
-              label="Agent tabs"
-              value={tab}
-              onValueChange={setTab}
-              items={TABS}
-            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Tabs
+                variant="panel"
+                label="Agent tabs"
+                value={tab}
+                onValueChange={setTab}
+                items={TABS}
+              />
+              {toolbarAction && newAgentMenu}
+            </div>
             <section
               id={`agents-${tab}`}
               role="tabpanel"
@@ -282,18 +314,13 @@ export function AgentsPage({
             >
               {tab === "yours" ? (
                 yours
-              ) : tab === "import" ? (
-                <ImportAgents
-                  agents={agents}
-                  types={runnable}
-                  onImported={() => setTab("yours")}
-                />
               ) : (
-                <AgentBrowse
-                  relay={relay}
+                <Teams
                   agents={agents}
-                  types={runnable}
-                  onImported={() => setTab("yours")}
+                  saved={snapshot.agents.filter(
+                    (agent) => agent.place === "here",
+                  )}
+                  teams={snapshot.teams}
                 />
               )}
             </section>
@@ -342,7 +369,7 @@ export function AgentsPage({
               )
             }
             actions={
-              !building && tab === "yours" && ready ? (
+              !building && snapshot.status === "ready" ? (
                 <MenuRoot>
                   <MenuTrigger
                     render={
@@ -357,7 +384,7 @@ export function AgentsPage({
                   />
                   <MenuPopup align="end">
                     <ProviderSubmenu types={types} onSelect={setProviderKey} />
-                    <MenuItem onClick={openTeams} disabled={side === "teams"}>
+                    <MenuItem onClick={openTeams} disabled={tab === "teams"}>
                       Teams
                     </MenuItem>
                   </MenuPopup>
@@ -368,6 +395,35 @@ export function AgentsPage({
           <div className="min-h-0 flex-1">{body}</div>
         </div>
       </FullPageSurface>
+      {flow && (
+        <Dialog
+          open
+          title={flow === "import" ? "Import an agent" : "Marketplace"}
+          size="wide"
+          height="stable"
+          preventClose={importing}
+          finalFocus={newAgentButton}
+          onOpenChange={(open) => {
+            if (!open) setFlow(undefined);
+          }}
+        >
+          {flow === "import" ? (
+            <ImportAgents
+              agents={agents}
+              types={runnable}
+              onImported={returnToAgents}
+              onPendingChange={setImporting}
+            />
+          ) : (
+            <AgentBrowse
+              relay={relay}
+              agents={agents}
+              types={runnable}
+              onImported={returnToAgents}
+            />
+          )}
+        </Dialog>
+      )}
       {creating && (
         <AgentCreateDialog
           agents={agents}
@@ -604,9 +660,10 @@ function ManagedProviderDialog({
   );
 }
 
-/** The grid as one listbox: a single tab stop, arrows move the selection. The
+/** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
 function Inventory({
+  service,
   agents,
   selected,
   typeOf,
@@ -614,6 +671,7 @@ function Inventory({
   onBuild,
   newAgent,
 }: {
+  service: Agents;
   agents: readonly Agent[];
   selected: string | undefined;
   typeOf(agent: Agent): RegisteredAgentType | undefined;
@@ -628,6 +686,11 @@ function Inventory({
       ? getComputedStyle(grid.current).gridTemplateColumns.split(" ").length
       : 1;
   const onKeyDown = (event: KeyboardEvent) => {
+    if (
+      !(event.target instanceof HTMLElement) ||
+      event.target.getAttribute("role") !== "gridcell"
+    )
+      return;
     const last = agents.length - 1;
     const from = index < 0 ? -1 : index;
     const step: Record<string, number> = {
@@ -657,15 +720,16 @@ function Inventory({
     event.preventDefault();
     onSelect(agents[next]?.pubkey);
     grid.current
-      ?.querySelectorAll<HTMLElement>('[role="option"]')
+      ?.querySelectorAll<HTMLElement>('[role="gridcell"]')
       [next]?.focus();
   };
   return (
     <div ref={grid} className={cardStyles.grid}>
       {newAgent}
       {agents.length > 0 && (
+        // biome-ignore lint/a11y/useSemanticElements: This is a wrapping layout grid of interactive cards, not tabular data.
         <div
-          role="listbox"
+          role="grid"
           aria-label="Agents"
           className="contents"
           onKeyDown={onKeyDown}
@@ -674,24 +738,149 @@ function Inventory({
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
             return (
-              <AgentCard
-                key={agent.pubkey}
-                role="option"
-                aria-selected={active}
-                tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
-                data-unavailable={type ? undefined : ""}
-                onClick={() => onSelect(active ? undefined : agent.pubkey)}
-                onDoubleClick={() => onBuild(agent.pubkey)}
-                agent={agent}
-                community={agent.relay || undefined}
-                icon={<TypeIcon type={type} />}
-                detail={summaryOf(agent, type)}
-              />
+              // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
+              // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
+              <div role="row" className="contents" key={agent.pubkey}>
+                <InventoryCard
+                  service={service}
+                  type={type}
+                  onBuild={() => onBuild(agent.pubkey)}
+                  onRemoved={() => onSelect()}
+                  role="gridcell"
+                  aria-label={agent.name}
+                  data-selected={active}
+                  aria-selected={active}
+                  tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
+                  data-unavailable={type ? undefined : ""}
+                  onClick={(event) => {
+                    if (
+                      event.currentTarget.contains(event.target as Node) &&
+                      !(event.target as Element).closest(
+                        "[data-card-control], button, input",
+                      )
+                    )
+                      onSelect(active ? undefined : agent.pubkey);
+                  }}
+                  onDoubleClick={(event) => {
+                    if (
+                      event.currentTarget.contains(event.target as Node) &&
+                      !(event.target as Element).closest(
+                        "[data-card-control], button, input",
+                      )
+                    )
+                      onBuild(agent.pubkey);
+                  }}
+                  agent={agent}
+                  community={agent.relay || undefined}
+                  icon={<TypeIcon type={type} />}
+                  detail={summaryOf(agent, type)}
+                />
+              </div>
             );
           })}
         </div>
       )}
     </div>
+  );
+}
+
+/** Card edits use the same type-owned field and service as creation/settings. */
+function InventoryCard({
+  service,
+  type,
+  onBuild,
+  onRemoved,
+  ...props
+}: Omit<React.ComponentProps<typeof AgentCard>, "agent"> & {
+  agent: Agent;
+  service: Agents;
+  type: RegisteredAgentType | undefined;
+  onBuild(): void;
+  onRemoved(): void;
+}) {
+  const agent = props.agent;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const editable = agent.place !== "elsewhere" && !agent.unfinished;
+  const Model = editable ? type?.CreateModel : undefined;
+  const save = async (config: unknown) => {
+    setSaving(true);
+    setError("");
+    try {
+      await service.save(agent.pubkey, { config });
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const menu = (remove?: () => void) => (
+    <MenuRoot>
+      <MenuTrigger
+        render={
+          <IconButton
+            aria-label={`Actions for ${agent.name}`}
+            size="sm"
+            icon={<DotsThreeIcon size={16} />}
+          />
+        }
+      />
+      <MenuPopup align="end">
+        {editable && <MenuItem onClick={onBuild}>Open settings</MenuItem>}
+        <MenuItem
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(agent.pubkey)
+              .catch((reason) => setError(message(reason)));
+          }}
+        >
+          Copy public key
+        </MenuItem>
+        {remove && (
+          <MenuItem tone="danger" onClick={remove}>
+            Delete agent
+          </MenuItem>
+        )}
+      </MenuPopup>
+    </MenuRoot>
+  );
+  return (
+    <AgentCard
+      {...props}
+      icon={Model ? undefined : props.icon}
+      detail={Model ? undefined : props.detail}
+      menu={
+        agent.place === "elsewhere" ? (
+          menu()
+        ) : (
+          <AgentDelete
+            agents={service}
+            agent={agent}
+            onRemoved={onRemoved}
+            trigger={menu}
+          />
+        )
+      }
+    >
+      <div
+        data-card-control=""
+        className="flex min-w-0 max-w-full flex-col items-center gap-2"
+      >
+        {Model && (
+          <Model
+            config={agent.config}
+            modelAppearance="subtle"
+            disabled={saving}
+            onChange={(config) => void save(config)}
+          />
+        )}
+        {error && (
+          <span role="alert" className="text-body-sm text-danger">
+            {error}
+          </span>
+        )}
+      </div>
+    </AgentCard>
   );
 }
 
@@ -861,10 +1050,12 @@ function ImportAgents({
   agents,
   types,
   onImported,
+  onPendingChange,
 }: {
   agents: Agents;
   types: readonly RegisteredAgentType[];
   onImported(): void;
+  onPendingChange(pending: boolean): void;
 }) {
   const [found, setFound] = useState<PortableAgents>();
   const [type, setType] = useState(types[0]?.key ?? "");
@@ -888,6 +1079,7 @@ function ImportAgents({
   const port = async (agent: PortableAgent) => {
     if (!chosen || pending) return;
     setPending(agent.pubkey);
+    onPendingChange(true);
     setError("");
     try {
       await agents.port({
@@ -907,6 +1099,7 @@ function ImportAgents({
       setError(message(reason));
     } finally {
       setPending(undefined);
+      onPendingChange(false);
     }
   };
   if (!types.length)
@@ -1018,12 +1211,10 @@ function Teams({
   agents,
   saved,
   teams,
-  onClose,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   teams: readonly Team[];
-  onClose(): void;
 }) {
   // A team's id while it is edited, or "new" for one being made.
   const [editing, setEditing] = useState<string>();
@@ -1040,11 +1231,7 @@ function Teams({
     );
   const names = new Map(saved.map((agent) => [agent.pubkey, agent.name]));
   return (
-    <section className={styles.sideBody} aria-label="Teams">
-      <SideHeader
-        title={<h3 className="m-0 text-heading">Teams</h3>}
-        onClose={onClose}
-      />
+    <section className="grid gap-5" aria-label="Teams">
       <p className="m-0 text-body-sm text-secondary">
         Each member is told who its teammates are, and follows the team's
         instructions after its own.
