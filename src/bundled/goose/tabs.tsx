@@ -446,9 +446,9 @@ export function createTabs({
     );
   }
 
-  /** The session of the conversation the profile was opened from, and the
-   * agent's other recent sessions, each with its transcript. */
-  function Conversations({
+  /** The agent's sessions: the one it was opened from, recent ones, and their
+   * transcripts. */
+  function ActivityTab({
     agent,
     conversation,
   }: {
@@ -741,12 +741,7 @@ export function createTabs({
   /** The trigger's detail for a provider or model chosen for this agent. */
   const createModelLabel = (saved: Config) => choiceLabel(readConfig(saved));
 
-  function SettingsTab({
-    agent,
-    save,
-    settingsHost,
-    conversation,
-  }: AgentViewProps<Config>) {
+  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
@@ -824,15 +819,15 @@ export function createTabs({
             Save
           </Button>
         </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
       </form>
     );
   }
 
-  return { Create, CreateModelMenu, createModelLabel, SettingsTab };
+  return {
+    Create,
+    CreateModelMenu,
+    createModelLabel,
+    SettingsTab,
+    ActivityTab,
+  };
 }

@@ -1,7 +1,10 @@
 // A stand-in for `goose-acp`'s ACP over stdio, for tests.
-import type {
-  HostProcess,
-  HostProcessOptions,
+import {
+  answerMcp,
+  type HostMcpServer,
+  type HostProcess,
+  type HostProcessOptions,
+  type McpHandler,
 } from "../../features/host/service";
 
 type Message = {
@@ -43,7 +46,8 @@ export type FakeGoose = {
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
-  /** An MCP message for the Buzz tools from `sessionId`. */
+  /** An MCP message for the Buzz tools from `sessionId`, sent to the server
+   * its `session/new` declared. */
   mcp(
     sessionId: string,
     method: string,
@@ -62,11 +66,21 @@ export type FakeSession = Readonly<{
   conversation: readonly Record<string, unknown>[];
 }>;
 
+/** A loopback MCP server `serve` started, as the app's host would. */
+export type FakeMcpServer = {
+  url: string;
+  token: string;
+  handler: McpHandler;
+  closed: boolean;
+};
+
 /** A spawn whose `goose` processes answer like `goose-acp`, and whose
- * `workspace` process prints `home` for a `~/…` directory. */
+ * `workspace` process prints `home` for a `~/…` directory; and a `serve` that
+ * starts in-memory MCP servers those processes reach. */
 export function fakeSpawn(
   options: Readonly<{
-    acp?: boolean;
+    /** Whether goose says it can reach HTTP MCP servers. */
+    http?: boolean;
     home?: string;
     hold?: boolean;
     /** What a turn writes before it ends. */
@@ -83,6 +97,30 @@ export function fakeSpawn(
   }> = {},
 ) {
   const processes: FakeGoose[] = [];
+  const servers: FakeMcpServer[] = [];
+  const serve = async (handler: McpHandler): Promise<HostMcpServer> => {
+    const index = servers.length + 1;
+    let stopped!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      stopped = resolve;
+    });
+    const server: FakeMcpServer = {
+      url: `http://127.0.0.1:${40_000 + index}/mcp`,
+      token: `token-${index}`,
+      handler,
+      closed: false,
+    };
+    servers.push(server);
+    return {
+      url: server.url,
+      headers: [{ name: "Authorization", value: `Bearer ${server.token}` }],
+      close: async () => {
+        server.closed = true;
+        stopped();
+      },
+      closed,
+    };
+  };
   const spawn = async (
     id: string,
     process: HostProcessOptions = {},
@@ -109,6 +147,9 @@ export function fakeSpawn(
     let alive = true;
     let sessions = 0;
     let requests = 0;
+    let mcpRequests = 0;
+    /** The Buzz MCP server each session was given. */
+    const declared = new Map<string, string>();
     const answers = new Map<number | string, (message: Message) => void>();
     const send = (message: Message) =>
       queueMicrotask(() => {
@@ -138,14 +179,18 @@ export function fakeSpawn(
         send({ jsonrpc: "2.0", id: requestId, method, params });
         return answer;
       },
-      mcp: (sessionId, method, params = {}) =>
-        fake.ask("mcp/message", {
-          serverId: "buzz",
-          requestId: `mcp-${requests + 1}`,
-          method,
-          params,
-          _meta: { sessionId },
-        }),
+      mcp: async (sessionId, method, params = {}) => {
+        const server = servers.find(
+          (item) => item.url === declared.get(sessionId),
+        );
+        if (!server || server.closed)
+          throw new Error(`No Buzz MCP server for ${sessionId}`);
+        const body = { jsonrpc: "2.0", id: ++mcpRequests, method, params };
+        return (await answerMcp(
+          server.handler,
+          JSON.stringify(body),
+        )) as Message;
+      },
       update: (sessionId, update) =>
         send({
           jsonrpc: "2.0",
@@ -174,12 +219,17 @@ export function fakeSpawn(
           return reply(id, {
             protocolVersion: 1,
             agentCapabilities: {
-              mcpCapabilities: { acp: options.acp ?? true },
+              mcpCapabilities: { http: options.http ?? true, sse: false },
             },
           });
         case "session/new": {
           fake.opened.push(params);
-          return reply(id, { sessionId: `session-${++sessions}` });
+          const sessionId = `session-${++sessions}`;
+          const extensions = ((params._meta as Record<string, unknown>)
+            ?.enabledExtensions ?? []) as { server?: { url?: string } }[];
+          const url = extensions.find((item) => item.server?.url)?.server?.url;
+          if (url) declared.set(sessionId, url);
+          return reply(id, { sessionId });
         }
         case "_goose/unstable/session/system-prompt/set":
           fake.prompts.set(sessionId, String(params.text));
@@ -339,7 +389,10 @@ export function fakeSpawn(
   };
   return {
     spawn,
+    serve,
     processes,
+    /** The MCP servers `serve` started, in order. */
+    servers,
     /** The `goose` processes started, without `workspace` lookups. */
     get geese() {
       return processes.filter((process) => process.id === "goose");

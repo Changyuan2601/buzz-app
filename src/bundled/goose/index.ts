@@ -23,13 +23,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
   const runtime = new GooseRuntime(host, agents.relay);
   const spawn = host.spawn?.bind(host);
-  const { Create, CreateModelMenu, createModelLabel, SettingsTab } = createTabs(
-    {
-      setup: new GooseSetup(spawn),
-      runtime,
-      history: new GooseHistory(spawn),
-    },
-  );
+  const {
+    Create,
+    CreateModelMenu,
+    createModelLabel,
+    SettingsTab,
+    ActivityTab,
+  } = createTabs({
+    setup: new GooseSetup(spawn),
+    runtime,
+    history: new GooseHistory(spawn),
+  });
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -76,6 +80,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     run: (delivery) => runtime.run(delivery),

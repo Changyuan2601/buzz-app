@@ -41,6 +41,10 @@ pub struct HostGrants {
     /// a process takes stdin and the caller appends its own arguments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub processes: Vec<HostProcess>,
+    /// The plugin may serve MCP servers on loopback HTTP to the agents it
+    /// runs, answering their messages itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

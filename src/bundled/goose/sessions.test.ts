@@ -20,6 +20,7 @@ const setup = (initial: Partial<Launch> = {}, hold = false) => {
   const sessions = new AgentSessions({
     spawn: fake.spawn,
     tools,
+    serve: fake.serve,
     launch: async () => settings,
     processFingerprint: () =>
       JSON.stringify([settings.workspace, settings.env]),
@@ -139,17 +140,18 @@ describe("AgentSessions", () => {
   });
 
   it("reports why goose could not start", async () => {
-    const fake = fakeSpawn({ acp: false });
+    const fake = fakeSpawn({ http: false });
     const sessions = new AgentSessions({
       spawn: fake.spawn,
       tools,
+      serve: fake.serve,
       launch: async () => ({ workspace: "/w", env: {}, systemPrompt: "" }),
       processFingerprint: () => "",
       fingerprint: () => "",
     });
     await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/MCP-over-ACP/),
+      error: expect.stringMatching(/HTTP MCP/),
     });
   });
 

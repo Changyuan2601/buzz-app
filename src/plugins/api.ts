@@ -25,6 +25,8 @@ export type PluginManifest = Readonly<{
       program: string;
       args?: readonly string[];
     }>[];
+    /** The plugin may serve MCP servers to its agents with `host.serveMcp`. */
+    mcp?: boolean;
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.

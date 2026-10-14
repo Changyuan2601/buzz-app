@@ -302,13 +302,13 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
     subscribe: () => () => {},
     sessions: () => none,
   } as unknown as GooseRuntime;
-  const { SettingsTab } = createTabs({
+  const { ActivityTab } = createTabs({
     setup: new GooseSetup(fake.spawn),
     runtime,
     history: new GooseHistory(fake.spawn),
   });
   render(
-    <SettingsTab
+    <ActivityTab
       agent={
         {
           pubkey: agent,
@@ -318,11 +318,9 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
           config: DEFAULT_CONFIG,
         } as Agent<Config>
       }
-      save={async () => {}}
     />,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByText("Runtime diagnostics"));
   expect(await screen.findByText("#general · 11111111")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "View transcript" }));
   expect(await screen.findByText("Hi from goose")).toBeInTheDocument();

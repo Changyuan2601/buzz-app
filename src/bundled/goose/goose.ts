@@ -1,17 +1,20 @@
 // One `goose-acp` process for one agent, driven over ACP's line-delimited
-// JSON-RPC. Each conversation the agent is in is one ACP session in it. The
-// Buzz tools are served over the same pipe with MCP-over-ACP: a session
-// declares an `acp` MCP server, and goose sends that server's MCP messages
-// back as `mcp/message` requests, so the process holds no Buzz key.
+// JSON-RPC. Each conversation the agent is in is one ACP session in it. Each
+// session gets its own loopback HTTP MCP server for the Buzz tools, which the
+// app serves and answers: goose is given its address and token in
+// `session/new`, never a Buzz key.
 import type {
+  HostMcpServer,
   HostProcess,
   HostProcessOptions,
+  McpHandler,
 } from "../../features/host/service";
 
 export type Spawn = (
   id: string,
   options?: HostProcessOptions,
 ) => Promise<HostProcess>;
+export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
 
 /** How a burst of work ended: every message sent so far has been answered,
  * or the session or its process is gone. */
@@ -37,20 +40,13 @@ export type ActivityReceipt = Readonly<{
  * JSON-RPC response. */
 export type ToolServer = (
   conversation: string | undefined,
-  message: Readonly<{ id: string; method: string; params?: unknown }>,
+  message: Readonly<{ id: string | number; method: string; params?: unknown }>,
 ) => Promise<unknown>;
 
-/** The `acp` MCP server every session declares; goose names its tools
+/** The HTTP MCP server every session declares; goose names its tools
  * `buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
-const ACP_SERVER = { type: "acp", name: TOOL_SERVER, serverId: TOOL_SERVER };
-/** The whole tool set: goose's own developer tools and the Buzz tools. Sent
- * as the session's selection, so extensions in the owner's goose config and
- * plugins never load into a Buzz agent. */
-const EXTENSIONS = [
-  { type: "platform", name: "developer" },
-  { type: "mcp", server: ACP_SERVER },
-];
+const DEVELOPER = { type: "platform", name: "developer" };
 
 /** What every `goose-acp` runs with: tools run without asking, sessions are
  * not named (one model call per turn, not two), and no Buzz identity reaches
@@ -99,6 +95,7 @@ export class GooseProcess {
   private constructor(
     private readonly process: HostProcess,
     private readonly tools: ToolServer,
+    private readonly serve: ServeMcp | undefined,
   ) {
     this.exited = process.exited.then((code) => {
       this.alive = false;
@@ -108,19 +105,24 @@ export class GooseProcess {
       );
       for (const call of this.calls.values()) call.reject(error);
       this.calls.clear();
-      for (const session of this.sessions.values()) session.fail(error.message);
+      for (const session of this.sessions.values()) {
+        session.fail(error.message);
+        void session.server?.close();
+      }
       this.sessions.clear();
       return code;
     });
   }
 
-  /** Starts `goose-acp` and checks it can serve the Buzz tools. */
+  /** Starts `goose-acp` and checks it can reach the Buzz tools. Sessions
+   * with tools need `serve`, which starts their MCP server. */
   static async start(
     spawn: Spawn,
     launch: Readonly<{
       cwd: string;
       env?: Readonly<Record<string, string | null>>;
       tools: ToolServer;
+      serve?: ServeMcp;
     }>,
   ) {
     let goose: GooseProcess | undefined;
@@ -137,7 +139,7 @@ export class GooseProcess {
           )
         : error;
     });
-    goose = new GooseProcess(process, launch.tools);
+    goose = new GooseProcess(process, launch.tools, launch.serve);
     for (const data of early) goose.read(data);
     try {
       const init = (await goose.request("initialize", {
@@ -145,11 +147,11 @@ export class GooseProcess {
         clientCapabilities: {},
         clientInfo: { name: "buzz", version: "1" },
       })) as {
-        agentCapabilities?: { mcpCapabilities?: { acp?: boolean } };
+        agentCapabilities?: { mcpCapabilities?: { http?: boolean } };
       };
-      if (!init.agentCapabilities?.mcpCapabilities?.acp)
+      if (!init.agentCapabilities?.mcpCapabilities?.http)
         throw new Error(
-          "This goose cannot serve Buzz tools (no MCP-over-ACP support)",
+          "This goose cannot reach Buzz tools (no HTTP MCP support)",
         );
     } catch (error) {
       void process.kill();
@@ -175,15 +177,39 @@ export class GooseProcess {
       bare?: boolean;
     }>,
   ): Promise<GooseSession> {
-    const { sessionId } = (await this.request("session/new", {
-      cwd: launch.cwd,
-      mcpServers: launch.bare ? [] : [ACP_SERVER],
-      _meta: {
-        enabledExtensions: launch.bare ? [] : EXTENSIONS,
-        ...(launch.title ? { sessionTitle: launch.title } : {}),
-      },
-    })) as { sessionId: string };
-    const session = new GooseSession(this, sessionId);
+    let server: HostMcpServer | undefined;
+    // goose connects while it opens the session, before it is known here.
+    let session: GooseSession | undefined;
+    if (!launch.bare) {
+      if (!this.serve) throw new Error("This goose serves no Buzz tools");
+      server = await this.serve((message) => this.mcp(session, message));
+    }
+    const buzz = server && {
+      type: "http",
+      name: TOOL_SERVER,
+      url: server.url,
+      headers: server.headers,
+    };
+    let sessionId: string;
+    try {
+      ({ sessionId } = (await this.request("session/new", {
+        cwd: launch.cwd,
+        mcpServers: buzz ? [buzz] : [],
+        _meta: {
+          // The session's whole tool set: goose's developer tools and the
+          // Buzz tools, so extensions in the owner's goose config and plugins
+          // never load into a Buzz agent. goose then ignores `mcpServers`.
+          enabledExtensions: buzz
+            ? [DEVELOPER, { type: "mcp", server: buzz }]
+            : [],
+          ...(launch.title ? { sessionTitle: launch.title } : {}),
+        },
+      })) as { sessionId: string });
+    } catch (error) {
+      void server?.close();
+      throw error;
+    }
+    session = new GooseSession(this, sessionId, server);
     this.sessions.set(sessionId, session);
     try {
       // Appended under goose's own prompt, which carries each extension's
@@ -206,6 +232,7 @@ export class GooseProcess {
   async close(session: GooseSession) {
     this.sessions.delete(session.id);
     session.fail("The session was closed");
+    void session.server?.close();
     if (!this.alive) return;
     this.notify("session/cancel", { sessionId: session.id });
     await this.request("session/close", { sessionId: session.id }).catch(
@@ -278,16 +305,15 @@ export class GooseProcess {
     const update = params.update as Record<string, unknown> | undefined;
     if (session && update) session.update(update);
   }
-  /** Answers what goose asks its client: the Buzz tools' MCP messages and,
-   * since tools run without asking, any permission prompt with allow. */
+  /** Answers what goose asks its client: since tools run without asking,
+   * any permission prompt with allow. */
   private async answer(
     id: number | string,
     method: string,
     params: Record<string, unknown>,
   ) {
     let reply: Wire;
-    if (method === "mcp/message") reply = await this.mcp(id, params);
-    else if (method === "session/request_permission")
+    if (method === "session/request_permission")
       reply = { jsonrpc: "2.0", id, result: { outcome: allow(params) } };
     else
       reply = {
@@ -297,55 +323,34 @@ export class GooseProcess {
       };
     return this.write(reply).catch(() => undefined);
   }
-  /** One MCP message for the Buzz tools. Its outcome is the response's
-   * `result` or `error`; a final `send` that succeeded ends its turn. */
+  /** One MCP message for a session's Buzz tools, answered with its JSON-RPC
+   * response; a notification gets none. A final `send` that succeeded ends
+   * its turn. The host answers a throw with an internal error. */
   private async mcp(
-    id: number | string,
-    params: Record<string, unknown>,
-  ): Promise<Wire> {
-    const sessionId = String(
-      (params._meta as { sessionId?: unknown } | undefined)?.sessionId ?? "",
-    );
-    const method = String(params.method ?? "");
-    const inner = {
-      id: String(params.requestId ?? id),
+    session: GooseSession | undefined,
+    message: unknown,
+  ): Promise<Wire | undefined> {
+    const { id, method = "", params } = (message ?? {}) as Wire;
+    if (id === undefined || id === null) return undefined;
+    const response = (await this.tools(session?.conversation, {
+      id,
       method,
-      params: params.params,
-    };
-    if (params.serverId !== TOOL_SERVER)
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32602,
-          message: `No MCP server ${String(params.serverId)}`,
-        },
-      };
-    let response: Wire;
-    try {
-      response = (await this.tools(
-        this.sessions.get(sessionId)?.conversation,
-        inner,
-      )) as Wire;
-    } catch (error) {
-      response = { error: { code: -32603, message: errorMessage(error) } };
-    }
-    const session = this.sessions.get(sessionId);
+      params,
+    })) as Wire;
     if (method === "tools/call") session?.used();
-    if (response.error)
-      return { jsonrpc: "2.0", id, result: { error: response.error } };
-    const call = (inner.params ?? {}) as {
+    const call = (params ?? {}) as {
       name?: unknown;
       arguments?: { final?: unknown };
     };
     if (
       method === "tools/call" &&
+      !response.error &&
       call.name === "send" &&
       call.arguments?.final === true &&
       !(response.result as { isError?: unknown } | undefined)?.isError
     )
       session?.finished();
-    return { jsonrpc: "2.0", id, result: { result: response.result } };
+    return response;
   }
 }
 
@@ -378,6 +383,8 @@ export class GooseSession {
   constructor(
     private readonly goose: GooseProcess,
     readonly id: string,
+    /** Serves this session's Buzz tools; closed with it. */
+    readonly server?: HostMcpServer,
   ) {}
 
   get busy() {

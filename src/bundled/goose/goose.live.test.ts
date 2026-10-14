@@ -1,16 +1,27 @@
 // @vitest-environment node
 // Drives a real `goose-acp` with the owner's goose config: run with
 // GOOSE_ACP_BIN=/path/to/goose-acp. The Buzz tools are listed as the app lists
-// them; their calls are recorded, not sent to a relay.
+// them, from a loopback HTTP MCP server that follows the app's native one;
+// their calls are recorded, not sent to a relay.
 import { spawn as spawnChild } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { respond } from "../../buzz-mcp/rpc";
-import type { HostProcessOptions } from "../../features/host/service";
+import {
+  answerMcp,
+  type HostProcessOptions,
+} from "../../features/host/service";
 import { systemPrompt } from "../claude-code/prompt";
-import { GooseProcess, type Spawn, type ToolServer } from "./goose";
+import {
+  GooseProcess,
+  type ServeMcp,
+  type Spawn,
+  type ToolServer,
+} from "./goose";
 import { GooseSetup } from "./setup";
 
 const BIN = process.env.GOOSE_ACP_BIN;
@@ -51,6 +62,54 @@ const spawn: Spawn = async (_id, options: HostProcessOptions = {}) => {
   };
 };
 
+/** The HTTP requests the MCP servers received, by method and status. */
+const hits: { method: string; status: number }[] = [];
+
+/** What the app's native listener does: a token per server, 404 for a wrong
+ * one, 405 for `GET`, and a JSON reply or 202 for each `POST /mcp`. */
+const serve: ServeMcp = async (handler) => {
+  const token = randomBytes(32).toString("base64url");
+  const server = createServer((request, response) => {
+    const end = (status: number, body?: string) => {
+      hits.push({ method: request.method ?? "", status });
+      response.writeHead(
+        status,
+        body ? { "Content-Type": "application/json" } : {},
+      );
+      response.end(body);
+    };
+    if (
+      request.url?.split("?")[0] !== "/mcp" ||
+      request.headers.authorization !== `Bearer ${token}`
+    )
+      return end(404);
+    if (request.method !== "POST") return end(405);
+    let body = "";
+    request.setEncoding("utf8").on("data", (data) => (body += data));
+    request.on("end", async () => {
+      const reply = await answerMcp(handler, body);
+      end(reply === undefined ? 202 : 200, JSON.stringify(reply));
+    });
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  const closed = new Promise<void>((resolve) =>
+    server.on("close", () => resolve()),
+  );
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    headers: [{ name: "Authorization", value: `Bearer ${token}` }],
+    close: async () => {
+      server.closeAllConnections();
+      server.close();
+    },
+    closed,
+  };
+};
+
 type Call = {
   conversation: string | undefined;
   method: string;
@@ -80,7 +139,7 @@ async function live() {
     return respond(undefined, {}, message);
   };
   const cwd = mkdtempSync(join(tmpdir(), "buzz-goose-"));
-  const goose = await GooseProcess.start(spawn, { cwd, tools });
+  const goose = await GooseProcess.start(spawn, { cwd, tools, serve });
   const requests: { method: string; ok?: boolean }[] = [];
   const request = goose.request.bind(goose);
   goose.request = (method, params) => {
@@ -127,6 +186,10 @@ describe.skipIf(!BIN)("goose-acp", () => {
       const settled = await session.send("Say hello to me in Buzz.");
       expect(settled).toEqual({ ok: true });
       expect(calls.some((call) => call.method === "tools/list")).toBe(true);
+      // goose reached the tools over HTTP with the token, and no request was
+      // refused.
+      expect(hits.some((hit) => hit.status === 200)).toBe(true);
+      expect(hits.filter((hit) => hit.status === 404)).toEqual([]);
       expect(
         calls.find((call) => call.method === "tools/call")?.conversation,
       ).toBe("channel/root");

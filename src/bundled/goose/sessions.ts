@@ -8,6 +8,7 @@ import {
   GooseProcess,
   type ActivityReceipt,
   type GooseSession,
+  type ServeMcp,
   type Settled,
   type Spawn,
   type ToolServer,
@@ -31,6 +32,8 @@ export type Launch = Readonly<{
 export type SessionsOptions = Readonly<{
   spawn: Spawn;
   tools: ToolServer;
+  /** Starts a session's MCP server for `tools`. */
+  serve: ServeMcp;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
   /** Changes when a setting the process was started with has changed. */
@@ -258,6 +261,7 @@ export class AgentSessions {
           cwd,
           env: launch.env,
           tools: this.options.tools,
+          serve: this.options.serve,
         });
         const process = { goose, cwd, fingerprint };
         void goose.exited.then(() => {
