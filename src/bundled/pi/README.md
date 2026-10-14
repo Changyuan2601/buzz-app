@@ -116,8 +116,11 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   no steps.
 - A provider that needs more than a key, such as Bedrock or Vertex, is set up
   with the `pi` command. Signing in from Buzz is not supported.
-- Only Pi's built-in providers run. One that a Pi package adds (`packages` in
-  Pi's settings), such as databricks, is not loaded: the provider field, the
-  New agent Model field and a turn's error say so, and Use and Save wait for another.
+- Only Pi's built-in providers and the ones Buzz shares run. One that a Pi
+  package adds (`packages` in Pi's settings), such as databricks, is not
+  loaded: the provider field, the New agent Model field and a turn's error say
+  so, and Use and Save wait for another. Use **Databricks in Buzz** instead,
+  from the Databricks provider plugin; it offers Claude on Anthropic Messages
+  and other models on OpenAI Responses, not Gemini or Chat-only models.
 - Windows is unsupported. Linux, packaged-app behavior, and human acceptance need
   separate validation.
