@@ -3562,3 +3562,18 @@ it("an agent whose record links an owner definition launches with that definitio
     SLOW,
   );
 });
+
+it("after sign-out, starting as another owner drops the old owner's instruction entries but keeps its had-version and cleanup keys", async () => {
+  const storage = memoryStorage();
+  const relay = "https://relay.example.test";
+  const gone = keypair().pubkey;
+  const before = new InstructionStore(storage);
+  before.stage(subjectKey(gone, relay, "a".repeat(64)), "old text", "r1");
+  before.markHadVersion(subjectKey(gone, relay, "a".repeat(64)));
+  before.stage(subjectKey(viewer, relay, "b".repeat(64)), "mine", "r1");
+  await setup({ storage });
+  const after = new InstructionStore(storage);
+  expect(after.entry(subjectKey(gone, relay, "a".repeat(64)))).toBeUndefined();
+  expect(after.hadVersion(subjectKey(gone, relay, "a".repeat(64)))).toBe(true);
+  expect(after.entry(subjectKey(viewer, relay, "b".repeat(64)))).toBeDefined();
+});

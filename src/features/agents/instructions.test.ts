@@ -358,7 +358,7 @@ describe("instructions sync", () => {
         false,
       ),
     ).toEqual({ blocked: "Instructions haven't synced yet" });
-    store.signOut(OWNER);
+    store.keepOwner(OTHER);
     expect(store.entry(subjectKey(OWNER, COMMUNITY, AGENT))).toBeUndefined();
     expect(store.hadVersion(subjectKey(OWNER, COMMUNITY, AGENT))).toBe(true);
     expect(store.hadVersion(subjectKey(OTHER, COMMUNITY, AGENT))).toBe(false);
@@ -1006,7 +1006,7 @@ describe("instructions sync", () => {
       const storage = memory();
       const s = new InstructionStore(storage);
       s.markHadVersion(key);
-      s.signOut(OWNER);
+      s.keepOwner(OTHER);
       const back = new InstructionStore(storage);
       back.write(key, {
         head: { absent: true, scanId: 2 },
@@ -1144,7 +1144,7 @@ describe("instructions sync", () => {
       await expect(h.sync.sweepCleanup()).rejects.toThrow();
       expect(h.store.cleanupIds(OWNER, COMMUNITY)).toEqual([lost]);
       h.relay.fail(false);
-      h.store.signOut(OWNER);
+      h.store.keepOwner(OTHER);
       const back = new InstructionStore(storage);
       expect(back.cleanupIds(OWNER, COMMUNITY)).toEqual([lost]);
       expect(back.cleanupIds(OTHER, COMMUNITY)).toEqual([]);

@@ -2350,6 +2350,7 @@ export class AgentsService extends Service implements Agents {
    * finish; lets go of the rest. */
   private watch() {
     const { viewer, selected } = this.communities.snapshot();
+    if (viewer) this.instructionStore.keepOwner(viewer);
     const origins = new Set<string>();
     const shown = viewer && originOf(selected ?? "");
     if (shown) origins.add(shown);

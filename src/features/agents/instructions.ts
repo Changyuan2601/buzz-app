@@ -218,13 +218,17 @@ export class InstructionStore {
     }
     this.commit(() => this.entries.delete(key));
   }
-  /** Sign-out: the owner's entries go; had-version keys and cleanup stay. */
-  signOut(owner: string) {
+  /** §2.2 sign-out: native sign-out restarts the app, so the next owner seen
+   * here drops every other owner's entries; had-version keys and cleanup stay. */
+  keepOwner(owner: string) {
+    const others = (keys: Iterable<string>) =>
+      [...keys].filter((key) => !key.startsWith(`${owner}:`));
+    const entries = others(this.entries.keys());
+    const scans = others(this.scans.keys());
+    if (!entries.length && !scans.length) return;
     this.commit(() => {
-      for (const key of [...this.entries.keys()])
-        if (key.startsWith(`${owner}:`)) this.entries.delete(key);
-      for (const key of [...this.scans.keys()])
-        if (key.startsWith(`${owner}:`)) this.scans.delete(key);
+      for (const key of entries) this.entries.delete(key);
+      for (const key of scans) this.scans.delete(key);
     });
   }
 
