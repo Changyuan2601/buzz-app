@@ -131,6 +131,25 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published).toHaveLength(1);
 });
 
+it("ends a turn only with a message that names who acts next", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  await expect(
+    callTool(client, context, "send", {
+      audience: "everyone",
+      text: "done",
+      final: true,
+    }),
+  ).rejects.toThrow("A final message must mention");
+  expect(published).toEqual([]);
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "@Bob done",
+    final: true,
+  });
+  expect(published[0]?.tags).toContainEqual(["p", bob]);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

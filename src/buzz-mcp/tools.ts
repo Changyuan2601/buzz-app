@@ -43,7 +43,8 @@ export const TOOLS: readonly Tool[] = [
       },
       final: {
         type: "boolean",
-        description: "Your last message this turn; ends the turn.",
+        description:
+          "Your last message this turn; ends the turn. Mention whoever acts next.",
       },
     },
     ["audience"],
@@ -130,6 +131,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       content,
       list(args.mentions),
     );
+    if (args.final === true && !mentions.length)
+      throw new Error(
+        "A final message must mention whoever acts next: the person who asked, or the agent you hand off to.",
+      );
     const event = await client.publish({
       kind: 9,
       content,

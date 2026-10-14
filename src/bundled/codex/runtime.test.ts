@@ -267,7 +267,20 @@ function fixture(
   } as Storage;
   const runtime = new CodexRuntime(spawn, () => relay, store);
   runtimes.push(runtime);
-  const events: EventData[] = [];
+  // The owner is a channel member, so a final message can mention them.
+  const events: EventData[] = [
+    {
+      id: "d".repeat(64),
+      pubkey,
+      kind: 39002,
+      content: "",
+      created_at: 1,
+      tags: [
+        ["d", "channel"],
+        ["p", owner],
+      ],
+    } as EventData,
+  ];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
     events.filter((event) =>
       filters.some((filter) =>
@@ -413,7 +426,11 @@ function fixture(
   };
   const complete = async (index = starts().length - 1, text = "DONE") => {
     if (!closed && text)
-      await tool("send", { audience: "everyone", text, final: true }, index);
+      await tool(
+        "send",
+        { audience: "everyone", text, mentions: [owner], final: true },
+        index,
+      );
     const params = starts()[index]?.params as { threadId: string };
     emit({
       method: "item/completed",
@@ -1933,6 +1950,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
         audience: "everyone",
         path: "answer.txt",
         files: ["attachment.jpg"],
+        mentions: [owner],
         final: true,
       })
     )?.result,
@@ -1968,6 +1986,7 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
       await f.tool("send", {
         audience: "everyone",
         text: "answer",
+        mentions: [owner],
         final: true,
       })
     )?.result,
@@ -2039,6 +2058,7 @@ it.each(["accepted", "rejected"] as const)(
         await f.tool("send", {
           audience: "everyone",
           text: "Updated answer",
+          mentions: [owner],
           final: true,
         });
         for (const [done] of f.workingUntil.mock.calls)
@@ -2054,6 +2074,7 @@ it.each(["accepted", "rejected"] as const)(
         await f.tool("send", {
           audience: "everyone",
           text: "Original answer",
+          mentions: [owner],
           final: true,
         });
         await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
@@ -2146,6 +2167,7 @@ it("delivers pending owner steering after a final send and posts its own answer"
     await f.tool("send", {
       audience: "everyone",
       text: "prior answer",
+      mentions: [owner],
       final: true,
     });
     expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
@@ -2226,6 +2248,7 @@ it("finishes final sends normally and preserves the agent's background terminals
   const reply = await f.tool("send", {
     audience: "everyone",
     text: "http://localhost:3000",
+    mentions: [owner],
     final: true,
   });
   expect(reply?.result).toMatchObject({ success: true });
@@ -2278,6 +2301,7 @@ it.each([false, true])(
     const reading = f.tool("send", {
       audience: "everyone",
       path: "answer.txt",
+      mentions: [owner],
       final: true,
     });
     await started.promise;
@@ -2471,7 +2495,10 @@ it("continues an owner's Me chat as one channel conversation posted at the top l
   // Progress, final answer and the runtime's own failure notice.
   expect(tagsOf(f)).toEqual([
     [["h", "channel"]],
-    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["p", owner],
+    ],
     [
       ["h", "channel"],
       ["p", owner],
@@ -2501,10 +2528,14 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
   expect(tagsOf(f)).toEqual([
     [["h", "channel"]],
-    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["p", owner],
+    ],
     [
       ["h", "channel"],
       ["e", root, "", "reply"],
+      ["p", owner],
     ],
   ]);
 });
