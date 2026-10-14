@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { parse } from "yaml";
 import { MAX_INSTRUCTIONS_LENGTH } from "../builderlab/agents/client";
 import { bestieInstructions, PROMPT_VERSION } from "./prompt";
-import { RHYTHMS, rhythmYaml } from "./rhythms";
 import { BUILDERLAB_TYPE } from "./setup";
 import { bestieFixture, cleanups, HOME } from "./testing";
 
@@ -59,7 +57,7 @@ it("keeps the kernel within Builderlab's instruction limit", () => {
   expect(kernel).toContain(PROMPT_VERSION);
 });
 
-it("creates hosted Bestie through Agents, then instructs, homes, introduces and saves paused rhythms", async () => {
+it("creates hosted Bestie through Agents, then instructs, homes and introduces it", async () => {
   const h = await bestieFixture(native.invoke);
   await h.bestie.setup();
   expect(h.bestie.snapshot()).toMatchObject({
@@ -110,18 +108,10 @@ it("creates hosted Bestie through Agents, then instructs, homes, introduces and 
       )
     ];
   expect(instructed).toBeLessThan(order ?? 0);
-  const rhythms = kinds(h, 30620);
-  expect(rhythms).toHaveLength(RHYTHMS.length);
-  for (const [index, key] of RHYTHMS.entries()) {
-    const event = rhythms[index];
-    expect(event?.pubkey).toBe(h.viewer);
-    expect(event?.tags).toContainEqual(["h", HOME]);
-    expect(event?.content).toBe(rhythmYaml(key, h.agent, HOME));
-    expect(parse(event?.content ?? "")).toMatchObject({ enabled: false });
-  }
+  expect(kinds(h, 30620)).toHaveLength(0);
 });
 
-it("reopens a finished setup after restart without another agent, channel, intro or workflow", async () => {
+it("reopens a finished setup after restart without another agent, channel or intro", async () => {
   const h = await bestieFixture(native.invoke);
   await h.bestie.setup();
   const published = h.events.length;

@@ -19,7 +19,6 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type {} from "../builderlab/service";
 import { ChannelPreview } from "../inbox/ChannelPreview";
 import { createRemoteBestie, type RemoteBestie } from "./setup";
-import { rhythmsComplete } from "./rhythms";
 
 export const inject = [
   "pages",
@@ -230,11 +229,6 @@ function Setup({
               ? state.message
               : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
           </p>
-          {!rhythmsComplete(record.rhythms) && (
-            <Button variant="outline" onClick={() => void bestie.setup()}>
-              Set up Bestie workflows
-            </Button>
-          )}
         </div>
         <ChannelPreview
           session={connection.session}
@@ -271,12 +265,6 @@ function Setup({
             agent named Bestie, replaces its instructions, creates a private
             channel and invites it. If you already customized Bestie's
             instructions, save a copy before continuing.
-          </p>
-          <p className="m-0 text-body-sm text-muted">
-            Setup also saves three paused workflows: hourly memory review,
-            nightly reflection at 09:00 UTC, and a daily check-in at 17:00 UTC.
-            Review them in Workflows. Hosted agents don't answer workflow
-            messages yet, so leave them paused.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             {state.status === "choose-agent" ? (
