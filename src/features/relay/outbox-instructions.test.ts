@@ -197,7 +197,7 @@ it("a version deletion leaves the outbox in the exact shape the native instructi
   });
   await flush();
   expect(h.signatures).toHaveLength(1);
-  const sent = h.signatures[0].event.tags.map(([name, value]) =>
+  const sent = (h.signatures[0]?.event.tags ?? []).map(([name, value]) =>
     name === "e" && value === target ? [name, "a".repeat(64)] : [name, value],
   );
   // The same corpus drives the native `is_deletion` test in src-tauri/src/relay/tests.rs.

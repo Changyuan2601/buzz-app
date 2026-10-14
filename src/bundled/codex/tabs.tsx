@@ -8,10 +8,12 @@ import {
   useOpenedSession,
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
-import type {
-  AgentCreateModelMenuProps,
-  AgentProviderSnapshot,
-  AgentViewProps,
+import {
+  needsRestart,
+  type AgentCreateModelMenuProps,
+  type AgentProviderSnapshot,
+  type AgentViewProps,
+  type InstructionSnapshot,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -621,6 +623,17 @@ export function createTabs(
     const { open, show, back } = useOpenTranscript(conversation, label);
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
+    let current: InstructionSnapshot | undefined;
+    try {
+      current = agent.liveInstructions?.capture();
+    } catch {}
+    // A pin older than a local save re-pins on its own; one a remote edit
+    // passed waits for Restart to apply (§5.1).
+    const stale = (pin?: InstructionSnapshot) =>
+      !!pin &&
+      !!current &&
+      pin.localRestart >= current.localRestart &&
+      needsRestart(pin, current);
     const detail = (text: string) => (
       <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap text-caption">
         {text}
@@ -671,7 +684,19 @@ export function createTabs(
                         .join("")}
                     </p>
                     {view?.detail && detail(view.detail)}
-                    <div>
+                    <div className="flex gap-2">
+                      {stale(conversation.instructions) && (
+                        <Button
+                          type="button"
+                          variant="subtle"
+                          title="Its instructions changed on another device"
+                          onClick={() =>
+                            runtime.restart(agent.pubkey, conversation.key)
+                          }
+                        >
+                          Needs restart · Restart to apply
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="ghost"

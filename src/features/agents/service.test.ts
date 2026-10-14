@@ -20,7 +20,15 @@ import {
   teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
-import { INSTRUCTIONS_STORE_KEY } from "./instructions";
+import { INSTRUCTIONS_STORE_KEY, recoveryKey } from "./instructions";
+import { INSTRUCTIONS_KIND } from "./instructions-envelope";
+import {
+  createOutbox,
+  PublishRejected,
+  type OutgoingEvent,
+} from "../relay/outbox";
+import type { ReadFilter } from "../relay/events";
+import { finalizeEvent, getEventHash } from "nostr-tools";
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
@@ -39,7 +47,9 @@ vi.mock("./relay-removal", () => ({
   removeRelayAgent: records.removeAgent,
 }));
 
-const viewer = "a".repeat(64);
+// A real key, so the outbox can verify what the instructions tests sign.
+const viewerKey = keypair();
+const viewer = viewerKey.pubkey;
 const other = "b".repeat(64);
 const bot = "c".repeat(64);
 const sibling = "d".repeat(64);
@@ -3192,4 +3202,214 @@ it("T25 a provisional row whose intent is missing or mismatched offers Delete on
   expect(native.confirm).not.toHaveBeenCalled();
   await service.discardImport(bot);
   expect(native.remove).toHaveBeenCalledWith(bot);
+});
+
+/** Binds `bot`'s community to a real outbox and an in-memory relay holding
+ * kind 44300 versions, with the signer and publish under the test's control. */
+async function withInstructions() {
+  const identities: AgentIdentity[] = [
+    {
+      pubkey: bot,
+      relay: "wss://relay.example.test",
+      owner: viewer,
+      type: "example/echo",
+      name: "Echo",
+      deleted: false,
+    },
+  ];
+  const harness = await setup({ identities });
+  const stored: RelayEvent[] = [];
+  const signing: (() => void)[] = [];
+  const publish = {
+    outcome: "accept" as "accept" | "lose" | "drop" | "refuse",
+  };
+  let journal: readonly OutgoingEvent[] = [];
+  const { outbox } = createOutbox(
+    viewer,
+    {
+      // Held until the test releases it, as a slow native signer is.
+      sign: (event) =>
+        new Promise((resolve) =>
+          signing.push(() =>
+            resolve(finalizeEvent({ ...event }, viewerKey.secret)),
+          ),
+        ),
+      publish: async (event) => {
+        if (publish.outcome === "refuse")
+          throw new PublishRejected("blocked: not allowed");
+        // "drop": the connection failed before the relay stored it.
+        if (publish.outcome === "drop") throw new Error("connection lost");
+        stored.push(event);
+        if (publish.outcome === "lose") throw new Error("receipt lost");
+      },
+    },
+    {
+      load: () => structuredClone(journal),
+      save: (next) => {
+        journal = structuredClone(next);
+      },
+    },
+  );
+  const version = (text: string, created_at: number) => {
+    const template = {
+      kind: INSTRUCTIONS_KIND,
+      pubkey: viewer,
+      created_at,
+      content: `c:${text}`,
+      tags: [["p", bot]],
+    };
+    const event = { ...template, id: getEventHash(template), sig: "s" };
+    stored.push(event as RelayEvent);
+    return event as RelayEvent;
+  };
+  const listings = harness.session.read;
+  Object.assign(harness.session, {
+    outbox,
+    read: vi.fn(async (filters: ReadFilter[], options: unknown) => {
+      const [filter] = filters;
+      if (
+        !filter?.kinds?.some((kind) => kind === INSTRUCTIONS_KIND || kind === 5)
+      )
+        return listings(filters, options as never);
+      return stored
+        .filter(
+          (event) =>
+            filter.kinds?.includes(event.kind) &&
+            (!filter.ids || filter.ids.includes(event.id)) &&
+            (!filter["#p"] ||
+              event.tags.some(
+                ([n, v]) => n === "p" && filter["#p"]?.includes(v ?? ""),
+              )),
+        )
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, filter.limit);
+    }),
+    live: {
+      snapshot: () => ({
+        status: "connected",
+        routes: [{ id: "instructions", status: "live", replay: "unknown" }],
+      }),
+      subscribe: () => () => {},
+    },
+    admitInstructionsDeletions: () => () => {},
+  });
+  Object.assign(harness.native, {
+    instructions: () => ({
+      prepare: async (_: string, text: string) => `c:${text}`,
+      decode: async (_: string, events: readonly RelayEvent[]) =>
+        events.map((event) => ({ id: event.id, text: event.content.slice(2) })),
+    }),
+  });
+  const capture = () => harness.service.find(bot)?.liveInstructions?.capture();
+  const sign = async () => {
+    await vi.waitFor(() => expect(signing.length).toBeGreaterThan(0));
+    for (const release of signing.splice(0)) release();
+    await settle();
+  };
+  return { ...harness, outbox, stored, publish, version, capture, sign };
+}
+
+/** Rebinds the community so it starts its instructions sync on the patched session. */
+async function rebind(h: Awaited<ReturnType<typeof withInstructions>>) {
+  h.connect(false);
+  h.connect(true);
+  await vi.waitFor(() => expect(h.capture()?.source).toBe("version"));
+}
+
+it("a local save restarts sessions only once the relay confirms it, and onto that version", async () => {
+  const h = await withInstructions();
+  const now = Math.floor(Date.now() / 1000);
+  const v1 = h.version("one", now - 10);
+  await rebind(h);
+  const before = h.capture();
+  expect(before).toMatchObject({ text: "one", versionId: v1.id });
+  await h.service.saveInstructions(bot, "two", v1.id);
+  // A turn between enqueue and confirmation: still V1 under the same generation.
+  expect(h.capture()).toEqual(before);
+  await h.sign();
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"));
+  const after = h.capture();
+  expect(after?.versionId).not.toBe(v1.id);
+  expect(after?.localRestart).toBeGreaterThan(before?.localRestart ?? 0);
+  expect(h.service.instructions(bot)?.submitted).toBeUndefined();
+});
+
+it("a refused save keeps its text and only an explicit save replaces it past the real outbox's refusal", async () => {
+  const h = await withInstructions();
+  const v1 = h.version("one", Math.floor(Date.now() / 1000) - 10);
+  await rebind(h);
+  const restart = h.capture()?.localRestart;
+  h.publish.outcome = "refuse";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  await vi.waitFor(() =>
+    expect(h.service.instructions(bot)?.save?.state).toBe("rejected"),
+  );
+  expect(h.service.instructions(bot)?.submitted).toBe("two");
+  expect(h.capture()).toMatchObject({ text: "one", localRestart: restart });
+  // The outbox itself still refuses a second save for this subject.
+  expect(() =>
+    h.outbox.send(
+      { kind: INSTRUCTIONS_KIND, content: "c:x", tags: [["p", bot]] },
+      {
+        key: recoveryKey(viewer, "wss://relay.example.test", bot),
+        value: "{}",
+      },
+    ),
+  ).toThrow("still being saved");
+  h.publish.outcome = "accept";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"));
+  // Stored, kept as Delete Agent's proof until its echo retires it.
+  expect(h.service.instructions(bot)).toMatchObject({
+    save: { state: "stored" },
+  });
+  expect(h.service.instructions(bot)?.submitted).toBeUndefined();
+});
+
+it("an unconfirmed save waits out the resend window before Save again, keeping its text", async () => {
+  const h = await withInstructions();
+  const start = Date.now();
+  const v1 = h.version("one", Math.floor(start / 1000) - 10);
+  await rebind(h);
+  h.publish.outcome = "drop";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  await vi.waitFor(() =>
+    expect(h.service.instructions(bot)?.save).toMatchObject({
+      state: "uncertain",
+      expired: false,
+    }),
+  );
+  // Inside the window only the same signed bytes may be re-sent.
+  await expect(h.service.saveInstructions(bot, "two", v1.id)).rejects.toThrow();
+  vi.spyOn(Date, "now").mockReturnValue(start + 901_000);
+  expect(h.service.instructions(bot)).toMatchObject({
+    save: { state: "uncertain", expired: true },
+    submitted: "two",
+  });
+  h.publish.outcome = "accept";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"));
+  expect(h.stored.filter((e) => e.kind === INSTRUCTIONS_KIND)).toHaveLength(2);
+});
+
+it("Save again after a save that did reach the relay meets the conflict check", async () => {
+  const h = await withInstructions();
+  const start = Date.now();
+  const v1 = h.version("one", Math.floor(start / 1000) - 10);
+  await rebind(h);
+  h.publish.outcome = "lose";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  vi.spyOn(Date, "now").mockReturnValue(start + 901_000);
+  await vi.waitFor(() =>
+    expect(h.service.instructions(bot)?.save).toMatchObject({ expired: true }),
+  );
+  await expect(h.service.saveInstructions(bot, "two", v1.id)).rejects.toThrow(
+    "Changed on another device",
+  );
+  expect(h.service.instructions(bot)?.submitted).toBe("two");
 });

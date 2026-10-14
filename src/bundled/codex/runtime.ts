@@ -125,6 +125,8 @@ export type SavedConversation = {
   root?: string;
   threadId: string;
   at?: number;
+  /** The instructions the thread is pinned to (§5.1). */
+  instructions?: InstructionSnapshot;
 };
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
@@ -387,7 +389,7 @@ export class CodexRuntime {
     // Untimestamped bindings keep save order, newest last; listed newest first.
     return Object.entries(saved)
       .reverse()
-      .flatMap(([key, { threadId, at }]) => {
+      .flatMap(([key, { threadId, at, instructions }]) => {
         try {
           const [channelId, root] = JSON.parse(key) as unknown[];
           if (typeof channelId !== "string" || typeof root !== "string")
@@ -401,6 +403,7 @@ export class CodexRuntime {
               ...(root === "channel" ? {} : { root }),
               threadId,
               ...(at === undefined ? {} : { at }),
+              ...(instructions ? { instructions } : {}),
             },
           ];
         } catch {
@@ -408,6 +411,25 @@ export class CodexRuntime {
         }
       })
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  }
+  /** Restart to apply: drops the thread's pin, so its next turn takes the
+   * agent's current instructions (§5.1). */
+  restart(pubkey: string, key: string) {
+    const entry = this.entries.get(pubkey);
+    const snapshot = this.relay(pubkey)?.snapshot();
+    const storageKey =
+      entry?.storageKey ??
+      (snapshot?.status === "ready"
+        ? this.storageKey(snapshot.scope ?? "", pubkey)
+        : undefined);
+    if (!storageKey) return;
+    const saved = entry?.saved ?? this.load(storageKey);
+    const binding = saved[key];
+    if (!binding?.instructions) return;
+    const { instructions: _, ...unpinned } = binding;
+    saved[key] = unpinned;
+    this.storage.setItem(storageKey, JSON.stringify(saved));
+    for (const listener of this.listeners) listener();
   }
   /** A display name for a pubkey in the agent's community, if known. */
   name(agentPubkey: string, pubkey: string) {

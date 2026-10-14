@@ -23,6 +23,7 @@ import { migrateAgentStorage } from "./migrate-storage";
 import {
   InstructionStore,
   InstructionSync,
+  localOnly,
   resolveInstructions,
   hash,
   subjectKey,
@@ -529,6 +530,12 @@ export type AgentInstructionsView = Readonly<{
   head?: string | undefined;
   /** The last save that hasn't been confirmed or cleared yet. */
   save?: SaveState | undefined;
+  /** That save's text, kept until its version is confirmed. */
+  submitted?: string | undefined;
+  /** Local text kept from before history (§3): offered to save, never launched. */
+  draft?: string | undefined;
+  /** No version yet and history isn't reachable: saves stay on this device. */
+  localOnly?: true;
 }>;
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
@@ -565,6 +572,8 @@ export type Agents = {
     text: string,
     base: string | undefined,
   ): Promise<void>;
+  /** Drops the kept local draft from before history without saving it. */
+  discardInstructionsDraft?(pubkey: string): void;
   /** Created or imported agents that stopped before they were confirmed. */
   unconfirmed?(): readonly AgentIdentity[];
   /** "Finish importing" Retry. */
@@ -1339,22 +1348,49 @@ export class AgentsService extends Service implements Agents {
       this.recordOf(identity).config,
     );
     const pending = this.bindingOf(identity)?.instructions?.pendingSave(pubkey);
+    const entry = this.instructionStore.entry(this.subjectOf(identity));
+    const submitted = entry?.submitted;
+    // Accepted and retired, but its version isn't installed yet.
+    const save = pending
+      ? saveState(pending, Math.floor(Date.now() / 1000))
+      : submitted && { state: "saving" as const };
     return {
       resolved,
       ...("versionId" in resolved ? { head: resolved.versionId } : {}),
-      ...(pending
-        ? { save: saveState(pending, Math.floor(Date.now() / 1000)) }
-        : {}),
+      ...(save ? { save } : {}),
+      ...(submitted ? { submitted: submitted.text } : {}),
+      ...(entry?.draft !== undefined ? { draft: entry.draft } : {}),
+      ...(this.localOnly(identity) ? { localOnly: true } : {}),
     };
+  }
+  /** Drops the kept local draft (§3) without saving it. */
+  discardInstructionsDraft(pubkey: string) {
+    const identity = this.live(pubkey);
+    if (!identity) return;
+    const key = this.subjectOf(identity);
+    const entry = this.instructionStore.entry(key);
+    if (entry?.draft === undefined) return;
+    const { draft: _, ...rest } = entry;
+    this.instructionStore.write(key, rest);
   }
   async saveInstructions(pubkey: string, text: string, base?: string) {
     const identity = this.live(pubkey);
-    const sync = identity && this.bindingOf(identity)?.instructions;
+    if (!identity) throw new Error("This agent is gone");
+    const key = this.subjectOf(identity);
+    const entry = this.instructionStore.entry(key);
+    if (entry?.migration.state === "staged" && this.localOnly(identity)) {
+      // Kept as configured local text; migration publishes it later (§3).
+      this.instructionStore.write(key, {
+        ...entry,
+        migration: { ...entry.migration, text },
+        localSave: Math.max(Date.now(), (entry.localSave ?? 0) + 1),
+      });
+      return;
+    }
+    const sync = this.bindingOf(identity)?.instructions;
     if (!sync) throw new Error("This community can't save instructions yet");
+    // Sessions restart once the relay confirms it, not here (§5.1).
     await sync.save(pubkey, text, base);
-    // A local save restarts sessions started before it (§5.1).
-    this.instructionStore.markLocalSave(this.subjectOf(identity), Date.now());
-    this.notify();
   }
 
   /** Created or imported agents that stopped before they were confirmed. */
@@ -2005,6 +2041,14 @@ export class AgentsService extends Service implements Agents {
     identity: Pick<AgentIdentity, "owner" | "relay" | "pubkey">,
   ) {
     return subjectKey(
+      identity.owner,
+      relayOrigin(identity.relay),
+      identity.pubkey,
+    );
+  }
+  private localOnly(identity: AgentIdentity) {
+    return localOnly(
+      this.instructionStore,
       identity.owner,
       relayOrigin(identity.relay),
       identity.pubkey,

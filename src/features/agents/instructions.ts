@@ -60,6 +60,9 @@ type Entry = Readonly<{
   /** When this device last saved a version (ms): sessions started before it
    * restart (§5.1). Survives app restarts, so a pinned Codex thread sees it. */
   localSave?: number;
+  /** This device's last save until a scan or receipt installs its version:
+   * the submitted text and its event id, kept for Save again (§2.5). */
+  submitted?: Readonly<{ id: string; text: string }>;
 }>;
 
 type CleanupEntry = Readonly<{
@@ -178,8 +181,7 @@ export class InstructionStore {
   }
 
   write(key: string, entry: Entry) {
-    this.entries.set(key, entry);
-    this.persist();
+    this.commit(() => this.entries.set(key, entry));
   }
   /** §3: keeps text written at create, import or migration as launchable local
    * text until its first version is confirmed. Never over an earlier stage. */
@@ -196,35 +198,34 @@ export class InstructionStore {
       head: { unknown: true },
       migration: { state: "never" },
     };
-    this.write(key, {
-      ...entry,
-      localSave: Math.max(at, (entry.localSave ?? 0) + 1),
-    });
+    this.write(key, { ...entry, localSave: nextLocalSave(entry, at) });
   }
   completeScan(owner: string, community: string, scanId: number) {
-    this.scans.set(`${owner}:${community}`, scanId);
-    this.persist();
+    this.commit(() => this.scans.set(`${owner}:${community}`, scanId));
   }
   markHadVersion(key: string) {
     if (this.had.has(key)) return;
+    this.storage.setItem(HAD_VERSION_KEY, JSON.stringify([...this.had, key]));
     this.had.add(key);
-    this.storage.setItem(HAD_VERSION_KEY, JSON.stringify([...this.had]));
     this.changed();
   }
   /** Delete Agent step 5: the subject's entries and its had-version key. */
   forget(key: string) {
-    this.entries.delete(key);
-    if (this.had.delete(key))
-      this.storage.setItem(HAD_VERSION_KEY, JSON.stringify([...this.had]));
-    this.persist();
+    if (this.had.has(key)) {
+      const had = [...this.had].filter((item) => item !== key);
+      this.storage.setItem(HAD_VERSION_KEY, JSON.stringify(had));
+      this.had.delete(key);
+    }
+    this.commit(() => this.entries.delete(key));
   }
   /** Sign-out: the owner's entries go; had-version keys and cleanup stay. */
   signOut(owner: string) {
-    for (const key of [...this.entries.keys()])
-      if (key.startsWith(`${owner}:`)) this.entries.delete(key);
-    for (const key of [...this.scans.keys()])
-      if (key.startsWith(`${owner}:`)) this.scans.delete(key);
-    this.persist();
+    this.commit(() => {
+      for (const key of [...this.entries.keys()])
+        if (key.startsWith(`${owner}:`)) this.entries.delete(key);
+      for (const key of [...this.scans.keys()])
+        if (key.startsWith(`${owner}:`)) this.scans.delete(key);
+    });
   }
 
   intent(intentId: string) {
@@ -232,16 +233,11 @@ export class InstructionStore {
   }
   /** Throws when storage fails, so the native call is never made. */
   putIntent(intent: AgentIntent) {
-    this.intents.set(intent.intentId, intent);
-    try {
-      this.persist();
-    } catch (error) {
-      this.intents.delete(intent.intentId);
-      throw error;
-    }
+    this.commit(() => this.intents.set(intent.intentId, intent));
   }
   dropIntent(intentId: string) {
-    if (this.intents.delete(intentId)) this.persist();
+    if (this.intents.has(intentId))
+      this.commit(() => this.intents.delete(intentId));
   }
 
   cleanupIds(owner: string, community: string) {
@@ -274,6 +270,22 @@ export class InstructionStore {
     this.cleanup = next;
   }
 
+  /** Memory changes only once storage holds them; a failed write restores
+   * what readers saw before and throws. */
+  private commit(apply: () => void) {
+    const before = [
+      new Map(this.entries),
+      new Map(this.scans),
+      new Map(this.intents),
+    ] as const;
+    apply();
+    try {
+      this.persist();
+    } catch (error) {
+      [this.entries, this.scans, this.intents] = before;
+      throw error;
+    }
+  }
   private persist() {
     this.storage.setItem(
       INSTRUCTIONS_STORE_KEY,
@@ -286,6 +298,10 @@ export class InstructionStore {
     this.changed();
   }
 }
+
+/** A later local-save generation than the entry's, never behind the clock. */
+const nextLocalSave = (entry: Entry, at: number) =>
+  Math.max(at, (entry.localSave ?? 0) + 1);
 
 function parse(value: string | null): unknown {
   try {
@@ -349,8 +365,13 @@ export function resolveInstructions(
     (head && "absent" in head) ||
     ((!head || !("unknown" in head)) &&
       store.scanned(owner, community) !== undefined);
-  if (!absent) return { blocked: "Instructions haven't synced yet" };
   const migration = entry?.migration;
+  if (localOnly(store, owner, community, agent))
+    return {
+      source: "local",
+      text: migration?.state === "staged" ? migration.text : "",
+    };
+  if (!absent) return { blocked: "Instructions haven't synced yet" };
   if (!store.hadVersion(key) && migration?.state === "staged")
     return { source: "local", text: migration.text };
   if (!fallback) return { blocked: "Agent record not synced" };
@@ -361,6 +382,23 @@ export function resolveInstructions(
   if (fallback.legacy !== undefined)
     return { source: "legacy", text: fallback.legacy };
   return { source: "none", text: "" };
+}
+
+/** §3: before this community's first complete scan, configured local text
+ * that never had a version stays the agent's instructions and is edited in
+ * place ("History isn't available yet"); a new device has none and waits. */
+export function localOnly(
+  store: InstructionStore,
+  owner: string,
+  community: string,
+  agent: string,
+) {
+  const key = subjectKey(owner, community, agent);
+  return (
+    store.scanned(owner, community) === undefined &&
+    !store.hadVersion(key) &&
+    store.entry(key)?.migration.state === "staged"
+  );
 }
 
 /** Editor save state, derived only from the outbox entry and the clock. */
@@ -374,6 +412,11 @@ export type SaveState =
  * rejection; the outbox keeps an earlier `unknown` across a refused retry. */
 const expired = (entry: OutgoingEvent, now: number) =>
   now > (entry.signed ?? entry.event).created_at + RESEND_WINDOW_SECONDS;
+
+/** Only a refused save, or one still unconfirmed after the window, may be
+ * replaced by a new event, and only by the user's explicit save. */
+const replaceable = (state: SaveState) =>
+  state.state === "rejected" || (state.state === "uncertain" && state.expired);
 
 export function saveState(entry: OutgoingEvent, now: number): SaveState {
   switch (entry.delivery) {
@@ -494,6 +537,9 @@ export class InstructionSync {
       ),
       live.subscribe(() => this.observe()),
       subscribeLive(({ events }) => void this.receive(events)),
+      ...(this.ports.outbox
+        ? [this.ports.outbox.subscribe(() => this.delivered())]
+        : []),
     );
     this.ports.signal.addEventListener("abort", () => this.stop(), {
       once: true,
@@ -692,10 +738,33 @@ export class InstructionSync {
       ? { event: best }
       : { absent: true, scanId: scanId ?? token.n };
     if (s.counter === counter) s.pendingDeletion = false;
-    this.ports.store.write(key, { ...entry, head });
+    // This device's save is confirmed once its version is installed, and only
+    // then restarts the agent's sessions, onto this head (§5.1).
+    const { submitted, ...rest } = entry;
+    this.ports.store.write(
+      key,
+      submitted && s.versions.has(submitted.id)
+        ? { ...rest, head, localSave: nextLocalSave(entry, Date.now()) }
+        : { ...entry, head },
+    );
   }
 
-  private async receive(events: readonly RelayEvent[]) {
+  /** Delivery changed: a save the relay accepted is received like any version. */
+  private delivered() {
+    const prefix = `instructions:${this.ports.owner}:${this.ports.community}:`;
+    const stored = (this.ports.outbox?.snapshot() ?? []).flatMap((item) =>
+      item.recovery?.key.startsWith(prefix) &&
+      item.signed &&
+      (item.delivery === "accepted" || item.delivery === "seen")
+        ? [item.signed]
+        : [],
+    );
+    // The entry stays as Delete Agent's proof until an echo or scan retires it.
+    if (stored.length) void this.receive(stored, false);
+    this.ports.store.touch();
+  }
+
+  private async receive(events: readonly RelayEvent[], settle = true) {
     for (const event of events) {
       if (event.pubkey !== this.ports.owner) continue;
       if (event.kind === INSTRUCTIONS_KIND) {
@@ -708,7 +777,7 @@ export class InstructionSync {
         this.ports.store.markHadVersion(this.key(agent));
         const token = this.token;
         if (token) await this.install(agent, s.counter, token).catch(() => {});
-        await this.settleSaved(event.id);
+        if (settle) await this.settleSaved(event.id);
       } else if (event.kind === 5) this.applyDeletion(event, true);
     }
   }
@@ -733,12 +802,21 @@ export class InstructionSync {
       .find((item) => item.recovery?.key === key);
   }
 
-  /** §2.6: prepare, check the head, publish. Returns the new event id. */
+  /** §2.6: prepare, check the head, publish. Returns the new event id. An
+   * earlier save that was refused, or couldn't be confirmed after the resend
+   * window, is replaced only by this explicit save (Save again, §2.5). */
   async save(agent: string, text: string, base: string | undefined) {
     const { outbox, codec, owner, community, signal } = this.ports;
     if (!this.eligible(agent)) throw new Error("This agent was deleted");
     if (!outbox) throw new Error("This community can't save instructions");
     await outbox.ready();
+    const earlier = this.pendingSave(agent);
+    // Anything else is left to the outbox: a stored entry stays as Delete
+    // Agent's proof until its echo retires it.
+    const replacing =
+      earlier && replaceable(saveState(earlier, this.ports.now()))
+        ? earlier.event.id
+        : undefined;
     const content = await codec.prepare(agent, text);
     signal.throwIfAborted();
     const [head] = await this.ports.read(
@@ -747,6 +825,7 @@ export class InstructionSync {
     );
     if ((head?.id ?? undefined) !== base) throw new ConflictError(head?.id);
     if (!this.eligible(agent)) throw new Error("This agent was deleted");
+    if (replacing) await outbox.retire(replacing);
     const id = outbox.send(
       {
         kind: INSTRUCTIONS_KIND,
@@ -760,6 +839,17 @@ export class InstructionSync {
       },
       () => this.alive && this.eligible(agent),
     );
+    const key = this.key(agent);
+    const entry = this.ports.store.entry(key) ?? {
+      head: { unknown: true } as const,
+      migration: { state: "never" } as const,
+    };
+    // The kept local draft lives on as the submitted text once it is saved.
+    const { draft, ...rest } = entry;
+    this.ports.store.write(key, {
+      ...(draft === text ? rest : entry),
+      submitted: { id, text },
+    });
     return id;
   }
 
