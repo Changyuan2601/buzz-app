@@ -1,6 +1,7 @@
 # Pi for Agents
 
-A bundled desktop plugin, on by default on macOS and Linux. Its agents run on
+A desktop plugin that ships with Buzz on macOS and Linux, off until turned on
+in **Settings → Plugins**. Its agents run on
 [Pi durable](https://earendil.com/posts/pi-1-0/) (`@earendil-works/pi-durable`),
 not the Pi coding agent, with any provider Pi supports.
 Agents owns the identity, admission, configuration, and signed Buzz actions. This
@@ -21,10 +22,10 @@ Pi needs Node.js 22.19 or later on this computer (`node:sqlite`). The app's PATH
 is searched first, then a login shell's, so Homebrew, nvm, fnm and similar
 installs work.
 
-1. Open **Agents → New agent**, choose **Pi** in the card's top corner, and in
-   its menu pick **Pi default** or **Choose provider and model…**. Pi's default is
-   the `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json`, as
-   the `pi` command sets them. The first time Buzz asks Pi anything, it installs
+1. Turn on **Pi** in **Settings → Plugins**. Then open **Agents → New agent**,
+   choose **Pi** in the card's top corner, and in its menu pick **Pi default**
+   or **Choose provider and model…**. Pi's default is the `defaultProvider` and
+   `defaultModel` in `~/.pi/agent/settings.json`, as the `pi` command sets them. The first time Buzz asks Pi anything, it installs
    Pi's packages (a few seconds).
 2. In **Choose provider and model…**, choose a provider. A provider Pi has no
    key for shows an **API key** field; **Save to Pi** stores it in

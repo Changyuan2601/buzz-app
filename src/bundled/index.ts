@@ -182,7 +182,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...piManifest, apiVersion: 1 },
     module: pi,
-    enabledByDefault: true,
+    enabledByDefault: false,
   },
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },

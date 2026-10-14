@@ -265,7 +265,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
-            | "buzz.pi"
             | "buzz.workflows"
             | "buzz.sessions"
             | "block.hosted-communities"
