@@ -38,9 +38,17 @@ const matrixValues = (key) => {
 };
 
 test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
-  const command = browser.match(
-    /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
+  const [selection, invocation] = parse(workflow)
+    .jobs.browser.steps.find((step) => step.name === "Functional journeys")
+    .run.trim()
+    .split("\n");
+  const selector = selection.match(
+    /^files=\$\(\.\/bin\/node (scripts\/browser-shards\.mjs select .+)\)$/,
   )?.[1];
+  const command = invocation.match(
+    / -- (\.\/bin\/pnpm test:browser:ci .+) \$files$/,
+  )?.[1];
+  assert.ok(selector, "shard file selection must exist");
   assert.ok(command, "functional invocation must exist");
   const discover = (args) => {
     const report = JSON.parse(
@@ -74,13 +82,17 @@ test("Linux shards and macOS recording discover every functional test/project ex
   const actual = [];
   for (const engine of matrixValues("engine")) {
     for (const shard of matrixValues("shard")) {
-      // Exercise the actual workflow command, including its shard denominator.
-      const expanded = command
-        .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
-        .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard);
-      const selected = discover(
-        expanded.replace(/^\.\/bin\/pnpm /, "").split(/\s+/),
-      );
+      // Exercise the actual workflow commands, including the shard denominator.
+      const expand = (text) =>
+        text
+          .replaceAll(/\$\{\{ matrix\.engine \}\}/g, engine)
+          .replaceAll(/\$\{\{ matrix\.shard \}\}/g, shard)
+          .split(/\s+/);
+      const files = run("node", expand(selector)).split(/\s+/).filter(Boolean);
+      const selected = discover([
+        ...expand(command.replace(/^\.\/bin\/pnpm /, "")),
+        ...files,
+      ]);
       assert.ok(selected.length > 0, `${engine}/${shard} must select tests`);
       assert.ok(selected.every((id) => id.startsWith(`${engine}:`)));
       actual.push(...selected);

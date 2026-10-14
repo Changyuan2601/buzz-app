@@ -208,9 +208,9 @@ jobs:
     env:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
-    # Playwright sizes file-level shards by test count, not duration, so costly
-    # files can share one. Nine shards keep the slowest WebKit shard well inside
-    # this deadline on slower runners, setup included.
+    # browser-shards.mjs assigns whole files by recorded per-engine cost, so
+    # costly neighbours never share one shard. Nine shards keep the slowest
+    # WebKit shard well inside this deadline on slower runners, setup included.
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -244,7 +244,9 @@ jobs:
       - name: Functional journeys
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
-        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/9)" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/9 --reporter=list,json
+        run: |
+          files=$(./bin/node scripts/browser-shards.mjs select ${{ matrix.engine }} ${{ matrix.shard }} 9)
+          ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/9)" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --reporter=list,json $files
       - name: Browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

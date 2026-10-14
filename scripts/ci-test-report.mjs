@@ -62,7 +62,7 @@ export function parseVitest(report) {
   };
 }
 
-const playwrightSpecs = (suites) =>
+export const playwrightSpecs = (suites) =>
   suites.flatMap((suite) => [
     ...(suite.specs ?? []),
     ...playwrightSpecs(suite.suites ?? []),

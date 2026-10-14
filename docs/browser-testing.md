@@ -131,7 +131,13 @@ measurement ceilings, and the strict `CI required` aggregate remain in place.
 
 CI shards each functional engine across nine runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
-`--shard=N/9`; measurement success is enforced by `CI required`, not job ordering.
+the files `scripts/browser-shards.mjs select <engine> N 9` assigns it; measurement
+success is enforced by `CI required`, not job ordering. Playwright's `--shard`
+splits by test count in path order, so the script instead balances whole files
+by their recorded summed test time in `tests/browser/shard-weights.json`; files
+without a record are estimated from their test count. Refresh the weights from a
+green run's `browser-journeys-*` artifacts with
+`./bin/node scripts/browser-shards.mjs weights <dir>/*/ci-report.json`.
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.
