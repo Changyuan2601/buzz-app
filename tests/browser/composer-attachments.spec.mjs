@@ -1200,7 +1200,8 @@ test.afterEach(async ({}, testInfo) => {
     out += run(
       `for t in /proc/${pid}/task/*; do echo "$t $(cat $t/comm) $(cut -d' ' -f3,14,15 $t/stat) wchan=$(cat $t/wchan) sys=$(cut -d' ' -f1 $t/syscall 2>/dev/null)"; done`,
     );
-    out += run(`gdb -p ${pid} -batch -ex "info sharedlibrary" -ex "thread apply all bt 60" 2>&1 | grep -v '^\\[New LWP'`);
+    out += run(`gdb -p ${pid} -batch -ex "info sharedlibrary" -ex "thread apply all bt 120" 2>&1 | grep -v '^\\[New LWP'`);
   }
   diagWrite(testInfo.outputPath("hang-diag.txt"), out);
+  run(`gzip -c /tmp/gst.log > '${testInfo.outputPath("gst.log.gz")}'`);
 });

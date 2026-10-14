@@ -16,12 +16,15 @@ jobs:
     env:
       HOME: /root
       CI: "true"
+      GST_DEBUG: "*:2,webkit*:6,GST_STATES:4,GST_MESSAGE:5,GST_CONTEXT:5,GST_PADS:3"
+      GST_DEBUG_NO_COLOR: "1"
+      GST_DEBUG_FILE: /tmp/gst.log
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        variant: [notrace, css1068-notrace]
-        copy: [1, 2, 3]
+        variant: [notrace]
+        copy: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -45,7 +48,7 @@ jobs:
         run: |
           extra=""
           extra="--trace off"
-          ./bin/pnpm test:browser:ci --project webkit --no-deps --workers=2 --repeat-each=24 --timeout 60000 -g "local previews stay interactive" --reporter=list $extra
+          ./bin/pnpm test:browser:ci --project webkit --no-deps --workers=1 --repeat-each=16 --timeout 60000 -g "local previews stay interactive" --reporter=list $extra
       - name: Shard 8 replica
         if: matrix.variant == 'shard8'
         run: ./bin/pnpm test:browser:ci --project webkit --no-deps --shard=8/9 --timeout 60000 --reporter=list
