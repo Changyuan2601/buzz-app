@@ -17,47 +17,25 @@ test.use({
 });
 
 async function choose(page, inbox, control, option) {
-  await inbox
-    .getByRole("button", { name: "Inbox filters", exact: true })
-    .click();
-  const menu = page.getByRole("menu", { name: "Inbox filters" });
-  await expect(menu).toBeVisible();
   if (control === "Show") {
-    await menu
-      .getByRole("menuitemradio", { name: option, exact: true })
-      .click();
-  } else if (control === "Sender") {
-    const people = menu.getByRole("menuitemcheckbox", { name: "People" });
-    const agents = menu.getByRole("menuitemcheckbox", { name: "Agents" });
-    if (
-      option !== "Agents" &&
-      (await people.getAttribute("aria-checked")) !== "true"
-    )
-      await people.click();
-    if (
-      option !== "Humans" &&
-      (await agents.getAttribute("aria-checked")) !== "true"
-    )
-      await agents.click();
-    if (
-      option === "Agents" &&
-      (await people.getAttribute("aria-checked")) === "true"
-    )
-      await people.click();
-    if (
-      option === "Humans" &&
-      (await agents.getAttribute("aria-checked")) === "true"
-    )
-      await agents.click();
-    await page.keyboard.press("Escape");
-  } else {
-    await menu
-      .getByRole("menuitemradio", {
-        name: option === "All activity" ? "All" : option,
-        exact: true,
-      })
-      .click();
+    await inbox.getByRole("tab", { name: option, exact: true }).click();
+    return;
   }
+  const label = control === "Sender" ? "Filter by sender" : "Inbox filters";
+  await inbox.getByRole("button", { name: label, exact: true }).click();
+  const menu = page.getByRole("menu", { name: label });
+  await expect(menu).toBeVisible();
+  await menu
+    .getByRole("menuitemradio", {
+      name:
+        option === "All activity"
+          ? "All"
+          : option === "Humans"
+            ? "People"
+            : option,
+      exact: true,
+    })
+    .click();
   await expect(menu).toHaveCount(0);
 }
 
@@ -75,16 +53,16 @@ test("Inbox status choices combine with attention filters and preserve them", as
 
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("All");
+  ).toHaveAccessibleDescription(/Activity: All\./);
   await expect(
     inbox.getByRole("button", { name: "About Inbox archive" }),
   ).toHaveCount(0);
   await expect(rows).toHaveCount(1);
   const rowArchive = rows.getByRole("button", { name: /^Archive / });
   await page.mouse.move(0, 0);
-  await expect(rowArchive.locator("xpath=..")).toHaveCSS("opacity", "0");
+  await expect(rowArchive).toBeHidden();
   await rows.hover();
-  await expect(rowArchive.locator("xpath=..")).toHaveCSS("opacity", "1");
+  await expect(rowArchive).toBeVisible();
 
   await choose(page, inbox, "Activity type", "Mentions");
   await choose(page, inbox, "Sender", "Agents");
@@ -98,7 +76,7 @@ test("Inbox status choices combine with attention filters and preserve them", as
   await expect(rows).toHaveCount(1);
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Agents");
+  ).toHaveAccessibleDescription(/From: Agents\./);
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -106,14 +84,14 @@ test("Inbox status choices combine with attention filters and preserve them", as
   await openPage(page, "Inbox");
   await expect(rows).toHaveCount(1);
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Archived");
+    inbox.getByRole("tab", { name: "Archived", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Mentions");
+  ).toHaveAccessibleDescription(/Activity: Mentions\./);
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Agents");
+  ).toHaveAccessibleDescription(/From: Agents\./);
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -122,37 +100,24 @@ test("Inbox status choices combine with attention filters and preserve them", as
   );
   await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
+  await rows.hover();
   await expect(rows.getByRole("button", { name: /^Restore / })).toBeVisible();
   await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Mentions");
+  ).toHaveAccessibleDescription(/Activity: Mentions\./);
   await expect(
     inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Agents");
+  ).toHaveAccessibleDescription(/From: Agents\./);
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
   // Preserve the focused status choice while relay activity updates rows.
-  const trigger = inbox.getByRole("button", {
-    name: "Inbox filters",
-    exact: true,
-  });
+  const trigger = inbox.getByRole("tab", { name: "Inbox", exact: true });
   await trigger.focus();
-  await page.keyboard.press("Enter");
-  const archived = page.getByRole("menuitemradio", {
-    name: "Archived",
-    exact: true,
-  });
-  await expect(
-    page.getByRole("menuitemradio", { name: "All", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("End");
-  await expect(
-    page.getByRole("menuitemradio", { name: "Drafts", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowRight");
+  const archived = inbox.getByRole("tab", { name: "Archived", exact: true });
   await expect(archived).toBeFocused();
   app.append(
     "primary",
@@ -170,8 +135,8 @@ test("Inbox status choices combine with attention filters and preserve them", as
   await expect(page.getByRole("menu", { name: "Inbox filters" })).toHaveCount(
     0,
   );
-  await expect(trigger).toContainText("Archived");
-  await expect(trigger).toBeFocused();
+  await expect(archived).toHaveAttribute("aria-selected", "true");
+  await expect(archived).toBeFocused();
   await expect(rows).toHaveCount(1);
 });
 
@@ -521,6 +486,7 @@ test("selected row button advances and menu closes without losing the original d
   });
   await expect(list).toHaveAttribute("aria-busy", "false");
   await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  await thread.hover();
   await thread.getByRole("button", { name: /^Archive / }).click();
   await expect(rows).toHaveCount(1);
   await expect(next).toHaveAttribute("data-selected", "true");
@@ -614,6 +580,7 @@ test("unselected row Archive preserves the open editor and unread neighbor", asy
   await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
   await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
+  await next.hover();
   await next.getByRole("button", { name: /^Restore / }).click();
   await expect(rows).toHaveCount(0);
   await choose(page, inbox, "Show", "Inbox");
@@ -635,6 +602,7 @@ test("reply and fresh mention reopen their filters without replacing composer dr
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
   await expect(rows).toHaveCount(1);
+  await rows.hover();
   await rows.getByRole("button", { name: /^Archive / }).click();
   await expect(rows).toHaveCount(0);
   await choose(page, inbox, "Show", "Archived");
@@ -733,29 +701,31 @@ test("same-account windows reconcile filters and archive intent without reload",
     await inbox.getByRole("button", { name: "Unread only" }).click();
     await expect(
       sibling.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toContainText("Mentions");
+    ).toHaveAccessibleDescription(/Activity: Mentions\./);
     await expect(
       sibling.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toContainText("Agents");
+    ).toHaveAccessibleDescription(/From: Agents\./);
     await expect(
       sibling.getByRole("button", { name: "Unread only" }),
     ).toHaveAttribute("aria-pressed", "true");
+    await rows.hover();
     await rows.getByRole("button", { name: /^Archive / }).click();
     await expect(rows).toHaveCount(0);
     await expect(siblingRows).toHaveCount(0);
     await choose(other, sibling, "Show", "Archived");
     await expect(
-      inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toContainText("Archived");
+      inbox.getByRole("tab", { name: "Archived", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
+    await siblingRows.hover();
     await siblingRows.getByRole("button", { name: /^Restore / }).click();
     await expect(rows).toHaveCount(0);
     await expect(siblingRows).toHaveCount(0);
     await choose(page, inbox, "Show", "Inbox");
     await expect(
       sibling.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toHaveText("Mentions · Agents");
+    ).toHaveAccessibleDescription("Activity: Mentions. From: Agents.");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
   } finally {

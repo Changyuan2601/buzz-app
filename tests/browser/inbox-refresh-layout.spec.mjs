@@ -103,13 +103,11 @@ for (const width of [1280, 390, 320]) {
     await expect(status).toHaveCount(0);
     await expect.poll(geometry).toEqual(before);
     await expect(inbox.getByRole("alert")).toHaveCount(0);
-    await expect(filters).toHaveText("All");
-    await filters.click();
-    for (const name of ["People", "Agents"]) {
-      await expect(
-        page.getByRole("menuitemcheckbox", { name, exact: true }),
-      ).toBeChecked();
-    }
+    await expect(filters).toHaveAccessibleDescription(/Activity: All\./);
+    await inbox.getByRole("button", { name: "Filter by sender" }).click();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Everyone", exact: true }),
+    ).toBeChecked();
     await page.keyboard.press("Escape");
     await testInfo.attach("refresh-geometry", {
       body: JSON.stringify(measurements, null, 2),
@@ -123,7 +121,7 @@ for (const width of [1280, 390, 320]) {
 test("narrow enlarged-text rows reflow Archive without erasing their labels", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
     localStorage.setItem("buzz-font-scale.v1", "2");
@@ -143,7 +141,7 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
     row.evaluate((element) => {
       const open = element.querySelector(".navigation-item");
       const label = open.querySelector(".navigation-item-label");
-      const action = open.nextElementSibling;
+      const action = element.querySelector('[class*="rowActions"]');
       const box = (node) => {
         const { x, y, width, height } = node.getBoundingClientRect();
         return { x, y, width, height };
@@ -153,6 +151,7 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
         row: box(element),
         open: box(open),
         label: box(label),
+        sender: box(element.querySelector("strong")),
         action: box(action),
       };
     });
@@ -160,52 +159,48 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
   // NavigationItem truncates long labels at enlarged text sizes; this checks
   // that Archive reserves no additional inline space, not full visual acceptance.
   expect(measured.label.width).toBeGreaterThanOrEqual(2 * measured.root);
+  expect(measured.sender.width).toBeGreaterThanOrEqual(measured.root);
   expect(measured.open.x + measured.open.width).toBe(
     measured.row.x + measured.row.width,
   );
-  expect(measured.action.y).toBeGreaterThanOrEqual(
-    measured.open.y + measured.open.height,
+  expect(measured.action.x + measured.action.width).toBeLessThanOrEqual(
+    measured.open.x + measured.open.width,
   );
+  expect(measured.action.y).toBeGreaterThanOrEqual(measured.open.y);
   await open.focus();
-  await expect(archive.locator("xpath=..")).toHaveCSS("opacity", "1");
+  await expect(archive).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("inbox-enlarged-text.png"),
+  });
   await archive.click();
   await expect(rows).toHaveCount(2);
-  await inbox
-    .getByRole("button", { name: "Inbox filters", exact: true })
-    .click();
-  await page
-    .getByRole("menuitemradio", { name: "Archived", exact: true })
-    .click();
+  await inbox.getByRole("tab", { name: "Archived", exact: true }).click();
   await expect(rows).toHaveCount(1);
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toContainText("Archived");
-  await expect(page.getByRole("menu", { name: "Inbox filters" })).toHaveCount(
-    0,
-  );
+    inbox.getByRole("tab", { name: "Archived", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await rows.getByRole("button", { name: /^Open / }).focus();
   await rows.getByRole("button", { name: /^Restore / }).click();
   await expect(rows).toHaveCount(0);
   await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
     0,
   );
+  await inbox.getByRole("tab", { name: "Inbox", exact: true }).click();
   const filters = inbox.getByRole("button", {
     name: "Inbox filters",
     exact: true,
   });
   await filters.click();
-  const menu = page.getByRole("menu", { name: "Inbox filters" });
-  await menu.getByRole("menuitemradio", { name: "Inbox", exact: true }).click();
-  await filters.click();
-  await menu
+  await page
     .getByRole("menuitemradio", { name: "Mentions", exact: true })
     .click();
-  await filters.click();
-  await menu
-    .getByRole("menuitemcheckbox", { name: "People", exact: true })
+  await inbox.getByRole("button", { name: "Filter by sender" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "Agents", exact: true })
     .click();
-  await page.keyboard.press("Escape");
-  await expect(filters).toHaveText("Mentions · Agents");
+  await expect(filters).toHaveAccessibleDescription(
+    "Activity: Mentions. From: Agents.",
+  );
   await expect
     .poll(() =>
       filters.evaluate((element) => element.getBoundingClientRect().right),

@@ -419,35 +419,44 @@ function fixture(
 }
 
 async function chooseFilter(label: string, control = "Activity type") {
+  if (control === "Attention") {
+    const toggle = screen.getByRole("button", { name: "Unread only" });
+    if (
+      toggle.getAttribute("aria-pressed") !== String(label === "Unread only")
+    ) {
+      fireEvent.click(toggle);
+    }
+    expect(toggle).toHaveAttribute(
+      "aria-pressed",
+      String(label === "Unread only"),
+    );
+    return;
+  }
   const user = userEvent.setup();
-  const trigger = screen.getByRole("button", { name: "Inbox filters" });
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  await screen.findByRole("menu", { name: "Inbox filters" });
-  if (control === "Sender") {
-    const people = screen.getByRole("menuitemcheckbox", { name: "People" });
-    const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
-    // Enable the desired sender before disabling the other: never select none.
-    if (label !== "Agents" && people.getAttribute("aria-checked") !== "true")
-      await user.click(people);
-    if (label !== "Humans" && agents.getAttribute("aria-checked") !== "true")
-      await user.click(agents);
-    if (label === "Agents" && people.getAttribute("aria-checked") === "true")
-      await user.click(people);
-    if (label === "Humans" && agents.getAttribute("aria-checked") === "true")
-      await user.click(agents);
-    await user.keyboard("{Escape}");
+  if (control === "Show" || label === "Drafts") {
+    await user.click(screen.getByRole("tab", { name: label }));
   } else {
+    if (!screen.queryByRole("button", { name: "Inbox filters" })) {
+      await user.click(screen.getByRole("tab", { name: "Inbox" }));
+    }
     await user.click(
-      screen.getByRole("menuitemradio", {
-        name: label === "All activity" ? "All" : label,
+      screen.getByRole("button", {
+        name: control === "Sender" ? "Filter by sender" : "Inbox filters",
       }),
     );
+    const option = await screen.findByRole("menuitemradio", {
+      name:
+        label === "Humans"
+          ? "People"
+          : label === "All activity"
+            ? "All"
+            : label,
+    });
+    option.focus();
+    await user.keyboard("{Enter}");
   }
   await waitFor(() =>
-    expect(
-      screen.queryByRole("menu", { name: "Inbox filters" }),
-    ).not.toBeInTheDocument(),
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
 }
 it("Drafts shares the composer storage, gates origin navigation on current membership, and deletes only after consent", async () => {
@@ -468,26 +477,19 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   await chooseFilter("Humans", "Sender");
   fireEvent.click(screen.getByRole("button", { name: "Unread only" }));
   await chooseFilter("Drafts");
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Drafts");
-  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Drafts",
+  );
+  expect(screen.getByRole("tab", { selected: true })).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: "Unread only" }),
   ).not.toBeInTheDocument();
   const user = userEvent.setup();
-  screen.getByRole("button", { name: "Inbox filters" }).focus();
+  screen.getByRole("tab", { selected: true }).focus();
   await user.keyboard("{Enter}");
-  await screen.findByRole("menu", { name: "Inbox filters" });
-  const people = screen.getByRole("menuitemcheckbox", { name: "People" });
-  const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
-  expect(people).toHaveAttribute("aria-disabled", "true");
-  expect(agents).toHaveAttribute("aria-disabled", "true");
-  expect(
-    screen.queryByText("Sender filters don’t apply to drafts."),
-  ).not.toBeInTheDocument();
-  expect(people).toBeChecked();
-  expect(agents).not.toBeChecked();
+  expect(screen.getByRole("tablist", { name: "Inbox views" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Inbox filters" })).toBeNull();
+  expect(screen.queryByRole("tablist", { name: "Inbox activity" })).toBeNull();
   await user.keyboard("{Escape}");
   expect(
     screen.queryByRole("button", { name: "Refresh" }),
@@ -543,10 +545,10 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Threads");
+  ).toHaveAccessibleDescription(/Activity: Threads/);
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("People");
+  ).toHaveAccessibleDescription(/From: People/);
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -685,7 +687,7 @@ it("DM draft composer labels use exact roster participants and recover as profil
     within(row).getByRole("button", { name: /^Open draft for / }),
   );
   expect(
-    within(detail()).getByRole("heading", { name: "Direct message" }),
+    within(detail()).getByRole("heading", { name: /^npub/ }),
   ).toBeInTheDocument();
   expect(
     within(detail()).getByRole("textbox", { name: /Message DM with npub/ }),
@@ -1347,7 +1349,7 @@ it.each(["channel", "thread", "unavailable"])(
 );
 
 it.each(["delete", "send", "empty-close"])(
-  "restores focus to a remaining row then Inbox filters on %s",
+  "restores focus to a remaining row then Inbox view on %s",
   async (exit) => {
     const h = fixture({ withWriter: true, withDm: true });
     writeView(h.owner.session.scope, "draft:room", "First draft");
@@ -1382,7 +1384,7 @@ it.each(["delete", "send", "empty-close"])(
       expect(
         name === "Open draft for #Design"
           ? remaining
-          : screen.getByRole("button", { name: "Inbox filters" }),
+          : screen.getByRole("tab", { selected: true }),
       ).toHaveFocus();
     }
   },

@@ -53,10 +53,17 @@ test("Draft and conversation previews share their plain layout and show real sel
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const chooseActivity = async (label) => {
-    await inbox
-      .getByRole("button", { name: "Inbox filters", exact: true })
-      .click();
-    await page.getByRole("menuitemradio", { name: label, exact: true }).click();
+    if (label !== "Drafts") {
+      await inbox
+        .getByRole("button", { name: "Inbox filters", exact: true })
+        .click();
+      await page
+        .getByRole("menu", { name: "Inbox filters", exact: true })
+        .getByRole("menuitemradio", { name: label, exact: true })
+        .click();
+      return;
+    }
+    await page.getByRole("tab", { name: label, exact: true }).click();
   };
   await chooseActivity("Mentions");
   await inbox
@@ -182,8 +189,10 @@ test("Draft and conversation previews share their plain layout and show real sel
       await expect
         .poll(async () => (await detail.boundingBox()).width)
         .toBeCloseTo(halfWidth, 0);
-      // Drafts now places its toolbar directly in the grid, unlike Inbox.
-      const toolbar = inbox.locator('[class*="toolbar"]');
+      // Drafts shares the compact-header container with Inbox.
+      const toolbar = inbox.locator(
+        '[class*="workspace"] > [class*="listHeader"] > header',
+      );
       const headerBox = await detail.locator("header").boundingBox();
       const toolbarBox = await toolbar.boundingBox();
       expect(headerBox.y + headerBox.height).toBeCloseTo(
@@ -320,12 +329,7 @@ test.describe("saved strict-window draft", () => {
     await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    await inbox
-      .getByRole("button", { name: "Inbox filters", exact: true })
-      .click();
-    await page
-      .getByRole("menuitemradio", { name: "Drafts", exact: true })
-      .click();
+    await page.getByRole("tab", { name: "Drafts", exact: true }).click();
     await inbox
       .getByRole("list", { name: "Drafts" })
       .getByRole("button", { name: "Open draft for #Window room" })
@@ -339,16 +343,11 @@ test.describe("saved strict-window draft", () => {
     ).toBeInViewport();
     await expect(draft.getByRole("form")).toHaveCount(1);
     await draft.getByRole("button", { name: "Close detail" }).click();
-    await inbox
-      .getByRole("button", { name: "Inbox filters", exact: true })
-      .click();
-    await page.getByRole("menuitemradio", { name: "All", exact: true }).click();
+    await page.getByRole("tab", { name: "Inbox", exact: true }).click();
     await expect(
       inbox.getByRole("list", { name: "Inbox conversations" }),
     ).toBeVisible();
-    await expect(
-      inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toBeVisible();
+    await expect(inbox.getByRole("tab", { selected: true })).toBeVisible();
   });
 });
 
@@ -370,12 +369,7 @@ test("two pages coordinate a selected draft through actual storage events", asyn
     await openPage(target, "Inbox");
     const inbox = target.getByRole("region", { name: "Inbox", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    await inbox
-      .getByRole("button", { name: "Inbox filters", exact: true })
-      .click();
-    await target
-      .getByRole("menuitemradio", { name: "Drafts", exact: true })
-      .click();
+    await target.getByRole("tab", { name: "Drafts", exact: true }).click();
     await inbox
       .getByRole("button", { name: "Open draft for #Beta", exact: true })
       .click();
@@ -453,7 +447,7 @@ test("two pages coordinate a selected draft through actual storage events", asyn
 
 // Browser-only: native keyboard activation and post-unmount focus handoff in
 // the responsive real workspace. Failure/race permutations stay in mounted RTL.
-test("keyboard draft retirement returns to its row, a remaining row, then Inbox filters", async ({
+test("keyboard draft retirement returns to its row, a remaining row, then Inbox view", async ({
   page,
   app,
 }, testInfo) => {
@@ -483,14 +477,9 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     await expect(control).toBeFocused();
     await page.keyboard.press("Enter");
   };
-  const filters = inbox.getByRole("button", {
-    name: "Inbox filters",
-    exact: true,
-  });
+  const filters = inbox.getByRole("tab", { selected: true });
   await activate(filters);
-  await activate(
-    page.getByRole("menuitemradio", { name: "Drafts", exact: true }),
-  );
+  await activate(page.getByRole("tab", { name: "Drafts", exact: true }));
   await expect(filters).toBeFocused();
   const beta = inbox.getByRole("button", {
     name: "Open draft for #Beta",
@@ -594,17 +583,21 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
     .toHaveLength(1);
   await expect(detail).toHaveCount(0);
   await expect(filters).toBeFocused();
+  await expect(inbox.getByRole("heading", { name: "No drafts" })).toBeVisible();
+  const tabLabel = filters.locator(".navigation-item-label");
+  expect((await tabLabel.boundingBox()).width).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath("drafts-empty-dark-390.png"),
+  });
   await page.keyboard.press("Enter");
-  await activate(page.getByRole("menuitemradio", { name: "All", exact: true }));
+  await activate(page.getByRole("tab", { name: "Inbox", exact: true }));
   await expect(
     inbox.getByRole("list", { name: "Inbox conversations" }),
   ).toBeVisible();
   await expect(filters).toBeFocused();
   // Empty Drafts still returns keyboard focus to the replacement menu trigger.
   await activate(filters);
-  await activate(
-    page.getByRole("menuitemradio", { name: "Drafts", exact: true }),
-  );
+  await activate(page.getByRole("tab", { name: "Drafts", exact: true }));
   await expect(inbox.getByText("No drafts", { exact: true })).toBeVisible();
   await expect(filters).toBeFocused();
 });

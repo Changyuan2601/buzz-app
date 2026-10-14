@@ -417,9 +417,9 @@ it("archives from the row without opening it, remembers filters, and clears an e
   view.unmount();
   render(h.view);
   await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Inbox filters" }),
-    ).toHaveTextContent("Archived"),
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Archived",
+    ),
   );
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
@@ -653,13 +653,13 @@ it("defaults saved filters field by field", async () => {
   );
   render(h.view);
   await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Inbox filters" }),
-    ).toHaveTextContent("Archived"),
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Archived",
+    ),
   );
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent(/^Archived$/);
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Archived",
+  );
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
     "false",
@@ -1187,15 +1187,15 @@ it("reconciles saved preferences from another window", async () => {
       );
     }
   });
+  expect(screen.getByRole("tab", { selected: true })).not.toHaveTextContent(
+    "Inbox and archived",
+  );
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Inbox",
+  );
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).not.toHaveTextContent("Inbox and archived");
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("All");
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Agents");
+  ).toHaveAccessibleDescription(/From: Agents/);
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -1790,35 +1790,30 @@ async function chooseFilter(label: string, control = "Activity type") {
     return;
   }
   const user = userEvent.setup();
-  const trigger = screen.getByRole("button", { name: "Inbox filters" });
-  await user.click(trigger);
-  await screen.findByRole("menu", { name: "Inbox filters" });
-  if (control === "Show") {
-    await user.click(screen.getByRole("menuitemradio", { name: label }));
-  } else if (control === "Sender") {
-    const people = screen.getByRole("menuitemcheckbox", { name: "People" });
-    const agents = screen.getByRole("menuitemcheckbox", { name: "Agents" });
-    // Enable the desired sender before disabling the other: never select none.
-    if (label !== "Agents" && people.getAttribute("aria-checked") !== "true")
-      await user.click(people);
-    if (label !== "Humans" && agents.getAttribute("aria-checked") !== "true")
-      await user.click(agents);
-    if (label === "Agents" && people.getAttribute("aria-checked") === "true")
-      await user.click(people);
-    if (label === "Humans" && agents.getAttribute("aria-checked") === "true")
-      await user.click(agents);
-    await user.keyboard("{Escape}");
+  if (control === "Show" || label === "Drafts") {
+    await user.click(screen.getByRole("tab", { name: label }));
   } else {
+    if (!screen.queryByRole("button", { name: "Inbox filters" })) {
+      await user.click(screen.getByRole("tab", { name: "Inbox" }));
+    }
     await user.click(
-      screen.getByRole("menuitemradio", {
-        name: label === "All activity" ? "All" : label,
+      screen.getByRole("button", {
+        name: control === "Sender" ? "Filter by sender" : "Inbox filters",
       }),
     );
+    const option = await screen.findByRole("menuitemradio", {
+      name:
+        label === "Humans"
+          ? "People"
+          : label === "All activity"
+            ? "All"
+            : label,
+    });
+    option.focus();
+    await user.keyboard("{Enter}");
   }
   await waitFor(() =>
-    expect(
-      screen.queryByRole("menu", { name: "Inbox filters" }),
-    ).not.toBeInTheDocument(),
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
 }
 it.each([false, true])(
@@ -1987,7 +1982,7 @@ it.each(["Please review", "A thread update"])(
     expect(
       screen.queryByRole("region", { name: "Inbox detail" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+    expect(screen.getByRole("tab", { selected: true })).toHaveFocus();
     expect(h.journal()).toEqual(journal);
     act(() => h.archiveRoom(false, 101));
     await waitFor(() => expect(rows()).toHaveLength(2));
@@ -2048,9 +2043,7 @@ it.each([false, true])(
         expect(
           screen.queryByRole("region", { name: "Inbox detail" }),
         ).not.toBeInTheDocument();
-        expect(
-          screen.getByRole("button", { name: "Inbox filters" }),
-        ).toHaveFocus();
+        expect(screen.getByRole("tab", { selected: true })).toHaveFocus();
         expect(h.journal()).toEqual(journal);
       }
     } finally {
@@ -2176,7 +2169,7 @@ it("filters real session evidence, opens an exact message and marks it read, and
   expect(screen.getByText("A thread update")).toBeInTheDocument();
 });
 
-it("puts the actual channel or DM source below the sender without category tags", async () => {
+it("places quiet channel or DM context beside the sender without repeating the DM participant", async () => {
   const h = fixture({ withDm: true });
   render(h.view);
   await screen.findByText("A direct reply");
@@ -2190,7 +2183,7 @@ it("puts the actual channel or DM source below the sender without category tags"
   if (!dmRow || !mentionRow) throw new Error("Expected DM and channel rows");
   const dmSource = dmRow.querySelector("[data-inbox-source]");
   const channelSource = mentionRow.querySelector("[data-inbox-source]");
-  expect(dmSource).toHaveTextContent("DM · Alice");
+  expect(dmSource).toHaveTextContent("DM");
   expect(channelSource).toHaveTextContent("#Design");
   expect(
     within(dmRow).getByText("Alice", { selector: "strong" }),
@@ -2216,7 +2209,7 @@ it("puts the actual channel or DM source below the sender without category tags"
     );
   }
   expect(
-    within(dmRow).getByRole("button", { name: "Open Alice in DM · Alice" }),
+    within(dmRow).getByRole("button", { name: "Open Alice in DM" }),
   ).toBeInTheDocument();
   await chooseFilter("DMs");
   expect(rows()).toHaveLength(1);
@@ -2286,9 +2279,9 @@ it("intersects activity and representative sender evidence without inferring mis
   const h = fixture({ withDm: true, withSenders: true, holdProfiles: true });
   render(h.view);
   await screen.findByText("Agent direct reply");
-  expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("All");
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Inbox",
+  );
   await chooseFilter("DMs");
   await chooseFilter("Agents", "Sender");
   // Inbox's idle-only ensure reads the shared choices; no filter-owned inventory.
@@ -2330,7 +2323,7 @@ it("intersects activity and representative sender evidence without inferring mis
   }
 });
 
-it("offers only open and archive row buttons and preserves disabled unread via right-click", async () => {
+it("offers row read and archive actions and preserves disabled unread via right-click", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
@@ -2341,7 +2334,7 @@ it("offers only open and archive row buttons and preserves disabled unread via r
     within(row)
       .getAllByRole("button")
       .map((button) => button.getAttribute("aria-label")?.split(" ")[0]),
-  ).toEqual(["Open", "Archive"]);
+  ).toEqual(["Open", "Mark", "Archive"]);
   expect(
     within(row).queryByRole("button", { name: /^Actions for / }),
   ).not.toBeInTheDocument();
@@ -2353,6 +2346,34 @@ it("offers only open and archive row buttons and preserves disabled unread via r
     screen.queryByRole("region", { name: "Inbox detail" }),
   ).not.toBeInTheDocument();
   expect(h.journal()?.state.frontiers).toEqual({});
+});
+
+it("marks a row read and unread without opening its detail", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  const row = rows()[0];
+  if (!row) throw new Error("Missing inbox row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Mark read / }));
+  await waitFor(() =>
+    expect(
+      within(row).queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
+  fireEvent.click(within(row).getByRole("button", { name: /^Mark unread / }));
+  await waitFor(() =>
+    expect(
+      within(row).getByRole("img", { name: "Unread" }),
+    ).toBeInTheDocument(),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
 });
 
 it("opens local unread actions with the ContextMenu key without changing selection", async () => {
@@ -2690,7 +2711,7 @@ it.each([true, false])(
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
     expect(
-      keepFocus ? screen.getByRole("button", { name: "Inbox filters" }) : other,
+      keepFocus ? screen.getByRole("tab", { selected: true }) : other,
     ).toHaveFocus();
   },
 );
@@ -2700,13 +2721,10 @@ it("keeps the status choice focused through incoming row updates", async () => {
   const user = userEvent.setup();
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
-  const trigger = screen.getByRole("button", { name: "Inbox filters" });
+  const trigger = screen.getByRole("tab", { name: "Inbox" });
   act(() => trigger.focus());
-  await user.keyboard("{Enter}");
-  const archived = await screen.findByRole("menuitemradio", {
-    name: "Archived",
-  });
-  await user.keyboard("{End}{ArrowUp}");
+  await user.keyboard("{ArrowRight}");
+  const archived = screen.getByRole("tab", { name: "Archived" });
   await waitFor(() => expect(archived).toHaveFocus());
   const incoming = message(h.alice, "room", "Another review request", 50, [
     ["p", h.viewer.pubkey],
@@ -2717,8 +2735,10 @@ it("keeps the status choice focused through incoming row updates", async () => {
   expect(archived).toHaveFocus();
   await user.keyboard("{Enter}");
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  expect(trigger).toHaveTextContent("Archived");
-  expect(trigger).toHaveFocus();
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Archived",
+  );
+  expect(archived).toHaveFocus();
 });
 
 it("shows Inbox scope as a filter without resetting attention filters", async () => {
@@ -2727,8 +2747,9 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   await screen.findByText("Public agent mention");
   await waitFor(() => expect(rows().length).toBeGreaterThan(0));
 
-  const show = () => screen.getByRole("button", { name: "Inbox filters" });
-  expect(show()).toHaveTextContent("All");
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Inbox",
+  );
   expect(screen.queryByRole("group", { name: "Inbox scope" })).toBeNull();
   expect(
     screen.queryByRole("button", { name: "About Inbox archive" }),
@@ -2753,7 +2774,10 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   const expectKept = () => {
     expect(
       screen.getByRole("button", { name: "Inbox filters" }),
-    ).toHaveTextContent(/Mentions.*Agents/);
+    ).toHaveAccessibleDescription(/Activity: Mentions/);
+    expect(
+      screen.getByRole("button", { name: "Inbox filters" }),
+    ).toHaveAccessibleDescription(/From: Agents/);
     expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -2779,75 +2803,51 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   expectKept();
 });
 
-it("combines the existing filter choices without placeholder actions", async () => {
+it("separates views, activity and sender filters, and clears restrictions within the current view", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
-  const trigger = screen.getByRole("button", { name: "Inbox filters" });
-  expect(trigger).toHaveTextContent("All");
-  expect(screen.queryByRole("combobox")).toBeNull();
+  const user = userEvent.setup();
+  expect(screen.queryByRole("tablist", { name: "Inbox activity" })).toBeNull();
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("All");
-  expect(screen.queryByRole("tab")).toBeNull();
+  ).toHaveAccessibleDescription("Activity: All. From: Everyone.");
+  await chooseFilter("Mentions");
+  await chooseFilter("Agents", "Sender");
+  await chooseFilter("Unread only", "Attention");
+  await chooseFilter("Archived", "Show");
+  expect(rows()).toHaveLength(0);
   expect(
-    screen.queryByRole("button", {
-      name: /Mark shown as read|Mark as read|Mark unread/,
-    }),
-  ).toBeNull();
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveAccessibleDescription(/Activity: Mentions/);
   expect(
-    screen.queryByText(
-      /Verified recent conversations|Results are bounded|Feed history reached its result limit|Read-state sync is unavailable on this host/,
-    ),
-  ).toBeNull();
-  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveAccessibleDescription(/From: Agents/);
+  await user.click(screen.getByRole("button", { name: "Inbox filters" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Clear filters" }),
+  );
+  expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    "Archived",
+  );
+  expect(
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveAccessibleDescription(/Activity: All/);
+  expect(
+    screen.getByRole("button", { name: "Inbox filters" }),
+  ).toHaveAccessibleDescription(/From: Everyone/);
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  const user = userEvent.setup();
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  const menu = await screen.findByRole("menu", { name: "Inbox filters" });
-  expect(
-    within(menu).getByRole("menuitemcheckbox", { name: "People" }),
-  ).toBeChecked();
-  expect(
-    within(menu).getByRole("menuitemcheckbox", { name: "Agents" }),
-  ).toBeChecked();
-  for (const name of ["All", "Threads", "Mentions", "DMs", "Drafts"])
-    expect(
-      within(menu).getByRole("menuitemradio", { name }),
-    ).toBeInTheDocument();
-  for (const name of ["Projects", "Needs action", "Reactions"])
-    expect(within(menu).queryByRole("menuitemradio", { name })).toBeNull();
-  await user.keyboard("{Escape}");
-  expect(trigger).toHaveFocus();
   await chooseFilter("Drafts");
+  expect(screen.queryByRole("tablist", { name: "Inbox activity" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Inbox filters" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unread only" })).toBeNull();
+  await chooseFilter("Inbox", "Show");
   expect(
     screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveTextContent("Drafts");
-  expect(screen.queryByRole("button", { name: "Unread only" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Inbox filters" }));
-  await screen.findByRole("menu", { name: "Inbox filters" });
-  for (const name of ["Inbox", "Archived", "People", "Agents"])
-    expect(
-      screen.getByRole(
-        name === "Inbox" || name === "Archived"
-          ? "menuitemradio"
-          : "menuitemcheckbox",
-        { name },
-      ),
-    ).toHaveAttribute("aria-disabled", "true");
-  await user.click(screen.getByRole("menuitemradio", { name: /^All$/ }));
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Inbox filters" }),
-    ).toHaveTextContent("All"),
-  );
-  expect(
-    screen.getByRole("button", { name: "Unread only" }),
-  ).toBeInTheDocument();
+  ).toHaveAccessibleDescription(/Activity: All/);
 });
 
 it("waits for roster recovery before explicit evidence refresh", async () => {
@@ -2895,10 +2895,12 @@ it("keeps a failed origin navigation above the retained preview instead of addin
   render(h.view);
   await screen.findByText("A direct reply");
   await chooseFilter("DMs");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Open Alice in DM" }));
   const detail = screen.getByRole("region", { name: "Inbox detail" });
+  expect(within(detail).getByRole("heading", { name: "Alice" })).toBeVisible();
+  expect(
+    within(detail).queryByRole("heading", { name: "Direct message" }),
+  ).toBeNull();
   const preview = within(detail).getByRole("region", {
     name: "Conversation preview",
   });
@@ -2927,9 +2929,7 @@ it("does not accept a second row selection while its explicit read is pending", 
   );
   const release = h.holdSave();
   try {
-    fireEvent.click(
-      screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Open Alice in DM" }));
     await waitFor(() => expect(h.saveStarted()).toBe(true));
     const other = rows().find((row) =>
       row.textContent?.includes("Please review this"),
@@ -2941,13 +2941,11 @@ it("does not accept a second row selection while its explicit read is pending", 
       screen.getByRole("list", { name: "Inbox conversations" }),
     ).toHaveAttribute("aria-busy", "true");
     fireEvent.click(button);
+    expect(screen.getByRole("heading", { name: "Alice" })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Direct message" }),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("heading", { name: "Direct message" })).getByRole(
+      within(screen.getByRole("heading", { name: "Alice" })).getByRole(
         "button",
-        { name: "Direct message" },
+        { name: "Alice" },
       ),
     ).toHaveAttribute("title", "Open conversation");
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
@@ -3880,7 +3878,7 @@ it("the Inbox owner dismisses an in-head DM with Escape but respects consumed ch
   const h = fixture({ withDm: true });
   render(h.view);
   await screen.findByText("A direct reply");
-  const row = screen.getByRole("button", { name: "Open Alice in DM · Alice" });
+  const row = screen.getByRole("button", { name: "Open Alice in DM" });
   fireEvent.click(row);
   const detail = await screen.findByRole("region", { name: "Inbox detail" });
   const close = await within(detail).findByRole("button", {
@@ -3980,9 +3978,7 @@ it.each(["close", "delete", "delete-pending"])(
     }
     await waitFor(() => expect(rows()).toHaveLength(0));
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Inbox filters" }),
-      ).toHaveFocus(),
+      expect(screen.getByRole("tab", { selected: true })).toHaveFocus(),
     );
   },
 );

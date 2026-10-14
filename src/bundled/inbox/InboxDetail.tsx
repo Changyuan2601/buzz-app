@@ -19,20 +19,19 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ChannelPreview } from "./ChannelPreview";
-import { useIdentityNames } from "../../features/identity-names/react";
-import { selectProfiles } from "../../features/relay/profile-selection";
+import { useChannelLabels } from "../channels/useChannelLabels";
+import { channelIcon } from "../../features/channels/channel-icon";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ArchiveIcon,
   ArchiveOffIcon,
   ArrowSquareOutIcon,
   ChatCircleIcon,
-  HashIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
-import { dmLabel } from "./dm-label";
 
 export function InboxDetail({
   item,
@@ -135,32 +134,16 @@ export function InboxDetail({
     )
       placeholderClose.current?.focus({ preventScroll: true });
   }, [previewIncomplete]);
-  const participantKey =
-    channel?.channelType === "dm"
-      ? (channel.participants ?? []).slice(0, 3).join(":")
-      : "";
-  const participantIds = useMemo(
-    () => (participantKey ? participantKey.split(":") : []),
-    [participantKey],
+  const headerRoster = useMemo(() => (channel ? [channel] : []), [channel]);
+  const { channels: labelledChannels } = useChannelLabels(
+    headerRoster,
+    session.profiles,
+    session.names,
   );
-  const selection = useMemo(
-    () => selectProfiles(session.profiles, participantIds),
-    [session, participantIds],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const name = useIdentityNames(session.names);
-  useEffect(() => {
-    void list.asOf;
-    if (available && participantIds.length)
-      void session.profiles
-        .ensure(participantIds, "background")
-        .catch(() => {});
-  }, [session, participantIds, available, list.asOf]);
-  const dmName = dmLabel(channel?.participants, profiles, name);
+  const conversationName =
+    labelledChannels[0]?.name ?? channel?.name ?? channelName;
+  const dmName = conversationName;
+  const ChannelIcon = channelIcon(channel);
   const open = async () => {
     const destination = {
       version: 1 as const,
@@ -174,13 +157,22 @@ export function InboxDetail({
     if (result.status === "failed")
       setError("This conversation could not be opened. Try again.");
   };
+  const dismissOnEscape = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Escape" && !event.defaultPrevented) {
+      event.stopPropagation();
+      onBack();
+    }
+  };
   const openAction = (
-    <IconButton
-      size="sm"
-      aria-label="Open in channel"
-      onClick={() => void open()}
-      icon={<ArrowSquareOutIcon size="1rem" />}
-    />
+    <Tooltip content="Open in channel">
+      <IconButton
+        size="sm"
+        onKeyDown={dismissOnEscape}
+        aria-label="Open in channel"
+        onClick={() => void open()}
+        icon={<ArrowSquareOutIcon size="1rem" />}
+      />
+    </Tooltip>
   );
   return (
     <section
@@ -207,7 +199,7 @@ export function InboxDetail({
               {channel?.channelType === "dm" ? (
                 <ChatCircleIcon size="1rem" />
               ) : (
-                <HashIcon size="1rem" />
+                <ChannelIcon size="1rem" />
               )}
             </span>
             <h2 className={styles.detailHeadingTitle}>
@@ -223,7 +215,7 @@ export function InboxDetail({
                 }
                 onClick={() => void open()}
               >
-                {channel?.channelType === "dm" ? "Direct message" : channelName}
+                {conversationName}
               </button>
             </h2>
           </div>
@@ -231,35 +223,40 @@ export function InboxDetail({
         actions={
           <>
             {archiveAction && (
-              <IconButton
-                size="sm"
-                variant="ghost"
-                disabled={
-                  archiveAction.disabled || !available || !!previewIncomplete
-                }
-                onClick={archiveAction.run}
-                aria-label={archiveLabel}
-                title={archiveLabel}
-                icon={
-                  archiveAction.archived ? (
-                    <ArchiveOffIcon size="1rem" aria-hidden="true" />
-                  ) : (
-                    <ArchiveIcon size="1rem" aria-hidden="true" />
-                  )
-                }
-              />
+              <Tooltip content={archiveLabel}>
+                <IconButton
+                  size="sm"
+                  variant="ghost"
+                  disabled={
+                    archiveAction.disabled || !available || !!previewIncomplete
+                  }
+                  onClick={archiveAction.run}
+                  onKeyDown={dismissOnEscape}
+                  aria-label={archiveLabel}
+                  icon={
+                    archiveAction.archived ? (
+                      <ArchiveOffIcon size="1rem" aria-hidden="true" />
+                    ) : (
+                      <ArchiveIcon size="1rem" aria-hidden="true" />
+                    )
+                  }
+                />
+              </Tooltip>
             )}
             {openAction}
-            <IconButton
-              ref={placeholderClose}
-              onBlur={() => {
-                withheldFocus.current = null;
-              }}
-              size="sm"
-              aria-label="Close detail"
-              onClick={onBack}
-              icon={<XIcon size="1rem" />}
-            />
+            <Tooltip content="Close detail">
+              <IconButton
+                ref={placeholderClose}
+                onBlur={() => {
+                  withheldFocus.current = null;
+                }}
+                size="sm"
+                onKeyDown={dismissOnEscape}
+                aria-label="Close detail"
+                onClick={onBack}
+                icon={<XIcon size="1rem" />}
+              />
+            </Tooltip>
           </>
         }
       />

@@ -24,6 +24,8 @@ import {
   listDraftViews,
   subscribeView,
 } from "../../shared/view-state";
+import { channelIcon } from "../../features/channels/channel-icon";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -34,6 +36,7 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
+  PencilSimpleIcon,
   ArrowSquareOutIcon,
   ChatCircleIcon,
   TrashIcon,
@@ -170,8 +173,9 @@ export function DraftsView({
   const title = !activeChannel
     ? "Unavailable conversation"
     : activeChannel.channelType === "dm"
-      ? "Direct message"
+      ? destination(activeChannel)
       : activeChannel.name;
+  const ActiveChannelIcon = channelIcon(activeChannel);
   const open = async () => {
     if (!active) return;
     const channel = channelFor(active.coordinates.channelId);
@@ -233,12 +237,16 @@ export function DraftsView({
   };
   return (
     <div className={styles.workspace} data-selected={!!active || undefined}>
-      {toolbar}
+      <div className={styles.listHeader}>{toolbar}</div>
       <div className={styles.draftList}>
         {!entries.length && !saved.unavailable && !active && (
-          <p role="status" className={styles.notice}>
-            No drafts
-          </p>
+          <div role="status" className={styles.empty}>
+            <EmptyState
+              icon={<PencilSimpleIcon />}
+              title="No drafts"
+              description={null}
+            />
+          </div>
         )}
         <ul className={styles.list} aria-label="Drafts">
           {visible.map((entry) => {
@@ -358,7 +366,7 @@ export function DraftsView({
                   activeChannel?.channelType === "dm" ? (
                     <ChatCircleIcon size="1rem" />
                   ) : (
-                    <HashIcon size="1rem" />
+                    <ActiveChannelIcon size="1rem" />
                   )
                 }
               />
