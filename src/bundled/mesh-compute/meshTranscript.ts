@@ -1,5 +1,5 @@
 // Goose transcript projection adapted from Salman’s #1010 (9706e746).
-// Mesh keeps the managed binary and private Goose state directory.
+// Inline Mesh runs retain a volatile display trace.
 import {
   promptMessage,
   promptSections,
@@ -8,18 +8,8 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
-import {
-  AcpClient,
-  gooseEnv,
-  GOOSE_ROOT,
-  resolveWorkspace,
-  type MeshAgentDeps,
-} from "./meshAgent";
-
-/** The latest turns shown; goose keeps the rest. */
+/** Maximum turns displayed from the volatile trace. */
 export const TURN_LIMIT = 50;
-/** Sessions read for one conversation, newest first. */
-const SESSION_LIMIT = 50;
 const STEER = "new-message-arrived-while-you-were-working";
 
 type Json = Record<string, unknown>;
@@ -215,136 +205,17 @@ export function gooseTurns(
 }
 
 export type MeshHistoryRow = GooseSessionRow & Place;
-export function historyPlace(title: string, agent: string): Place | undefined {
-  if (!title.startsWith("Buzz Mesh ")) return;
-  try {
-    const [owner, channelId, root] = JSON.parse(title.slice(9));
-    if (
-      owner !== agent ||
-      typeof channelId !== "string" ||
-      !(root === null || typeof root === "string")
-    )
-      return;
-    return { channelId, ...(root ? { root } : {}) };
-  } catch {
-    return;
-  }
-}
-
-/** Read-only ACP calls in a short-lived managed child; no inference preparation. */
-export class MeshHistory {
-  constructor(private readonly spawn: MeshAgentDeps["spawn"]) {}
-
-  async recent(
+/** Read-only trace source; no process or session database. */
+export interface MeshHistory {
+  recent(
     agent: string,
     workspace: string,
     signal: AbortSignal,
-  ): Promise<MeshHistoryRow[]> {
-    return this.read(workspace, signal, async (client, cwd) => {
-      const rows: MeshHistoryRow[] = [];
-      let cursor: string | undefined;
-      // Bound discovery, and let the UI state this window rather than claim absence.
-      for (let page = 0; page < 5; page++) {
-        const result = await client.request<{
-          sessions: { sessionId: string; title?: string; updatedAt?: string }[];
-          nextCursor?: string;
-        }>("session/list", {
-          cwd,
-          ...(cursor ? { cursor } : {}),
-          _meta: { types: ["acp"] },
-        });
-        for (const row of result.sessions) {
-          const place = historyPlace(row.title ?? "", agent);
-          if (place)
-            rows.push({
-              ...place,
-              sessionId: row.sessionId,
-              title: row.title ?? "",
-              at: Date.parse(row.updatedAt ?? "") || 0,
-            });
-        }
-        if (
-          !result.nextCursor ||
-          result.nextCursor === cursor ||
-          rows.length >= SESSION_LIMIT
-        )
-          break;
-        cursor = result.nextCursor;
-      }
-      return rows.sort((a, b) => b.at - a.at).slice(0, SESSION_LIMIT);
-    });
-  }
-
-  async transcript(
+  ): Promise<MeshHistoryRow[]>;
+  transcript(
     agent: string,
     workspace: string,
     row: MeshHistoryRow,
     signal: AbortSignal,
-  ): Promise<GooseTranscript> {
-    return this.read(workspace, signal, async (client) => {
-      const { data } = await client.request<{ data: string }>(
-        "_goose/unstable/session/export",
-        { sessionId: row.sessionId, format: "json" },
-      );
-      const saved = object(JSON.parse(data));
-      if (!historyPlace(str(saved?.name), agent))
-        throw new Error("This session does not belong to this Mesh agent");
-      const turns = gooseTurns(
-        Array.isArray(saved?.conversation)
-          ? (saved.conversation as Message[])
-          : [],
-        row,
-        true,
-      );
-      return {
-        turns: turns.slice(-TURN_LIMIT),
-        unknownThread: 0,
-        more: turns.length > TURN_LIMIT,
-      };
-    });
-  }
-
-  private async read<T>(
-    workspace: string,
-    signal: AbortSignal,
-    read: (client: AcpClient, cwd: string) => Promise<T>,
-  ): Promise<T> {
-    signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-    signal.throwIfAborted();
-    const cwd = await resolveWorkspace({ spawn: this.spawn }, workspace);
-    const root = await resolveWorkspace({ spawn: this.spawn }, GOOSE_ROOT);
-    signal.throwIfAborted();
-    let client: AcpClient | undefined;
-    const child = await this.spawn("agent", {
-      cwd,
-      // No session/new or prompt is issued, and no model endpoint is contacted.
-      env: gooseEnv(
-        { baseUrl: "http://127.0.0.1:1/v1", model: "mesh", lease: "history" },
-        root,
-      ),
-      onStdout: (data) => client?.receive(data),
-    });
-    client = new AcpClient((line) => child.write(line));
-    const abort = () => {
-      client?.fail(new Error("Transcript read cancelled"));
-      void child.kill();
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    void child.exited.then(() =>
-      client?.fail(new Error("Transcript reader exited")),
-    );
-    try {
-      signal.throwIfAborted();
-      await client.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-      });
-      const result = await read(client, cwd);
-      signal.throwIfAborted();
-      return result;
-    } finally {
-      signal.removeEventListener("abort", abort);
-      await child.kill();
-    }
-  }
+  ): Promise<GooseTranscript>;
 }

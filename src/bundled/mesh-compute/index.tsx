@@ -1,4 +1,4 @@
-import { MeshHistory } from "./meshTranscript";
+import { InlineAgent } from "./inlineAgent";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -175,7 +175,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
         throw new Error("Community changed during memory read");
       return listing;
     };
+    const inline = new InlineAgent({
+      spawn,
+      current: (lease) =>
+        invoke<boolean>("mesh_compute_inference_current", { lease }),
+      memories: async (agent, signal) =>
+        (await readMemory(agent, signal)).entries,
+      remembered: (agent) => {
+        const snapshot = agents.relay(agent)?.snapshot();
+        if (snapshot?.status === "ready")
+          memoryReads.forget(snapshot.session, agent);
+      },
+    });
     const runtime = new MeshAgentRuntime({
+      inline,
       spawn,
       origin: (agent) => agents.relay(agent)?.snapshot().origin,
       prepare: (relay) =>
@@ -230,7 +243,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         {
           id: "transcript",
           title: "Transcripts",
-          component: createMeshTranscriptTab(new MeshHistory(spawn)),
+          component: createMeshTranscriptTab(inline),
         },
       ],
       // Covers compute startup (native waits up to 120s) plus one reply.

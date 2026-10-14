@@ -129,7 +129,7 @@ impl AppAgentHost {
         .await
     }
     /// The agent, if it still has its key. One deleted elsewhere loses its cached key.
-    async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
+    pub(crate) async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
         let host = self.clone();
         blocking(move || {
             let agent = host.agents.clone()?.get(&pubkey);

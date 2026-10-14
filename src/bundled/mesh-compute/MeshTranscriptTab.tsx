@@ -11,7 +11,9 @@ import type {
 } from "./meshTranscript";
 
 /** The Agents/profile host owns framing and tabs; this body only reads history. */
-export function createMeshTranscriptTab(history: MeshHistory) {
+export function createMeshTranscriptTab(
+  history: Pick<MeshHistory, "recent" | "transcript">,
+) {
   return function MeshTranscriptTab({
     agent,
     conversation,

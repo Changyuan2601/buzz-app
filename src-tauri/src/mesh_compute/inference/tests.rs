@@ -274,3 +274,65 @@ async fn interrupt_cancels_both_requests_queued_before_first_admission() {
     drop(second_guard);
     drop(stopping.await);
 }
+
+#[tokio::test]
+async fn gdk_loop_uses_the_real_leased_gateway_and_local_tools() {
+    use buzz_mesh_agent_spike::{local_tools::LocalTools, AgentMessage, AgentModel};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let upstream = Router::new().route("/v1/chat/completions", post({
+        let calls = calls.clone();
+        move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let round = calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                assert_eq!(body["model"], "mesh");
+                assert!(body["tools"].as_array().unwrap().iter().any(|t| t["function"]["name"] == "write"));
+                let delta = if round == 0 {
+                    serde_json::json!({"role":"assistant","tool_calls":[{"index":0,"id":"write-one","type":"function","function":{"name":"write","arguments":"{\"path\":\"proof.txt\",\"content\":\"gateway proof\"}"}}]})
+                } else {
+                    assert_eq!(round, 1);
+                    assert!(body["messages"].as_array().unwrap().iter().any(|m| m["role"] == "tool"));
+                    serde_json::json!({"role":"assistant","content":"Wrote proof.txt"})
+                };
+                let chunk = serde_json::json!({"id":"fixture","object":"chat.completion.chunk","created":1,"model":"mesh","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+                let end = serde_json::json!({"id":"fixture","object":"chat.completion.chunk","created":1,"model":"mesh","choices":[{"index":0,"delta":{},"finish_reason":if round == 0 {"tool_calls"} else {"stop"}}]});
+                ([(header::CONTENT_TYPE,"text/event-stream")], format!("data: {chunk}\n\ndata: {end}\n\ndata: [DONE]\n\n"))
+            }
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    let lease = Arc::new(Lease::default());
+    let id = lease.select("https://fixture.example".into()).unwrap();
+    let gateway = Gateway::start(Arc::new(Fence::default()), {
+        let lease = lease.clone();
+        Arc::new(move |id| lease.with_current(id, |_| Ok(port)))
+    })
+    .await
+    .unwrap();
+    let provider =
+        buzz_mesh_agent_spike::provider(gateway.base_url(&id).trim_end_matches("/v1").to_owned())
+            .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let tools = LocalTools::new(dir.path().to_path_buf(), &[], CancellationToken::new()).unwrap();
+    let mut history = vec![AgentMessage::user().with_text("Write proof.txt")];
+    let result = buzz_mesh_agent_spike::run(
+        provider.as_ref(),
+        &AgentModel::new("mesh"),
+        "fixture",
+        &mut history,
+        &tools,
+        CancellationToken::new(),
+        3,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, "Wrote proof.txt");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("proof.txt")).unwrap(),
+        "gateway proof"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    drop(gateway);
+    server.abort();
+}
