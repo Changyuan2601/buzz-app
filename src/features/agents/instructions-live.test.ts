@@ -258,3 +258,43 @@ it("T22 a listener that registers after EOSE sees live and scans once", async ()
   expect(h.scans()).toBe(1);
   expect(h.resolve()).toMatchObject({ text: "late" });
 });
+
+it("T22 a retry on the same socket ignores the retired wire's EOSE and scans on the new one", async () => {
+  const h = await setup();
+  h.sync.start();
+  h.sync.identities(known);
+  await h.connect();
+  const [first] = h.socket().instructions();
+  let release = () => {};
+  h.hold(new Promise<void>((r) => (release = r)));
+  await h.socket().receive(["EOSE", first]);
+  await settle();
+  expect(h.route()?.status).toBe("live");
+  expect(h.scans()).toBe(1);
+  // The held scan would install this; leaving `live` must discard it.
+  h.stored.push(h.version("stale scan", 10));
+  await h
+    .socket()
+    .receive(["CLOSED", first, "rate-limited: quota exceeded; retry in 1s"]);
+  await settle();
+  expect(h.route()?.status).not.toBe("live");
+  h.hold(undefined);
+  release();
+  await settle();
+  expect(h.resolve()).toEqual({ blocked: "Instructions haven't synced yet" });
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(h.sockets).toHaveLength(1);
+  const [, second] = h.socket().instructions();
+  expect(second).toBeDefined();
+  expect(second).not.toBe(first);
+  h.stored.splice(0, h.stored.length, h.version("current", 11));
+  await h.socket().receive(["EOSE", first]);
+  await settle();
+  expect(h.route()?.status).toBe("pending");
+  expect(h.scans()).toBe(1);
+  await h.socket().receive(["EOSE", second]);
+  await settle();
+  expect(h.route()?.status).toBe("live");
+  expect(h.scans()).toBe(2);
+  expect(h.resolve()).toMatchObject({ text: "current" });
+});
