@@ -30,6 +30,10 @@ mod host_command;
 mod host_process;
 mod host_request;
 mod mesh_compute;
+use mesh_compute::usb_display::{
+    mesh_compute_widget_usb_connect, mesh_compute_widget_usb_disconnect,
+    mesh_compute_widget_usb_frame, UsbDisplay,
+};
 use mesh_compute::widget::{
     mesh_compute_widget_close, mesh_compute_widget_open, mesh_compute_widget_status,
 };
@@ -415,6 +419,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         mesh_compute_widget_open,
         mesh_compute_widget_close,
         mesh_compute_widget_status,
+        mesh_compute_widget_usb_connect,
+        mesh_compute_widget_usb_frame,
+        mesh_compute_widget_usb_disconnect,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
@@ -680,6 +687,7 @@ pub fn run() {
         .manage(image_clipboard::ImageClipboard::default())
         .manage(identity)
         .manage(MeshHost::default())
+        .manage(UsbDisplay::default())
 
         .manage(archive::ArchiveHost::default())
         .manage(pairing::Pairing::default())

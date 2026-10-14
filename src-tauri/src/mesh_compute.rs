@@ -20,6 +20,7 @@ mod preferences;
 mod publisher;
 #[cfg(feature = "mesh")]
 pub(crate) mod sharing;
+pub(crate) mod usb_display;
 pub(crate) mod widget;
 
 #[cfg(feature = "mesh")]

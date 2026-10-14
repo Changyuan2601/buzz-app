@@ -1,12 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "compute-widget",
-  "description": "Read-only Mesh activity and floating window controls.",
+  "description": "Mesh activity, floating window controls, and opt-in USB display streaming.",
   "windows": ["compute-widget"],
   "permissions": [
     "core:window:allow-start-dragging",
     "core:window:allow-set-size",
     "core:window:allow-close",
-    "allow-mesh-compute-widget-status"
+    "allow-mesh-compute-widget-status",
+    "allow-mesh-compute-widget-usb-connect",
+    "allow-mesh-compute-widget-usb-frame",
+    "allow-mesh-compute-widget-usb-disconnect"
   ]
 }
