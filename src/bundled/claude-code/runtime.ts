@@ -50,7 +50,9 @@ const EFFORTS = [
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude's own default. */
   model: string;
-  instructions: string;
+  /** Legacy instructions an agent saved before the app owned them (kind
+   * 44300); present only until migration strips it, empty included. */
+  instructions?: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
@@ -58,7 +60,6 @@ export type Config = Readonly<{
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
-  instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
 });

@@ -77,16 +77,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
           : saved.workspace,
     }),
     // Instructions moved to the app (kind 44300); these read and drop what
-    // an existing agent still keeps in its config.
-    legacyInstructions: (saved) => {
-      const { instructions } = config(saved);
-      return instructions.trim() ? instructions : undefined;
+    // an existing agent still keeps in its config, exactly as saved: a
+    // configured empty value is still configured.
+    legacyInstructions: (saved) => config(saved).instructions,
+    withoutInstructions: (saved) => {
+      const { instructions: _, ...rest } = config(saved);
+      return rest;
     },
-    withoutInstructions: (saved) => ({ ...config(saved), instructions: "" }),
     carry: (saved) => {
       const { instructions, workspace } = config(saved);
       return {
-        ...(instructions.trim() && { instructions }),
+        ...(instructions !== undefined && { instructions }),
         ...(workspace !== defaults.workspace && { workspace }),
       };
     },

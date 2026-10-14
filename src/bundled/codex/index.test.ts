@@ -39,6 +39,22 @@ function applied() {
   return type;
 }
 
+it("reads configured legacy instructions from the saved config, empty included", () => {
+  const type = applied();
+  const saved = type?.defaults().config;
+  expect(type?.legacyInstructions?.(saved)).toBeUndefined();
+  for (const text of ["", "  ", "Triage."])
+    expect(
+      type?.legacyInstructions?.({ ...(saved as object), instructions: text }),
+    ).toBe(text);
+  const stripped = type?.withoutInstructions?.({
+    ...(saved as object),
+    instructions: "",
+  });
+  expect(stripped).toEqual(saved);
+  expect(type?.legacyInstructions?.(stripped)).toBeUndefined();
+});
+
 it("registers only where the desktop app can run codex and base64", () => {
   const check = vi.spyOn(CodexProvider.prototype, "check").mockResolvedValue();
   const type = applied();
@@ -75,9 +91,14 @@ it("adopts only an agent's workspace and carries its instructions and workspace"
   });
   // A workspace Codex cannot run in stays the default.
   expect(type?.adopt?.({ workspace: "code" }, saved)).toEqual(saved);
-  expect(
-    type?.carry?.({ ...(saved as object), model: "gpt", instructions: " " }),
-  ).toEqual({});
+  expect(type?.carry?.({ ...(saved as object), model: "gpt" })).toEqual({});
+  // Configured text carries exactly as saved, empty and whitespace included.
+  expect(type?.carry?.({ ...(saved as object), instructions: " " })).toEqual({
+    instructions: " ",
+  });
+  expect(type?.carry?.({ ...(saved as object), instructions: "" })).toEqual({
+    instructions: "",
+  });
   expect(
     type?.carry?.({ instructions: "Triage.", workspace: "/work/code" }),
   ).toEqual({ instructions: "Triage.", workspace: "/work/code" });

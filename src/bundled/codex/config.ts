@@ -1,7 +1,8 @@
 export type Config = {
   model: string;
   effort: string;
-  instructions: string;
+  /** Legacy instructions, present only until migration strips them. */
+  instructions?: string;
   workspace: string;
   scope: "thread" | "channel";
 };
@@ -16,7 +17,6 @@ export type Model = {
 export const defaults: Config = {
   model: "",
   effort: "",
-  instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
 };
@@ -26,8 +26,9 @@ export function config(raw: unknown): Config {
   return {
     model: typeof value.model === "string" ? value.model : "",
     effort: typeof value.effort === "string" ? value.effort : "",
-    instructions:
-      typeof value.instructions === "string" ? value.instructions : "",
+    ...(typeof value.instructions === "string" && {
+      instructions: value.instructions,
+    }),
     workspace:
       typeof value.workspace === "string" && value.workspace.trim()
         ? value.workspace.trim()

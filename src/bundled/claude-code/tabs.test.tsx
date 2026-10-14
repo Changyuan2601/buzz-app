@@ -393,6 +393,14 @@ it("is an agent type on the desktop app", () => {
   });
   expect(type.adopt?.({}, DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
   expect(type.carry?.(DEFAULT_CONFIG)).toEqual({});
+  // Configured text carries and reads exactly as saved, empty included.
+  for (const text of ["", "  "]) {
+    const saved = { ...DEFAULT_CONFIG, instructions: text };
+    expect(type.carry?.(saved)).toEqual({ instructions: text });
+    expect(type.legacyInstructions?.(saved)).toBe(text);
+    expect(type.withoutInstructions?.(saved)).toEqual(DEFAULT_CONFIG);
+  }
+  expect(type.legacyInstructions?.(DEFAULT_CONFIG)).toBeUndefined();
   expect(
     type.carry?.({
       model: "opus",
