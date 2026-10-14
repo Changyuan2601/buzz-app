@@ -45,7 +45,8 @@ export function localAgentsNative(): AgentsNative {
   };
   return {
     list: async () => identities,
-    create: async (relay, owner, type, name) => {
+    // Provisional until its own intent confirms it, as native custody is.
+    create: async (relay, owner, type, name, intentId) => {
       const identity = {
         pubkey: localAgentKey,
         relay,
@@ -53,9 +54,19 @@ export function localAgentsNative(): AgentsNative {
         type,
         name,
         deleted: false,
+        intentId,
       };
       identities = [identity];
       return identity;
+    },
+    confirm: async (pubkey, intentId) => {
+      const found = identities.find((identity) => identity.pubkey === pubkey);
+      if (!found || found.intentId !== intentId)
+        throw new Error("Unexpected confirm in local activity fixture");
+      const { intentId: _, ...confirmed } = found;
+      identities = identities.map((identity) =>
+        identity === found ? confirmed : identity,
+      );
     },
     portable: unsupported,
     port: unsupported,
