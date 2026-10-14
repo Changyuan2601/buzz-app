@@ -1,0 +1,210 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-10-14 12:01-0700\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en-US\n"
+
+#: src/app/settings-sections.ts
+msgid "Administration"
+msgstr "Administration"
+
+#: src/app/settings-sections.ts
+msgid "Agents"
+msgstr "Agents"
+
+#: src/app/settings-sections.ts
+msgid "App"
+msgstr "App"
+
+#: src/app/LanguageSettings.tsx
+msgid "App language"
+msgstr "App language"
+
+#: src/app/settings-sections.ts
+msgid "Appearance"
+msgstr "Appearance"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Attach files"
+msgstr "Attach files"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability"
+msgstr "Availability"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}"
+msgstr "Availability: {label}"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}, updating to away"
+msgstr "Availability: {label}, updating to away"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}, updating to offline"
+msgstr "Availability: {label}, updating to offline"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Availability: {label}, updating to online"
+msgstr "Availability: {label}, updating to online"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Away"
+msgstr "Away"
+
+#: src/app/SettingsSidebar.tsx
+msgid "Back"
+msgstr "Back"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Cancel edit"
+msgstr "Cancel edit"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Choose attachments"
+msgstr "Choose attachments"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Close edit"
+msgstr "Close edit"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Could not confirm your status. Try again."
+msgstr "Could not confirm your status. Try again."
+
+#: src/app/settings-sections.ts
+msgid "Developer"
+msgstr "Developer"
+
+#: src/app/settings-sections.ts
+msgid "Development"
+msgstr "Development"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Edit message"
+msgstr "Edit message"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Editing message"
+msgstr "Editing message"
+
+#: src/app/LanguageSettings.tsx
+#: src/app/settings-sections.ts
+msgid "Language"
+msgstr "Language"
+
+#: src/app/LanguageSettings.tsx
+msgid "Language wasn’t saved"
+msgstr "Language wasn’t saved"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Loading status…"
+msgstr "Loading status…"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Message #{channelName}"
+msgstr "Message #{channelName}"
+
+#: src/app/settings-sections.ts
+msgid "Notifications"
+msgstr "Notifications"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Offline"
+msgstr "Offline"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Online"
+msgstr "Online"
+
+#: src/app/settings-sections.ts
+msgid "Plugins"
+msgstr "Plugins"
+
+#: src/app/settings-sections.ts
+msgid "Profile"
+msgstr "Profile"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Reply to thread"
+msgstr "Reply to thread"
+
+#: src/app/LanguageSettings.tsx
+msgid "Retry saving language"
+msgstr "Retry saving language"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Save changes"
+msgstr "Save changes"
+
+#: src/features/messages/MessageComposer.tsx
+msgid "Send message"
+msgstr "Send message"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Set a status"
+msgstr "Set a status"
+
+#: src/app/Settings.tsx
+#: src/app/shell/ProfileButton.tsx
+msgid "Settings"
+msgstr "Settings"
+
+#: src/app/settings-sections.ts
+msgid "Shortcuts"
+msgstr "Shortcuts"
+
+#: src/app/LanguageSettings.tsx
+msgid "Some parts of Buzz are not translated yet."
+msgstr "Some parts of Buzz are not translated yet."
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Status unavailable"
+msgstr "Status unavailable"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Status updates are unavailable in this community."
+msgstr "Status updates are unavailable in this community."
+
+#: src/app/LanguageSettings.tsx
+msgid "This language is active, but could not be saved on this device. Try again."
+msgstr "This language is active, but could not be saved on this device. Try again."
+
+#: src/app/settings-sections.ts
+msgid "Updates"
+msgstr "Updates"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Updating to away…"
+msgstr "Updating to away…"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Updating to offline…"
+msgstr "Updating to offline…"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Updating to online…"
+msgstr "Updating to online…"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "View your profile"
+msgstr "View your profile"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your avatar"
+msgstr "Your avatar"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your profile"
+msgstr "Your profile"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your status is unavailable"
+msgstr "Your status is unavailable"
+
+#: src/app/shell/ProfileButton.tsx
+msgid "Your status: {label}"
+msgstr "Your status: {label}"

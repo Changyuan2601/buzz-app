@@ -2,6 +2,7 @@ import { expectTabler } from "./tabler.mjs";
 import { test, expect } from "@playwright/test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
+import { linguiPlugin } from "../lingui-plugin.mjs";
 import { fileURLToPath } from "node:url";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       root: fileURLToPath(new URL("../../", import.meta.url)),
       configFile: false,
       envFile: false,
-      plugins: [react()],
+      plugins: [react(), linguiPlugin()],
       logLevel: "error",
       server: { host: "127.0.0.1", port: 0, strictPort: false },
     });

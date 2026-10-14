@@ -4,10 +4,13 @@ import { setImmediate as settle } from "node:timers/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
+import { linguiPlugin } from "../../tests/lingui-plugin.mjs";
 
 test("the app runtime exposes ready bundled pages and removes them on disable", async () => {
   const vite = await createServer({
     configFile: false,
+    // Host modules use Lingui macros and import `.po` catalogs.
+    plugins: [linguiPlugin()],
     optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true, ws: false },
   });

@@ -42,6 +42,7 @@ import type {
 } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
+import { useLingui } from "@lingui/react/macro";
 
 const noSubscription = () => () => {};
 const noLiveSnapshot = () => undefined;
@@ -75,12 +76,15 @@ export function ProfileButton({
     selected && connection.viewer === viewer ? session?.presence : undefined,
     viewer ?? undefined,
   );
-  const label = {
-    online: "Online",
-    away: "Away",
-    offline: "Offline",
-    unknown: "Status unavailable",
-  }[observed];
+  const { t, i18n } = useLingui();
+  const lang = i18n.locale;
+  const labels = {
+    online: t`Online`,
+    away: t`Away`,
+    offline: t`Offline`,
+    unknown: t`Status unavailable`,
+  };
+  const label = labels[observed];
   const [statusChange, setStatusChange] = useState<{
     target: "online" | "away" | "offline";
     session: typeof session;
@@ -96,6 +100,23 @@ export function ProfileButton({
       : undefined;
   const pending =
     currentChange && !currentChange.failed && observed !== currentChange.target;
+  // Whole sentences per target let each language inflect the status.
+  const updating =
+    currentChange &&
+    {
+      online: {
+        status: t`Updating to online…`,
+        label: t`Availability: ${label}, updating to online`,
+      },
+      away: {
+        status: t`Updating to away…`,
+        label: t`Availability: ${label}, updating to away`,
+      },
+      offline: {
+        status: t`Updating to offline…`,
+        label: t`Availability: ${label}, updating to offline`,
+      },
+    }[currentChange.target];
   useEffect(() => {
     if (!statusChange) return;
     if (!currentChange || observed === currentChange.target)
@@ -218,7 +239,8 @@ export function ProfileButton({
           render={
             <IconButton
               type="button"
-              aria-label="Your profile"
+              lang={lang}
+              aria-label={t`Your profile`}
               ref={profileTrigger}
               title={name}
               variant="avatar"
@@ -230,9 +252,9 @@ export function ProfileButton({
                   aria-label={
                     viewer
                       ? observed === "unknown"
-                        ? "Your status is unavailable"
-                        : `Your status: ${label}`
-                      : "Your avatar"
+                        ? t`Your status is unavailable`
+                        : t`Your status: ${label}`
+                      : t`Your avatar`
                   }
                 >
                   {avatar}
@@ -265,7 +287,8 @@ export function ProfileButton({
                   render={
                     <IconButton
                       type="button"
-                      aria-label="View your profile"
+                      lang={lang}
+                      aria-label={t`View your profile`}
                       variant="avatar"
                       shape="round"
                       icon={avatar}
@@ -282,9 +305,13 @@ export function ProfileButton({
                 <MenuRoot modal={false}>
                   <span className={styles.availability} data-status={observed}>
                     <MenuTrigger
-                      aria-label={`Availability: ${label}${pending ? `, updating to ${currentChange.target}` : ""}`}
+                      aria-label={
+                        pending && updating
+                          ? updating.label
+                          : t`Availability: ${label}`
+                      }
                       render={
-                        <Button variant="subtle" size="xs">
+                        <Button variant="subtle" size="xs" lang={lang}>
                           {pending && (
                             <CircleNotchIcon
                               size={12}
@@ -295,7 +322,7 @@ export function ProfileButton({
                           {label}
                           {pending && (
                             <span role="status" className="sr-only">
-                              Updating to {currentChange?.target}…
+                              {updating?.status}
                             </span>
                           )}
                         </Button>
@@ -320,21 +347,16 @@ export function ProfileButton({
                         });
                         communities.presence.setPreference(value);
                       }}
-                      aria-label="Availability"
+                      lang={lang}
+                      aria-label={t`Availability`}
                     >
-                      {(
-                        [
-                          ["online", "Online"],
-                          ["away", "Away"],
-                          ["offline", "Offline"],
-                        ] as const
-                      ).map(([value, name]) => (
+                      {(["online", "away", "offline"] as const).map((value) => (
                         <MenuRadioItem
                           key={value}
                           value={value}
                           closeOnClick={false}
                         >
-                          {name}
+                          {labels[value]}
                         </MenuRadioItem>
                       ))}
                     </MenuRadioGroup>
@@ -346,9 +368,10 @@ export function ProfileButton({
           {currentChange?.failed && (
             <p
               role="alert"
+              lang={lang}
               className="mx-3 my-2 max-w-56 text-body-sm text-danger"
             >
-              Could not confirm your status. Try again.
+              {t`Could not confirm your status. Try again.`}
             </p>
           )}
           {presence.error && (
@@ -363,10 +386,12 @@ export function ProfileButton({
             <>
               <div className={styles.statusCard}>
                 <MenuItem
+                  // A set status shows user text, so its label stays in the source language.
+                  lang={status ? undefined : lang}
                   aria-label={
                     status
                       ? `Set a status: ${[status.emoji, status.text].filter(Boolean).join(" ")}`
-                      : "Set a status"
+                      : t`Set a status`
                   }
                   aria-describedby={
                     !session.statuses.writable ? statusUnavailable : undefined
@@ -393,8 +418,8 @@ export function ProfileButton({
                         <SmileyIcon size={16} aria-hidden="true" />
                       </MenuIcon>
                       {statusEditor.loading
-                        ? "Loading status…"
-                        : "Set a status"}
+                        ? t`Loading status…`
+                        : t`Set a status`}
                     </>
                   )}
                 </MenuItem>
@@ -402,9 +427,10 @@ export function ProfileButton({
               {!session.statuses.writable && (
                 <p
                   id={statusUnavailable}
+                  lang={lang}
                   className="mx-3 my-2 max-w-56 text-body-sm text-muted"
                 >
-                  Status updates are unavailable in this community.
+                  {t`Status updates are unavailable in this community.`}
                 </p>
               )}
               {statusEditor.error && (
@@ -428,6 +454,7 @@ export function ProfileButton({
             </MenuItem>
           ))}
           <MenuItem
+            lang={lang}
             aria-current={settingsSelected ? "page" : undefined}
             onClick={() => {
               handoff.current = true;
@@ -437,7 +464,7 @@ export function ProfileButton({
             <MenuIcon>
               <GearIcon aria-hidden="true" size={16} />
             </MenuIcon>
-            Settings
+            {t`Settings`}
             {settingsSelected && (
               <MenuTrailing>
                 <CheckIcon aria-hidden="true" size={14} />

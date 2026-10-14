@@ -1,6 +1,7 @@
 import { fixtureAliases } from "../relay-config.ts";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
+import { linguiPlugin } from "../lingui-plugin.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +31,7 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
+        linguiPlugin(),
         ...(pairingFixture
           ? [
               {

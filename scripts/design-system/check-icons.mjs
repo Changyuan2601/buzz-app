@@ -18,6 +18,12 @@ const nonIconDependencies = new Set([
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
+  // UI string localization and its catalog tooling, not icon catalogs.
+  "@lingui/cli",
+  "@lingui/core",
+  "@lingui/format-po",
+  "@lingui/react",
+  "@lingui/vite-plugin",
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@playwright/test",

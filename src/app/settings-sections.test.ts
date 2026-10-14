@@ -12,6 +12,13 @@ import {
   isBuiltInSettingsSection,
   settingsSections,
 } from "./settings-sections";
+import { setupI18n } from "@lingui/core";
+import { messages as enUS } from "../features/localization/locales/en-US.po";
+import { messages as ptBR } from "../features/localization/locales/pt-BR.po";
+
+const fixed = (locale: string) =>
+  setupI18n({ locale, messages: { "en-US": enUS, "pt-BR": ptBR } });
+const english = fixed("en-US");
 
 const card = (
   key: string,
@@ -37,6 +44,7 @@ const cards = [
 const primary = { id: "primary", name: "Primary" };
 const app = [
   "appearance",
+  "language",
   "notifications",
   "shortcuts",
   "agents",
@@ -79,7 +87,7 @@ it.each([
 ])(
   "orders Settings groups and defaults for %s",
   (_, community, initial, groups) => {
-    const model = settingsSections(cards, community);
+    const model = settingsSections(cards, community, english);
     expect(outline(model)).toEqual(groups);
     expect(model.defaultSection).toBe(initial);
     expect(model.sections.map((section) => section.id)).toEqual(
@@ -90,7 +98,7 @@ it.each([
 
 it("leaves contributed group icons to each presentation", () => {
   const icons = Object.fromEntries(
-    settingsSections(cards, primary).sections.map((section) => [
+    settingsSections(cards, primary, english).sections.map((section) => [
       section.id,
       section.icon,
     ]),
@@ -109,4 +117,24 @@ it("classifies built-in sections apart from plugin card keys", () => {
   expect(isBuiltInSettingsSection("developer")).toBe(developerMode);
   for (const id of ["example/groups", "Profile", "", "administration"])
     expect(isBuiltInSettingsSection(id)).toBe(false);
+});
+
+it("marks host-translated labels with their language, not contributed ones", () => {
+  const { groups } = settingsSections(cards, primary, fixed("pt-BR"));
+  const labels = groups.flatMap((group) => [
+    [group.label, group.lang],
+    ...group.sections.map((section) => [section.label, section.lang]),
+  ]);
+  expect(labels).toEqual(
+    expect.arrayContaining([
+      ["Primary", undefined],
+      ["Perfil", "pt-BR"],
+      ["example/groups", undefined],
+      ["Administração", "pt-BR"],
+      ["example/membership", undefined],
+      ["Communities", undefined],
+      ["Aplicativo", "pt-BR"],
+      ["Idioma", "pt-BR"],
+    ]),
+  );
 });

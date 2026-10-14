@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=24"
   },
+  "imports": {
+    "#localization": "./src/features/localization/service.ts"
+  },
   "scripts": {
     "dev": "vite --force",
     "dev:desktop": "vite --strictPort --force",
@@ -19,7 +22,7 @@
     "format:check": "biome format .",
     "tauri": "tauri",
     "lint": "biome lint --error-on-warnings . && node scripts/design-system/check-icons.mjs",
-    "check": "biome check --error-on-warnings . && pnpm typecheck && pnpm design:typecheck && pnpm design:check",
+    "check": "biome check --error-on-warnings . && pnpm typecheck && lingui check sync --clean && pnpm design:typecheck && pnpm design:check",
     "buzzodz": "cargo run --quiet --manifest-path crates/plugin-manager/Cargo.toml --bin buzzodz --",
     "test": "node --test tests/integration/*.test.mjs && vitest run && cargo test -p buzzodz-plugins && pnpm test:browser",
     "test:browser": "playwright test --config tests/browser/playwright.config.mjs",
@@ -34,7 +37,8 @@
     "design:check": "node scripts/design-system/check-type.mjs && node scripts/design-system/check-color.mjs && node scripts/design-system/check-contrast.mjs && node scripts/design-system/check-app-foundations.mjs && node scripts/design-system/check-icons.mjs && node scripts/design-system/check-adoption.mjs",
     "design:census": "node scripts/design-system/token-consumers.mjs",
     "design:test": "vitest run --config vitest.design.config.ts",
-    "design:test:browser": "pnpm build && pnpm design:build && playwright test --config tests/fixtures/design-system/playwright.config.ts"
+    "design:test:browser": "pnpm build && pnpm design:build && playwright test --config tests/fixtures/design-system/playwright.config.ts",
+    "i18n:extract": "lingui extract --clean"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
@@ -44,6 +48,8 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@jsquash/webp": "1.5.0",
+    "@lingui/core": "6.9.1",
+    "@lingui/react": "6.9.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@noble/curves": "2.0.1",
     "@tabler/icons": "3.46.0",
@@ -85,6 +91,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@lingui/cli": "6.9.1",
+    "@lingui/format-po": "6.9.1",
+    "@lingui/vite-plugin": "6.9.1",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.3.3",
     "@tauri-apps/cli": "2.11.4",

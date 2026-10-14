@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { lingui } from "@lingui/vite-plugin";
 import { worktreePort } from "./scripts/worktree-port.mjs";
 import {
   parseCommunityAliases,
@@ -30,7 +31,14 @@ export default defineConfig(async ({ command, mode }) => {
     throw new Error(
       "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",
     );
-  const plugins: PluginOption[] = [react()];
+  const plugins: PluginOption[] = [
+    react(),
+    lingui({
+      macroTransform: true,
+      // Tools load this config from other working directories.
+      configPath: fileURLToPath(new URL("./lingui.config.ts", import.meta.url)),
+    }),
+  ];
   if (command === "serve")
     plugins.push(
       (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(

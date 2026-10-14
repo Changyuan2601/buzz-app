@@ -2,6 +2,7 @@ import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
+import { useLingui } from "@lingui/react/macro";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
@@ -344,6 +345,8 @@ function Composer({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
+  const { t, i18n } = useLingui();
+  const lang = i18n.locale;
   const draftKey =
     submission?.draftKey ??
     (threadRootId
@@ -522,9 +525,11 @@ function Composer({
     (editing.target && (editing.locked || editDisabled)) ||
     false;
   const label = editing.target
-    ? "Edit message"
+    ? t`Edit message`
     : (customLabel ??
-      (threadRootId ? "Reply to thread" : `Message #${channelName}`));
+      (threadRootId ? t`Reply to thread` : t`Message #${channelName}`));
+  // Caller-supplied copy is not host-translated, so it keeps inherited metadata.
+  const labelLang = editing.target || !customLabel ? lang : undefined;
   const attachments = useAttachmentDraft(
     session,
     `${scope}:${draftKey}`,
@@ -1397,7 +1402,8 @@ function Composer({
             type="file"
             multiple
             hidden
-            aria-label="Choose attachments"
+            lang={lang}
+            aria-label={t`Choose attachments`}
             onChange={(event) => {
               attachFiles(Array.from(event.currentTarget.files ?? []));
               event.currentTarget.value = "";
@@ -1406,8 +1412,9 @@ function Composer({
           <IconButton
             size="sm"
             type="button"
-            aria-label="Attach files"
-            title="Attach files"
+            lang={lang}
+            aria-label={t`Attach files`}
+            title={t`Attach files`}
             disabled={editingDisabled || !!editing.target}
             onClick={() => picker.current?.click()}
             icon={<PaperclipIcon size={16} />}
@@ -1474,18 +1481,19 @@ function Composer({
         {editing.target && (
           <div className={styles.composerEditHeader}>
             <PencilSimpleIcon size={18} />
-            <span>Editing message</span>
+            <span lang={lang}>{t`Editing message`}</span>
             <IconButton
               type="button"
               size="sm"
-              aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+              lang={lang}
+              aria-label={editing.locked ? t`Close edit` : t`Cancel edit`}
               disabled={editing.busy}
               onClick={editing.close}
               icon={<XIcon size={18} />}
             />
           </div>
         )}
-        <label className="sr-only" htmlFor={inputId}>
+        <label className="sr-only" htmlFor={inputId} lang={labelLang}>
           {label}
         </label>
         {active && extensions?.completions && (
@@ -1579,6 +1587,9 @@ function Composer({
               maxLength={16000}
               aria-label={label}
               placeholder={placeholder ?? label}
+              placeholderLang={
+                placeholder === undefined ? labelLang : undefined
+              }
               onFocus={() => completion.observe(true)}
               onBlur={() => {
                 completion.invalidate();
@@ -1730,8 +1741,9 @@ function Composer({
               }
               size="toolbar"
               type="submit"
-              aria-label={editing.target ? "Save changes" : "Send message"}
-              title={editing.target ? "Save changes" : "Send message"}
+              lang={lang}
+              aria-label={editing.target ? t`Save changes` : t`Send message`}
+              title={editing.target ? t`Save changes` : t`Send message`}
               disabled={
                 disabled ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||

@@ -157,6 +157,8 @@ export type EditableInputProps = Omit<
   value: string;
   disabled: boolean;
   placeholder: string;
+  /** Language of the placeholder when it differs from the surrounding UI. */
+  placeholderLang?: string | undefined;
   maxLength: number;
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
@@ -175,6 +177,7 @@ export function EditableInput({
   value: _value,
   disabled,
   placeholder,
+  placeholderLang,
   maxLength,
   onDraftChange,
   onFormatsChange,
@@ -197,6 +200,7 @@ export function EditableInput({
     acceptRecipient,
     disabled,
     placeholder,
+    placeholderLang,
   });
   current.current = {
     draft,
@@ -208,6 +212,7 @@ export function EditableInput({
     acceptRecipient,
     disabled,
     placeholder,
+    placeholderLang,
   };
   const tokenClassName = styles.token ?? "";
   const tokenClass = useRef(tokenClassName);
@@ -415,6 +420,10 @@ export function EditableInput({
             ranges.push(
               Decoration.node(0, first.nodeSize, {
                 "data-placeholder": current.current.placeholder,
+                // The empty paragraph holds no user text, only the placeholder.
+                ...(current.current.placeholderLang && {
+                  lang: current.current.placeholderLang,
+                }),
               }),
             );
           }
@@ -1723,6 +1732,10 @@ export function EditableInput({
       api.current?.sync(draft);
     editor.setProps({ editable: () => !disabled && !locked.current });
   }, [draft, disabled]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Decorations read the placeholder from `current`; a change must redraw them.
+  useLayoutEffect(() => {
+    view.current?.setProps({});
+  }, [placeholder, placeholderLang]);
 
   const projection =
     view.current && projectComposerDocument(view.current.state.doc);

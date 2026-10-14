@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { linguiPlugin } from "./tests/lingui-plugin.mjs";
 import { fixtureAliases } from "./tests/relay-config.ts";
 const workerLimit = process.env.BUZZ_TEST_WORKERS;
 const maxWorkers = workerLimit === undefined ? undefined : Number(workerLimit);
@@ -14,6 +15,7 @@ if (
 process.env.LC_ALL = "C.UTF-8";
 
 export default defineConfig({
+  plugins: [linguiPlugin()],
   define: {
     "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES":
       JSON.stringify(fixtureAliases),

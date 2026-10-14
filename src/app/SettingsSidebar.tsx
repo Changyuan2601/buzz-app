@@ -9,6 +9,7 @@ import type { Communities } from "../features/communities/service";
 import type { SettingsCards } from "../features/settings/service";
 import { settingsSections, type SettingsSection } from "./settings-sections";
 import styles from "./Settings.module.css";
+import { useLingui } from "@lingui/react/macro";
 
 export function SettingsSidebar({
   cards,
@@ -23,6 +24,8 @@ export function SettingsSidebar({
   onBack: () => void;
   onSection: (section: string) => void;
 }) {
+  const { t, i18n } = useLingui();
+  const lang = i18n.locale;
   const connection = useRelayConnection(communities.relay);
   const width = readChannelSidebarWidth(connection.scope ?? "disconnected");
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
@@ -33,19 +36,22 @@ export function SettingsSidebar({
   const selectedCommunity = client.memberships.find(
     (membership) => membership.id === client.selected,
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The shared i18n object is stable; its locale identifies the translation.
   const { groups, defaultSection } = useMemo(
-    () => settingsSections(contributed, selectedCommunity),
-    [contributed, selectedCommunity],
+    () => settingsSections(contributed, selectedCommunity, i18n),
+    [contributed, selectedCommunity, i18n, lang],
   );
   const current = selected ?? defaultSection;
   const section = ({
     id,
     label,
+    lang,
     icon: Icon = ChatCircleIcon,
   }: SettingsSection) => (
     <NavigationItem
       key={id}
       label={label}
+      lang={lang}
       icon={<Icon aria-hidden="true" size={18} />}
       selected={current === id}
       aria-current={current === id ? "page" : undefined}
@@ -58,7 +64,8 @@ export function SettingsSidebar({
       <Panel as="aside" aria-label="Settings sidebar">
         <div className={`${channelStyles.sidebar} ${styles.settingsSidebar}`}>
           <NavigationItem
-            label="Back"
+            label={t`Back`}
+            lang={lang}
             icon={<ArrowLeftIcon aria-hidden="true" size={18} />}
             onClick={onBack}
           />
@@ -67,7 +74,11 @@ export function SettingsSidebar({
             className={styles.settingsNavigation}
           >
             {groups.map((group) => (
-              <SettingsGroup key={group.id} label={group.label}>
+              <SettingsGroup
+                key={group.id}
+                label={group.label}
+                lang={group.lang}
+              >
                 {group.sections.map(section)}
               </SettingsGroup>
             ))}
@@ -80,14 +91,18 @@ export function SettingsSidebar({
 
 function SettingsGroup({
   label,
+  lang,
   children,
 }: {
   label: string;
+  lang?: string | undefined;
   children: ReactNode;
 }) {
   return (
     <section>
-      <h2 className={styles.settingsGroupTitle}>{label}</h2>
+      <h2 lang={lang} className={styles.settingsGroupTitle}>
+        {label}
+      </h2>
       <div className={styles.settingsGroupItems}>{children}</div>
     </section>
   );

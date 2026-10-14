@@ -1,5 +1,6 @@
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
+import { linguiPlugin } from "../../lingui-plugin.mjs";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import {
@@ -112,6 +113,7 @@ const server = await createServer({
   logLevel: "warn",
   plugins: [
     react(),
+    linguiPlugin(),
     {
       name: "isolated-naming-demo",
       transform(code, id) {

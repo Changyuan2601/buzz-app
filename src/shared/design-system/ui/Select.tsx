@@ -9,6 +9,8 @@ export type SelectGroup = {
   options: readonly {
     value: string;
     label: string;
+    /** Language of this option's label, including its selected-value display. */
+    lang?: string;
     description?: ReactNode;
     /** Decorative identity artwork shown before the option's text. */
     leading?: ReactNode;
@@ -19,6 +21,7 @@ export type SelectGroup = {
 /** A compact, labelled single-choice control with accessible option groups. */
 export function Select({
   label,
+  lang,
   value,
   groups,
   onValueChange,
@@ -36,6 +39,8 @@ export function Select({
   align = "start",
 }: {
   label: string;
+  /** Language of the control and portaled popup; options can override it. */
+  lang?: string;
   description?: ReactNode;
   error?: ReactNode;
   name?: string;
@@ -62,6 +67,7 @@ export function Select({
   const control = (
     <div
       data-buzz-ui=""
+      lang={lang}
       className="buzz-select text-body"
       data-variant={variant}
     >
@@ -95,6 +101,7 @@ export function Select({
                 </span>
               )}
               <BaseSelect.Value
+                lang={items.find((item) => item.value === value)?.lang}
                 className="buzz-select-value"
                 placeholder={selectedValue === null ? placeholder : undefined}
                 data-placeholder={selectedValue === null ? "" : undefined}
@@ -128,6 +135,7 @@ export function Select({
                     </span>
                   )}
                   <BaseSelect.Value
+                    lang={items.find((item) => item.value === value)?.lang}
                     className={
                       variant === "compact" ? "buzz-select-value" : undefined
                     }
@@ -164,6 +172,7 @@ export function Select({
             alignItemWithTrigger={false}
           >
             <BaseSelect.Popup
+              lang={lang}
               data-buzz-ui=""
               className="buzz-select-popup text-body"
               data-variant={variant}
@@ -182,6 +191,7 @@ export function Select({
                         <BaseSelect.Item
                           key={option.value}
                           value={option.value}
+                          lang={option.lang}
                           disabled={option.disabled}
                           aria-label={option.label}
                           aria-describedby={

@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
+import { linguiPlugin } from "../lingui-plugin.mjs";
 import { fileURLToPath } from "node:url";
 import { run } from "./run-command.mjs";
 import { nativeFixture } from "./native-fixture.mjs";
@@ -78,6 +79,7 @@ test("independent packed author consumer and native-installed contribution survi
       cacheDir: join(temp, "vite"),
       plugins: [
         react(),
+        linguiPlugin(),
         {
           name: "isolated-native-manager-bridge",
           configureServer(server) {

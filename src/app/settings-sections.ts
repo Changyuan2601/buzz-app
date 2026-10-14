@@ -4,6 +4,7 @@ import {
   BellIcon,
   ChatCircleIcon,
   DownloadIcon,
+  GlobeIcon,
   KeyboardIcon,
   PaletteIcon,
   RobotIcon,
@@ -14,6 +15,8 @@ import {
 } from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
+import type { I18n, MessageDescriptor } from "@lingui/core";
+import { msg } from "@lingui/core/macro";
 
 type Community = { name: string };
 export type SettingsSection = {
@@ -21,10 +24,13 @@ export type SettingsSection = {
   label: string;
   /** Contributed groups leave the icon to each presentation. */
   icon?: typeof UserIcon;
+  /** Set on host-translated labels; contributed labels keep inherited metadata. */
+  lang?: string;
 };
 export type SettingsGroup = {
   id: string;
   label: string;
+  lang?: string;
   sections: readonly SettingsSection[];
 };
 
@@ -34,25 +40,23 @@ export const developerMode =
   import.meta.env.DEV &&
   /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
 
-const profile: SettingsSection = {
-  id: "profile",
-  label: "Profile",
-  icon: UserIcon,
-};
-const app: readonly SettingsSection[] = [
-  { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "notifications", label: "Notifications", icon: BellIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "agents", label: "Agents", icon: RobotIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
-  { id: "updates", label: "Updates", icon: DownloadIcon },
+type BuiltIn = Omit<SettingsSection, "label"> & { label: MessageDescriptor };
+const profile: BuiltIn = { id: "profile", label: msg`Profile`, icon: UserIcon };
+const app: readonly BuiltIn[] = [
+  { id: "appearance", label: msg`Appearance`, icon: PaletteIcon },
+  { id: "language", label: msg`Language`, icon: GlobeIcon },
+  { id: "notifications", label: msg`Notifications`, icon: BellIcon },
+  { id: "shortcuts", label: msg`Shortcuts`, icon: KeyboardIcon },
+  { id: "agents", label: msg`Agents`, icon: RobotIcon },
+  { id: "plugins", label: msg`Plugins`, icon: SquaresFourIcon },
+  { id: "updates", label: msg`Updates`, icon: DownloadIcon },
 ];
-const developer: SettingsSection = {
+const developer: BuiltIn = {
   id: "developer",
-  label: "Developer",
+  label: msg`Developer`,
   icon: WrenchIcon,
 };
-const builtIn = new Set(
+const builtIn = new Set<string>(
   [profile, ...app, ...(developerMode ? [developer] : [])].map(({ id }) => id),
 );
 
@@ -62,7 +66,14 @@ export const isBuiltInSettingsSection = (id: string) => builtIn.has(id);
 export function settingsSections(
   cards: readonly Contribution<SettingsCard>[],
   community: Community | undefined,
+  i18n: Pick<I18n, "_" | "locale">,
 ) {
+  const lang = i18n.locale;
+  const label = (section: BuiltIn): SettingsSection => ({
+    ...section,
+    label: i18n._(section.label),
+    lang,
+  });
   const section = (
     card: Contribution<SettingsCard>,
     icon?: typeof UserIcon,
@@ -86,7 +97,7 @@ export function settingsSections(
             id: "community",
             label: community.name,
             sections: [
-              profile,
+              label(profile),
               ...cards
                 .filter((card) => !card.group && !card.section)
                 .map((card) => section(card, ChatCircleIcon)),
@@ -98,7 +109,8 @@ export function settingsSections(
       ? [
           {
             id: "administration",
-            label: "Administration",
+            label: i18n._(msg`Administration`),
+            lang,
             sections: administration,
           },
         ]
@@ -112,11 +124,19 @@ export function settingsSections(
     })),
     {
       id: "app",
-      label: "App",
-      sections: [...(community ? [] : [profile]), ...app],
+      label: i18n._(msg`App`),
+      lang,
+      sections: [...(community ? [] : [profile]), ...app].map(label),
     },
     ...(developerMode
-      ? [{ id: "development", label: "Development", sections: [developer] }]
+      ? [
+          {
+            id: "development",
+            label: i18n._(msg`Development`),
+            lang,
+            sections: [label(developer)],
+          },
+        ]
       : []),
   ];
   return {
