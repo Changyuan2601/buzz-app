@@ -563,7 +563,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       await stopObserving.dispose();
     }
     await history.evaluate((element) => {
-      for (const selector of ["pre", "table"]) {
+      for (const selector of ["pre code", "table"]) {
         const item = element.querySelector(selector);
         if (!(item instanceof HTMLElement))
           throw new Error(`Missing ${selector}`);

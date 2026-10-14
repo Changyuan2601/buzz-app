@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentType } from "../../features/agents/service";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
+import { CodexSetup } from "./setup";
 import { CodexProvider } from "./tabs";
 import { apply } from "./index";
 
@@ -141,4 +142,103 @@ it("stops agents that stop running even when the agent list could not be read", 
   state = { ...state, status: "error", agents: [], running: [] };
   notify();
   expect(sync).toHaveBeenLastCalledWith([]);
+});
+
+it("starts the server once Codex is updated and checked, only while a Codex agent runs", async () => {
+  /** What the next update and check leave behind. */
+  let left: { running?: "install"; readiness: string } = { readiness: "ready" };
+  /** Held updates and checks, released in order. */
+  const held: (() => void)[] = [];
+  const hold = (target: object, change: () => object) =>
+    new Promise<void>((resolve) => {
+      held.push(() => {
+        const own = target as { state: object };
+        own.state = { ...own.state, ...change() };
+        resolve();
+      });
+    });
+  const update = vi
+    .spyOn(CodexSetup.prototype, "update")
+    .mockImplementation(function (this: CodexSetup) {
+      return hold(this, () => ({ running: left.running }));
+    });
+  const check = vi
+    .spyOn(CodexProvider.prototype, "check")
+    .mockImplementation(function (this: CodexProvider) {
+      return hold(this, () => ({ readiness: left.readiness }));
+    });
+  const warm = vi
+    .spyOn(CodexRuntime.prototype, "warm")
+    .mockImplementation(() => undefined);
+  vi.spyOn(CodexRuntime.prototype, "sync").mockImplementation(() => undefined);
+  const release = async () => {
+    await vi.waitFor(() => expect(held.length).toBeGreaterThan(0));
+    held.shift()?.();
+  };
+  // Every step is a microtask, so a macrotask has seen the chain through.
+  const settled = () => new Promise((resolve) => setTimeout(resolve));
+  const agent = { pubkey: "agent", type: "buzz.codex/codex" };
+  let state = { status: "ready", agents: [agent], running: [agent] };
+  let notify = () => undefined;
+  const restart = () => {
+    state = { ...state, running: [] };
+    notify();
+    state = { ...state, running: [agent] };
+    notify();
+  };
+  let cleanup: () => void = () => undefined;
+  apply({
+    pluginOwner: { id: "buzz.codex" },
+    host: { spawn: vi.fn(), request: vi.fn() },
+    agents: {
+      register: () => undefined,
+      snapshot: () => state,
+      relay: () => undefined,
+      subscribe: (listener: () => undefined) => {
+        notify = listener;
+        return () => undefined;
+      },
+    },
+    effect: (setup: () => () => void) => {
+      cleanup = setup();
+    },
+  } as never);
+  expect(update).toHaveBeenLastCalledWith(true);
+  await release();
+  // Two first starts of Codex race on its state, so the check goes first.
+  await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
+  await settled();
+  expect(warm).not.toHaveBeenCalled();
+  await release();
+  await vi.waitFor(() => expect(warm).toHaveBeenCalledOnce());
+
+  // An agent that stops meanwhile, a Codex that needs attention, and an
+  // install in progress all leave the start to the mention.
+  restart();
+  state = { ...state, running: [] };
+  notify();
+  await release();
+  await release();
+  await settled();
+  expect(warm, "stopped").toHaveBeenCalledOnce();
+  for (const next of [
+    { readiness: "attention" },
+    { readiness: "ready", running: "install" as const },
+  ]) {
+    left = next;
+    restart();
+    await release();
+    await release();
+    await settled();
+    expect(warm, JSON.stringify(next)).toHaveBeenCalledOnce();
+  }
+  // Nor does a plugin disposed meanwhile start one.
+  left = { readiness: "ready" };
+  restart();
+  await release();
+  cleanup();
+  await release();
+  await settled();
+  expect(update).toHaveBeenCalledTimes(5);
+  expect(warm).toHaveBeenCalledOnce();
 });

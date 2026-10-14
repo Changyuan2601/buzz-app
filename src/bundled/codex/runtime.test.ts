@@ -594,6 +594,15 @@ it("serves every agent from one server and routes each tool call to its own agen
   expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
   expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
 });
+it("warms the server before a mention, which then reuses it", async () => {
+  const f = fixture();
+  f.runtime.warm();
+  f.runtime.warm();
+  expect(servers(f)).toHaveLength(1);
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(servers(f)).toHaveLength(1);
+});
 it("stops a removed agent's turn without ending the server the others share", async () => {
   const f = fixture();
   const b = second(f);
