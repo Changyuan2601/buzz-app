@@ -138,8 +138,6 @@ it.each(["1", "0"])(
     const viewer = "01".repeat(32);
     const linkFinished = deferred<void>();
     native.invoke.mockImplementation(async (command, input) => {
-      if (command === "nsec_backup_session" || command === "nsec_backup_retry")
-        return;
       if (command === "identity_restore") return viewer;
       if (command === "oauth_callback_begin")
         return {
@@ -200,35 +198,22 @@ it.each(["1", "0"])(
       expect(
         await screen.findByText("No remote agents yet."),
       ).toBeInTheDocument();
-      if (live === "0") {
-        await linkFinished.promise;
-        await waitFor(() =>
-          expect(native.invoke).toHaveBeenCalledWith("nsec_backup_retry", {
-            source: "builderlab",
-          }),
-        );
-        expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
-          source: "builderlab",
-          generation: expect.any(Number),
-          credential: "synthetic-credential",
-        });
-      }
+      if (live === "0") await linkFinished.promise;
+      expect(backupCalls()).toEqual([]);
       await user.click(screen.getByRole("button", { name: "Sign out" }));
       expect(
         await screen.findByRole("button", { name: "Sign in with Builderlab" }),
       ).toBeEnabled();
-      if (live === "0")
-        expect(backupCalls().at(-1)?.[1]).toMatchObject({ credential: null });
+      expect(backupCalls()).toEqual([]);
       await runtime.dispose();
+      expect(backupCalls()).toEqual([]);
       if (live === "1") {
-        expect(backupCalls()).toEqual([]);
         expect(
           native.invoke.mock.calls.filter(
             ([command]) => command === "identity_restore",
           ),
         ).toEqual([]);
-      } else
-        expect(backupCalls().at(-1)?.[1]).toMatchObject({ credential: null });
+      }
     } finally {
       cleanup();
       await runtime.dispose();
@@ -246,7 +231,6 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   let browserInstructions = "Be concise.";
   let instructionsSave: ReturnType<typeof deferred<HostResponse>> | undefined;
   let loginCallback: ReturnType<typeof deferred<OAuthCallback>> | undefined;
-  const backupHandoff = deferred<void>();
   const hostRequests = () =>
     native.invoke.mock.calls
       .filter(([command]) => command === "plugin_host_request")
@@ -260,8 +244,6 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       ([command]) => command === "oauth_callback_wait",
     );
   native.invoke.mockImplementation(async (command, input) => {
-    if (command === "nsec_backup_session") return backupHandoff.promise;
-    if (command === "nsec_backup_retry") return;
     if (command === "oauth_callback_begin")
       return {
         id: "native-attempt-id",
@@ -374,11 +356,11 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(
       await within(providerDialog).findByRole("button", { name: "Sign out" }),
     ).toBeEnabled();
-    expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
-      source: "builderlab",
-      generation: expect.any(Number),
-      credential: "private-token",
-    });
+    expect(
+      native.invoke.mock.calls.filter(([command]) =>
+        command.startsWith("nsec_backup_"),
+      ),
+    ).toEqual([]);
     picker.unmount();
     const card = cards.snapshot()[0];
     expect(card?.group).toBe("Integrations");
@@ -631,7 +613,6 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     await waitFor(() => expect(agents.find(browserKey)).toBeUndefined());
     expect(requestsTo("delete-agent")).toHaveLength(beforeDelete + 1);
   } finally {
-    backupHandoff.resolve();
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();

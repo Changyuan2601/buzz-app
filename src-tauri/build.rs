@@ -47,8 +47,6 @@ fn main() {
             "identity_create",
             "identity_export",
             "nsec_backup_available",
-            "nsec_backup_session",
-            "nsec_backup_retry",
             "nsec_restore_begin",
             "nsec_restore_wait",
             "nsec_restore_install",

@@ -4,7 +4,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Host, HostRequest } from "../../features/host/service";
 import { boundKey, type Account, type Backend } from "./api";
-import { handoffBackupSession } from "../../features/identity/backup";
 
 export const BUILDERLAB_ORIGIN = "https://app.builderlab.xyz";
 const API = `${BUILDERLAB_ORIGIN}/api/goose`;
@@ -162,15 +161,12 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
   // Sign-in and sign-out bump the generation; late results from an older one never
   // write, clear or describe the current session.
   let generation = 0;
-  const backupSession = (current: string | null) =>
-    handoffBackupSession("hosted", current, bridge.invoke);
   let session = new AbortController();
   const revoke = () => {
     generation += 1;
     session.abort();
     session = new AbortController();
     credential = undefined;
-    backupSession(null);
   };
   const login = async (signal: AbortSignal) => {
     revoke();
@@ -203,7 +199,6 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
     if (attempt.aborted || started !== generation)
       throw new Error("Builderlab authentication canceled");
     credential = exchanged.session_credential;
-    backupSession(credential);
     return account;
   };
   const bind = async () => {
@@ -243,14 +238,6 @@ export function createNativeBackend(host: Host, bridge: Native = native) {
       current,
     );
     ensureCurrent();
-    if (
-      verified.status >= 200 &&
-      verified.status < 300 &&
-      !(verified.value as { error?: unknown }).error
-    )
-      void bridge
-        .invoke("nsec_backup_retry", { source: "hosted" })
-        .catch(() => {});
     return verified;
   };
   const call = (action: string, input?: Record<string, unknown>) => {

@@ -217,7 +217,6 @@ export function createAgentClient(
     const credential = session.credential();
     const bound = boundKey(await identityRequest("current", {}, signal));
     if (bound === key) {
-      backupLinkedIdentity();
       return;
     }
     // Never replace another key's binding; unlinking is the account owner's choice.
@@ -250,13 +249,6 @@ export function createAgentClient(
     );
     if (boundKey(verified) !== key)
       throw new Error("Builderlab did not confirm your Buzz identity link.");
-    backupLinkedIdentity();
-  }
-  function backupLinkedIdentity() {
-    if (nativeIdentityEnabled())
-      void invoke("nsec_backup_retry", { source: "builderlab" }).catch(
-        () => {},
-      );
   }
   async function activate(
     pubkey: string,

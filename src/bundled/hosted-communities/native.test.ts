@@ -34,8 +34,6 @@ function setup(
         oauth_callback_begin: () => ({ id: "attempt" }),
         oauth_callback_wait: () => ({ parameters: [["code", "one-time"]] }),
         oauth_callback_cancel: () => undefined,
-        nsec_backup_session: () => undefined,
-        nsec_backup_retry: () => undefined,
         ...commands,
       };
       const handler = handlers[name];
@@ -203,64 +201,31 @@ it("clears the session when it can no longer be verified", async () => {
   await expect(backend.auth()).resolves.toBeNull();
 });
 
-it("forgets the credential on sign-out and plugin disposal", async () => {
+it("forgets the credential on sign-out and plugin disposal without backup handoffs", async () => {
   const { backend, dispose, invoke } = setup(signedIn);
   await login(backend);
-  const firstHandoff = invoke.mock.calls.find(
-    ([name, input]) =>
-      name === "nsec_backup_session" && input?.credential === "token",
-  )?.[1];
-  expect(firstHandoff).toMatchObject({ source: "hosted", credential: "token" });
   await expect(backend.send("sign-out")).resolves.toEqual({
     status: 200,
     value: {},
   });
   await expect(backend.auth()).resolves.toBeNull();
-  expect(invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
-    source: "hosted",
-    generation: expect.any(Number),
-    credential: null,
-  });
   await login(backend);
-  const replacement = invoke.mock.calls
-    .filter(
-      ([name, input]) =>
-        name === "nsec_backup_session" && input?.credential === "token",
-    )
-    .at(-1)?.[1];
-  expect(replacement?.generation).toBeGreaterThan(
-    Number(firstHandoff?.generation),
-  );
   dispose();
   await expect(backend.auth()).resolves.toBeNull();
-  expect(invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
-    source: "hosted",
-    generation: expect.any(Number),
-    credential: null,
-  });
+  expect(
+    invoke.mock.calls.filter(([name]) => name.startsWith("nsec_backup_")),
+  ).toEqual([]);
 });
 
-it("finishes login while the silent backup handoff is still pending", async () => {
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
+it("signs in without handing the login credential to backup commands", async () => {
+  const { backend, invoke } = setup(signedIn);
+  await expect(login(backend)).resolves.toMatchObject({ status: 200 });
+  await expect(backend.auth()).resolves.toMatchObject({
+    email: "a@example.com",
   });
-  const { backend, invoke } = setup(signedIn, {
-    nsec_backup_session: (input) => (input?.credential ? pending : undefined),
-  });
-  try {
-    await expect(login(backend)).resolves.toMatchObject({ status: 200 });
-    expect(invoke).toHaveBeenCalledWith("nsec_backup_session", {
-      source: "hosted",
-      generation: expect.any(Number),
-      credential: "token",
-    });
-    await expect(backend.auth()).resolves.toMatchObject({
-      email: "a@example.com",
-    });
-  } finally {
-    release();
-  }
+  expect(
+    invoke.mock.calls.filter(([name]) => name.startsWith("nsec_backup_")),
+  ).toEqual([]);
 });
 
 it("returns a challenge error without signing", async () => {
@@ -405,9 +370,9 @@ it("verifies a signed binding with the session that requested it", async () => {
       signed_payload: JSON.stringify({ id: "event" }),
     }),
   });
-  expect(invoke).toHaveBeenCalledWith("nsec_backup_retry", {
-    source: "hosted",
-  });
+  expect(
+    invoke.mock.calls.filter(([name]) => name.startsWith("nsec_backup_")),
+  ).toEqual([]);
 });
 
 it.each([

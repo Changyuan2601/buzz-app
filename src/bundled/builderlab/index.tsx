@@ -1,6 +1,4 @@
 import type { PluginModule } from "../../plugins/api";
-import { handoffBackupSession } from "../../features/identity/backup";
-import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
 import {
   browserCredential,
@@ -31,22 +29,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return browserCredential(ctx.host, signal);
   });
   ctx.effect(() => () => session.dispose());
-  const backupSession = () => {
-    if (!nativeIdentityEnabled()) return;
-    handoffBackupSession(
-      "builderlab",
-      session.snapshot().status === "signed-in"
-        ? session.credential().value
-        : null,
-    );
-  };
-  ctx.effect(() => {
-    const stop = session.subscribe(backupSession);
-    return () => {
-      stop();
-      if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
-    };
-  });
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {

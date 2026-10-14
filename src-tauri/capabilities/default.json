@@ -14,8 +14,6 @@
     "allow-identity-create",
     "allow-identity-export",
     "allow-nsec-backup-available",
-    "allow-nsec-backup-session",
-    "allow-nsec-backup-retry",
     "allow-nsec-restore-begin",
     "allow-nsec-restore-wait",
     "allow-nsec-restore-install",

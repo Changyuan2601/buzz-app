@@ -37,39 +37,31 @@ old Buzz service/account and copy the selected agent key into this app's separat
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
-## Automatic backup and optional recovery
+## Optional recovery without automatic uploads
+
+Buzz does not enroll, seal, or upload local identity keys. Builderlab and Hosted
+communities sign-in, identity binding, key creation/import, and restoration do not
+start backups or retry legacy pending uploads. No backup credentials are handed
+from those plugins to the native host. Existing encrypted retry records remain
+inert and are removed by Sign out and erase through the existing resumable wipe.
 
 Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
-`BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity silently after an existing
-Builderlab or Hosted communities login and matching key binding. These are paired
-native build-process inputs; unset leaves the feature disabled. The service URL
-includes its API prefix and must use HTTPS. Existing login credentials are accepted
-only for the matching trusted build origin. Without a qualifying login, backup
-defers without opening a browser or delaying identity readiness.
+`BUZZ_NSEC_BACKUP_NAMESPACE` can offer **Restore from backup** when secure storage
+confirms that no local identity exists. These paired native build inputs identify
+the recovery service; they never enable uploads. The service URL includes its API
+prefix and must use HTTPS. Without these inputs, recovery is unavailable.
 
-The native host validates enrollment and seals with the reviewed HPKE v1 protocol.
-Only encrypted pending bytes and public completion metadata are saved in the OS
-account's `.buzz-foundation/nsec-backups/<human credential service>` folder, scoped
-separately for debug and release. A shared lock serializes cooperating
-copies. Pending bytes and IDs survive restart; later login/binding/key-install
-events retry them, including a coalesced follow-up when an event arrives during an
-active pass. Upload success requires a matching stored receipt. Backup
-failure never replaces or deletes the local identity.
+Restore offers explicit browser sign-in. The session and recovered keys remain
+native; the renderer sees only validated public identities and attempt-scoped
+handles. Recovery prefers the account's current associated identity. A previous
+identity requires explicit selection and does not change the account association.
+Failed mapping requests, unavailable endpoints, failed backups and an empty
+successful result remain distinct. Installation uses the existing create-only
+secure store; cancel, reload, signout or a competing create/import prevents stale
+installation. Recovery does not create backup retry records or retain its session
+after installation.
 
-When secure storage confirms absence, **Restore from backup** offers explicit
-browser sign-in. The session and recovered keys remain native; the renderer sees
-only validated public identities and attempt-scoped handles. Recovery prefers the
-account's current associated identity. A previous identity requires explicit
-selection and does not change the account association. Failed mapping requests,
-unavailable endpoints, failed backups and an empty successful result remain distinct.
-Installation uses the existing create-only secure store; cancel, reload, signout
-or a competing create/import prevents stale installation.
-Remembering recovered completion is best effort; retry-file failure does not block
-secure-store installation. Pending uploads still require durable ciphertext before sending.
-Plain signout retains backup records; Sign out and erase removes this credential
-service's records through the existing resumable wipe before clearing its marker.
-
-Rollout requires the backend backup/recovery endpoints, private-organization
+Recovery rollout requires the backend recovery endpoint, private-organization
 authorization, database migration, and configured KMS recipient/permissions. The
 client inputs must match that service's namespace. Synthetic HTTP/storage tests
 and the browser fixture do not establish live sign-in, KMS or installed-app
