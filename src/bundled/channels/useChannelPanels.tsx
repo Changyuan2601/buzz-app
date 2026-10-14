@@ -15,11 +15,21 @@ type Opening = {
   target: string;
   trigger: HTMLElement | null;
 };
+/** The page's tab workspace, which owns `channelPlacement: "tab"` panels. */
+export type ChannelPanelTabs = {
+  pressed(panel: RegisteredPanel, context: ChannelPanelContext): boolean;
+  toggle(
+    panel: RegisteredPanel,
+    context: ChannelPanelContext,
+    target: string,
+  ): void;
+};
 /** Page-local presentation; optional plugins retain their own work outside this mount. */
 export function useChannelPanels(
   panels: Panels,
   context?: ChannelPanelContext,
   onOpen?: () => void,
+  tabs?: ChannelPanelTabs,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -66,11 +76,17 @@ export function useChannelPanels(
           .map((panel) => {
             const Launcher = panel.channelLauncher;
             if (!Launcher) return null;
+            const tabbed = panel.channelPlacement === "tab";
+            if (tabbed && !tabs) return null;
             return (
               <Launcher
                 key={`${panel.key}:${panel.revision}`}
                 context={context}
-                pressed={selected?.panel === panel}
+                pressed={
+                  tabbed
+                    ? !!tabs?.pressed(panel, context)
+                    : selected?.panel === panel
+                }
                 available={() =>
                   mounted.current === context &&
                   panels.snapshot().includes(panel)
@@ -81,7 +97,8 @@ export function useChannelPanels(
                     !panels.snapshot().includes(panel)
                   )
                     return;
-                  if (selected?.panel === panel) hide(selected);
+                  if (tabbed) tabs?.toggle(panel, context, target);
+                  else if (selected?.panel === panel) hide(selected);
                   else {
                     onOpen?.();
                     setOpened({

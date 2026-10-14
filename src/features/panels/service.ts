@@ -60,8 +60,11 @@ export type Panel = Readonly<{
     label: string;
     eligible(channel: ChannelSummary, session: RelaySession): boolean;
   }>;
-  /** Channel launchers default to the bottom drawer; side reuses the companion column. */
-  channelPlacement?: "bottom" | "side";
+  /**
+   * Channel launchers default to the bottom drawer; side reuses the companion
+   * column; tab opens a tab in the channel's side pane beside its threads.
+   */
+  channelPlacement?: "bottom" | "side" | "tab";
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
@@ -130,9 +133,10 @@ export class PanelsService extends Service implements Panels {
     if (
       panel.channelPlacement !== undefined &&
       panel.channelPlacement !== "bottom" &&
-      panel.channelPlacement !== "side"
+      panel.channelPlacement !== "side" &&
+      panel.channelPlacement !== "tab"
     )
-      throw new Error("A channel placement must be bottom or side");
+      throw new Error("A channel placement must be bottom, side or tab");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

@@ -269,10 +269,6 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
-  const drawer = useChannelPanels(panels, drawerContext, () => {
-    onOpenDrawer?.();
-    tabState.setPaneOpen(true);
-  });
   const sideTabs = tabState.tabs.filter((tab) => tabPane(tab) === "side");
   const mainTabs = mainPane
     ? tabState.tabs.filter((tab) => tabPane(tab) === "main")
@@ -285,6 +281,50 @@ export function useConversationTabs({
   const selectedTab = rootTabIds.includes(tabState.selected)
     ? tabState.selected
     : (rootTabIds[0] ?? "");
+  // A tab-placed channel launcher keeps one retained tab per channel.
+  const channelTab = (panel: Opening["panel"], channelId: string) =>
+    panelTabs.find(
+      (entry) =>
+        entry.panel === panel &&
+        !!entry.channelContext &&
+        entry.channelId === channelId,
+    );
+  const drawer = useChannelPanels(
+    panels,
+    drawerContext,
+    () => {
+      onOpenDrawer?.();
+      tabState.setPaneOpen(true);
+    },
+    {
+      pressed: (panel, context) => {
+        const entry = channelTab(panel, context.channelId);
+        return !!entry && tabState.paneOpen && selectedTab === tabId(entry);
+      },
+      toggle: (panel, context, target) => {
+        if (!currentVisit()) return;
+        const entry = channelTab(panel, context.channelId);
+        if (entry && tabState.paneOpen && selectedTab === tabId(entry)) {
+          closeTab(entry);
+          return;
+        }
+        panelTrigger.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        tabState.setPaneOpen(true);
+        open(
+          {
+            panel,
+            channelId: context.channelId,
+            target,
+            channelContext: context,
+          },
+          true,
+        );
+      },
+    },
+  );
   const selectPanelTab = (id: string) => {
     opening.current = panelTabs.find((entry) => tabId(entry) === id);
     tabState.select(id);
