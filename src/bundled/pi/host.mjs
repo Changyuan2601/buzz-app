@@ -96,12 +96,13 @@ export class AuthFile {
       type: value.type,
     }));
   }
+  /** As pi-ai's stores do: a change that returns nothing, such as a refresh
+   * another process already made, leaves the entry. */
   modify(id, change) {
     return this.locked(async (all) => {
       const next = await change(all[id]);
-      if (next) all[id] = next;
-      else delete all[id];
-      return next;
+      if (next !== undefined) all[id] = next;
+      return all[id];
     });
   }
   async delete(id) {

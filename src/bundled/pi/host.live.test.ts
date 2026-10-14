@@ -19,7 +19,7 @@ import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { serve } from "./host.mjs";
+import { AuthFile, serve } from "./host.mjs";
 const data = process.argv[2];
 const faux = fauxProvider();
 const models = createModels();
@@ -100,6 +100,12 @@ await pi.rpc("open", { agent, tools });
 out.resumed = await pi.rpc("wait", { agent, submission: d1.submission });
 out.place = await pi.rpc("place", { agent, key: "chan/root" });
 await pi.stop();
+// Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
+// another process refreshed first, keeps the sign-in.
+const auth = new AuthFile(data + "/auth.json");
+const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
+await auth.modify("p", async () => signIn);
+out.auth = { result: await auth.modify("p", async () => undefined), stored: await auth.read("p") };
 console.log(JSON.stringify(out));
 `;
 
@@ -172,5 +178,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       text: "Resumed answer",
     });
     expect(out.place).toEqual({ seen: 100 });
+    const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
+    expect(out.auth).toEqual({ result: signIn, stored: signIn });
   }, 90_000);
 });
