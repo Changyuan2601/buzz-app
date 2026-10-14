@@ -1,12 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render as mount,
-  screen,
-} from "@testing-library/react";
+import { cleanup, render as mount, screen } from "@testing-library/react";
 afterEach(() => {
   cleanup();
 });
@@ -27,10 +22,26 @@ const base: Snapshot = {
   roster: { state: "verified" },
   heads: [],
 };
+/** A session recovery owner fixed in one state. Production derives it from
+ * the same live snapshot; "shown" is any failure past its first retry. */
+function recoveryIn(state: "idle" | "shown") {
+  const snapshot = Object.freeze(
+    state === "shown"
+      ? { recovering: true, attempt: 1, shown: true }
+      : { recovering: false, attempt: 0, shown: false },
+  );
+  return {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retryNow: vi.fn(),
+    dispose() {},
+  };
+}
 function render(
   patch: Partial<Snapshot> = {},
   partialRoster = false,
   diagnostics = false,
+  recovery: "idle" | "shown" = "idle",
 ) {
   const snapshot: Snapshot = { ...base, ...patch };
   const live = {
@@ -44,6 +55,7 @@ function render(
       channelId="a"
       partialRoster={partialRoster}
       diagnostics={diagnostics}
+      recovery={recoveryIn(recovery)}
     />
   );
   if (diagnostics) return renderToStaticMarkup(component);
@@ -86,7 +98,9 @@ it.each<Partial<Snapshot>>([
   { roster: { state: "error", error: "Roster refused" } },
   { roster: { state: "deferred" } },
 ])("retains recovery for degraded coverage or failures: %j", async (patch) => {
-  expect(await render(patch)).toContain("Retry live updates");
+  expect(await render(patch, false, false, "shown")).toContain(
+    "Reconnecting to relay…",
+  );
 });
 it.each(["channel", "global"])(
   "keeps bounded pending %s quota recovery in Diagnostics only",
@@ -151,24 +165,61 @@ it.each<Partial<Snapshot>>([
 ])(
   "does not hide actionable or unsupported failures behind automatic recovery: %j",
   async (patch) => {
-    const html = await render({ routes: [recovering], ...patch });
-    expect(html).toContain("Retry live updates");
+    const html = await render(
+      { routes: [recovering], ...patch },
+      false,
+      false,
+      "shown",
+    );
+    expect(html).toContain("Reconnecting to relay…");
     expect(html).not.toContain("retry in 4s");
   },
 );
 it("a recovering global cannot hide a selected channel failure", async () => {
   expect(
-    await render({
-      routes: [
-        { ...channel, status: "error", error: "Selected stream stopped" },
-        { id: "profiles", status: "pending", replay: "unknown", error: quota },
-      ],
-    }),
+    await render(
+      {
+        routes: [
+          { ...channel, status: "error", error: "Selected stream stopped" },
+          {
+            id: "profiles",
+            status: "pending",
+            replay: "unknown",
+            error: quota,
+          },
+        ],
+      },
+      false,
+      false,
+      "shown",
+    ),
+  ).toContain("Reconnecting to relay…");
+  // The notice is only a title and Retry now; Diagnostics keeps the reason.
+  expect(
+    await render(
+      {
+        routes: [
+          { ...channel, status: "error", error: "Selected stream stopped" },
+          {
+            id: "profiles",
+            status: "pending",
+            replay: "unknown",
+            error: quota,
+          },
+        ],
+      },
+      false,
+      true,
+    ),
   ).toContain("Selected stream stopped");
 });
 it("keeps partial roster coverage visible even with healthy established routes", async () => {
   expect(await render({}, true)).toContain("Some channels are missing");
-  expect(await render({}, true)).toContain("Retry live updates");
+  // Automatic recovery cannot add missing channels: say so without promising it.
+  expect(await render({}, true)).toContain(
+    "Only currently accessible messages remain readable.",
+  );
+  expect(await render({}, true)).not.toContain("retrying");
   expect(await render({ routes: [recovering] }, true)).toContain(
     "Some channels are missing",
   );
@@ -186,9 +237,9 @@ it.each(["pending"] as const)(
 it.each(["error", "deferred"] as const)(
   "offers roster recovery when partial discovery is %s",
   async (state) => {
-    const notice = await render({ roster: { state } }, true);
-    expect(notice).toContain("Channel list needs refreshing.");
-    expect(notice).toContain("Retry live updates");
+    const notice = await render({ roster: { state } }, true, false, "shown");
+    expect(notice).not.toContain("Channel list needs refreshing.");
+    expect(notice).toContain("Reconnecting to relay…");
   },
 );
 it.each<Partial<Snapshot>>([{ error: "Socket refused" }])(
@@ -197,13 +248,15 @@ it.each<Partial<Snapshot>>([{ error: "Socket refused" }])(
     const notice = await render(
       { ...patch, roster: { state: "pending" } },
       true,
+      false,
+      "shown",
     );
-    expect(notice).toContain("Retry live updates");
+    expect(notice).toContain("Reconnecting to relay…");
     expect(notice).not.toContain("Some channels are missing");
   },
 );
 
-it("diagnostics does not duplicate notices; changing the selected channel/session replaces recovery ownership", async () => {
+it("diagnostics does not duplicate notices; changing the selected channel/session replaces the notice", async () => {
   const oldRetry = vi.fn();
   const retry = vi.fn();
   const live = (channelId: string, action: () => void) => {
@@ -246,9 +299,156 @@ it("diagnostics does not duplicate notices; changing the selected channel/sessio
   expect(screen.getAllByRole("status")).toHaveLength(1);
   view.rerender(content(newSession, "b"));
   expect(screen.getAllByRole("status")).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "Retry live updates" }));
-  expect(retry).toHaveBeenCalledOnce();
+  // Recovery is automatic and owned by the session; the notice has no
+  // per-panel Retry and never retries on render.
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(retry).not.toHaveBeenCalled();
   expect(oldRetry).not.toHaveBeenCalled();
   view.rerender(content(newSession, "b", false));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("stays quiet before the first automatic retry, then shows one inline notice whose Retry now retries the session", async () => {
+  const failed: Snapshot = { ...base, status: "retrying" };
+  const quietState = Object.freeze({
+    recovering: true,
+    attempt: 0,
+    shown: false,
+  });
+  const live = {
+    snapshot: () => failed,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+  };
+  const quiet = {
+    ...recoveryIn("idle"),
+    snapshot: () => quietState,
+  };
+  const view = mount(
+    <LiveStatus
+      live={live}
+      channelId="a"
+      partialRoster={false}
+      recovery={quiet}
+    />,
+  );
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  const shown = recoveryIn("shown");
+  view.rerender(
+    <LiveStatus
+      live={live}
+      channelId="a"
+      partialRoster={false}
+      recovery={shown}
+    />,
+  );
+  const notice = screen.getByRole("status", { name: "Reconnecting to relay…" });
+  screen.getByRole("button", { name: "Retry now" }).click();
+  expect(shown.retryNow).toHaveBeenCalledTimes(1);
+  expect(live.retry).not.toHaveBeenCalled();
+  // Only the title and the button: no explanatory copy.
+  expect(notice).toHaveTextContent(/^Reconnecting to relay…Retry now$/);
+});
+
+it("hands focus on when recovery removes the focused Retry now button", () => {
+  const failed: Snapshot = { ...base, status: "retrying" };
+  const live = {
+    snapshot: () => failed,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+  };
+  const onRecovered = vi.fn();
+  const content = (state: "idle" | "shown", view: Snapshot = failed) => (
+    <LiveStatus
+      live={{ ...live, snapshot: () => view }}
+      channelId="a"
+      partialRoster={false}
+      recovery={recoveryIn(state)}
+      onRecovered={onRecovered}
+    />
+  );
+  const view = mount(content("shown"));
+  screen.getByRole("button", { name: "Retry now" }).focus();
+  view.rerender(content("idle", base));
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(onRecovered).toHaveBeenCalledTimes(1);
+  // An unfocused notice leaves focus where the user put it.
+  view.rerender(content("shown"));
+  view.rerender(content("idle", base));
+  expect(onRecovered).toHaveBeenCalledTimes(1);
+});
+
+it("shows a permanent live failure even while other reads recover", () => {
+  const denied: Snapshot = {
+    ...base,
+    status: "error",
+    error: "Relay rejected live authentication",
+  };
+  const live = {
+    snapshot: () => denied,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+  };
+  const quietState = Object.freeze({
+    recovering: true,
+    attempt: 0,
+    shown: false,
+  });
+  const quiet = { ...recoveryIn("idle"), snapshot: () => quietState };
+  const onRecovered = vi.fn();
+  mount(
+    <LiveStatus
+      live={live}
+      channelId="a"
+      partialRoster={false}
+      recovery={quiet}
+      onRecovered={onRecovered}
+    />,
+  );
+  expect(
+    screen.getByRole("status", { name: "Live updates limited" }),
+  ).toHaveTextContent("Relay rejected live authentication");
+  // Recovery skips a terminal failure, so the user keeps an explicit retry
+  // for after they fix the signer or access problem.
+  screen.getByRole("button", { name: "Retry live updates" }).click();
+  expect(live.retry).toHaveBeenCalledTimes(1);
+  expect(onRecovered).toHaveBeenCalledTimes(1);
+});
+
+it("keeps capacity and partial-roster notices passive", () => {
+  const capacity: Snapshot = {
+    ...base,
+    routes: [
+      {
+        id: "channel:a",
+        channelId: "a",
+        status: "limited",
+        replay: "unknown",
+        error: "Live channel capacity reached; finite reads remain available",
+      },
+    ],
+  };
+  const live = {
+    snapshot: () => capacity,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+  };
+  const view = mount(
+    <LiveStatus live={live} channelId="a" partialRoster={false} />,
+  );
+  expect(
+    screen.getByRole("status", { name: "Live updates limited" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  view.rerender(
+    <LiveStatus
+      live={{ ...live, snapshot: () => base }}
+      channelId="a"
+      partialRoster
+    />,
+  );
+  expect(
+    screen.getByRole("status", { name: "Live updates limited" }),
+  ).toHaveTextContent("Some channels are missing");
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });

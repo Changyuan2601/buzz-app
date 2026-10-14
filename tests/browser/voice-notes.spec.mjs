@@ -18,6 +18,9 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await server?.close();
 });
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "wait" });
+});
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/relay/media?*", async (route) => {
     const url = new URL(route.request().url()).searchParams.get("url");

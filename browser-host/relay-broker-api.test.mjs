@@ -7,7 +7,7 @@ import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
-import { createServer, get } from "node:http";
+import { createServer, get, request } from "node:http";
 import { createHash, createHmac } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { ReadableStream } from "node:stream/web";
@@ -106,6 +106,7 @@ async function harness(
   const base = `http://127.0.0.1:${server.address().port}`;
   return {
     base,
+    server,
     event,
     calls,
     publications: socket.publications,
@@ -134,6 +135,8 @@ async function harness(
     },
   };
 }
+/** Native media URLs name one sha256 blob; the broker enforces the same shape. */
+const blob = "c".repeat(64);
 const filters = [{ kinds: [0], limit: 1 }];
 
 test.each([
@@ -518,7 +521,7 @@ test("GIF search follows the relay-advertised KLIPY path with signed, bounded in
 test("media proxy returns generic files as neutralized authenticated downloads", async () => {
   const bytes = Buffer.from("%PDF-1.7\nfixture pdf\n");
   const h = await harness((call) => {
-    expect(call.url).toBe(`${fixtureRelayUrl}/media/file.pdf`);
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/${blob}.pdf`);
     return new Response(bytes, {
       headers: {
         "Content-Type": "application/pdf",
@@ -529,7 +532,7 @@ test("media proxy returns generic files as neutralized authenticated downloads",
   });
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file.pdf`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.pdf`)}`,
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe(
@@ -565,7 +568,7 @@ test("media proxy neutralizes active content as downloads", async () => {
     );
     try {
       const response = await fetch(
-        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}`)}`,
       );
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe(
@@ -592,7 +595,7 @@ test("media proxy neutralizes comma-joined content types as downloads", async ()
   );
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}`)}`,
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe(
@@ -618,7 +621,7 @@ test("media proxy strips smuggled inline content type parameters", async () => {
   );
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}`)}`,
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
@@ -640,7 +643,7 @@ test("media proxy neutralizes missing or empty content types as downloads", asyn
     );
     try {
       const response = await fetch(
-        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}`)}`,
       );
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe(
@@ -667,7 +670,7 @@ test("media proxy keeps raster images inline with exact bytes", async () => {
   );
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/pixel.png`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.png`)}`,
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
@@ -705,7 +708,7 @@ test.each([
     );
     try {
       const response = await fetch(
-        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}`)}`,
       );
       expect(response.status).toBe(413);
       expect(await response.json()).toEqual({ error: "Media budget exceeded" });
@@ -740,13 +743,17 @@ test("unknown-length media is metered, cancelled on overflow and leaves the brok
     // never complete successfully after headers have already reached the client.
     await expect(
       (async () => {
-        const response = await h.get("media?url=/media/file.gif");
+        const response = await h.get(
+          `media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.gif`)}`,
+        );
         await response.arrayBuffer();
       })(),
     ).rejects.toThrow();
     await vi.waitFor(() => expect(cancelled).toBe(true));
     oversized = false;
-    const next = await h.get("media?url=/media/file.txt");
+    const next = await h.get(
+      `media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.txt`)}`,
+    );
     expect(next.headers.get("content-disposition")).toBe("attachment");
     expect(await next.text()).toBe("ok");
   } finally {
@@ -773,7 +780,9 @@ test("media deadline cancels the response pipeline after headers", async () => {
       ),
   );
   try {
-    const response = await h.get("media?url=/media/clip.mp4");
+    const response = await h.get(
+      `media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.mp4`)}`,
+    );
     const reader = response.body.getReader();
     expect((await reader.read()).value).toEqual(new Uint8Array([1]));
     deadline.abort();
@@ -787,7 +796,7 @@ test("media deadline cancels the response pipeline after headers", async () => {
 test("media proxy streams authenticated video ranges and preserves seek headers", async () => {
   const bytes = Buffer.from("video-range");
   const h = await harness((call) => {
-    expect(call.url).toBe(`${fixtureRelayUrl}/media/clip.mp4`);
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/${blob}.mp4`);
     expect(call.headers.Range).toBe("bytes=100-");
     return new Response(bytes, {
       status: 206,
@@ -801,7 +810,7 @@ test("media proxy streams authenticated video ranges and preserves seek headers"
   });
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/clip.mp4`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.mp4`)}`,
       { headers: { Range: "bytes=100-" } },
     );
     expect(response.status).toBe(206);
@@ -818,7 +827,7 @@ test("media proxy streams authenticated video ranges and preserves seek headers"
 test("media proxy streams authenticated audio ranges and preserves seek headers", async () => {
   const bytes = Buffer.from("audio-range");
   const h = await harness((call) => {
-    expect(call.url).toBe(`${fixtureRelayUrl}/media/audio.mp3`);
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/${blob}.mp3`);
     expect(call.headers.Range).toBe("bytes=100-");
     return new Response(bytes, {
       status: 206,
@@ -832,7 +841,7 @@ test("media proxy streams authenticated audio ranges and preserves seek headers"
   });
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.mp3`)}`,
       { headers: { Range: "bytes=100-" } },
     );
     expect(response.status).toBe(206);
@@ -859,7 +868,7 @@ test("media proxy rejects oversized non-range audio", async () => {
   );
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.mp3`)}`,
     );
     expect(response.status).toBe(413);
   } finally {
@@ -880,7 +889,7 @@ test("media proxy neutralizes non-media content types as downloads", async () =>
   );
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file.txt`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.txt`)}`,
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe(
@@ -914,7 +923,7 @@ test("an upstream video stream error closes only that response, not the broker",
   });
   try {
     await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/clip.mp4`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.mp4`)}`,
       { headers: { Range: "bytes=0-" } },
     )
       .then((response) => response.arrayBuffer())
@@ -937,11 +946,60 @@ test("media proxy rejects malformed ranges before upstream I/O", async () => {
   });
   try {
     const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/clip.mp4`)}`,
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/${blob}.mp4`)}`,
       { headers: { Range: "items=0-1" } },
     );
     expect(response.status).toBe(416);
     expect(h.calls).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy accepts only the media URLs the native proxy accepts", async () => {
+  const relayHost = new URL(fixtureRelayUrl).host;
+  const scheme = new URL(fixtureRelayUrl).protocol;
+  const still = `${fixtureRelayUrl}/media/${blob}.png`;
+  const rejected = [
+    // Desktop's animated-avatar suffix; clients must request the still image.
+    `${still}#buzz-anim=${encodeURIComponent(`${fixtureRelayUrl}/media/${"d".repeat(64)}.png`)}`,
+    `${still}#`,
+    `${still}?size=small`,
+    `${still}?`,
+    `${scheme}//user@${relayHost}/media/${blob}.png`,
+    `/media/${blob}.png`,
+    `https://other.test/media/${blob}.png`,
+    `${fixtureRelayUrl}/media/file.png`,
+    `${fixtureRelayUrl}/media/${"C".repeat(64)}.png`,
+    `${fixtureRelayUrl}/media/${blob}.PNG`,
+    `${fixtureRelayUrl}/media/${blob}.toolongext`,
+    `${fixtureRelayUrl}/media/${blob}.tar.gz`,
+    `${fixtureRelayUrl}/media/${blob}/nested.png`,
+    `${fixtureRelayUrl}/other/${blob}.png`,
+  ];
+  const accepted = [
+    `${fixtureRelayUrl}/media/${blob}`,
+    still,
+    `${fixtureRelayUrl}/media/${blob}.thumb.jpg`,
+  ];
+  const h = await harness(
+    () => new Response("ok", { headers: { "Content-Type": "image/png" } }),
+  );
+  try {
+    for (const target of rejected) {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(target)}`,
+      );
+      expect(response.status, target).toBe(403);
+    }
+    expect(h.calls).toHaveLength(0);
+    for (const target of accepted) {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(target)}`,
+      );
+      expect(response.status, target).toBe(200);
+    }
+    expect(h.calls.map((call) => call.url)).toEqual(accepted);
   } finally {
     await h.close();
   }
@@ -1030,6 +1088,121 @@ test("foreground profile publication starts while background I/O is outstanding;
     await h.close();
   }
 });
+
+// Delivers bytes in two HTTP chunks, the second only after the broker has read the first.
+async function postSplit(h, path, bytes, at) {
+  const read = new Promise((resolve) =>
+    h.server.once("request", (req) => resolve(vi.spyOn(req, "read"))),
+  );
+  const client = request(`${h.base}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const response = new Promise((resolve, reject) =>
+    client.once("response", resolve).once("error", reject),
+  );
+  client.write(bytes.subarray(0, at));
+  const spy = await read;
+  await vi.waitFor(() =>
+    expect(spy.mock.results.some(({ value }) => value?.length)).toBe(true),
+  );
+  client.end(bytes.subarray(at));
+  const res = await response;
+  const chunks = [];
+  for await (const chunk of res) chunks.push(chunk);
+  return {
+    status: res.statusCode,
+    body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+  };
+}
+
+const profileName = "café €🛩";
+const profileBody = Buffer.from(
+  JSON.stringify({ name: profileName, picture: "" }),
+);
+// Every interior byte of each 2-, 3- and 4-byte UTF-8 sequence.
+const profileSplits = [...profileName]
+  .filter((char) => Buffer.byteLength(char) > 1)
+  .flatMap((char) =>
+    Array.from({ length: Buffer.byteLength(char) - 1 }, (_, byte) => [
+      char,
+      byte + 1,
+      profileBody.indexOf(char) + byte + 1,
+    ]),
+  );
+
+test.each(profileSplits)(
+  "signed profile text survives %s split after byte %i across HTTP chunks",
+  async (_char, _byte, at) => {
+    const h = await harness(success);
+    try {
+      const response = await postSplit(
+        h,
+        "/api/relay/profile",
+        profileBody,
+        at,
+      );
+      expect(response.status).toBe(200);
+      const [published] = h.calls.filter((call) =>
+        call.url.endsWith("/events"),
+      );
+      expect(published.body.kind).toBe(0);
+      expect(verifyEvent(published.body)).toBe(true);
+      expect(JSON.parse(published.body.content).name).toBe(profileName);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test.each([
+  ["/api/builderlab/delete", 4096, "chars", "Request too large"],
+  ["/api/relay/register", 4096, "chars", "Relay URL too large"],
+  [
+    "/api/relay/prepare-remote-agent-authorization",
+    4096,
+    "bytes",
+    "Authorization request is too large",
+  ],
+  ["/api/relay/archive", 4096, "bytes", "Archive request too large"],
+  ["/api/relay/stream-presence", 256, "bytes", "Live control too large"],
+  ["/api/relay/stream", 300000, "bytes", "Live interests too large"],
+  ["/api/relay/query", 65536, "chars", "Filter body too large"],
+  ["/api/relay/presence-snapshot", 20 * 1024, "bytes", "Filter body too large"],
+])(
+  "%s measures a split multibyte body exactly at its %i %s limit",
+  async (path, limit, unit, tooLarge) => {
+    const size = (body) =>
+      unit === "bytes" ? Buffer.byteLength(body) : body.length;
+    const padded = (extra) =>
+      Buffer.from(
+        JSON.stringify({
+          pad: `é${"a".repeat(limit - size(JSON.stringify({ pad: "é" })) + extra)}`,
+        }),
+      );
+    const at = padded(0).indexOf("é") + 1;
+    const h = await harness(success);
+    try {
+      const whole = await fetch(`${h.base}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: padded(0),
+      });
+      const split = await postSplit(h, path, padded(0), at);
+      expect(split.status).not.toBe(413);
+      expect(split).toEqual({
+        status: whole.status,
+        body: await whole.json(),
+      });
+      expect(await postSplit(h, path, padded(1), at)).toEqual({
+        status: 413,
+        body: { error: tooLarge },
+      });
+    } finally {
+      await h.close();
+    }
+  },
+);
 
 test("local capacity is explicitly unsent, not relay quota; unknown upstream publication is never resent", async () => {
   let release;
@@ -1149,6 +1322,29 @@ test("each request mints fresh auth at dispatch after wall time advances", async
     await response.text();
     expect(h.calls).toHaveLength(2);
     expect(h.calls[1].auth.created_at - h.calls[0].auth.created_at).toBe(61);
+  } finally {
+    await h.close();
+  }
+});
+
+test("query keeps relay 403 refusals but turns an edge 403 page into a gateway failure", async () => {
+  let edge = false;
+  const h = await harness(() =>
+    edge
+      ? new Response("<html><body>Forbidden</body></html>", {
+          status: 403,
+          headers: { "Content-Type": "text/html" },
+        })
+      : Response.json({ error: "restricted: not a member" }, { status: 403 }),
+  );
+  try {
+    const refused = await h.post("query", filters);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ denied: true });
+    edge = true;
+    const page = await h.post("query", filters);
+    expect(page.status).toBe(502);
+    expect(await page.json()).toEqual({ error: "Relay request failed (502)" });
   } finally {
     await h.close();
   }
@@ -2151,7 +2347,7 @@ test("memory reads use captured relay and owner, not submitted identity/filter a
     ]);
     expect(call.auth.pubkey).toBe(viewer);
     return forbidden
-      ? new Response("denied", { status: 403 })
+      ? Response.json({ error: "restricted: not the owner" }, { status: 403 })
       : Response.json([memory]);
   });
   try {

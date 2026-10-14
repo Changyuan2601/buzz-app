@@ -6,6 +6,39 @@ const measurementFiles = ["channel-opening.spec.mjs", "scroll.spec.mjs"];
 // so they run in their own Chromium project and never in the engine projects.
 const classicScrollbars = /@classic-scrollbars/;
 
+// On macOS, WebKit trace screenshots leak WindowServer IOSurfaces: each traced
+// headless WebKit test leaves about 55 surfaces that are never freed. Near 65,536
+// surfaces WindowServer aborts and logs the user out. Local macOS runs therefore
+// keep WebKit traces without the screenshot filmstrip. DOM snapshots, logs and
+// failure screenshots remain. CI runners are disposable and keep the filmstrip.
+// Set BUZZ_WEBKIT_TRACE_SCREENSHOTS=1 for one run to restore it locally.
+const leakyWebkitTraceScreenshots =
+  process.platform === "darwin" && !process.env.CI;
+const webkitTraceScreenshots =
+  !leakyWebkitTraceScreenshots ||
+  process.env.BUZZ_WEBKIT_TRACE_SCREENSHOTS === "1";
+const webkitTrace = {
+  mode: "retain-on-failure",
+  screenshots: webkitTraceScreenshots,
+};
+// Workers load this config too; warn once, from the runner process.
+if (
+  leakyWebkitTraceScreenshots &&
+  webkitTraceScreenshots &&
+  process.env.TEST_WORKER_INDEX === undefined
+) {
+  console.warn(
+    [
+      "",
+      "WARNING: BUZZ_WEBKIT_TRACE_SCREENSHOTS=1 enables WebKit trace screenshots on macOS.",
+      "This LEAKS WindowServer IOSurfaces (about 55 per WebKit test) that are not freed",
+      "until you log out. Near 65,536 surfaces WindowServer crashes and logs you out.",
+      "Use it for a single diagnostic run only.",
+      "",
+    ].join("\n"),
+  );
+}
+
 export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.mjs",
@@ -37,14 +70,17 @@ export default defineConfig({
     },
     {
       name: "webkit-measurements",
-      use: { browserName: "webkit" },
+      use: { browserName: "webkit", trace: webkitTrace },
       testMatch: measurementFiles,
       workers: 1,
       dependencies: ["chromium-measurements"],
     },
     ...["chromium", "webkit"].map((browserName) => ({
       name: browserName,
-      use: { browserName },
+      use:
+        browserName === "webkit"
+          ? { browserName, trace: webkitTrace }
+          : { browserName },
       testIgnore: measurementFiles,
       grepInvert: classicScrollbars,
       dependencies: ["webkit-measurements"],

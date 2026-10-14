@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
-import { activityTarget } from "../agents/activity-target";
+import { profileActivityViewTarget } from "../profiles/target";
 import { TypingIndicator } from "./TypingIndicator";
 
 afterEach(cleanup);
@@ -108,7 +108,9 @@ it("opens one avatar by hover, with separate thread and activity actions and key
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
   );
-  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel", root));
+  expect(open).toHaveBeenLastCalledWith(profileActivityViewTarget(agent), {
+    rootId: root,
+  });
   trigger.focus();
   await user.keyboard("{Enter}");
   dialog = await screen.findByRole("dialog", { name: "Working now" });
@@ -117,6 +119,7 @@ it("opens one avatar by hover, with separate thread and activity actions and key
   );
   expect(open).toHaveBeenLastCalledWith(
     `buzz://message?channel=channel&id=${root}&thread=${root}`,
+    undefined,
   );
   trigger.focus();
   await user.keyboard("{Enter}");
@@ -289,7 +292,33 @@ it("never chooses one thread from simultaneous work and deduplicates public and 
   await user.click(
     within(dialog).getByRole("button", { name: "View Agent activity" }),
   );
-  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+  expect(open).toHaveBeenLastCalledWith(
+    profileActivityViewTarget(agent),
+    undefined,
+  );
+});
+
+it("opens activity for the composer's explicit thread", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    open = vi.fn(() => true);
+  f.update([entry(), entry(agent, secondRoot)]);
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      threadRootId={root}
+      openActivity={open}
+      canOpenActivity={() => true}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  await user.click(screen.getByRole("button", { name: "View Agent activity" }));
+  expect(open).toHaveBeenLastCalledWith(profileActivityViewTarget(agent), {
+    rootId: root,
+  });
 });
 
 it("retains one explicit live region from idle through work and back to idle", () => {
@@ -371,14 +400,17 @@ it.each([null, undefined])(
     await user.click(
       screen.getByRole("button", { name: "View Agent activity" }),
     );
-    expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+    expect(open).toHaveBeenLastCalledWith(
+      profileActivityViewTarget(agent),
+      undefined,
+    );
     await user.click(
       screen.getByRole("button", { name: "Activity: Agent working" }),
     );
     await user.click(
       screen.getByRole("button", { name: "Open conversation for Agent" }),
     );
-    expect(open).toHaveBeenLastCalledWith("buzz://channel/channel");
+    expect(open).toHaveBeenLastCalledWith("buzz://channel/channel", undefined);
   },
 );
 
@@ -410,7 +442,10 @@ it("opens the sole known conversation without attributing unknown telemetry to t
   );
   expect(screen.getByText(/Work with unconfirmed thread/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "View Agent activity" }));
-  expect(open).toHaveBeenLastCalledWith(activityTarget(agent, "channel"));
+  expect(open).toHaveBeenLastCalledWith(
+    profileActivityViewTarget(agent),
+    undefined,
+  );
   await user.click(
     screen.getByRole("button", { name: "Activity: Agent working" }),
   );
@@ -419,6 +454,7 @@ it("opens the sole known conversation without attributing unknown telemetry to t
   );
   expect(open).toHaveBeenLastCalledWith(
     `buzz://message?channel=channel&id=${root}&thread=${root}`,
+    undefined,
   );
 });
 
@@ -514,7 +550,8 @@ it.each(["click", "Enter", "Space"])(
       await user.keyboard(activation === "Enter" ? "{Enter}" : " ");
     }
     expect(open).toHaveBeenCalledExactlyOnceWith(
-      activityTarget(agent, "channel", root),
+      profileActivityViewTarget(agent),
+      { rootId: root },
     );
     expect(
       screen.queryByRole("dialog", { name: "Working now" }),
@@ -595,6 +632,7 @@ it("Me ArrowDown exposes retained thread navigation without opening Activity", a
   await user.keyboard("{Enter}");
   expect(open).toHaveBeenCalledExactlyOnceWith(
     `buzz://message?channel=channel&id=${root}&thread=${root}`,
+    undefined,
   );
   expect(trigger).toHaveFocus();
 });

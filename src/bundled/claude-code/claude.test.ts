@@ -12,6 +12,7 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
     model: "opus",
+    effort: "high",
     sessionId: "new-session",
   });
   const [fake] = processes;
@@ -26,6 +27,8 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
     "bypassPermissions",
     "--model",
     "opus",
+    "--effort",
+    "high",
     "--session-id",
     "new-session",
   ]);

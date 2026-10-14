@@ -20,6 +20,8 @@
   background: transparent;
 }
 .feed {
+  --timeline-measure: 100%;
+
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -39,6 +41,9 @@
      ::-webkit-scrollbar, which is why .feed carries no such rules. */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+}
+.feed[data-chat-presentation] {
+  --timeline-measure: 52rem;
 }
 .threadHistory::-webkit-scrollbar {
   width: 8px;
@@ -63,6 +68,8 @@
   padding: 0;
 }
 .edge {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
   min-height: var(--space-4);
   box-sizing: border-box;
@@ -79,6 +86,8 @@
   min-height: calc(var(--size-control) + var(--space-4));
 }
 .day {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -103,6 +112,8 @@
   min-width: 0;
 }
 .message {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   position: relative;
   container: message-row / inline-size;
   display: flex;
@@ -113,6 +124,9 @@
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
   gap: var(--space-2);
+}
+.message[data-viewer-message] {
+  flex-direction: row-reverse;
 }
 .message[data-layout="continuation"] {
   padding-block: var(--space-half);
@@ -135,6 +149,13 @@
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+.message[data-viewer-message] .messageBody {
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: min(85%, 42rem);
+  margin-inline-start: auto;
+  text-align: start;
 }
 .byline {
   display: flex;
@@ -497,6 +518,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
 }
+.composer[data-chat-presentation] {
+  width: min(calc(100% - 2 * var(--space-4)), 52rem);
+  margin-inline: auto;
+  margin-bottom: var(--space-3);
+}
 .empty {
   padding: var(--space-8) var(--space-4);
   color: var(--text-subtle);
@@ -554,6 +580,33 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-1);
+}
+.composerToolRow {
+  display: contents;
+}
+.composerConversationControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerActions {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerToolRow {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerConversationControls {
+  width: 100%;
 }
 .backgroundUpload {
   display: flex;

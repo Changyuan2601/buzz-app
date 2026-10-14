@@ -28,6 +28,13 @@ export type Upload = Readonly<{
   thumb?: string;
   duration?: number;
 }>;
+/** One of the owner's channel templates, as a channel made from it starts:
+ * its Canvas and the owner's agents it adds. */
+export type ChannelTemplate = Readonly<{
+  name: string;
+  canvas: string;
+  agents: readonly string[];
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -50,6 +57,8 @@ export interface BuzzClient {
   memories(): Promise<readonly Memory[]>;
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
   remember(slug: string, body: string, after: number): Promise<void>;
+  /** The owner's channel templates, where the host has them. */
+  templates?(): Promise<readonly ChannelTemplate[]>;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

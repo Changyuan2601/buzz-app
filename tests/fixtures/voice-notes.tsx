@@ -97,8 +97,11 @@ const owner = createRelaySession(
         if (signal.aborted) abort();
       });
       if (report.failUpload) throw new Error("Fixture upload failed");
+      // Only recordings upload as voice notes; other files keep their type.
       const result: UploadedAttachment = {
-        ...attachment,
+        ...(file.type.startsWith("audio/")
+          ? attachment
+          : { type: file.type || "application/octet-stream" }),
         name: file.name.replace(/\.wav$/, ".mp4"),
         url: `https://fixture.test/media/${report.uploads.toString(16).padStart(64, "0")}.mp4`,
         sha256: report.uploads.toString(16).padStart(64, "0"),

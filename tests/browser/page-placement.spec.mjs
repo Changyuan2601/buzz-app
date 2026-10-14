@@ -103,7 +103,7 @@ test("Me replaces the sidebar while Messages preserves its draft and history", a
     await expect(me).toBeFocused();
     await page
       .getByRole("complementary", { name: "Me sidebar" })
-      .getByRole("button", { name: "New conversation", exact: true })
+      .getByRole("button", { name: "New chat", exact: true })
       .click();
     await expect(newComposer).toBeFocused();
     for (const name of ["Me", "Messages"]) {
@@ -311,7 +311,7 @@ test("header pages remain reachable without overlap through scale and resize", a
       await more.press("Enter");
       await choices.getByRole("button", { name: "Me", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "New conversation", exact: true }),
+        page.getByRole("heading", { name: "New chat", exact: true }),
       ).toBeVisible();
       await expect(more).not.toHaveAttribute("aria-expanded", "true");
       // Widen with focus inside the open overflow, not only on its trigger.

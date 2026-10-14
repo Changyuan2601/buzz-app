@@ -74,6 +74,15 @@
   margin: var(--space-1) var(--space-3);
 }
 
+.collectionHeading {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  font-weight: var(--type-weight-medium);
+  padding: var(--space-2) var(--space-2) 0;
+  text-transform: uppercase;
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+
 .content {
   border-inline-start: 1px solid var(--border-standard);
   display: flex;
@@ -256,6 +265,8 @@
   white-space: nowrap;
 }
 .sectionHeading > span:last-child {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -343,6 +354,23 @@
   .organizedRow :is([data-channel-priority], [data-channel-activity]) {
     opacity: 0;
   }
+}
+
+.section[data-project] .folderGlyph {
+  display: none;
+}
+.section[data-project] .chevronGlyph {
+  opacity: 1;
+}
+.section[data-project] .organizedRow {
+  margin-inline-start: var(--space-5);
+}
+.section[data-project] .sectionHeader {
+  position: relative;
+}
+.section[data-project] .sectionActions {
+  position: absolute;
+  inset-inline-end: 0;
 }
 
 /* Working occupies the same trailing action slot as attention, as in Messages. */

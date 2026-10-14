@@ -19,7 +19,6 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
-import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -105,6 +104,7 @@ export type MessageRowProps = {
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
+  alignViewer?: boolean;
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -154,6 +154,7 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
+  alignViewer = false,
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -252,16 +253,11 @@ function MessageRowContent({
       profile?.isAgent
     ) &&
     activityView &&
-    canOpenLink?.(activityView) &&
-    canOpenLink(activityTarget(row.authorId, row.channelId));
+    canOpenLink?.(activityView);
   const activityItem = canViewActivity && (
     <MenuItem
       onClick={() => {
-        if (
-          canOpenLink?.(activityView) &&
-          canOpenLink(activityTarget(row.authorId, row.channelId))
-        )
-          onOpenLink(activityView);
+        if (canOpenLink?.(activityView)) onOpenLink(activityView);
       }}
     >
       <MenuIcon>
@@ -416,7 +412,14 @@ function MessageRowContent({
   return (
     <div data-message-id={row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
-      <div ref={rowRef} className={styles.message} data-layout={layout}>
+      <div
+        ref={rowRef}
+        className={styles.message}
+        data-layout={layout}
+        data-viewer-message={
+          alignViewer && row.authorId === session?.viewer ? "" : undefined
+        }
+      >
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />

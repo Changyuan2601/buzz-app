@@ -121,6 +121,9 @@ export interface ReadTransport {
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
+  /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
+   * it keeps channel labels and answers label lookups. */
+  readonly channelIdentity?: true;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -183,10 +186,16 @@ export function mediaUrl(
 ): string | undefined {
   if (url.startsWith("data:")) return avatarSource(url);
   if (url.startsWith(`${relayOrigin}/media/`)) {
+    // Desktop appends `#buzz-anim=<url>` to animated avatars. A fragment never
+    // reaches the relay, and both media proxies reject it, so load the still.
+    const still = url.split("#", 1)[0] ?? url;
     const media =
       size === "small"
-        ? url.replace(/\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$/, "/$1.thumb.jpg")
-        : url;
+        ? still.replace(
+            /\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$/,
+            "/$1.thumb.jpg",
+          )
+        : still;
     return relayProxy?.(media);
   }
   return /^https:\/\//.test(url) ? url : undefined;
@@ -410,6 +419,7 @@ export async function connectBrokerTransport(
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
+    channelIdentity?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarStarWrites?: boolean;
@@ -719,10 +729,18 @@ export async function connectBrokerTransport(
               signal,
             });
             if (!result.ok)
-              throw new Error(`Local decoder failed (HTTP ${result.status})`);
+              // A 5xx is the host being unavailable; a 4xx rejects these events.
+              throw new ReadError(
+                result.status >= 500 ? "unavailable" : "invalid-response",
+                `Local decoder failed (HTTP ${result.status})`,
+                result.status,
+              );
             return result.json();
           },
         }
+      : {}),
+    ...(session.channelIdentity === true
+      ? { channelIdentity: true as const }
       : {}),
     ...(session.channelKit
       ? {
@@ -1065,9 +1083,7 @@ export async function connectBrokerTransport(
         if (!result.ok) {
           const failure = await readApiFailure(result);
           throw new ReadError(
-            result.status === 401 || result.status === 403
-              ? "denied"
-              : "unavailable",
+            failure.denied ? "denied" : "unavailable",
             failure.error,
             result.status,
             failure.retryAfterMs,
@@ -1241,9 +1257,7 @@ export async function connectSignedTransport(
         if (!result.ok) {
           const failure = await readApiFailure(result);
           throw new ReadError(
-            result.status === 401 || result.status === 403
-              ? "denied"
-              : "unavailable",
+            failure.denied ? "denied" : "unavailable",
             failure.error,
             result.status,
             failure.retryAfterMs,

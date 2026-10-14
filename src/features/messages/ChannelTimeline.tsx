@@ -127,6 +127,8 @@ export type ChannelTimelineProps = {
   launchPending?: boolean | undefined;
   /** Sessions page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
+  /** Me's quieter centered transcript and viewer-message alignment. */
+  chatPresentation?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -180,6 +182,7 @@ function Timeline({
   navigation,
   onOpenThread,
   onOpenMediaReview,
+  chatPresentation = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -375,19 +378,39 @@ function Timeline({
       ? navigation.target.messageId
       : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  // The reveal keeps its row in place through late measurement until any newer
+  // intent: reader input, a send or Jump to latest.
+  const targetIntent = useRef<number | undefined>(undefined);
+  const holdTarget = useCallback(
+    () => intent.current === targetIntent.current,
+    [],
+  );
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
-    intent.current++;
+    targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
     restoredAnchor.current = undefined;
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
   }, [targetIndex]);
+  const targetSignal = inlineSignal ?? navigation?.signal;
+  // Positioning waits for the exact reveal, then must run again: a reveal that
+  // leaves the reader at the bottom keeps following late row measurement.
+  const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   const completeTarget = useCallback(() => {
+    const element = scroller.current;
+    // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
+    // keeps its row where it placed it instead of re-aligning to the end.
+    if (
+      element &&
+      element.scrollHeight - element.clientHeight - element.scrollTop > 1
+    )
+      follow.current = false;
     navigation?.complete({ status: "opened" });
-  }, [navigation]);
-  const exactRevealed = useMessageReveal({
+    setRevealedSignal(targetSignal);
+  }, [navigation, targetSignal]);
+  useMessageReveal({
     scroller,
     focus: !(
       navigation?.target.kind === "conversation" &&
@@ -395,10 +418,11 @@ function Timeline({
     ),
     settled,
     messageId: targetId,
-    signal: inlineSignal ?? navigation?.signal,
+    signal: targetSignal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
+    hold: holdTarget,
   });
   useReading({
     session: queries,
@@ -511,15 +535,12 @@ function Timeline({
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
-      (!targetId ||
-        exactRevealed.current === (inlineSignal ?? navigation?.signal))
+      (!targetId || revealedSignal === targetSignal)
     ) {
       setNewMessageCount((count) => count + arrivals);
     }
     if (
-      (targetId &&
-        (inlineSignal || navigation) &&
-        exactRevealed.current !== (inlineSignal ?? navigation?.signal)) ||
+      (targetId && targetSignal && revealedSignal !== targetSignal) ||
       !size.width ||
       !size.height ||
       !rows.length ||
@@ -648,9 +669,8 @@ function Timeline({
     prepend,
     recordPosition,
     targetId,
-    navigation,
-    inlineSignal,
-    exactRevealed,
+    targetSignal,
+    revealedSignal,
     updateJumpToLatest,
     revealMessageId,
   ]);
@@ -721,6 +741,7 @@ function Timeline({
     <section
       ref={scroller}
       data-message-scroller
+      data-chat-presentation={chatPresentation || undefined}
       className={styles.feed}
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
@@ -854,6 +875,7 @@ function Timeline({
                   />
                 ) : (
                   <MessageRow
+                    alignViewer={chatPresentation}
                     layout={
                       continuesMessageGroup(rows[index - 1], row)
                         ? "continuation"

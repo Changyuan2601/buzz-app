@@ -24,6 +24,9 @@ import {
   type ClaudeRuntime,
   type Config,
   config as readConfig,
+  effortChoices,
+  effortLabel,
+  effortLevels,
   type SavedConversation,
   modelName as resolvedModelName,
 } from "./runtime";
@@ -46,36 +49,25 @@ type Read =
 const options = (choices: readonly (readonly [string, string])[]) => [
   { label: "", options: choices.map(([value, label]) => ({ value, label })) },
 ];
-const MODEL_CHOICES = [
-  ["opus", "Opus"],
-  ["sonnet", "Sonnet"],
-  ["haiku", "Haiku"],
-] as const;
-const modelOptionCopy = (
-  model: ClaudeModel | undefined,
-  fallbackLabel: string,
-) => {
-  const label = model?.resolvedModel
+const modelOptionCopy = (model: ClaudeModel) => {
+  const label = model.resolvedModel
     ? resolvedModelName(model.resolvedModel)
-    : fallbackLabel;
+    : (model.displayName ?? model.value);
   const descriptionPrefix = `${label} · `;
-  const description = model?.description?.startsWith(descriptionPrefix)
+  const description = model.description?.startsWith(descriptionPrefix)
     ? model.description.slice(descriptionPrefix.length)
-    : model?.description;
+    : model.description;
 
   return { label, description };
 };
+/** The models Claude lists; `default` is the picker's own default row. */
 const modelChoices = (models: readonly ClaudeModel[]) =>
-  MODEL_CHOICES.map(([id, fallbackLabel]) => ({
-    id,
-    ...modelOptionCopy(
-      models.find((model) => model.value === id),
-      fallbackLabel,
-    ),
-  }));
+  models
+    .filter((model) => model.value !== "default")
+    .map((model) => ({ id: model.value, ...modelOptionCopy(model) }));
 const modelName = (model: string, models: readonly ClaudeModel[]) =>
   modelChoices(models).find((choice) => choice.id === model)?.label ??
-  "Claude default";
+  resolvedModelName(model);
 const providerDefaultLabel = (
   model: string,
   models: readonly ClaudeModel[],
@@ -85,6 +77,17 @@ const providerDefaultLabel = (
   return native?.resolvedModel
     ? `Claude default (${resolvedModelName(native.resolvedModel)})`
     : "Claude default";
+};
+/** The effort levels of the model a run uses, `""` being Claude's default;
+ * a model Claude does not list may run at any level a listed one has. */
+const effortsFor = (model: string, models: readonly ClaudeModel[]) => {
+  const id = model || "default";
+  const listed = models.find(
+    (candidate) => candidate.value === id || candidate.resolvedModel === id,
+  );
+  return effortChoices(
+    listed ? effortLevels(listed) : models.flatMap(effortLevels),
+  );
 };
 const SCOPES = options([
   ["thread", "One session per thread"],
@@ -119,10 +122,12 @@ export function createTabs({
     useEffect(() => {
       if (!state.status && !state.checking) void setup.check();
     }, [state.status, state.checking]);
+    // Once per change of readiness: a failed load waits for Try again.
+    const readiness = state.status?.state;
     useEffect(() => {
-      if (state.status?.state === "ready" && state.models.length === 0)
+      if (readiness === "ready" && state.models.length === 0)
         void setup.loadModels();
-    }, [state.status, state.models.length]);
+    }, [readiness, state.models.length]);
     return state;
   }
 
@@ -205,9 +210,18 @@ export function createTabs({
           : status?.state === "signed-out"
             ? ({ step: "login", label: "Sign in" } as const)
             : undefined;
-    const model = (value: string) =>
-      state.models.find((candidate) => candidate.value === value);
-    const nativeModel = model("default");
+    const nativeModel = state.models.find(
+      (candidate) => candidate.value === "default",
+    );
+    const listed = modelChoices(state.models);
+    // A saved default Claude has not listed (yet) stays selectable.
+    const defaultChoices =
+      draftDefault && !listed.some((choice) => choice.id === draftDefault)
+        ? [
+            ...listed,
+            { id: draftDefault, label: resolvedModelName(draftDefault) },
+          ]
+        : listed;
     const nativeLabel = nativeModel?.resolvedModel
       ? `Claude default (${resolvedModelName(nativeModel.resolvedModel)})`
       : "Claude default";
@@ -337,16 +351,29 @@ export function createTabs({
                       ? "Following Claude Code's recommendation"
                       : undefined,
                   },
-                  ...MODEL_CHOICES.map(([value, fallbackLabel]) => {
-                    const copy = modelOptionCopy(model(value), fallbackLabel);
-                    return { value, ...copy };
-                  }),
+                  ...defaultChoices.map(({ id, ...copy }) => ({
+                    value: id,
+                    ...copy,
+                  })),
                 ],
               },
             ]}
             {...(draftDefault === "" ? { valueLabel: nativeLabel } : {})}
+            {...(state.loadingModels
+              ? { description: "Loading Claude's models…" }
+              : {})}
+            {...(state.modelsError
+              ? { error: `Couldn't load Claude's models: ${state.modelsError}` }
+              : {})}
             onValueChange={setDraftDefault}
           />
+          {state.modelsError && (
+            <div>
+              <Button variant="ghost" onClick={() => void setup.loadModels()}>
+                Try again
+              </Button>
+            </div>
+          )}
           {defaultError && (
             <p role="alert" className="buzz-field-error">
               {defaultError}
@@ -446,7 +473,9 @@ export function createTabs({
     );
   }
 
-  function Conversations({
+  /** The agent's sessions: the one it was opened from, recent ones, and their
+   * transcripts. */
+  function ActivityTab({
     agent,
     conversation,
   }: {
@@ -541,12 +570,7 @@ export function createTabs({
   }
 
   /** What the agent runs with. Saving restarts idle sessions with the change. */
-  function SettingsTab({
-    agent,
-    save,
-    settingsHost,
-    conversation,
-  }: AgentViewProps<Config>) {
+  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
     const setupState = useSetupCatalog();
     const providerDefaults = useSyncExternalStore(
@@ -573,22 +597,66 @@ export function createTabs({
         setSaving(false);
       }
     };
+    const efforts = effortsFor(
+      draft.model || providerDefaults.model,
+      setupState.models,
+    );
+    const effortOptions = [
+      { value: "", label: "Claude default" },
+      // A saved level the model does not list; without Claude's list, it may.
+      ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
+        ? [
+            {
+              value: draft.effort,
+              label: setupState.models.length
+                ? `${effortLabel(draft.effort)} (unavailable)`
+                : effortLabel(draft.effort),
+            },
+          ]
+        : []),
+      ...efforts.map(({ id, label }) => ({ value: id, label })),
+    ];
     const modelControl = (
-      <ModelPicker
-        allowCustomModel
-        models={modelChoices(setupState.models)}
-        value={draft.model}
-        defaultLabel={providerDefaultLabel(
-          providerDefaults.model,
-          setupState.models,
-        )}
-        defaultDescription="Following the provider's model default"
-        onChange={(model) => setDraft({ ...draft, model })}
-      />
+      <div className="grid gap-4 [@container(min-width:36rem)]:grid-cols-2">
+        <ModelPicker
+          allowCustomModel
+          models={modelChoices(setupState.models)}
+          value={draft.model}
+          defaultLabel={providerDefaultLabel(
+            providerDefaults.model,
+            setupState.models,
+          )}
+          defaultDescription="Following the provider's model default"
+          onChange={(model) => {
+            // An effort the new model does not list goes back to the default;
+            // without Claude's list, the effort is kept.
+            const next = effortsFor(
+              model || providerDefaults.model,
+              setupState.models,
+            );
+            setDraft({
+              ...draft,
+              model,
+              effort:
+                setupState.models.length === 0 ||
+                next.some((level) => level.id === draft.effort)
+                  ? draft.effort
+                  : "",
+            });
+          }}
+        />
+        <Select
+          label="Thinking"
+          variant="field"
+          value={draft.effort}
+          groups={[{ label: "", options: effortOptions }]}
+          onValueChange={(effort) => setDraft({ ...draft, effort })}
+        />
+      </div>
     );
     return (
       <form
-        className="grid gap-4"
+        className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
@@ -640,12 +708,6 @@ export function createTabs({
             Save
           </Button>
         </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
       </form>
     );
   }
@@ -656,5 +718,6 @@ export function createTabs({
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   };
 }

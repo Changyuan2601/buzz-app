@@ -11,8 +11,11 @@ import {
   transportOrigin,
   transportPartition,
 } from "./partition";
-import { ReadError, readErrorKind } from "./errors";
+import { isTransientFailure, ReadError, readErrorKind } from "./errors";
+import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
+const WAKE_TICK_MS = 5_000;
+const WAKE_GAP_MS = 15_000;
 
 export type RelaySnapshot = Readonly<{
   status: "disconnected" | "connecting" | "ready" | "error";
@@ -66,8 +69,27 @@ export function provideRelay(
     session: store.session,
   });
   const listeners = new Set<() => void>();
+  // A connection that failed for a transient reason (network, timeout) always
+  // tries again. Only disconnect() stops trying. A denial or a deterministic
+  // failure keeps its error visible and waits for the user.
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let reconnects = 0;
+  /** Whether the latest connection failure can clear without anyone acting.
+   * Later publishes of the same failure (cache handoff) keep it. */
+  let transientFailure = false;
   const publish = (next: RelaySnapshot) => {
     snapshot = Object.freeze(next);
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    if (next.status !== "error") transientFailure = false;
+    if (next.status === "ready" && !next.cached) reconnects = 0;
+    else if (next.status === "error" && transientFailure && !disposed)
+      reconnectTimer = setTimeout(
+        () => service.retry(),
+        RECOVERY_DELAYS_MS[
+          Math.min(reconnects++, RECOVERY_DELAYS_MS.length - 1)
+        ] ?? 30_000,
+      );
     for (const listener of listeners) listener();
   };
   const reset = () => {
@@ -191,6 +213,7 @@ export function provideRelay(
           return;
         controller.abort();
         connecting = false;
+        transientFailure = true;
         publish({
           ...snapshot,
           status: "error",
@@ -284,18 +307,21 @@ export function provideRelay(
               return;
             store.dispose();
             store = createRelaySession(null, { identityNames });
+            transientFailure = false;
             publish({
               status: "error",
               generation,
               session: store.session,
               error: String(error),
             });
-          } else
+          } else {
+            transientFailure = isTransientFailure(error);
             publish({
               ...snapshot,
               status: "error",
               error: String(error),
             });
+          }
         })
         .finally(() => {
           clearTimeout(timer);
@@ -342,24 +368,44 @@ export function provideRelay(
   };
   ctx.provide("relay", service);
   ctx.effect(() => {
+    // Network, focus and wake are hints that the relay may answer again.
+    // Failed background reads retry now; healthy sessions do no extra work.
     const online = () => {
       if (snapshot.cached) service.retry();
+      else store.session.recovery?.retryNow();
     };
     const visible = () => {
       if (document.visibilityState !== "visible") return;
       if (snapshot.cached) service.retry();
-      else store.session.channels.refreshList?.();
+      else {
+        store.session.channels.refreshList?.();
+        store.session.recovery?.retryNow();
+      }
     };
-    if (typeof window !== "undefined")
+    // Timers stop while the machine sleeps. A large gap between ticks means
+    // it woke up, which a desktop window does not always report as focus.
+    let tick = Date.now();
+    const wake = setInterval(() => {
+      const now = Date.now();
+      if (now - tick > WAKE_GAP_MS) online();
+      tick = now;
+    }, WAKE_TICK_MS);
+    if (typeof window !== "undefined") {
       window.addEventListener("online", online);
+      window.addEventListener("focus", online);
+    }
     if (typeof document !== "undefined")
       document.addEventListener("visibilitychange", visible);
     return () => {
       disposed = true;
+      clearInterval(wake);
+      clearTimeout(reconnectTimer);
       reset();
       listeners.clear();
-      if (typeof window !== "undefined")
+      if (typeof window !== "undefined") {
         window.removeEventListener("online", online);
+        window.removeEventListener("focus", online);
+      }
       if (typeof document !== "undefined")
         document.removeEventListener("visibilitychange", visible);
     };

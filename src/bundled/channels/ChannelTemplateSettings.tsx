@@ -6,7 +6,9 @@ import {
   useChannelTemplates,
   type ChannelTemplate,
 } from "../../features/channel-templates/local";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { CopyIcon, PlusIcon } from "../../shared/design-system/icons";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -88,6 +90,22 @@ export function ChannelTemplateSettings({
 }
 
 const noAgents: readonly never[] = Object.freeze([]);
+
+function AgentLabel({ agent }: { agent: Agent }) {
+  const src = useAvatarPreview(agent.picture ?? "", agent.relay || undefined);
+  return (
+    <span className={styles.agentLabel}>
+      <Avatar
+        src={src}
+        alt=""
+        fallback={agent.name}
+        size="small"
+        shape="squircle"
+      />
+      <span>{agent.name}</span>
+    </span>
+  );
+}
 
 function summary(
   template: ChannelTemplate,
@@ -196,7 +214,7 @@ function TemplateDialog({
             agents.map((agent) => (
               <Checkbox
                 key={agent.pubkey}
-                label={agent.name}
+                label={<AgentLabel agent={agent} />}
                 checked={chosenAgents.includes(agent.pubkey)}
                 onCheckedChange={(checked) =>
                   setChosenAgents((last) =>

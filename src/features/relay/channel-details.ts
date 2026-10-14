@@ -7,10 +7,12 @@ import { lifecycleChannelId } from "./channel-lifecycle-protocol";
 import {
   detailsSettings,
   detailsTemplate,
+  sameLabels,
   validateDetailsDraft,
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "./channel-details-protocol";
+import { channelIdentityUnsupported } from "./channel-labels";
 
 export type DetailsAttempt = Readonly<{
   draft: ChannelDetailsDraft;
@@ -35,6 +37,7 @@ const uncertain =
 export function createChannelDetails({
   reader,
   writer,
+  labels = false,
   viewer,
   relayAuthor,
   canAccess,
@@ -42,6 +45,8 @@ export function createChannelDetails({
 }: {
   reader?: RelayReader | undefined;
   writer?: RelayWriter | undefined;
+  /** The relay keeps channel labels (NIP-CL). Without it, label edits are refused. */
+  labels?: boolean;
   viewer: string;
   relayAuthor: string;
   canAccess(id: string): boolean;
@@ -112,7 +117,10 @@ export function createChannelDetails({
       details.name !== draft.name ||
       details.description !== draft.description ||
       details.visibility !== draft.visibility ||
-      details.ttlSeconds !== draft.ttlSeconds
+      details.ttlSeconds !== draft.ttlSeconds ||
+      (draft.labels !== undefined &&
+        JSON.stringify([...new Set(draft.labels)].sort()) !==
+          JSON.stringify([...(details.labels ?? [])].sort()))
     )
       throw new Error(uncertain);
     attempts.delete(id);
@@ -163,6 +171,12 @@ export function createChannelDetails({
         throw new Error("Check the previous change before saving again.");
       const draft = Object.freeze({ ...input });
       validateDetailsDraft(draft, base);
+      if (
+        !labels &&
+        draft.labels !== undefined &&
+        !sameLabels(draft.labels, base.labels ?? [])
+      )
+        throw channelIdentityUnsupported();
       let publicationStarted = false;
       attempts.set(id, Object.freeze({ draft, status: "saving" }));
       emit();
