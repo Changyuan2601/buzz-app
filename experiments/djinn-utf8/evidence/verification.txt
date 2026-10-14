@@ -1,0 +1,23 @@
+== cargo build
+== charon
+== aeneas
+translated 3 declarations into /home/bloxer/buzz-app/experiments/djinn-utf8/djinn/proofs/Utf8Tail
+== lake build
+== axiom audit
+PASS
+'historical_result_rejected' depends on axioms: [propext, Classical.choice, Quot.sound]
+'correct_result_accepted' depends on axioms: [propext, Classical.choice, Quot.sound]
+Counterexample axiom audit PASS
+efc592c962d568e796c0e04de9e391222a5aee082d64fb457018f856b983399a  /home/bloxer/buzz-app/src-tauri/src/host_process/utf8_tail.rs
+ee223d1bbbb8645a0aafb0d78437554f7928588ec1c096e9f3cf70cea12868c4  /home/bloxer/buzz-app/src-tauri/src/host_process/text.rs
+f4dcad822a5c18e752f6743e7e75564316508eaf0f45e790dac4da92e7439a0e  src/spec.rs
+641172b8d28ab7de75e4e34bf3419ed5a741bde2f094cd015da72eda432226d6  djinn/solution/mod.rs
+01cf9d50c6a14e01c2dd7f01405901c1bdab1cb2104d652554a662aef09b8643  djinn/proofs/Utf8Tail/Prefixes.lean
+384a721628833e40f4c5355b90087bbe4d3bfc3ca03bbe626cf64bc1d4cdb00b  djinn/proofs/Utf8Tail/Proofs.lean
+78e5408d7177b766dfd36c521a96bdaa7e1d900a1880f451310a2e80978dbdfa  djinn/proofs/Utf8Tail/Spec.lean
+664e86642246c0c80af0aed1b01e4f30983a04842cb81a2553920382ff725f00  djinn/proofs/Utf8Tail/Obligations.lean
+c87a67e54df9cb26f164edc74ddaa4f240ea4f958db0455cae2614a24bc2f520  djinn/proofs/Utf8Tail/Code/Funs.lean
+5baad73693d905767f00cd0359861d273fda4f6c9cdc3e2c0eba42a67e2b2d41  djinn/proofs/Utf8Tail/Code/Types.lean
+0cbd947ffd72c07c8b475b9ec424300d25f226ec587cecbc02be8afa548bd908  djinn/proofs/Counterexample.lean
+7c492450f2ef4e3dd6c1a34ee0d83b24ea7e50a916feba98a5b3e063c5c6d1d0  djinn/proofs/Utf8Tail/Audit.lean
+5351e66dfb4b601b643d9066e730dd6737d1ce84facdada5c7aabee171024fb1  djinn/report.toml

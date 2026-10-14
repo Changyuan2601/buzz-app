@@ -1,0 +1,45 @@
+Historical production base: 9c90857e3c1048a08b7fdd571eb836ec3639791d
+Command: bin/cargo test -p buzz-foundation --lib host_process::tests --locked
+Captured before the implementation fix with the existing split-character test
+extended for malformed+split data and the added real child EOF regression.
+The later exhaustive and duplex tests were added after this reproduction.
+
+running 12 tests
+test host_process::tests::directories_are_absolute_or_under_home ... ok
+test host_process::tests::a_spawn_from_before_a_reload_is_refused ... ok
+test host_process::tests::reports_stderr_and_exit_code ... ok
+test host_process::tests::only_the_owning_plugin_can_write_or_kill ... ok
+test host_process::tests::stop_all_ends_every_process ... ok
+test host_process::tests::incomplete_output_is_flushed_before_exit ... FAILED
+test host_process::tests::text_waits_for_a_split_character ... FAILED
+test host_process::tests::streams_stdin_to_stdout_until_input_closes ... ok
+test host_process::tests::a_page_that_stops_listening_stops_the_process ... ok
+test host_process::tests::shutdown_kills_every_group_without_waiting ... ok
+test host_process::tests::a_process_may_close_its_output_and_carry_on ... ok
+test host_process::tests::kill_ends_the_process_and_its_descendants ... ok
+
+failures:
+
+---- host_process::tests::incomplete_output_is_flushed_before_exit stdout ----
+
+thread 'host_process::tests::incomplete_output_is_flushed_before_exit' (120786) panicked at src-tauri/src/host_process/tests.rs:274:5:
+assertion `left == right` failed
+  left: "x"
+ right: "x�"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- host_process::tests::text_waits_for_a_split_character stdout ----
+
+thread 'host_process::tests::text_waits_for_a_split_character' (120815) panicked at src-tauri/src/host_process/tests.rs:256:5:
+assertion `left == right` failed
+  left: "����"
+ right: "�€"
+
+
+failures:
+    host_process::tests::incomplete_output_is_flushed_before_exit
+    host_process::tests::text_waits_for_a_split_character
+
+test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 352 filtered out; finished in 3.07s
+
+error: test failed, to rerun pass `-p buzz-foundation --lib`

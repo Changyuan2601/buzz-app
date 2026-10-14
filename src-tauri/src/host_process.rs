@@ -18,6 +18,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::oneshot;
 
+mod text;
+use text::TextDecoder;
+
 /// Processes alive at once across all plugins.
 const MAX_PROCESSES: usize = 64;
 /// One write to a process's stdin.
@@ -362,15 +365,16 @@ fn forward(
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut buffer = vec![0; READ_BYTES];
-        let mut pending = Vec::new();
+        let mut decoder = TextDecoder::default();
         loop {
-            let read = match pipe.read(&mut buffer).await {
-                Ok(0) | Err(_) => break,
-                Ok(read) => read,
+            let (data, done) = match pipe.read(&mut buffer).await {
+                Ok(0) | Err(_) => (decoder.finish(), true),
+                Ok(read) => (decoder.push(&buffer[..read]), false),
             };
-            pending.extend_from_slice(&buffer[..read]);
-            let data = take_text(&mut pending);
             if data.is_empty() {
+                if done {
+                    break;
+                }
                 continue;
             }
             let event = match stream {
@@ -387,23 +391,11 @@ fn forward(
                 }
                 break;
             }
+            if done {
+                break;
+            }
         }
     })
-}
-
-/// The complete UTF-8 text in `pending`, leaving a character split across
-/// reads for the next one. Invalid bytes become U+FFFD.
-fn take_text(pending: &mut Vec<u8>) -> String {
-    let complete = match std::str::from_utf8(pending) {
-        Ok(_) => pending.len(),
-        // An incomplete trailing sequence waits for its remaining bytes.
-        Err(error) if error.error_len().is_none() => error.valid_up_to(),
-        Err(_) => pending.len(),
-    };
-    let rest = pending.split_off(complete);
-    let text = String::from_utf8_lossy(pending).into_owned();
-    *pending = rest;
-    text
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.

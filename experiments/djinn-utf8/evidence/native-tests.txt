@@ -1,0 +1,22 @@
+   Compiling buzzodz-plugins v0.1.0 (/home/bloxer/buzz-app/crates/plugin-manager)
+   Compiling buzz-foundation v0.0.0 (/home/bloxer/buzz-app/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.20s
+     Running unittests src/lib.rs (target/debug/deps/buzz_foundation_lib-4fdf98e1660d1917)
+
+running 14 tests
+test host_process::tests::directories_are_absolute_or_under_home ... ok
+test host_process::tests::a_spawn_from_before_a_reload_is_refused ... ok
+test host_process::tests::only_the_owning_plugin_can_write_or_kill ... ok
+test host_process::tests::reports_stderr_and_exit_code ... ok
+test host_process::tests::incomplete_output_is_flushed_before_exit ... ok
+test host_process::tests::forwards_malformed_prefix_then_split_scalar_on_each_pipe ... ok
+test host_process::tests::text_waits_for_a_split_character ... ok
+test host_process::tests::streams_stdin_to_stdout_until_input_closes ... ok
+test host_process::tests::stop_all_ends_every_process ... ok
+test host_process::tests::a_page_that_stops_listening_stops_the_process ... ok
+test host_process::tests::shutdown_kills_every_group_without_waiting ... ok
+test host_process::tests::lossy_text_is_independent_of_read_partitions ... ok
+test host_process::tests::a_process_may_close_its_output_and_carry_on ... ok
+test host_process::tests::kill_ends_the_process_and_its_descendants ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 352 filtered out; finished in 3.09s

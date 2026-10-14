@@ -1,0 +1,8 @@
+buzz-utf8-proof (src/spec.rs)
+legend: ✓ ok (accepted by verify)   ✓· checks locally, not yet verified   ~ drafted (sorry or error)   – missing   ✓? verified before a change
+verified state — last verify PASS at 2026-10-14 23:10:04 UTC (4 s):
+  rel  scalar_encoding  [wf ✓]   → ok
+  rel  proper_suffix    [wf ✓]   → ok
+  func tail_len         unambiguous ✓   impl drafted   impl_correct ✓   [exists ✓]   → ok
+  funcs implemented and fully verified: 1/1
+agent jobs: none

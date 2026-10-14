@@ -1,0 +1,20 @@
+[package]
+name = "buzz-utf8-proof"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+djinn = { path = "../../../rust-djinn/rust-djinn" }
+
+[package.metadata.charon]
+preset = "aeneas"
+
+[package.metadata.djinn]
+spec = "src/spec.rs"
+namespace = "Utf8Tail"
+aeneas_lean = "../../../../../rust-djinn/tools/aeneas/backends/lean"
+charon = "../../../rust-djinn/tools/aeneas/charon/bin/charon"
+aeneas = "../../../rust-djinn/tools/aeneas/bin/aeneas"

@@ -1,0 +1,8 @@
+100000 deterministic arbitrary streams checked against whole-stream std oracle
+406901 representative strings, 3188776 partitions checked using production decoder
+ascii_64k: bytes=1048576, chunks=16, historical_equivalent=true
+multibyte_64k: bytes=1048572, chunks=16, historical_equivalent=true
+ascii_64: bytes=1048576, chunks=16384, historical_equivalent=true
+multibyte_1024: bytes=1048572, chunks=1024, historical_equivalent=true
+malformed_64k: bytes=1048575, chunks=16, historical_equivalent=true
+malformed_split_tail: bytes=458752, chunks=229376, historical_equivalent=false

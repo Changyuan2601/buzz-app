@@ -1,0 +1,47 @@
+# Written by `cargo djinn` after every verify. Per declaration: its tokens as
+# verified, what it uses, and the status of each obligation. The `djinn!`
+# macro refuses to compile a `fn` that is not `ok` here or whose tokens (or a
+# used declaration's) differ from this file. Commit it with solution/ and proofs/.
+
+[run]
+time = "2026-10-14 23:10:04 UTC"
+unix_time = 1792019404
+duration_secs = 4
+pass = true
+stage = "done"
+errors = []
+
+[[decl]]
+name = "scalar_encoding"
+kind = "rel"
+implemented = true
+ok = true
+uses = []
+tokens = "pub rel scalar_encoding () - > full : Vec < u8 > { 2 < = full . len () < = 4 ; for i in 1 . . full . len () { 0x80 < = full [ i ] < = 0xbf ; } cases { full . len () = = 2 & & 0xc2 < = full [ 0 ] < = 0xdf ; full . len () = = 3 & & 0xe0 < = full [ 0 ] < = 0xef & & ( full [ 0 ] ! = 0xe0 | | full [ 1 ] > = 0xa0 ) & & ( full [ 0 ] ! = 0xed | | full [ 1 ] < = 0x9f ) ; full . len () = = 4 & & 0xf0 < = full [ 0 ] < = 0xf4 & & ( full [ 0 ] ! = 0xf0 | | full [ 1 ] > = 0x90 ) & & ( full [ 0 ] ! = 0xf4 | | full [ 1 ] < = 0x8f ) ; } }"
+
+[decl.obligations]
+wf = "proved"
+
+[[decl]]
+name = "proper_suffix"
+kind = "rel"
+implemented = true
+ok = true
+uses = ["scalar_encoding"]
+tokens = "pub rel proper_suffix ( bytes : & [ u8 ] ) - > k : int { 1 < = k < = 3 ; k < = bytes . len () ; some full : Vec < u8 > { scalar_encoding () = = full ; k < full . len () ; for i in 0 . . k { bytes [ bytes . len () - k + i ] = = full [ i ] ; } } }"
+
+[decl.obligations]
+wf = "proved"
+
+[[decl]]
+name = "tail_len"
+kind = "func"
+implemented = true
+ok = true
+uses = ["proper_suffix"]
+tokens = "pub fn tail_len ( bytes : & [ u8 ] ) - > r : usize { r < = 3 ; r < = bytes . len () ; r > 0 = > proper_suffix ( bytes ) = = r ; for k in 1 . . 4 { proper_suffix ( bytes ) = = k = > k < = r ; } }"
+
+[decl.obligations]
+exists = "proved"
+impl_correct = "proved"
+unambiguous = "proved"

@@ -1,0 +1,5 @@
+'Utf8Tail.Obligations.scalar_encoding.wf' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Utf8Tail.Obligations.proper_suffix.wf' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Utf8Tail.Obligations.tail_len.unambiguous' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Utf8Tail.Obligations.tail_len.impl_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Utf8Tail.Obligations.tail_len.exists' depends on axioms: [propext, Classical.choice, Quot.sound]

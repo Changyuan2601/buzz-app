@@ -241,14 +241,132 @@ async fn shutdown_kills_every_group_without_waiting() {
 
 #[test]
 fn text_waits_for_a_split_character() {
-    let mut pending = "héllo".as_bytes()[..2].to_vec();
-    assert_eq!(take_text(&mut pending), "h");
-    assert_eq!(pending, [0xc3]);
-    pending.extend_from_slice(&"héllo".as_bytes()[2..]);
-    assert_eq!(take_text(&mut pending), "éllo");
-    assert!(pending.is_empty());
-    let mut invalid = vec![b'a', 0xff, b'b'];
-    assert_eq!(take_text(&mut invalid), "a\u{fffd}b");
+    let mut decoder = TextDecoder::default();
+    assert_eq!(decoder.push(&"héllo".as_bytes()[..2]), "h");
+    assert_eq!(decoder.push(&"héllo".as_bytes()[2..]), "éllo");
+    assert_eq!(decoder.finish(), "");
+    assert_eq!(decoder.push(&[b'a', 0xff, b'b']), "a\u{fffd}b");
+    assert_eq!(decoder.push(&[0xff, 0xe2]), "\u{fffd}");
+    assert_eq!(decoder.push(&[0x82, 0xac]), "€");
+    assert_eq!(decoder.finish(), "");
+}
+
+/// Check concatenated output, not event boundaries: reads may split anywhere.
+fn assert_partitions(bytes: &[u8]) {
+    let expected = String::from_utf8_lossy(bytes);
+    for cuts in 0..(1usize << bytes.len().saturating_sub(1)) {
+        let mut decoder = TextDecoder::default();
+        let mut output = decoder.push(&[]);
+        let mut start = 0;
+        for end in 1..bytes.len() {
+            if cuts & (1 << (end - 1)) != 0 {
+                output.push_str(&decoder.push(&bytes[start..end]));
+                start = end;
+            }
+        }
+        output.push_str(&decoder.push(&bytes[start..]));
+        output.push_str(&decoder.finish());
+        assert_eq!(output, expected, "bytes={bytes:x?}, cuts={cuts:b}");
+        assert_eq!(decoder.finish(), "");
+    }
+}
+
+#[test]
+fn lossy_text_is_independent_of_read_partitions() {
+    // UTF-8 boundary classes, including overlongs, surrogates, out-of-range
+    // scalars, stray continuations and truncated valid prefixes at EOF.
+    for bytes in [
+        &[][..],
+        &[0xff, 0xe2, 0x82, 0xac],
+        &[0xe2, 0xc2],
+        &[0xe0, 0x80],
+        &[0xed, 0xa0],
+        &[0xf0, 0x80],
+        &[0xf4, 0x90],
+        &[0xf0, 0x90, 0x80],
+        &[0xf4, 0x8f, 0xbf],
+        &[0xe2, 0x82],
+        "a€𐀀z".as_bytes(),
+    ] {
+        assert_partitions(bytes);
+    }
+    const BYTES: [u8; 15] = [
+        0x61, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc2, 0xdf, 0xe0, 0xe2, 0xed, 0xf0, 0xf4, 0xff,
+    ];
+    for len in 1..=4 {
+        for mut code in 0..BYTES.len().pow(len) {
+            let mut bytes = vec![0; len as usize];
+            for byte in &mut bytes {
+                *byte = BYTES[code % BYTES.len()];
+                code /= BYTES.len();
+            }
+            assert_partitions(&bytes);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn forwards_malformed_prefix_then_split_scalar_on_each_pipe() {
+    for stream in [Stream::Stdout, Stream::Stderr] {
+        let (mut writer, reader) = tokio::io::duplex(32);
+        let (channel, mut events) = channel();
+        let (gone, _closed) = oneshot::channel();
+        let forwarding = forward(reader, stream, channel, Arc::new(Mutex::new(Some(gone))));
+        writer.write_all(&[0xff, 0xe2]).await.unwrap();
+        // This event is a barrier proving the first read was decoded before
+        // the next write; the pipe cannot coalesce away the split we test.
+        let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first["type"],
+            match stream {
+                Stream::Stdout => "stdout",
+                Stream::Stderr => "stderr",
+            }
+        );
+        assert_eq!(first["data"], "\u{fffd}");
+        writer
+            .write_all(&[0x82, 0xac, b'x', 0xe2, 0x82])
+            .await
+            .unwrap();
+        writer.shutdown().await.unwrap();
+        forwarding.await.unwrap();
+        let mut output = first["data"].as_str().unwrap().to_owned();
+        while let Some(event) = events.recv().await {
+            assert_eq!(event["type"], first["type"]);
+            output.push_str(event["data"].as_str().unwrap());
+        }
+        assert_eq!(
+            output,
+            String::from_utf8_lossy(&[0xff, 0xe2, 0x82, 0xac, b'x', 0xe2, 0x82])
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn incomplete_output_is_flushed_before_exit() {
+    let processes = HostProcesses::default();
+    let (channel, mut events) = channel();
+    processes
+        .start(
+            0,
+            "a.plugin".into(),
+            "sh",
+            command(
+                "sh",
+                &["-c", "printf '\\170\\342'; printf '\\342\\202' >&2"],
+            ),
+            channel,
+        )
+        .unwrap();
+    let (stdout, stderr, exit) = until_exit(&mut events).await;
+    assert_eq!(stdout, "x\u{fffd}");
+    assert_eq!(stderr, "\u{fffd}");
+    assert_eq!(exit, serde_json::json!({"type": "exit", "code": 0}));
 }
 
 #[test]
