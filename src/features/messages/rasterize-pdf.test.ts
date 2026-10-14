@@ -81,7 +81,7 @@ it("renders page one of a single-page PDF onto a white 2x canvas as a PNG", asyn
   expect(result?.lastModified).toBe(1234);
   expect(pdfjs.GlobalWorkerOptions.workerSrc).toBe("/pdf.worker.mjs");
   expect(pdfjs.getDocument).toHaveBeenCalledWith(
-    expect.objectContaining({ useWasm: false }),
+    expect.objectContaining({ useWasm: false, stopAtErrors: true }),
   );
   expect(fake.render).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -112,13 +112,39 @@ it("leaves non-PDF, oversized and multi-page documents as file attachments", asy
   expect(fake.destroy).toHaveBeenCalledTimes(1);
 });
 
-it("falls back to the original file when pdf.js rejects the document", async () => {
+it("falls back to the original file when pdf.js rejects the document or the render", async () => {
+  const signal = new AbortController().signal;
+  const encrypted = fakePdf();
+  encrypted.loading.reject(new Error("No password given"));
+  expect(await pdfPageImage(pdfFile(), signal)).toBeUndefined();
+  expect(encrypted.destroy).toHaveBeenCalledTimes(1);
+
+  const broken = fakePdf();
+  broken.loading.resolve(broken.pdf);
+  broken.render.mockReturnValue({
+    promise: Promise.reject(new Error("Unable to decode inline image")),
+    cancel() {},
+  });
+  const encodes = stubToBlob(new Blob(["png"], { type: "image/png" }));
+  expect(await pdfPageImage(pdfFile(), signal)).toBeUndefined();
+  expect(encodes).toEqual([]);
+  expect(broken.destroy).toHaveBeenCalledTimes(1);
+});
+
+it("keeps PDFs that need the unshipped wasm decoders as files without loading pdf.js", async () => {
+  const signal = new AbortController().signal;
+  for (const filter of ["JBIG2Decode", "JPXDecode", "CCITTFaxDecode"]) {
+    const body = `%PDF-1.5\n5 0 obj\n<< /Type /XObject /Subtype /Image /Filter /${filter} >>\nendobj`;
+    expect(
+      await pdfPageImage(pdfFile("scan.pdf", body), signal),
+    ).toBeUndefined();
+  }
+  expect(pdfjs.getDocument).not.toHaveBeenCalled();
   const fake = fakePdf();
-  fake.loading.reject(new Error("No password given"));
-  expect(
-    await pdfPageImage(pdfFile(), new AbortController().signal),
-  ).toBeUndefined();
-  expect(fake.destroy).toHaveBeenCalledTimes(1);
+  fake.loading.resolve(fake.pdf);
+  stubToBlob(new Blob(["png"], { type: "image/png" }));
+  const flate = pdfFile("page.pdf", "%PDF-1.5\n<< /Filter /FlateDecode >>");
+  expect((await pdfPageImage(flate, signal))?.name).toBe("page.png");
 });
 
 it("rethrows an abort while loading instead of falling back, and destroys the task", async () => {

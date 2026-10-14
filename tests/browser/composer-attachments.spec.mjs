@@ -191,6 +191,7 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
   const server = await createServer({
     configFile: false,
     envFile: false,
+    // Belt and braces: the startup crawl already finds the literal dynamic import.
     optimizeDeps: { include: ["pdfjs-dist"] },
     plugins: [
       react(),
@@ -242,12 +243,17 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
         mimeType: "application/pdf",
         buffer: await fixture("two-pages.pdf"),
       },
+      {
+        name: "scan.pdf",
+        mimeType: "application/pdf",
+        buffer: await fixture("jpx-page.pdf"),
+      },
     ]);
     const image = form
       .getByRole("button", { name: "Preview diagram.png", exact: true })
       .locator("img");
     await expect(image).toBeVisible();
-    await expect(form.getByText(/Ready$/)).toHaveCount(2);
+    await expect(form.getByText(/Ready$/)).toHaveCount(3);
     // 200x100 pt page at 2x, white background, red rectangle filling the centre.
     expect(
       await image.evaluate(async (img) => {
@@ -275,9 +281,21 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
     });
     await expect(manual).toBeVisible();
     await expect(manual.locator("img")).toHaveCount(0);
-    expect(uploads).toEqual(["image/png", "application/pdf"]);
+    // A JPEG 2000 page needs a decoder pdf.js only ships as wasm, which Buzz
+    // does not bundle: the PDF must stay a file rather than become a blank image.
+    const scan = form.getByRole("button", {
+      name: "Preview scan.pdf",
+      exact: true,
+    });
+    await expect(scan).toBeVisible();
+    await expect(scan.locator("img")).toHaveCount(0);
+    expect(uploads).toEqual([
+      "image/png",
+      "application/pdf",
+      "application/pdf",
+    ]);
     await expect(
-      form.getByRole("button", { name: /diagram\.pdf/ }),
+      form.getByRole("button", { name: /diagram\.pdf|scan\.png/ }),
     ).toHaveCount(0);
   } finally {
     await server.close();

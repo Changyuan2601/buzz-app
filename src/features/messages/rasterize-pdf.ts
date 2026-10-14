@@ -6,6 +6,13 @@ import { MIB, mediaByteLimit } from "../relay/attachment-limits";
 const RASTERIZE_MAX_BYTES = 32 * MIB;
 /** Under WebKit's canvas area limit and the 25 MP cap used for images. */
 const MAX_EDGE_PX = 4096;
+/**
+ * pdf.js decodes these only through wasm modules Buzz does not ship, and it
+ * drops an undecodable image XObject even with `stopAtErrors`, so such a scan
+ * would render as a blank page. Stream dictionaries are never compressed into
+ * object streams, so the filter name is visible in the raw bytes.
+ */
+const WASM_ONLY_FILTERS = /\/(?:JBIG2|JPX|CCITTFax)Decode\b/;
 
 export function isPdf(header: Uint8Array): boolean {
   return String.fromCharCode(...header.subarray(0, 5)) === "%PDF-";
@@ -26,7 +33,7 @@ function raced<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** Page 1 as a PNG, or undefined for multi-page, encrypted and malformed documents. */
+/** Page 1 as a PNG, or undefined when pdf.js cannot render the whole single page. */
 async function renderSinglePage(
   file: File,
   signal: AbortSignal,
@@ -34,13 +41,22 @@ async function renderSinglePage(
   const canvas = document.createElement("canvas");
   let loading: { destroy(): Promise<void> } | undefined;
   try {
+    const data = await raced(file.arrayBuffer(), signal);
+    if (WASM_ONLY_FILTERS.test(new TextDecoder("latin1").decode(data)))
+      return undefined;
     const { getDocument, GlobalWorkerOptions } = await raced(
       import("pdfjs-dist"),
       signal,
     );
     GlobalWorkerOptions.workerSrc = workerUrl;
-    const data = await raced(file.arrayBuffer(), signal);
-    const task = getDocument({ data, useWasm: false, verbosity: 0 });
+    const task = getDocument({
+      data,
+      useWasm: false,
+      verbosity: 0,
+      // A partial render would silently replace the PDF; any evaluator error
+      // keeps the file attachment instead.
+      stopAtErrors: true,
+    });
     loading = task;
     const pdf = await raced(task.promise, signal);
     if (pdf.numPages !== 1) return undefined;
