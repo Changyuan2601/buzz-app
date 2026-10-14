@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { CircleNotchIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -39,12 +39,15 @@ const FAILURES: Record<FindFailure, { message: string; retry: boolean }> = {
 export function FindCommunity({
   url,
   onCancel,
+  onFound,
   onJoin,
   request = nativeRelayFetch,
   titleId,
 }: {
   url: string;
   onCancel: () => void;
+  /** Takes over a found community instead of showing Join Community; the lookup page stays until the caller moves on. */
+  onFound?: (found: FoundCommunity) => void;
   onJoin?: (found: FoundCommunity) => Promise<void> | void;
   request?: RelayFetch;
   titleId?: string;
@@ -55,13 +58,17 @@ export function FindCommunity({
   const [agreed, setAgreed] = useState(false);
   const [joining, setJoining] = useState(false);
   const inFlight = useRef<AbortController>(null);
+  const settle = useEffectEvent((found: FoundCommunity) => {
+    if (onFound) onFound(found);
+    else setState({ status: "found", found });
+  });
   useEffect(() => {
     if (state.status !== "finding") return;
     const controller = new AbortController();
     inFlight.current = controller;
     findCommunity(url, request, controller.signal).then(
       (found) => {
-        if (!controller.signal.aborted) setState({ status: "found", found });
+        if (!controller.signal.aborted) settle(found);
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;

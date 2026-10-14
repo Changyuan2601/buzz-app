@@ -2,12 +2,26 @@
 
 Native macOS, Windows and Linux without the live development broker open on a
 welcome screen when no human key exists on this device: **Buzz** — "Your people,
-your agents, your projects — all in one place." — with **Connect with Builderlab**
-as the only enabled action; a community URL field and **Scan a QR code** are shown
-disabled as *Coming soon*. Connect runs the bundled Builderlab plugin's browser
-sign-in under that plugin's own native network grant; that credential is not yet
-shared with Settings → Integrations → Builderlab. A failed or canceled sign-in
-shows the error with **Back** to the welcome screen.
+your agents, your projects — all in one place." — with **Connect with Builderlab**,
+a live **Community URL** field with **Join** beside it (the same field and
+normalisation as Join a community below), and **Scan a QR code**, shown disabled as
+*Coming soon*. Connect runs the bundled Builderlab plugin's browser sign-in under
+that plugin's own native network grant; that credential is not yet shared with
+Settings → Integrations → Builderlab. A failed or canceled sign-in shows the
+error with **Back** to the welcome screen.
+
+A URL given on the welcome screen is looked up first, before sign-in and before
+any key exists: **Join** opens the same **Finding community** page described
+below, which sends only the two unauthenticated GETs, so a typo, an unreachable
+relay or a non-Buzz address fails there with the same classified copy; **Cancel**
+(and **Retry**, when offered) behave as below, except that Cancel returns to the
+welcome screen with the address kept in the field. A found community decides
+which sign-in follows: `discoverAuthentication` in
+`src/features/identity/setup.ts` is the seam for that, and today treats every
+community URL as Builderlab-hosted, so sign-in starts at once and the welcome
+screen shows it pending (**Cancel sign-in**, with the field disabled). Cancel
+sign-in, and **Back** from a sign-in or setup failure, return to the welcome
+screen with the address kept and do not look it up again.
 
 Success continues to a **Setting up Buzz** page that runs four steps in order,
 showing the current label with a spinner: *Downloading keys*, *Creating keys*,
@@ -17,10 +31,12 @@ screen, so the next launch opens as a returning user. The other three are
 placeholders marked `[TODO]` that wait two seconds each until their backends
 exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finish
 setup** with the error and **Back** to the welcome screen. Setup then lands on
-**Join a community**: three example pending-invite rows showing only what a relay
-publishes before admission — an icon placeholder and the hostname — each with a
-disabled **Join**, then a **Community URL** field with **Join** beside it, and
-**Scan a QR code** and **Create a community**, both *Coming soon*.
+**Join Community** for the address given on the welcome screen, looked up again
+(the policy may have changed meanwhile), or otherwise on **Join a community**:
+three example pending-invite rows showing only what a relay publishes before
+admission — an icon placeholder and the hostname — each with a disabled **Join**,
+then a **Community URL** field with **Join** beside it, and **Scan a QR code** and
+**Create a community**, both *Coming soon*.
 
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
 is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
@@ -31,12 +47,12 @@ enabled once the address is valid; Enter submits, and an invalid address shows
 
 Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
 reusable by later flows): the hostname with a spinner and **Cancel**, which
-returns to Join a community with the typed address intact and discards any
-late answer. The page reads the relay's NIP-11 document and `/api/join-policy`
-in parallel through the identity-free native `relay_http` GET path. Those two
-unauthenticated GETs are the only pre-join traffic: nothing is signed with the
-device's key until the user chooses to join. On success it shows **Join
-Community**: only what the relay publishes — the
+returns to Join a community with the typed address intact — however the user
+arrived there — and discards any late answer. The page reads the relay's NIP-11
+document and `/api/join-policy` in parallel through the identity-free native
+`relay_http` GET path. Those two unauthenticated GETs are the only pre-join
+traffic: nothing is signed with the device's key until the user chooses to join.
+On success it shows **Join Community**: only what the relay publishes — the
 icon if set and the hostname — plus, when the deployment has a join policy, *I am
 18 years of age or older.* (if age attestation is required) and *I agree to the
 Buzz Terms of Service and Privacy Policy.*, whose links open the relay's

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { FindCommunity } from "./FindCommunity";
@@ -147,6 +147,42 @@ it("without a policy Join needs no consent, and without onJoin it stays a placeh
     />,
   );
   expect(await screen.findByRole("button", { name: "Join" })).toBeEnabled();
+});
+
+it("with onFound a found community is handed over while the lookup page stays", async () => {
+  const request = relay(() => ({
+    "/": Response.json(buzz),
+    "/api/join-policy": Response.json({ policy }),
+  }));
+  const onFound = vi.fn();
+  const onCancel = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <FindCommunity
+      url={url}
+      onCancel={onCancel}
+      onFound={onFound}
+      onJoin={vi.fn()}
+      request={request}
+    />,
+  );
+  await waitFor(() =>
+    expect(onFound).toHaveBeenCalledWith({
+      url,
+      host,
+      icon: "https://cdn.example.com/icon.png",
+      policy,
+    }),
+  );
+  // The caller decides what comes next; nothing here moves on or offers Join.
+  expect(
+    screen.getByRole("heading", { name: "Finding community" }),
+  ).toBeVisible();
+  expect(joinCommunity()).toBeNull();
+  expect(screen.queryByRole("button", { name: /join/i })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onCancel).toHaveBeenCalledTimes(1);
+  expect(onFound).toHaveBeenCalledTimes(1);
 });
 
 it("holds the page while onJoin is pending and leaves a failed join's meaning to the caller", async () => {

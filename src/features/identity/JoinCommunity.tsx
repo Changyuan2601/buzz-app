@@ -1,9 +1,6 @@
-import { useId, useState } from "react";
-import { enteredRelayOrigin } from "../communities/destination";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
+import { CommunityUrlField } from "./CommunityUrlField";
 
 /**
  * Wireframe examples. A relay publishes only its NIP-11 icon before admission
@@ -16,14 +13,6 @@ const EXAMPLE_INVITES = [
   "buzz.example.org",
 ];
 
-function originOf(url: string) {
-  try {
-    return enteredRelayOrigin(url);
-  } catch {
-    return undefined;
-  }
-}
-
 /** First-run landing after setup. Only the community URL is a live action. */
 export function JoinCommunity({
   url,
@@ -35,13 +24,6 @@ export function JoinCommunity({
   /** Receives the canonical secure origin the typed address normalizes to. */
   onFind: (origin: string) => void;
 }) {
-  const [invalid, setInvalid] = useState(false);
-  const errorId = useId();
-  const origin = originOf(url);
-  const submit = () => {
-    if (origin) onFind(origin);
-    else setInvalid(true);
-  };
   return (
     <>
       <h1 id="welcome-title" className="text-title text-primary">
@@ -65,44 +47,11 @@ export function JoinCommunity({
         ))}
       </ul>
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-end gap-3">
-            <div className="min-w-0 flex-1">
-              <Field label="Community URL" invalid={invalid}>
-                <Input
-                  inputMode="url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="relay.example.com"
-                  value={url}
-                  aria-describedby={invalid ? errorId : undefined}
-                  onChange={(event) => {
-                    onUrlChange(event.target.value);
-                    setInvalid(false);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" || event.nativeEvent.isComposing)
-                      return;
-                    event.preventDefault();
-                    submit();
-                  }}
-                />
-              </Field>
-            </div>
-            <Button variant="primary" disabled={!origin} onClick={submit}>
-              Join
-            </Button>
-          </div>
-          {invalid && (
-            <p
-              id={errorId}
-              role="alert"
-              className="m-0 text-body-sm text-danger"
-            >
-              Please enter a valid community URL
-            </p>
-          )}
-        </div>
+        <CommunityUrlField
+          url={url}
+          onUrlChange={onUrlChange}
+          onSubmit={onFind}
+        />
         <Button size="lg" disabled>
           Scan a QR code — Coming soon
         </Button>

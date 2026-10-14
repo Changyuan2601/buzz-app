@@ -1,3 +1,4 @@
+import type { FoundCommunity } from "../communities/find-community";
 import type { Identity } from "./service";
 
 export type SetupStep = Readonly<{ label: string; run: () => Promise<void> }>;
@@ -34,6 +35,19 @@ export function setupSteps(identity: Identity, delay = wait): SetupStep[] {
     { label: "Uploading keys… [TODO]", run: () => delay(2000) },
     { label: "Finding communities… [TODO]", run: () => delay(2000) },
   ];
+}
+
+export type Authentication = "builderlab";
+
+/**
+ * Which sign-in a community URL given before setup leads to.
+ *
+ * TODO: nothing a relay publishes identifies its host today (NIP-11 `self` is
+ * the likeliest future signal), so every community URL is treated as
+ * Builderlab-hosted.
+ */
+export function discoverAuthentication(_found: FoundCommunity): Authentication {
+  return "builderlab";
 }
 
 /** Runs the steps once, stopping at the first failure. */
