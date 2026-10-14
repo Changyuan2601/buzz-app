@@ -9,6 +9,91 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
+// Browser-only: layout clipping can blank both the preview and expanded prose
+// between React states even when the height transition itself runs correctly.
+test("coordination keeps its first line visible throughout expansion and collapse", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.append("primary", "alpha", "Coordination motion check");
+  const original = page.locator(
+    `[data-channel-timeline] [data-message-id="${root.id}"]`,
+  );
+  await original.hover();
+  await original.getByRole("button", { name: "Reply", exact: true }).click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const event = app.append(
+    "primary",
+    "alpha",
+    "Three café names:\n\n1. Corner Cup: Friendly and local.\n2. Common Grounds: A gathering place.\n3. Porchlight Café: Warm and welcoming.",
+    true,
+    true,
+    root.id,
+    undefined,
+    [["audience", "agents"]],
+  );
+  const row = thread.locator(`[data-message-id="${event.id}"]`);
+  const toggle = row.getByRole("button", { expanded: false });
+  await expect(toggle).toBeVisible();
+  await settle(page, thread.getByRole("region", { name: "Thread messages" }));
+  const result = await row.evaluate(async (row) => {
+    const button = row.querySelector("button[aria-expanded]");
+    const failures = [];
+    let animated = false;
+    const sample = (opening) => {
+      const panel = row.querySelector('[class*="audiencePanel"]');
+      const preview = row.querySelector('[class*="audiencePreview"]');
+      const text = panel?.querySelector("p");
+      const panelBox = panel?.getBoundingClientRect();
+      const textBox = text?.getBoundingClientRect();
+      const previewVisible =
+        !!preview && preview.getBoundingClientRect().height > 0;
+      const firstLineVisible =
+        !!textBox &&
+        !!panelBox &&
+        Math.min(textBox.bottom, panelBox.bottom) -
+          Math.max(textBox.top, panelBox.top) >=
+          Number.parseFloat(getComputedStyle(text).lineHeight) / 2;
+      if (!previewVisible && !firstLineVisible)
+        failures.push(opening ? "opening" : "closing");
+      const running = panel
+        ?.getAnimations()
+        .some((animation) => animation.playState === "running");
+      animated ||= !!running;
+      return { panel, running };
+    };
+    for (const opening of [true, false]) {
+      const start = performance.now();
+      button.click();
+      await new Promise((resolve, reject) => {
+        let settled = 0;
+        const tick = () => {
+          const { panel, running } = sample(opening);
+          settled = (
+            opening
+              ? panel && !panel.hasAttribute("data-starting-style") && !running
+              : !panel
+          )
+            ? settled + 1
+            : 0;
+          if (settled >= 2) resolve();
+          else if (performance.now() - start > 5000)
+            reject(new Error("Coordination transition did not settle"));
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+    }
+    return { failures, animated };
+  });
+  expect(result).toEqual({ failures: [], animated: true });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
 // Native Tab must discover deferred controls before the browser chooses focus;
 // continuation rows have no avatar that could activate them on the way in.
 for (const direction of ["forward", "backward"]) {

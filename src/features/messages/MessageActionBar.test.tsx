@@ -22,6 +22,7 @@ import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboa
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
 import { MessageActionBar } from "./MessageActionBar";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { createPortal } from "react-dom";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -58,6 +59,26 @@ function pointerMedia(matches = true) {
       for (const listener of listeners) listener();
     });
 }
+
+it("leaves portalled message content outside its context-menu target", () => {
+  render(
+    <MessageActionBar copyText={() => "Message"}>
+      <div>
+        <button type="button">Expand coordination</button>
+        {createPortal(
+          <button type="button">Viewer content</button>,
+          document.body,
+        )}
+      </div>
+    </MessageActionBar>,
+  );
+  const viewer = screen.getByRole("button", { name: "Viewer content" });
+  expect(
+    fireEvent.contextMenu(viewer, { clientX: 20, clientY: 20, button: 2 }),
+  ).toBe(true);
+  fireEvent.keyDown(viewer, { key: "F10", shiftKey: true });
+  expect(screen.queryByRole("menu")).toBeNull();
+});
 
 it("defers desktop controls until row interaction and retains them after leaving", () => {
   pointerMedia();

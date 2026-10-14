@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ReactElement,
   type Ref,
   type RefObject,
 } from "react";
@@ -18,6 +19,8 @@ import {
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
   MenuRoot,
   MenuTrigger,
   MenuPopup,
@@ -37,6 +40,8 @@ const AfterMenuClose = createContext<
 export const useAfterMessageMenuClose = () => useContext(AfterMenuClose);
 
 type Props = {
+  /** A coordination row is the context-menu target instead of a toolbar. */
+  children?: ReactElement | undefined;
   rowRef?: RefObject<HTMLDivElement | null>;
   messageId?: string;
   menuTriggerRef?: Ref<HTMLButtonElement>;
@@ -53,7 +58,15 @@ type Props = {
 
 export function MessageActionBar(props: Props) {
   const active = useConversationPresentation();
-  return active ? <ActiveMessageActionBar {...props} /> : null;
+  return active ? (
+    props.children ? (
+      <MessageActionBarControls {...props} />
+    ) : (
+      <ActiveMessageActionBar {...props} />
+    )
+  ) : (
+    (props.children ?? null)
+  );
 }
 
 function ActiveMessageActionBar(props: Props) {
@@ -73,6 +86,7 @@ function ActiveMessageActionBar(props: Props) {
 }
 
 function MessageActionBarControls({
+  children,
   onSendToChannel,
   onReply,
   replyDisabled,
@@ -88,7 +102,12 @@ function MessageActionBarControls({
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
-  const floating = useFloatingActionBar(rowRef, barRef, slotRef, open);
+  const floating = useFloatingActionBar(
+    children ? undefined : rowRef,
+    barRef,
+    slotRef,
+    open,
+  );
   const [copying, setCopying] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
   const busy = useRef(false);
@@ -103,6 +122,8 @@ function MessageActionBarControls({
   }, []);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
   const [openedByPointer, setOpenedByPointer] = useState(false);
+  const [contextAnchor, setContextAnchor] = useState<HTMLElement>();
+  const contextFocus = useRef<HTMLElement | null>(null);
   const copy = async (text: () => string, label: string) => {
     if (busy.current) return;
     busy.current = true;
@@ -121,138 +142,223 @@ function MessageActionBarControls({
       setCopying(false);
     }
   };
-  return (
-    <>
-      <div ref={slotRef} className={styles.messageActionsSlot}>
-        {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
-        <div
-          className={styles.messageActions}
-          ref={barRef}
-          popover={floating ? "manual" : undefined}
-          role="group"
-          aria-label="Message actions"
+  const popup = (
+    <MenuPopup
+      align={children ? "start" : "end"}
+      anchor={contextAnchor}
+      data-message-id={messageId}
+      // The shared popup preserves moved focus; retirement also revokes
+      // return-focus ownership, including a retained hidden source row.
+      finalFocus={() =>
+        live.current && !handingOffFocus
+          ? children
+            ? contextFocus.current?.isConnected
+              ? contextFocus.current
+              : false
+            : !openedByPointer
+          : false
+      }
+    >
+      <AfterMenuClose.Provider
+        value={(action) => {
+          setHandingOffFocus(true);
+          afterClose.current = action;
+        }}
+      >
+        {leadingItems}
+        <MenuItem
+          disabled={copying}
+          onClick={() => void copy(copyText, "Message")}
         >
-          {quickControls}
-          {onReply && (
-            <IconButton
-              aria-label="Reply"
-              title={
-                replyDisabled ? "Reply unavailable for this message" : "Reply"
-              }
-              size="sm"
-              disabled={replyDisabled}
-              icon={<ChatCircleIcon />}
-              onClick={(event) => {
-                event.currentTarget.focus();
-                onReply();
-              }}
-            />
-          )}
-          <IconButton
-            aria-label="Copy link"
-            title={link ? "Copy link" : "Message link unavailable"}
-            size="sm"
-            disabled={!link || copying}
-            icon={<LinkIcon />}
+          <MenuIcon>
+            <CopyIcon />
+          </MenuIcon>
+          Copy message
+        </MenuItem>
+        {onSendToChannel && (
+          <MenuItem
             onClick={() => {
-              if (link) void copy(() => link, "Link");
-            }}
-          />
-          <MenuRoot
-            open={open}
-            onOpenChange={(next, details) => {
-              if (next) {
-                setHandingOffFocus(false);
-                // Base UI opens on mousedown, so a real pointer press carries a
-                // click count; keyboard and assistive presses arrive as a click
-                // with 0.
-                setOpenedByPointer(
-                  details.event instanceof MouseEvent &&
-                    details.event.detail > 0,
-                );
-              } else if (
-                details.event.type.startsWith("key") ||
-                (details.event.type === "click" &&
-                  "detail" in details.event &&
-                  details.event.detail === 0)
-              ) {
-                setOpenedByPointer(false);
-              }
-              setOpen(next);
-            }}
-            onOpenChangeComplete={(opened) => {
-              if (!opened) {
-                const action = afterClose.current;
-                afterClose.current = undefined;
-                action?.();
+              try {
+                onSendToChannel();
+                setNotice({ text: "Sending to channel", error: false });
+              } catch (error) {
+                setNotice({
+                  text:
+                    error instanceof Error
+                      ? error.message
+                      : "Couldn’t send to channel",
+                  error: true,
+                });
               }
             }}
           >
-            <MenuTrigger
-              render={
-                <IconButton
-                  ref={menuTriggerRef}
-                  aria-label="More message actions"
-                  title="More message actions"
-                  size="sm"
-                  icon={<DotsThreeIcon />}
-                />
+            <MenuIcon>
+              <HashArrowInIcon />
+            </MenuIcon>
+            Send to channel
+          </MenuItem>
+        )}
+        {children && onReply && (
+          <MenuItem
+            disabled={replyDisabled}
+            onClick={() => {
+              setHandingOffFocus(true);
+              afterClose.current = onReply;
+            }}
+          >
+            <MenuIcon>
+              <ChatCircleIcon />
+            </MenuIcon>
+            Reply
+          </MenuItem>
+        )}
+        {children && (
+          <MenuItem
+            disabled={!link || copying}
+            onClick={() => {
+              if (link) void copy(() => link, "Link");
+            }}
+          >
+            <MenuIcon>
+              <LinkIcon />
+            </MenuIcon>
+            Copy link
+          </MenuItem>
+        )}
+        {overflowItems}
+      </AfterMenuClose.Provider>
+    </MenuPopup>
+  );
+  const closed = (opened: boolean) => {
+    if (!opened) {
+      const action = afterClose.current;
+      afterClose.current = undefined;
+      action?.();
+    }
+  };
+  return (
+    <>
+      {children ? (
+        <ContextMenuRoot
+          open={open}
+          onOpenChange={(next) => {
+            if (next) setHandingOffFocus(false);
+            setOpen(next);
+          }}
+          onOpenChangeComplete={closed}
+        >
+          <ContextMenuTrigger
+            render={children}
+            onContextMenu={(event) => {
+              if (!event.currentTarget.contains(event.target as Node)) {
+                event.preventBaseUIHandler();
+                return;
               }
-            />
-            <MenuPopup
-              align="end"
-              data-message-id={messageId}
-              // The shared popup preserves moved focus; retirement also revokes
-              // return-focus ownership, including a retained hidden source row.
-              finalFocus={() =>
-                live.current && !handingOffFocus && !openedByPointer
+              setContextAnchor(undefined);
+              contextFocus.current =
+                event.currentTarget.querySelector("button");
+            }}
+            onTouchStart={(event) => {
+              if (!event.currentTarget.contains(event.target as Node)) {
+                event.preventBaseUIHandler();
+                return;
               }
-            >
-              <AfterMenuClose.Provider
-                value={(action) => {
-                  setHandingOffFocus(true);
-                  afterClose.current = action;
+              setContextAnchor(undefined);
+              contextFocus.current =
+                event.currentTarget.querySelector("button");
+            }}
+            onKeyDown={(event) => {
+              if (!event.currentTarget.contains(event.target as Node)) return;
+              if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10")
+              ) {
+                event.preventDefault();
+                contextFocus.current = event.target as HTMLElement;
+                setContextAnchor(event.currentTarget);
+                setHandingOffFocus(false);
+                setOpen(true);
+              }
+            }}
+          />
+          {popup}
+        </ContextMenuRoot>
+      ) : (
+        <div ref={slotRef} className={styles.messageActionsSlot}>
+          {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
+          <div
+            className={styles.messageActions}
+            ref={barRef}
+            popover={floating ? "manual" : undefined}
+            role="group"
+            aria-label="Message actions"
+          >
+            {quickControls}
+            {onReply && (
+              <IconButton
+                aria-label="Reply"
+                title={
+                  replyDisabled ? "Reply unavailable for this message" : "Reply"
+                }
+                size="sm"
+                disabled={replyDisabled}
+                icon={<ChatCircleIcon />}
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onReply();
                 }}
-              >
-                {leadingItems}
-                <MenuItem
-                  disabled={copying}
-                  onClick={() => void copy(copyText, "Message")}
-                >
-                  <MenuIcon>
-                    <CopyIcon />
-                  </MenuIcon>
-                  Copy message
-                </MenuItem>
-                {onSendToChannel && (
-                  <MenuItem
-                    onClick={() => {
-                      try {
-                        onSendToChannel();
-                        setNotice({ text: "Sending to channel", error: false });
-                      } catch (error) {
-                        setNotice({
-                          text:
-                            error instanceof Error
-                              ? error.message
-                              : "Couldn’t send to channel",
-                          error: true,
-                        });
-                      }
-                    }}
-                  >
-                    <MenuIcon>
-                      <HashArrowInIcon />
-                    </MenuIcon>
-                    Send to channel
-                  </MenuItem>
-                )}
-                {overflowItems}
-              </AfterMenuClose.Provider>
-            </MenuPopup>
-          </MenuRoot>
+              />
+            )}
+            <IconButton
+              aria-label="Copy link"
+              title={link ? "Copy link" : "Message link unavailable"}
+              size="sm"
+              disabled={!link || copying}
+              icon={<LinkIcon />}
+              onClick={() => {
+                if (link) void copy(() => link, "Link");
+              }}
+            />
+            <MenuRoot
+              open={open}
+              onOpenChange={(next, details) => {
+                if (next) {
+                  setHandingOffFocus(false);
+                  // Base UI opens on mousedown, so a real pointer press carries a
+                  // click count; keyboard and assistive presses arrive as a click
+                  // with 0.
+                  setOpenedByPointer(
+                    details.event instanceof MouseEvent &&
+                      details.event.detail > 0,
+                  );
+                } else if (
+                  details.event.type.startsWith("key") ||
+                  (details.event.type === "click" &&
+                    "detail" in details.event &&
+                    details.event.detail === 0)
+                ) {
+                  setOpenedByPointer(false);
+                }
+                setOpen(next);
+              }}
+              onOpenChangeComplete={closed}
+            >
+              <MenuTrigger
+                render={
+                  <IconButton
+                    ref={menuTriggerRef}
+                    aria-label="More message actions"
+                    title="More message actions"
+                    size="sm"
+                    icon={<DotsThreeIcon />}
+                  />
+                }
+              />
+              {popup}
+            </MenuRoot>
+          </div>
         </div>
-      </div>
+      )}
       {notice && (
         <ToastNotice
           title={notice.text}

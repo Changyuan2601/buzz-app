@@ -2353,6 +2353,9 @@ it("shows a message for agents as one line from its author to whom it addresses"
     expect(line).not.toHaveAttribute("data-message-id");
     expect(line.parentElement).toHaveAttribute("data-message-id");
     expect(screen.queryByText(/Then report back/)).toBeNull();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
+    fireEvent.pointerEnter(line);
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     fireEvent.click(line);
     expect(line).toHaveAttribute("aria-expanded", "true");
     expect(
@@ -2361,6 +2364,22 @@ it("shows a message for agents as one line from its author to whom it addresses"
     const expanded = screen.getByText("run").closest("[data-message-id]");
     expect(expanded?.querySelector('[class*="messageBubble"]')).toBeNull();
     expect(expanded?.querySelector("[data-own]")).toBeNull();
+    expect(line.parentElement?.querySelectorAll("time")).toHaveLength(1);
+    expect(line.parentElement?.querySelector("time")).toHaveAttribute(
+      "datetime",
+      new Date(quiet.createdAt * 1000).toISOString(),
+    );
+    // Base UI binds the trigger to its panel. One stable message anchor stays
+    // outside the animated content, including while that content is retiring.
+    const panelId = line.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    expect(document.getElementById(panelId ?? "")).toContainElement(
+      screen.getByText(/Then report back/),
+    );
+    expect(
+      document.querySelectorAll(`[data-message-id="${quiet.id}"]`),
+    ).toHaveLength(1);
+    expect(line.parentElement).toHaveAttribute("data-message-id", quiet.id);
     // The body keeps later mentions but drops the one the line shows.
     expect(screen.getByText(/Then report back/)).toBeInTheDocument();
     expect(screen.queryByText("@Rivet,")).toBeNull();
@@ -2372,6 +2391,75 @@ it("shows a message for agents as one line from its author to whom it addresses"
     cleanup();
   }
 });
+
+it.each([false, true])(
+  "coordination opens its actions only from context interaction (expanded=%s)",
+  async (expanded) => {
+    const onReply = vi.fn();
+    const write = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: write },
+    });
+    const content = "@Rivet, **run** the suite\n\nThen report back.";
+    try {
+      renderDom(
+        <ToastProvider>
+          <MessageRow
+            row={{
+              ...row,
+              content,
+              mentions: ["b".repeat(64)],
+              audience: "agents",
+            }}
+            profile={{ name: "Morgarita" }}
+            participantProfiles={new Map([["b".repeat(64), { name: "Rivet" }]])}
+            media={() => undefined}
+            onOpenLink={() => false}
+            onReply={onReply}
+            day={false}
+            retry={undefined}
+          />
+        </ToastProvider>,
+      );
+      const toggle = screen.getByRole("button", { name: /Morgarita to Rivet/ });
+      if (expanded) fireEvent.click(toggle);
+      fireEvent.pointerEnter(toggle);
+      expect(
+        screen.queryByRole("button", { name: "More message actions" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("group", { name: "Message actions" }),
+      ).toBeNull();
+      fireEvent.contextMenu(
+        expanded ? screen.getByText(/Then report back/) : toggle,
+        {
+          clientX: 20,
+          clientY: 20,
+          button: 2,
+        },
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Copy message" }),
+      );
+      expect(write).toHaveBeenCalledExactlyOnceWith(
+        "[@Rivet](nostr:npub1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwasxw04hu), **run** the suite\n\nThen report back.",
+      );
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+      toggle.focus();
+      fireEvent.keyDown(toggle, { key: "F10", shiftKey: true });
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Reply" }));
+      await waitFor(() =>
+        expect(onReply).toHaveBeenCalledExactlyOnceWith(row.id),
+      );
+      expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("keeps an agents message that opens with prose, or is only a mention, as written", () => {
   const rivet = "b".repeat(64);
