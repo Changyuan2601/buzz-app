@@ -42,6 +42,9 @@ test("coordination keeps its first line visible throughout expansion and collaps
   await settle(page, thread.getByRole("region", { name: "Thread messages" }));
   const result = await row.evaluate(async (row) => {
     const button = row.querySelector("button[aria-expanded]");
+    const preview = row.querySelector('[class*="audiencePreview"]');
+    if (!preview) throw new Error("Coordination preview is missing");
+    const textEdge = preview.getBoundingClientRect().left;
     const failures = [];
     let animated = false;
     const sample = (opening) => {
@@ -60,6 +63,10 @@ test("coordination keeps its first line visible throughout expansion and collaps
           Number.parseFloat(getComputedStyle(text).lineHeight) / 2;
       if (!previewVisible && !firstLineVisible)
         failures.push(opening ? "opening" : "closing");
+      if (textBox && Math.abs(textBox.left - textEdge) > 0.5)
+        failures.push(
+          opening ? "opening shifted text" : "closing shifted text",
+        );
       const running = panel
         ?.getAnimations()
         .some((animation) => animation.playState === "running");

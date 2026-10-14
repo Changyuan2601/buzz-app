@@ -2726,6 +2726,8 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 .audienceEntry:has(> .audiencePanel) .audienceLine {
   flex: none;
   inline-size: auto;
+  /* Match the trigger's avatar-to-preview gap when the prose is its sibling. */
+  padding-inline-end: var(--space-1h);
   background: none;
 }
 .audiencePanel {
