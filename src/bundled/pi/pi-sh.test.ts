@@ -53,7 +53,7 @@ async function disk(npm = 'mkdir -p "$prefix/node_modules"') {
     lock = LOCK,
   ) =>
     (
-      await run("bash", ["-c", script, "pi.sh", "run", HOST, PACKAGE, lock], {
+      await run("bash", ["-c", script, "pi.sh", HOST, PACKAGE, lock], {
         env: {
           PATH: `${bin}:/usr/bin:/bin`,
           HOME: home,

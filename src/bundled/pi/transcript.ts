@@ -1,18 +1,17 @@
 // A Buzz conversation's Pi conversation, read from the agent's Pi durable
 // storage through the host and shown in the host's turn-transcript model. Pi
 // owns the entries; nothing here writes or keeps them.
-import {
-  promptSections,
-  type ToolItem,
-  type Transcript,
-  type TranscriptItem,
-  type TranscriptTurn,
+import type {
+  ToolItem,
+  Transcript,
+  TranscriptItem,
+  TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import { prompt } from "../claude-code/transcript";
+import type { Pi } from "./pi";
 
 /** The latest turns shown; Pi's storage keeps the rest. */
 export const TURN_LIMIT = 50;
-const STEER = "new-message-arrived-while-you-were-working";
 const PREFIX = "buzz_";
 const KINDS: Record<string, string> = {
   read: "read",
@@ -46,16 +45,12 @@ export type PiEntry = Readonly<{
   model?: readonly Message[];
 }>;
 /** The Pi conversation of a Buzz thread or channel. */
-export type Conversation = Readonly<{
+type Conversation = Readonly<{
   conversation: number;
   channelId: string;
   root?: string;
 }>;
 export type PiTranscript = Transcript & { more: boolean };
-type Request = <T>(
-  method: string,
-  params: Readonly<Record<string, unknown>>,
-) => Promise<T>;
 
 const text = (content: Message["content"]) =>
   typeof content === "string"
@@ -72,11 +67,11 @@ const text = (content: Message["content"]) =>
         .join("\n");
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 /** Whether an entry is a prompt that opens a turn, not a steer into one. */
-const opens = ({ kind, model }: PiEntry) =>
-  kind === "pi.user" &&
-  !promptSections(text(model?.[0]?.content)).some(
-    (section) => section.tag === STEER,
-  );
+const opens = ({ id, kind, model }: PiEntry) => {
+  if (kind !== "pi.user") return false;
+  const item = prompt(String(id), 0, text(model?.[0]?.content));
+  return !(item.type === "prompt" && item.steer);
+};
 
 /** Entries, oldest first, as turns, each opened by a prompt. */
 export function piTurns(
@@ -144,9 +139,11 @@ export function piTurns(
       }
       if (message.model && !current.config.includes(message.model))
         current.config.push(message.model);
+      // Pi keeps each failed attempt it retried: only the last one counts.
       if (message.stopReason === "error")
         current.error = message.errorMessage || "The model did not answer";
-      else if (message.stopReason === "aborted") current.stopReason = "stopped";
+      else delete current.error;
+      if (message.stopReason === "aborted") current.stopReason = "stopped";
       (typeof message.content === "string"
         ? []
         : (message.content ?? [])
@@ -213,7 +210,7 @@ export function piTurns(
 /** The conversation's latest turns, read newest first until there are
  * enough of them. */
 export async function readTranscript(
-  request: Request,
+  pi: Pick<Pi, "request">,
   agent: string,
   conversation: Conversation,
   working: boolean,
@@ -223,7 +220,7 @@ export async function readTranscript(
   let turns = 0;
   let cursor: unknown;
   do {
-    const page = await request<{ entries: PiEntry[]; next?: unknown }>(
+    const page = await pi.request<{ entries: PiEntry[]; next?: unknown }>(
       "entries",
       {
         agent,

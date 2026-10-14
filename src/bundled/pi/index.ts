@@ -24,9 +24,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new PiRuntime(host, (pubkey) =>
     ownerReads(agents.relay(pubkey), pubkey),
   );
-  const { Create, CreateModelMenu, createModelLabel, SettingsTab } = createTabs(
-    { setup: runtime.setup, runtime },
-  );
+  const {
+    ActivityTab,
+    Create,
+    CreateModelMenu,
+    createModelLabel,
+    SettingsTab,
+  } = createTabs({ setup: runtime.setup, runtime });
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -73,6 +77,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         component: SettingsTab,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
       },
     ],
     models: (agent) => runtime.models(agent),

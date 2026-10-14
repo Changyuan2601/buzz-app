@@ -192,8 +192,9 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
     context: { channel, root: root.id },
     request: mention.id,
     provider: "",
-    model: "claude-x",
-    thinking: "high",
+    model: "",
+    // The owner's pick, apart, so a steer changes only what it names.
+    pick: { model: "claude-x", thinking: "high" },
     cwd: "~/.buzz",
   });
   const text = String(delivered?.params.text);
@@ -329,6 +330,46 @@ it("posts the answer of a turn that did not send, once for every request it answ
         ["e", root.id, "", "reply"],
       ],
     },
+  ]);
+});
+
+it("posts a run's answer for a request it took after a send", async () => {
+  const answered = deferred();
+  const { host, deliver, settled, published } = setup({
+    wait: async () => {
+      await answered.promise;
+      return { status: "done", answer: 5, text: "The build is green." };
+    },
+  });
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run;
+  const steer = reply("3", "@Pi also");
+  const second = deliver({ type: "mention", event: steer });
+  await vi.waitFor(() => expect(second.workingUntil).toHaveBeenCalled());
+  // The run sends for the first request, then takes the second.
+  await host.processes[0]?.tool({
+    agent: self,
+    conversation: CONVERSATION,
+    context: { channel, root: root.id },
+    name: "send",
+    arguments: { text: "On it", audience: "everyone" },
+  });
+  host.processes[0]?.send({
+    method: "event",
+    params: {
+      agent: self,
+      conversation: CONVERSATION,
+      type: "placed",
+      request: steer.id,
+    },
+  });
+  await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalled());
+  answered.resolve();
+  await expect(settled(first)).resolves.toEqual({ ok: true });
+  await expect(settled(second)).resolves.toEqual({ ok: true });
+  expect(published.map((event) => event.content)).toEqual([
+    "On it",
+    "The build is green.",
   ]);
 });
 

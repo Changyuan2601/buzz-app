@@ -98,6 +98,14 @@ out.stopped = await stopped;
 pi = start();
 await pi.rpc("open", { agent, tools });
 out.resumed = await pi.rpc("wait", { agent, submission: d1.submission });
+// A run that fails leaves no request it was steered with waiting for the next.
+const e = held();
+faux.setResponses([async () => { await e.gate; return fauxAssistantMessage("", { stopReason: "error", errorMessage: "400 Bad model" }); }]);
+const e1 = await pi.rpc("deliver", turn("E1", "sixth"));
+await started(pi.events, "E1");
+const e2 = await pi.rpc("deliver", turn("E2", "seventh"));
+e.release();
+out.e = await Promise.all([e1, e2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
 out.place = await pi.rpc("place", { agent, key: "chan/root" });
 await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
@@ -177,6 +185,12 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       status: "done",
       text: "Resumed answer",
     });
+    const [failed, withdrawn] = out.e;
+    expect(failed).toMatchObject({
+      status: "unanswered",
+      detail: expect.stringContaining("400 Bad model"),
+    });
+    expect(withdrawn).toEqual(failed);
     expect(out.place).toEqual({ seen: 100 });
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });

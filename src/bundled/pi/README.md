@@ -46,10 +46,11 @@ installs work.
 6. Quit Buzz during a long turn, start it again, and mention the agent in that
    thread. Pi continues the interrupted run from its storage, and the new
    mention steers it.
-7. Open the agent from that thread, then **Settings → Runtime diagnostics**.
-   **This thread** is its Pi conversation, with the agent's other recent ones
-   below. **View transcript** shows each turn's prompt, thinking, tool calls
-   with their output, and what it sent, read from Pi's storage.
+7. Choose **View activity** on one of its messages in that thread, or open the
+   agent's **Activity** tab from there. **This thread** is its Pi conversation,
+   with the agent's other recent ones below. **View transcript** shows each
+   turn's prompt, thinking, tool calls with their output, and what it sent,
+   read from Pi's storage.
 
 The composer's model picker offers the agent's provider's models, and each
 model's thinking levels, for one turn.
@@ -107,7 +108,7 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 - A Buzz tool call that a stop cuts off runs again when the run continues, so a
   `send` may be posted twice.
 - Pi's storage keeps every conversation, including each one-off watch or timer
-  turn; nothing prunes it. Runtime diagnostics lists thread and channel
+  turn; nothing prunes it. The Activity tab lists thread and channel
   conversations only, and rereads an open transcript when its turn ends, not
   as it streams.
 - A host that stops while a turn waits is started again once and waits for it

@@ -20,7 +20,7 @@ it("starts the host once, with the install script, and pairs each answer with it
   const [process] = host.processes;
   expect(process?.id).toBe("pi-sh");
   expect(process?.options.cwd).toBe("~");
-  expect(process?.options.args?.slice(1, 3)).toEqual(["pi.sh", "run"]);
+  expect(process?.options.args?.[1]).toBe("pi.sh");
   // The packages it installs are the ones the lock pins.
   expect(process?.options.args?.at(-1)).toContain('"lockfileVersion"');
 });

@@ -325,27 +325,68 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
   expect(use).not.toHaveAttribute("aria-disabled", "true");
 });
 
-it("lists Pi's conversations under Runtime diagnostics, and shows a transcript", async () => {
-  const runtime = fakeRuntime();
-  const { SettingsTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+const AGENT = {
+  pubkey: "c".repeat(64),
+  name: "pii",
+  type: "buzz.pi/pi",
+  owner: "a".repeat(64),
+  config: DEFAULT_CONFIG,
+} as Agent<Config>;
+
+it("keeps Try again's providers for what the dialog's Use allows", async () => {
+  const fail: Record<string, string> = { providers: "Pi stopped" };
+  created(fakePi(fail, { provider: "databricks", model: "databricks-x" }));
+  const dialog = await openChoices();
+  expect(await within(dialog).findByText("Pi stopped")).toBeVisible();
+  delete fail.providers;
+  await userEvent
+    .setup()
+    .click(within(dialog).getByRole("button", { name: "Try again" }));
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("combobox", { name: "Model provider" }),
+    ).toHaveAccessibleDescription(/databricks isn't one/),
+  );
+  expect(within(dialog).getByRole("button", { name: "Use" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
+it("saves a key on Enter without saving the agent's settings", async () => {
+  const pi = fakePi();
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(pi),
+    runtime: fakeRuntime(),
+  });
   const save = vi.fn();
+  render(<SettingsTab agent={AGENT} save={save} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Model provider" }),
+    ).toBeEnabled(),
+  );
+  await choose("Model provider", "OpenAI");
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText("API key"), "sk-test{Enter}");
+  expect(await screen.findByText("OpenAI is set up in Pi.")).toBeVisible();
+  expect(pi.calls).toHaveBeenCalledWith("login", {
+    provider: "openai",
+    key: "sk-test",
+  });
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("lists Pi's conversations in the Activity tab, and shows a transcript", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
   render(
-    <SettingsTab
-      agent={
-        {
-          pubkey: "c".repeat(64),
-          name: "pii",
-          type: "buzz.pi/pi",
-          owner: "a".repeat(64),
-          config: DEFAULT_CONFIG,
-        } as Agent<Config>
-      }
-      save={save}
+    <ActivityTab
+      agent={AGENT}
       conversation={{ channelId: "chan", rootId: "root" }}
     />,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByText("Runtime diagnostics"));
   const here = await screen.findByRole("region", { name: "This thread" });
   expect(here).toHaveTextContent("#general");
   expect(here).toHaveTextContent("Working");
@@ -371,5 +412,4 @@ it("lists Pi's conversations under Runtime diagnostics, and shows a transcript",
     }),
   );
   expect(await screen.findByText("Hello from other")).toBeVisible();
-  expect(save).not.toHaveBeenCalled();
 });

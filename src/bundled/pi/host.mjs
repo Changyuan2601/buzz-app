@@ -111,23 +111,21 @@ export class AuthFile {
     });
   }
   /** As in `pi`: `!command` runs it for the key, and `$NAME` or `${NAME}`
-   * reads it from the environment. */
+   * reads it from the environment. A command that gave no key, such as one
+   * for a locked password manager, runs again next time. */
   resolve(key) {
     if (key.startsWith("!")) {
-      if (!this.commands.has(key))
-        try {
-          this.commands.set(
-            key,
-            execSync(key.slice(1), {
-              encoding: "utf8",
-              timeout: 10_000,
-              stdio: ["ignore", "pipe", "ignore"],
-            }).trim() || undefined,
-          );
-        } catch {
-          this.commands.set(key, undefined);
-        }
-      return this.commands.get(key);
+      if (this.commands.has(key)) return this.commands.get(key);
+      let value;
+      try {
+        value = execSync(key.slice(1), {
+          encoding: "utf8",
+          timeout: 10_000,
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch {}
+      if (value) this.commands.set(key, value);
+      return value || undefined;
     }
     const name = /^\$(?:\{(\w+)\}|(\w+))$/.exec(key);
     return name ? process.env[name[1] ?? name[2]] : key;
@@ -232,12 +230,15 @@ export function serve({
       write({ id, method, params });
     });
 
-  /** The model a turn runs on: the agent's, or else Pi's default. */
-  async function choose({ provider, model, thinking }) {
+  /** The model a turn runs on: the owner's pick, the agent's, or else Pi's
+   * default. */
+  async function choose({ provider, model, pick = {} }) {
     const defaults = await piDefaults(dir);
     const id = provider || defaults.provider;
     const modelId =
-      model || (id === defaults.provider ? defaults.model : undefined);
+      pick.model ||
+      model ||
+      (id === defaults.provider ? defaults.model : undefined);
     if (id && !models.getProvider(id)) throw new Error(notBuiltIn(id));
     if (!id || !modelId)
       throw new Error(
@@ -246,10 +247,11 @@ export function serve({
     const found = models.getModel(id, modelId);
     if (!found) throw new Error(`Pi has no model ${modelId} from ${id}`);
     return {
+      found,
       model: { provider: id, modelId },
       thinkingLevel: clampThinkingLevel(
         found,
-        thinking || defaults.thinking || THINKING,
+        pick.thinking || defaults.thinking || THINKING,
       ),
     };
   }
@@ -299,6 +301,8 @@ export function serve({
         watched: new Map(),
         /** Deliveries to each conversation key, one after another. */
         queues: new Map(),
+        /** Why each request withdrawn with a failed run is unanswered. */
+        failed: new Map(),
         closing: false,
       };
       const places = (await harness.snapshot(Places, context)) ?? {};
@@ -373,14 +377,13 @@ export function serve({
   /** Watches a conversation for its steps, whether it is working, and when
    * each request joins its run. */
   async function watch(opened, conversation) {
-    let watched = opened.watched.get(conversation);
+    const watched = opened.watched.get(conversation);
     if (watched) return watched;
     const stream = await watchEvents(opened.harness, conversation, context);
-    watched = { busy: Boolean(stream.snapshot.run), stream };
-    opened.watched.set(conversation, watched);
+    const state = { busy: Boolean(stream.snapshot.run), stream };
+    opened.watched.set(conversation, state);
     const send = (event) =>
       notify("event", { agent: opened.agent, conversation, ...event });
-    const state = watched;
     stream.start(async (events) => {
       for (const event of events)
         if (event.type === "run_start") state.busy = true;
@@ -406,7 +409,7 @@ export function serve({
             else if (change.type === "text_start")
               send({ type: "step", tool: "Writing reply" });
     });
-    return watched;
+    return state;
   }
 
   async function settle(opened, id) {
@@ -419,12 +422,17 @@ export function serve({
       if (opened.closing) return { status: "closed" };
       throw error;
     }
-    if (record.status !== "done")
-      return {
+    if (record.status !== "done") {
+      const failed = opened.failed.get(id) ?? {
         status: "unanswered",
         reason: record.reason,
         ...(record.detail ? { detail: String(record.detail) } : {}),
       };
+      opened.failed.delete(id);
+      if (record.reason !== "aborted")
+        await withdraw(opened, record.conversationId, failed);
+      return failed;
+    }
     const entry = await opened.harness.commit(
       (tx) => tx.entry(AssistantEntry, record.answer),
       context,
@@ -436,21 +444,47 @@ export function serve({
     };
   }
 
-  /** Starts a request in a conversation configured for this turn. */
+  /** A failed run leaves what was queued for it waiting for a later request:
+   * it is withdrawn instead, unanswered for the same reason. */
+  async function withdraw(opened, conversation, failed) {
+    const { submissions } = await opened.harness.inspect(context);
+    for (const { id, status, conversationId } of submissions) {
+      if (status !== "queued" || conversationId !== conversation) continue;
+      opened.failed.set(id, failed);
+      const result = await opened.harness.abortSubmission(
+        id,
+        context,
+        conversation,
+      );
+      if (result !== "aborted") opened.failed.delete(id);
+    }
+  }
+
+  /** Starts a request in a conversation configured for this turn. One that
+   * steers a working run changes only what its owner picked, as in Claude. */
   async function submit(opened, conversation, turn) {
-    await conversation.configure(
-      {
-        ...(await choose(turn)),
-        instructions: turn.instructions,
-        cwd: turn.cwd.replace(/^~(?=$|\/)/, homedir()),
-      },
-      context,
-    );
     const watched = await watch(opened, conversation.id);
+    const steers = watched.busy && turn.steer;
+    const chosen = await choose(turn);
+    const change = steers
+      ? {
+          ...(turn.pick?.model ? { model: chosen.model } : {}),
+          ...(turn.pick?.thinking
+            ? { thinkingLevel: chosen.thinkingLevel }
+            : {}),
+        }
+      : {
+          model: chosen.model,
+          thinkingLevel: chosen.thinkingLevel,
+          instructions: turn.instructions,
+          cwd: turn.cwd.replace(/^~(?=$|\/)/, homedir()),
+        };
+    if (Object.keys(change).length)
+      await conversation.configure(change, context);
     const submission = await conversation.submit(
       {
         type: "input",
-        content: watched.busy && turn.steer ? turn.steer : turn.text,
+        content: steers ? turn.steer : turn.text,
         whenBusy: "steer",
         requestId: turn.request,
       },
@@ -501,13 +535,12 @@ export function serve({
           );
         },
       });
-      return {};
     },
     /** Asks the model for one short reply. */
     async test(turn) {
-      const { model } = await choose(turn);
+      const { found, model } = await choose(turn);
       const reply = await models.completeSimple(
-        models.getModel(model.provider, model.modelId),
+        found,
         {
           messages: [
             { role: "user", content: "Reply with OK.", timestamp: Date.now() },
@@ -534,7 +567,6 @@ export function serve({
         opened.registry.install(buzz(opened, tools));
         opened.tools = listed;
       }
-      return {};
     },
     /** The agent's Buzz conversations: each key's Pi conversation, and the
      * newest message it has been shown. Storage opened only to be read runs
@@ -630,7 +662,6 @@ export function serve({
     async abort({ agent, conversation }) {
       const { harness } = await agentOf(agent);
       await (await harness.conversation(conversation, context))?.abort(context);
-      return {};
     },
     /** Closes the agent's storage. Unfinished runs stay, and continue when it
      * opens again. */
@@ -638,7 +669,6 @@ export function serve({
       const opening = agents.get(agent);
       agents.delete(agent);
       await shut(await opening?.catch(() => undefined));
-      return {};
     },
   };
 

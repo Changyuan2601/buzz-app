@@ -35,7 +35,7 @@ import {
   config as readConfig,
 } from "./runtime";
 import type { PiModel, PiSetup, Provider, Providers, Tested } from "./setup";
-import { type PiTranscript, TURN_LIMIT } from "./transcript";
+import { TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -59,27 +59,29 @@ type Read<T> =
   | { status: "ready"; value: T }
   | { status: "error"; error: string; value?: T };
 
-/** `read()` as it settles, read again when `key` changes or on `retry`. A
- * value already shown stays while it is read again. */
-function useRead<T>(read: () => Promise<T>, key: string) {
+/** `read()` as it settles, read again when `key` changes or on `retry`, which
+ * abort the one before. A value already shown stays while it is read again. */
+function useRead<T>(read: (signal: AbortSignal) => Promise<T>, key: string) {
   const [state, setState] = useState<Read<T>>({ status: "loading" });
   const [round, setRound] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
-    let current = true;
+    const abort = new AbortController();
     setState((prior) =>
       prior.value === undefined
         ? { status: "loading" }
         : { status: "loading", value: prior.value },
     );
-    read().then(
-      (value) => current && setState({ status: "ready", value }),
-      (error: unknown) =>
-        current && setState({ status: "error", error: message(error) }),
+    read(abort.signal).then(
+      (value) => {
+        if (!abort.signal.aborted) setState({ status: "ready", value });
+      },
+      (error: unknown) => {
+        if (!abort.signal.aborted)
+          setState({ status: "error", error: message(error) });
+      },
     );
-    return () => {
-      current = false;
-    };
+    return () => abort.abort();
   }, [key, round]);
   return [state, () => setRound((value) => value + 1)] as const;
 }
@@ -125,17 +127,19 @@ export function createTabs({
   setup: PiSetup;
   runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
 }>) {
-  /** The provider, its key and its model, and a test that they answer. */
+  /** The provider, its key and its model, and a test that they answer.
+   * `listing` is the surface's own read, so what it gates agrees with this. */
   function ProviderFields({
     value,
     onChange,
-    disabled = false,
+    listing,
+    reload,
   }: Readonly<{
     value: Choice;
     onChange(value: Choice): void;
-    disabled?: boolean;
+    listing: Read<Providers>;
+    reload(): void;
   }>) {
-    const [listing, reload] = useRead(() => setup.providers(), "providers");
     const providers = listing.value;
     const fallback = providers?.defaults.provider;
     const id = value.provider || fallback || "";
@@ -162,7 +166,7 @@ export function createTabs({
           label="Model provider"
           variant="field"
           value={value.provider}
-          disabled={disabled || !providers}
+          disabled={!providers}
           {...(listing.status === "error"
             ? { error: listing.error }
             : unknown
@@ -203,12 +207,7 @@ export function createTabs({
           </div>
         )}
         {provider && (
-          <ProviderKey
-            key={provider.id}
-            provider={provider}
-            disabled={disabled}
-            onSaved={reload}
-          />
+          <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
         )}
         <ModelPicker
           allowCustomModel={false}
@@ -225,14 +224,12 @@ export function createTabs({
                   description: `Pi's settings name no model for ${named(id)}. Choose one.`,
                 }
               : {})}
-          disabled={disabled || Boolean(unknown)}
+          disabled={Boolean(unknown)}
           onChange={(model) => onChange({ ...value, model })}
         />
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            disabled={
-              disabled || unusable(value, providers) || tested === "testing"
-            }
+            disabled={unusable(value, providers) || tested === "testing"}
             loading={tested === "testing"}
             onClick={async () => {
               setResult({ choice, tested: "testing" });
@@ -266,13 +263,26 @@ export function createTabs({
    * a key is set up with the `pi` command. */
   function ProviderKey({
     provider,
-    disabled,
     onSaved,
-  }: Readonly<{ provider: Provider; disabled: boolean; onSaved(): void }>) {
+  }: Readonly<{ provider: Provider; onSaved(): void }>) {
     const [key, setKey] = useState("");
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const [changing, setChanging] = useState(false);
+    const saveKey = async () => {
+      setSaving(true);
+      setError("");
+      try {
+        await setup.login(provider.id, key.trim());
+        setKey("");
+        setChanging(false);
+        onSaved();
+      } catch (reason) {
+        setError(message(reason));
+      } finally {
+        setSaving(false);
+      }
+    };
     if (provider.configured && (!provider.key || !changing))
       return (
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -280,9 +290,7 @@ export function createTabs({
             {provider.name} is set up in Pi.
           </p>
           {provider.key && (
-            <Button disabled={disabled} onClick={() => setChanging(true)}>
-              Change
-            </Button>
+            <Button onClick={() => setChanging(true)}>Change</Button>
           )}
         </div>
       );
@@ -303,29 +311,19 @@ export function createTabs({
             type="password"
             autoComplete="off"
             value={key}
-            disabled={disabled || saving}
+            disabled={saving}
             onValueChange={setKey}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing)
+                return;
+              // The key's own save, not the settings form's.
+              event.preventDefault();
+              if (key.trim()) void saveKey();
+            }}
           />
         </Field>
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            disabled={disabled || !key.trim()}
-            loading={saving}
-            onClick={async () => {
-              setSaving(true);
-              setError("");
-              try {
-                await setup.login(provider.id, key.trim());
-                setKey("");
-                setChanging(false);
-                onSaved();
-              } catch (reason) {
-                setError(message(reason));
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
+          <Button disabled={!key.trim()} loading={saving} onClick={saveKey}>
             Save to Pi
           </Button>
           {error && (
@@ -395,7 +393,7 @@ export function createTabs({
       provider: value.provider,
       model: value.model,
     });
-    const [listing] = useRead(() => setup.providers(), "providers");
+    const [listing, reload] = useRead(() => setup.providers(), "providers");
     return (
       <Dialog
         open
@@ -420,7 +418,12 @@ export function createTabs({
         }
       >
         <div className="grid gap-4">
-          <ProviderFields value={draft} onChange={setDraft} />
+          <ProviderFields
+            value={draft}
+            onChange={setDraft}
+            listing={listing}
+            reload={reload}
+          />
         </div>
       </Dialog>
     );
@@ -510,57 +513,37 @@ export function createTabs({
     place: Place;
     working: boolean;
   }) {
-    const [read, setRead] = useState<
-      | { status: "ready"; transcript: PiTranscript }
-      | { status: "error"; error: string }
-    >();
-    const [loading, setLoading] = useState(true);
-    const [attempt, setAttempt] = useState(0);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
-    useEffect(() => {
-      const abort = new AbortController();
-      setLoading(true);
-      void runtime
-        .transcript(agent.pubkey, place, working, abort.signal)
-        .then(
-          (transcript) => ({ status: "ready", transcript }) as const,
-          (reason: unknown) =>
-            ({ status: "error", error: message(reason) }) as const,
-        )
-        .then((next) => {
-          if (abort.signal.aborted) return;
-          setRead(next);
-          setLoading(false);
-        });
-      return () => abort.abort();
-    }, [agent.pubkey, place, working, attempt]);
+    const [read, refresh] = useRead(
+      (signal) => runtime.transcript(agent.pubkey, place, working, signal),
+      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
+    );
     return (
       <div className="grid gap-4">
         <div>
           <Button
             type="button"
             variant="ghost"
-            loading={loading}
-            onClick={() => setAttempt((value) => value + 1)}
+            loading={read.status === "loading"}
+            onClick={refresh}
           >
             Refresh
           </Button>
         </div>
-        {!read ? (
-          <p role="status" className="m-0">
-            Reading the Pi conversation…
-          </p>
-        ) : read.status === "error" ? (
+        {read.status === "error" ? (
           <p role="alert" className="m-0">
             Could not read the Pi conversation: {read.error}
           </p>
+        ) : !read.value ? (
+          <p role="status" className="m-0">
+            Reading the Pi conversation…
+          </p>
         ) : (
           <ActivityTranscript
-            transcript={read.transcript}
+            transcript={read.value}
             agentName={agent.name}
             state={() => (working ? "working" : undefined)}
             before={
-              read.transcript.more && (
+              read.value.more && (
                 <p className="m-0 text-body-sm text-subtle">
                   Showing the latest {TURN_LIMIT} turns.
                 </p>
@@ -575,7 +558,7 @@ export function createTabs({
   /** The Pi conversation of the place the profile was opened from, and the
    * agent's other recent ones, each with its transcript. Pi's storage is
    * shared by every Buzz build here, so the list is the whole history. */
-  function Conversations({
+  function ActivityTab({
     agent,
     conversation,
   }: {
@@ -702,17 +685,12 @@ export function createTabs({
     );
   }
 
-  function SettingsTab({
-    agent,
-    save,
-    settingsHost,
-    conversation,
-  }: AgentViewProps<Config>) {
+  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
-    const [listing] = useRead(() => setup.providers(), "providers");
+    const [listing, reload] = useRead(() => setup.providers(), "providers");
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -741,6 +719,8 @@ export function createTabs({
         <ProviderFields
           value={draft}
           onChange={(choice) => setDraft({ ...draft, ...choice })}
+          listing={listing}
+          reload={reload}
         />
         <Field
           label="Workspace"
@@ -785,15 +765,15 @@ export function createTabs({
             Save
           </Button>
         </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
       </form>
     );
   }
 
-  return { Create, CreateModelMenu, createModelLabel, SettingsTab };
+  return {
+    ActivityTab,
+    Create,
+    CreateModelMenu,
+    createModelLabel,
+    SettingsTab,
+  };
 }

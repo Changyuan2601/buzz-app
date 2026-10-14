@@ -33,6 +33,8 @@ import {
   turnPrompt,
   watchPrompt,
 } from "../claude-code/prompt";
+import { effortLabel } from "../claude-code/runtime";
+import { ONCE_DEADLINE_MS } from "../claude-code/sessions";
 import {
   Pi,
   type PiEvent,
@@ -66,24 +68,17 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-/** Pi's thinking levels, for the owner's pick of a turn's effort. */
-export const THINKING: Readonly<Record<string, string>> = {
-  off: "Off",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
-};
-
 const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
-/** A watch or timer turn is stopped after this long, so its lane frees. */
-export const ONCE_DEADLINE_MS = 5 * 60_000;
 const CHAT = [9, 40002];
 
 type Settled = { ok: boolean; error?: string };
+/** Where a mention's turn replies: its thread, or the top of a Me chat. */
+type Where = Readonly<{ channel: string; root: string; topLevel: boolean }>;
+const replyTags = ({ channel, root, topLevel }: Where) => [
+  ["h", channel],
+  ...(topLevel ? [] : [["e", root, "", "reply"]]),
+];
 /** A Buzz thread or channel the agent has a Pi conversation for. */
 export type Place = Readonly<{
   key: string;
@@ -103,6 +98,8 @@ type Waited =
 type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   /** Where its activity shows: a thread, or a Me chat's channel. */
   scope: string;
+  /** Its conversation's `send` calls when Pi placed it in a run. */
+  sends?: number;
 };
 
 type Entry = {
@@ -143,7 +140,7 @@ export class PiRuntime {
   private readonly views = new Map<string, readonly number[]>();
 
   /** The Pi host every agent of this type runs in, started when needed. */
-  readonly pi: Pi;
+  private readonly pi: Pi;
   readonly setup: PiSetup;
 
   constructor(
@@ -195,7 +192,7 @@ export class PiRuntime {
       models: listed.map((item) => ({
         id: item.id,
         label: item.label,
-        efforts: item.thinking.map((id) => ({ id, label: THINKING[id] ?? id })),
+        efforts: item.thinking.map((id) => ({ id, label: effortLabel(id) })),
         ...(item.thinking.includes(level) ? { effort: level } : {}),
       })),
     };
@@ -236,13 +233,7 @@ export class PiRuntime {
     working: boolean,
     signal: AbortSignal,
   ) {
-    return readTranscript(
-      (method, params) => this.pi.request(method, params),
-      pubkey,
-      place,
-      working,
-      signal,
-    );
+    return readTranscript(this.pi, pubkey, place, working, signal);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -372,20 +363,23 @@ export class PiRuntime {
       });
       sends = entry.sends.get(submitted.conversation) ?? 0;
     })();
-    const done = handed.then(
-      async (): Promise<Settled> => {
+    const where = { channel, root, topLevel };
+    const settled = handed
+      .then(async (): Promise<Settled> => {
         const waited = await this.settle(
           entry,
           agent.pubkey,
           submitted.submission,
         );
         if (waited.status === "done") {
+          // Sends before Pi placed the request, in a run it joined, were not
+          // its answer.
           await this.answer(
             entry,
             agent,
-            { channel, root, topLevel },
+            where,
             submitted.conversation,
-            sends,
+            entry.receipts.get(request)?.sends ?? sends,
             waited,
           );
           return { ok: true };
@@ -393,10 +387,7 @@ export class PiRuntime {
         return waited.status === "closed"
           ? { ok: true }
           : { ok: false, error: unanswered(waited) };
-      },
-      (error: unknown): Settled => ({ ok: false, error: message(error) }),
-    );
-    const settled = done
+      })
       .catch(
         (error: unknown): Settled => ({ ok: false, error: message(error) }),
       )
@@ -418,12 +409,11 @@ export class PiRuntime {
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
-    if (!wait) await handed.catch(() => undefined);
+    if (!wait) await policy.handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(settled);
     void settled.then(async (result) => {
-      if (!result.ok)
-        await this.report(agent, channel, root, result.error ?? "", topLevel);
+      if (!result.ok) await this.report(agent, where, result.error ?? "");
     });
   }
 
@@ -481,6 +471,7 @@ export class PiRuntime {
       const before = active.get(receipt.scope);
       if (before !== receipt) before?.superseded?.();
       active.set(receipt.scope, receipt);
+      receipt.sends ??= entry.sends.get(event.conversation) ?? 0;
       receipt.acknowledged?.();
       this.notify();
     } else
@@ -542,8 +533,9 @@ export class PiRuntime {
     const memory = await this.core(pubkey);
     return {
       provider,
-      model: pick.model ?? model,
-      ...(pick.effort ? { thinking: pick.effort } : {}),
+      model,
+      // Apart, so a request that steers a working run changes only these.
+      pick: { model: pick.model, thinking: pick.effort },
       cwd: workspace,
       instructions: systemPrompt({
         scope,
@@ -562,7 +554,7 @@ export class PiRuntime {
   private async answer(
     entry: Entry,
     agent: AgentHandle,
-    where: Readonly<{ channel: string; root: string; topLevel: boolean }>,
+    where: Where,
     conversation: number,
     sends: number,
     waited: Extract<Waited, { status: "done" }>,
@@ -577,10 +569,7 @@ export class PiRuntime {
     await agent.publish({
       kind: 9,
       content: waited.text,
-      tags: [
-        ["h", where.channel],
-        ...(where.topLevel ? [] : [["e", where.root, "", "reply"]]),
-      ],
+      tags: replyTags(where),
     });
   }
 
@@ -706,22 +695,12 @@ export class PiRuntime {
   /** Says in the thread that a turn failed, so nobody waits on it. Tells the
    * owner even when a sibling asked, as Claude does: tagging the sibling would
    * wake it, and two agents failing alike would wake each other without end. */
-  private report(
-    agent: AgentHandle,
-    channel: string,
-    root: string,
-    error: string,
-    topLevel: boolean,
-  ) {
+  private report(agent: AgentHandle, where: Where, error: string) {
     return agent
       .publish({
         kind: 9,
         content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
-        tags: [
-          ["h", channel],
-          ...(topLevel ? [] : [["e", root, "", "reply"]]),
-          ["p", agent.owner],
-        ],
+        tags: [...replyTags(where), ["p", agent.owner]],
       })
       .catch((failure) =>
         console.warn("Pi could not report a failed turn", failure),

@@ -12,10 +12,7 @@ import packageLock from "./deps/package-lock.json?raw";
 import host from "./host.mjs?raw";
 import script from "./pi.sh?raw";
 
-export type Spawn = (
-  id: string,
-  options?: HostProcessOptions,
-) => Promise<HostProcess>;
+type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
 export type ToolCall = Readonly<{
   agent: string;
@@ -38,7 +35,7 @@ export type PiEvent = Readonly<
     | { type: "step"; tool: string; target?: string }
   )
 >;
-export type Handlers = Readonly<{
+type Handlers = Readonly<{
   tool(call: ToolCall): Promise<ToolResult>;
   event(event: PiEvent): void;
 }>;
@@ -70,8 +67,6 @@ type Connection = {
 
 export class Pi {
   private connection: Promise<Connection> | undefined;
-  /** The process running now, until it exits. */
-  private live: Connection | undefined;
   private requests = 0;
   private stopped = false;
 
@@ -152,7 +147,7 @@ export class Pi {
       }
     };
     connection.process = await this.spawn()("pi-sh", {
-      args: [script, "pi.sh", "run", host, packageJson, packageLock],
+      args: [script, "pi.sh", host, packageJson, packageLock],
       cwd: "~",
       onStdout: (data) => {
         buffer += data;
@@ -173,7 +168,6 @@ export class Pi {
         stderr = (stderr + data).slice(-TAIL);
       },
     });
-    this.live = connection;
     void connection.process.exited.then((code) => {
       // Before it is ready, its last words are why it could not start, such
       // as Node missing.
@@ -186,10 +180,7 @@ export class Pi {
         call.reject(connection.gone);
       connection.calls.clear();
       // The next request starts another.
-      if (this.live === connection) {
-        this.live = undefined;
-        this.connection = undefined;
-      }
+      this.connection = undefined;
       ready();
     });
     await started;

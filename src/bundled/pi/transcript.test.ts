@@ -152,6 +152,20 @@ it("ends each turn at the next prompt, and keeps a working one open", () => {
   ]);
 });
 
+it("counts only the last attempt of a turn Pi retried", () => {
+  const [turn] = piTurns(
+    [
+      user(1, event("first")),
+      assistant(2, [], { stopReason: "error", errorMessage: "Overloaded" }),
+      assistant(3, [{ type: "text", text: "Done" }], { stopReason: "stop" }),
+    ],
+    PLACE,
+    false,
+  );
+  expect(turn?.endedAt).toBe(3);
+  expect(turn?.error).toBeUndefined();
+});
+
 it("reads pages, newest first, until one turn more than it shows", async () => {
   // Two entries a turn, a page of three entries at a time.
   const entries = Array.from({ length: (TURN_LIMIT + 5) * 2 }, (_, index) =>
@@ -169,7 +183,7 @@ it("reads pages, newest first, until one turn more than it shows", async () => {
     },
   );
   const read = await readTranscript(
-    request as never,
+    { request } as never,
     "agent",
     PLACE,
     false,
