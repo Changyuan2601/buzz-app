@@ -24,13 +24,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new PiRuntime(host, (pubkey) =>
     ownerReads(agents.relay(pubkey), pubkey),
   );
-  const {
-    ActivityTab,
-    Create,
-    CreateModelMenu,
-    createModelLabel,
-    SettingsTab,
-  } = createTabs({ setup: runtime.setup, runtime });
+  const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
+    setup: runtime.setup,
+    runtime,
+  });
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -53,8 +50,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
-    CreateModelMenu,
-    createModelLabel,
+    CreateModel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

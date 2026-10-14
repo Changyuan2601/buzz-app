@@ -22,13 +22,13 @@ Pi needs Node.js 22.19 or later on this computer (`node:sqlite`). The app's PATH
 is searched first, then a login shell's, so Homebrew, nvm, fnm and similar
 installs work.
 
-1. Turn on **Pi** in **Settings → Plugins**. Then open **Agents → New agent**,
-   choose **Pi** in the card's top corner, and in its menu pick **Pi default**
-   or **Choose provider and model…**. Pi's default is the `defaultProvider` and
-   `defaultModel` in `~/.pi/agent/settings.json`, as the `pi` command sets them. The first time Buzz asks Pi anything, it installs
-   Pi's packages (a few seconds).
-2. In **Choose provider and model…**, choose a provider. A provider Pi has no
-   key for shows an **API key** field; **Save to Pi** stores it in
+1. Turn on **Pi** in **Settings → Plugins**. Then open **Agents → New agent**
+   and choose **Pi** as the **Harness**. Its **Model** starts on **Pi default**:
+   the `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json`, as
+   the `pi` command sets them. The first time Buzz asks Pi anything, it
+   installs Pi's packages (a few seconds).
+2. Click **Provider…** beside the model and choose a provider. A provider Pi
+   has no key for shows an **API key** field; **Save to Pi** stores it in
    `~/.pi/agent/auth.json`, shared with the `pi` command. A provider that signs
    in some other way (OAuth, cloud credentials) says to run `pi`, then `/login`.
    Choose a model, click **Test connection**, then **Use**. Name the agent and
@@ -118,6 +118,6 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   with the `pi` command. Signing in from Buzz is not supported.
 - Only Pi's built-in providers run. One that a Pi package adds (`packages` in
   Pi's settings), such as databricks, is not loaded: the provider field, the
-  New agent menu and a turn's error say so, and Use and Save wait for another.
+  New agent Model field and a turn's error say so, and Use and Save wait for another.
 - Windows is unsupported. Linux, packaged-app behavior, and human acceptance need
   separate validation.

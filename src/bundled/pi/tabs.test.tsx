@@ -10,12 +10,6 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Button } from "../../shared/design-system/ui/Button";
-import {
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
 import type { Agent } from "../../features/agents/service";
 import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
@@ -146,7 +140,7 @@ function fakeRuntime() {
 }
 
 function created(pi = fakePi()) {
-  const { Create, CreateModelMenu } = createTabs({
+  const { Create, CreateModel } = createTabs({
     setup: new PiSetup(pi),
     runtime: fakeRuntime(),
   });
@@ -157,20 +151,11 @@ function created(pi = fakePi()) {
       changes.push(next);
       setConfig(next);
     };
+    // As New agent shows them: the Model row, then the type's own choices.
     return (
       <>
+        <CreateModel config={config} disabled={false} onChange={onChange} />
         <Create config={config} disabled={false} onChange={onChange} />
-        <MenuRoot>
-          <MenuTrigger render={<Button>Pi</Button>} />
-          <MenuPopup>
-            <CreateModelMenu
-              config={config}
-              disabled={false}
-              onChange={onChange}
-              requestCustomModel={() => {}}
-            />
-          </MenuPopup>
-        </MenuRoot>
       </>
     );
   }
@@ -184,25 +169,23 @@ async function choose(label: string, option: string) {
   await user.click(await screen.findByRole("option", { name: option }));
 }
 
-/** Opens the provider dialog from the type menu. */
+/** Opens the provider dialog from the Model field. */
 async function openChoices() {
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Pi" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: /Choose provider and model/ }),
-  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Provider…" }));
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
-it("keeps New agent's card to instructions; Pi's default leads the menu", async () => {
+it("starts New agent's Model field on Pi's default, with the provider kept to its dialog", async () => {
   created();
   expect(screen.queryByRole("combobox", { name: "Model provider" })).toBeNull();
-  await userEvent.setup().click(screen.getByRole("button", { name: "Pi" }));
-  expect(
-    await screen.findByRole("menuitemradio", {
-      name: /Pi default \(Anthropic · claude-x\)/,
-    }),
-  ).toHaveAttribute("aria-checked", "true");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Pi default (Anthropic · claude-x)",
+    ),
+  );
+  expect(screen.getByLabelText("Describe what I should do")).toBeVisible();
 });
 
 it("saves a provider's key with Pi's login, needs a model for it, and tests it", async () => {
@@ -249,16 +232,17 @@ it("saves a provider's key with Pi's login, needs a model for it, and tests it",
     model: "gpt-x",
   });
   // Nothing reaches the agent until the choice is used.
-  expect(changes.at(-1)).toMatchObject({ provider: "", model: "" });
+  expect(changes).toEqual([]);
   await user.click(use);
   expect(changes.at(-1)).toMatchObject({ provider: "openai", model: "gpt-x" });
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
-  await user.click(screen.getByRole("button", { name: "Pi" }));
-  expect(
-    await screen.findByRole("menuitemradio", { name: /OpenAI · gpt-x/ }),
-  ).toHaveAttribute("aria-checked", "true");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "GPT X",
+    ),
+  );
 });
 
 it("sends a provider that signs in without a key to the pi command", async () => {
@@ -299,12 +283,10 @@ it("says why Pi could not start, and tries again", async () => {
 
 it("says Buzz can't use a default provider that a Pi package adds", async () => {
   created(fakePi({}, { provider: "databricks", model: "databricks-x" }));
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Pi" }));
-  expect(
-    await screen.findByRole("menuitemradio", { name: /Pi default/ }),
-  ).toHaveTextContent("databricks isn't built into Pi, so Buzz can't use it");
-  await user.keyboard("{Escape}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "databricks isn't built into Pi, so Buzz can't use it",
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
   const dialog = await openChoices();
   const provider = within(dialog).getByRole("combobox", {
     name: "Model provider",
