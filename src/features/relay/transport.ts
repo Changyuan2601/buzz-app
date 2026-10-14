@@ -62,6 +62,10 @@ import {
 } from "./live";
 import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
+import {
+  INSTRUCTIONS_KIND,
+  UNKNOWN_KIND_REFUSAL,
+} from "../agents/instructions-envelope";
 import { httpReadError, ReadError } from "./errors";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import {
@@ -1217,6 +1221,9 @@ export async function connectSignedTransport(
             profiling,
             event.id,
             principal().api,
+            "foreground",
+            false,
+            event.kind === INSTRUCTIONS_KIND ? unknownKind : undefined,
           ).catch((error) => {
             if (error instanceof ApiPaused || error instanceof ApiNotSent)
               throw new PublishRejected(error.message);
@@ -1267,11 +1274,12 @@ async function signedPost(
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
   optionalPresence = false,
+  reason?: (body: unknown) => string | undefined,
 ) {
   const dispatch = (request: () => Promise<Response>) =>
     optionalPresence
       ? admission.prepare(request)
-      : admittedApiRequest(admission, request, signal, priority);
+      : admittedApiRequest(admission, request, signal, priority, reason);
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
@@ -1306,6 +1314,12 @@ export async function acceptReadStatePublish(response: Response, id: string) {
   return acceptPublish(response, id);
 }
 
+/** The one upstream reason an instructions write keeps (§3). */
+const unknownKind = (body: unknown) =>
+  (body as { error?: unknown } | null)?.error === UNKNOWN_KIND_REFUSAL
+    ? UNKNOWN_KIND_REFUSAL
+    : undefined;
+
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */
 export async function acceptPublish(response: Response, id: string) {
   if (!response.ok) {
@@ -1316,6 +1330,12 @@ export async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         "conflict: the relay state changed; reload before writing again",
       );
+    if (
+      response.status === 400 &&
+      (await readApiFailure(response.clone(), unknownKind)).error ===
+        UNKNOWN_KIND_REFUSAL
+    )
+      throw new PublishRejected(UNKNOWN_KIND_REFUSAL);
     if ([400, 401, 403, 404, 413, 422].includes(response.status))
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,

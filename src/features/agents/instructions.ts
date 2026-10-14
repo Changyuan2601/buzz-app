@@ -8,6 +8,7 @@ import {
   INSTRUCTIONS_KIND,
   instructionsDeletionTargets,
   instructionsSubject,
+  UNKNOWN_KIND_REFUSAL,
 } from "./instructions-envelope";
 
 /** NIP-AP agent instructions (kind 44300): the single owner of this device's
@@ -532,7 +533,7 @@ const newer = (a: EventData, b: EventData) =>
 
 /** The relay's answer when it does not accept a kind at all (§3). */
 const refusesKind = (state: SaveState) =>
-  state.state === "rejected" && state.reason.includes("unknown event kind");
+  state.state === "rejected" && state.reason.endsWith(UNKNOWN_KIND_REFUSAL);
 
 /** One binding's instructions sync: scan tokens, live merge, saves, recovery,
  * the Delete Agent sweep and the cleanup list. Dropped with its binding.
@@ -780,11 +781,11 @@ export class InstructionSync {
         ...this.subjects.keys(),
         ...this.ports.store.agents(this.ports.owner, this.ports.community),
       ])) {
-        if (!this.eligible(agent)) continue;
-        await this.install(agent, this.subject(agent).revision, token, scanId);
+        await this.installCurrent(agent, token, scanId);
       }
-      // Complete only once every subject's result is installed, so a fresh
-      // subject never resolves through the fallback while its decode is held.
+      // Complete only once every subject's current revision is installed, so
+      // a subject never resolves through the fallback while a decode is held.
+      // A failed decode throws and leaves the scan incomplete.
       if (!this.current(token)) return;
       this.ports.store.completeScan(
         this.ports.owner,
@@ -823,7 +824,7 @@ export class InstructionSync {
     } finally {
       this.reconciling.delete(since);
     }
-    await this.install(agent, s.revision, token);
+    await this.installCurrent(agent, token);
   }
 
   private applyDeletion(event: RelayEvent, live: boolean) {
@@ -843,20 +844,32 @@ export class InstructionSync {
       }
   }
 
-  /** Installs the newest undeleted version as head, decoding it first. */
+  /** Installs the subject's current revision, starting over whenever a newer
+   * revision supersedes the install in flight. True once a head is committed;
+   * false if the token or the agent's eligibility ends first. */
+  private async installCurrent(agent: string, token: Token, scanId?: number) {
+    while (this.current(token) && this.eligible(agent)) {
+      const s = this.subjects.get(agent) ?? this.subject(agent);
+      if (await this.install(agent, s.revision, token, scanId)) return true;
+    }
+    return false;
+  }
+
+  /** Installs the newest undeleted version as head, decoding it first. True
+   * only if it committed: a superseded or fenced install writes nothing. */
   private async install(
     agent: string,
     revision: number,
     token: Token,
     scanId?: number,
-  ) {
+  ): Promise<boolean> {
     const s = this.subjects.get(agent);
     const fresh = () =>
       this.current(token) &&
       this.eligible(agent) &&
       this.subjects.get(agent) === s &&
       s?.revision === revision;
-    if (!s || !fresh()) return;
+    if (!s || !fresh()) return false;
     const key = this.key(agent);
     let best: RelayEvent | undefined;
     for (const event of s.versions.values())
@@ -864,14 +877,14 @@ export class InstructionSync {
         best = event;
     if (best && !this.ports.store.decodedText(best.id)) {
       const [row] = await this.ports.codec.decode(agent, [best]);
-      if (!fresh()) return;
+      if (!fresh()) return false;
       if (row?.id === best.id)
         this.ports.store.remember(
           best.id,
           "text" in row ? { text: row.text } : { invalid: row.invalid },
         );
     }
-    if (!fresh()) return;
+    if (!fresh()) return false;
     const entry = this.ports.store.entry(key) ?? {
       head: { unknown: true } as const,
       migration: { state: "never" } as const,
@@ -895,6 +908,7 @@ export class InstructionSync {
         : submitted && { submitted }),
       ...(unsettled?.length && { originals: unsettled }),
     });
+    return true;
   }
 
   /** Delivery changed: a save the relay accepted is received like any version. */
@@ -1039,9 +1053,17 @@ export class InstructionSync {
         outbox.retry(item.event.id, () => this.alive && this.eligible(agent));
       else {
         const found = await this.find(item.event.id);
-        if (!found || (token && !this.current(token))) continue;
-        await this.receive([found], false);
-        await outbox.retire(item.event.id);
+        const live = token ?? this.token;
+        if (!found || !live || !this.current(live) || !this.eligible(agent))
+          continue;
+        // The signed save leaves the outbox only once it is installed and its
+        // submitted state resolved; a deferred, discarded or failed install
+        // keeps it for the next recovery.
+        const s = this.subject(agent);
+        if (this.learn(s, found))
+          this.ports.store.markHadVersion(this.key(agent));
+        if (await this.installCurrent(agent, live).catch(() => false))
+          await outbox.retire(item.event.id);
       }
     }
   }

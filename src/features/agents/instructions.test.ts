@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  assert,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { LiveSnapshot } from "../relay/live";
 import type { Outbox, OutgoingEvent, Settlement } from "../relay/outbox";
 import type { ReadFilter, RelayEvent } from "../relay/events";
@@ -24,6 +32,9 @@ import {
   INSTRUCTIONS_KIND,
 } from "./instructions-envelope";
 import { READ_RESPONSE_MAX_BYTES } from "../relay/reader";
+import { createOutbox } from "../relay/outbox";
+import { connectSignedTransport } from "../relay/transport";
+import { hostSigner, keypair } from "../relay/testing";
 
 const OWNER = "a".repeat(64);
 const OTHER = "b".repeat(64);
@@ -250,10 +261,12 @@ function harness({
   storage = memory(),
   relay = fakeRelay(),
   owner = OWNER,
+  outbox,
 }: {
   storage?: Storage & { fail?: string | undefined };
   relay?: ReturnType<typeof fakeRelay>;
   owner?: string;
+  outbox?: Outbox;
 } = {}) {
   let now = T0;
   const clock = () => now;
@@ -281,7 +294,7 @@ function harness({
     store,
     codec: { prepare: async (_s, text) => `c:${text}`, decode },
     read: (filters) => relay.read(filters),
-    outbox: box.outbox,
+    outbox: outbox ?? box.outbox,
     live: {
       snapshot: () => snapshot,
       subscribe(listener) {
@@ -697,6 +710,99 @@ describe("instructions sync", () => {
       expect(h.resolve()).toMatchObject({ versionId: fresh.id });
     });
 
+    it("a scan whose install is superseded completes only once the newer head is installed", async () => {
+      const h = harness();
+      const v1 = version("v1", T0 + 1);
+      h.relay.events.push(v1);
+      const releaseV1 = holdDecode(h, v1.id);
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      h.route("live");
+      await flush();
+      // V2 arrives live while the scan decodes V1, and is held too.
+      const v2 = version("v2", T0 + 2);
+      const releaseV2 = holdDecode(h, v2.id);
+      h.relay.events.push(v2);
+      h.push(v2);
+      await flush();
+      releaseV1();
+      await flush();
+      expect(h.store.scanned(OWNER, COMMUNITY)).toBeUndefined();
+      expect(h.resolve()).toHaveProperty("blocked");
+      releaseV2();
+      await flush();
+      expect(h.resolve()).toMatchObject({ versionId: v2.id });
+      expect(h.store.scanned(OWNER, COMMUNITY)).toBeDefined();
+    });
+
+    it("a scan whose newer head fails to decode stays incomplete and blocked", async () => {
+      const h = harness();
+      const v1 = version("v1", T0 + 1);
+      h.relay.events.push(v1);
+      const releaseV1 = holdDecode(h, v1.id);
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      h.route("live");
+      await flush();
+      const v2 = version("v2", T0 + 2);
+      const decode = h.decode.getMockImplementation();
+      h.decode.mockImplementation(async (subject, events) => {
+        if (events.some((e) => e.id === v2.id)) throw new Error("decode");
+        return decode?.(subject, events) ?? [];
+      });
+      h.relay.events.push(v2);
+      h.push(v2);
+      await flush();
+      releaseV1();
+      await flush();
+      expect(h.store.scanned(OWNER, COMMUNITY)).toBeUndefined();
+      expect(h.resolve()).toHaveProperty("blocked");
+    });
+
+    it("an exact-id recovery hit keeps the outbox copy when its install is discarded by the route leaving live", async () => {
+      const h = harness();
+      await live(h);
+      h.box.answer = "lose";
+      const saved = await h.sync.save(AGENT, "text", undefined);
+      await flush();
+      h.advance(RESEND_WINDOW_SECONDS + 1);
+      const release = holdDecode(h, saved);
+      const run = h.sync.recover();
+      await vi.waitFor(() =>
+        expect(h.decode.mock.calls.some(([, e]) => e[0]?.id === saved)).toBe(
+          true,
+        ),
+      );
+      h.route("pending");
+      release();
+      await run;
+      expect(h.sync.pendingSave(AGENT)?.event.id).toBe(saved);
+      expect(h.store.entry(key)?.submitted?.id).toBe(saved);
+      // Back live: the next scan installs it and only then retires the copy.
+      h.route("live");
+      await flush();
+      expect(h.resolve()).toMatchObject({ versionId: saved });
+      expect(h.sync.pendingSave(AGENT)).toBeUndefined();
+    });
+
+    it("an exact-id recovery hit keeps the outbox copy when its decode throws", async () => {
+      const h = harness();
+      await live(h);
+      h.box.answer = "lose";
+      const saved = await h.sync.save(AGENT, "text", undefined);
+      await flush();
+      h.advance(RESEND_WINDOW_SECONDS + 1);
+      const decode = h.decode.getMockImplementation();
+      h.decode.mockImplementation(async (subject, events) => {
+        if (events.some((e) => e.id === saved)) throw new Error("decode");
+        return decode?.(subject, events) ?? [];
+      });
+      await h.sync.recover();
+      await flush();
+      expect(h.sync.pendingSave(AGENT)?.event.id).toBe(saved);
+      expect(h.store.entry(key)?.submitted?.id).toBe(saved);
+    });
+
     it("Delete Agent discards a live install already held in decode", async () => {
       const h = harness();
       await live(h);
@@ -764,21 +870,76 @@ describe("instructions sync", () => {
       expect(h.resolve()).toMatchObject({ text: "A" });
     });
 
-    it("a relay that refuses kind 44300 keeps the local editor; an auth refusal does not", async () => {
-      for (const [answer, local] of [
-        ["blocked: unknown event kind", true],
-        ["restricted: not a member", false],
-      ] as const) {
-        const h = harness();
-        await live(h);
-        h.store.write(key, {
+    it("the relay's unknown-kind refusal through the signed HTTP writer keeps the local editor; other failures do not", async () => {
+      const key = keypair();
+      const agentKey = subjectKey(key.pubkey, COMMUNITY, AGENT);
+      const answers: [string, () => Promise<Response>, boolean][] = [
+        [
+          "unknown kind",
+          async () =>
+            Response.json(
+              { error: "restricted: unknown event kind" },
+              { status: 400 },
+            ),
+          true,
+        ],
+        [
+          "auth",
+          async () =>
+            Response.json({ error: "auth-required: sign in" }, { status: 401 }),
+          false,
+        ],
+        [
+          "validation",
+          async () =>
+            Response.json({ error: "invalid: bad signature" }, { status: 400 }),
+          false,
+        ],
+        [
+          "quota",
+          async () =>
+            Response.json(
+              { error: "rate-limited: quota exceeded", sent: false },
+              { status: 429 },
+            ),
+          false,
+        ],
+        [
+          "transient",
+          async () => {
+            throw new TypeError("connection reset");
+          },
+          false,
+        ],
+      ];
+      for (const [name, answer, local] of answers) {
+        const transport = await connectSignedTransport(
+          hostSigner(key, () => answer()),
+          "https://relay.test",
+          "relay",
+        );
+        assert.exists(transport.writer);
+        let journal: readonly OutgoingEvent[] = [];
+        const { outbox } = createOutbox(key.pubkey, transport.writer, {
+          load: () => journal,
+          save: (next) => {
+            journal = next;
+          },
+        });
+        const h = harness({ owner: key.pubkey, outbox });
+        h.sync.start();
+        h.sync.identities(ready([AGENT]));
+        h.route("live");
+        await flush();
+        h.store.write(agentKey, {
           head: { unknown: true },
           migration: { state: "staged", text: "A", sourceRevision: "r1" },
         });
-        h.box.answer = answer;
         await expect(h.sync.migrate(AGENT, async () => {})).rejects.toThrow();
-        expect(h.store.scanned(OWNER, COMMUNITY)).toBeDefined();
-        expect(localOnly(h.store, OWNER, COMMUNITY, AGENT), answer).toBe(local);
+        expect(h.store.refusesHistory(key.pubkey, COMMUNITY), name).toBe(local);
+        expect(localOnly(h.store, key.pubkey, COMMUNITY, AGENT), name).toBe(
+          local,
+        );
       }
     });
   });

@@ -49,6 +49,10 @@ export function instructionsDeletionTargets(event: {
   return targets;
 }
 
+/** The relay's exact refusal of a kind it does not accept at all: an
+ * instructions write that gets it moves the community to local editing (§3). */
+export const UNKNOWN_KIND_REFUSAL = "restricted: unknown event kind";
+
 /** The relay's answers that do not prove a send was refused: an internal
  * `error:` and the clock-window refusal an in-window re-send can draw. */
 export function uncertainRefusal(message: string): boolean {
