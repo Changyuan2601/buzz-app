@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package in a path with spaces exposes host, identity names, and page navigation metadata", async () => {
+test("generated author package in a path with spaces exposes shared message facts, host, identity names, and page navigation metadata", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -32,7 +32,7 @@ test("generated author package in a path with spaces exposes host, identity name
     await writeFile(
       join(dir, "consumer.ts"),
       `
-import type { Context, Host, PluginManifest, NamingPolicy } from "@buzz/author";
+import type { Context, Host, PluginManifest, NamingPolicy, UnreadCapability } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -40,8 +40,22 @@ export const manifest: PluginManifest = {
     networkOrigins: ["https://api.example.com"],
   },
 };
-export const inject = ["host", "identityNames", "pages"];
+export const inject = ["host", "identityNames", "pages", "relay"];
 export function apply(ctx: Context) {
+  const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
+  const conversations: ReturnType<UnreadCapability["inbox"]> = unread.inbox();
+  for (const item of conversations.items) {
+    for (const message of item.messages) {
+      const id: string = message.id;
+      const createdAt: number = message.createdAt;
+      const mentioned: boolean = message.mentioned;
+      void [id, createdAt, mentioned];
+      // @ts-expect-error Shared message facts are immutable.
+      message.mentioned = false;
+    }
+    // @ts-expect-error The shared projection does not expose Archive policy.
+    item.archived;
+  }
   const policy: NamingPolicy = {
     id: "alternative",
     resolve: (identities) => new Map(identities.map(({ pubkey, name }) => [pubkey, { name }])),

@@ -29,6 +29,8 @@ export const inject = [
 // The last check time per `<origin>:<viewer>`, so reminders that came due
 // while the app was closed notify on the next launch.
 const CHECKED_KEY = "buzz-reminders-checked.v1";
+/** Labels change by the minute, so half a minute keeps them current. */
+const PAGE_TICK_MS = 30_000;
 const storage = () =>
   typeof localStorage === "undefined" ? undefined : localStorage;
 function readChecked(scope: string) {
@@ -49,7 +51,8 @@ function writeChecked(scope: string, at: number) {
 
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
-  // The one due-time timer also advances `now` for the badge and page.
+  // Checks, and a tick while the page is open, advance `now` for the badge and
+  // page.
   let now = nowSeconds();
   const clock = new Set<() => void>();
   const subscribeClock = (listener: () => void) => {
@@ -57,6 +60,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return () => void clock.delete(listener);
   };
   const readClock = () => now;
+  const tick = () => {
+    now = nowSeconds();
+    for (const listener of clock) listener();
+  };
+  // The page's relative due and done labels age without a due-time event, so
+  // the clock also ticks while the page is open.
+  const subscribePageClock = (listener: () => void) => {
+    const off = subscribeClock(listener);
+    const timer = setInterval(tick, PAGE_TICK_MS);
+    return () => {
+      clearInterval(timer);
+      off();
+    };
+  };
   const notify = ctx.notifications.register({
     id: "reminders",
     label: "Reminders",
@@ -76,8 +93,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     let unbind: (() => void) | undefined;
     const check = () => {
       clearTimeout(timer);
-      now = nowSeconds();
-      for (const listener of clock) listener();
+      tick();
       const connection = relay.snapshot();
       // Only the session this window was bound for may advance it.
       if (
@@ -217,7 +233,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <RemindersPage
         relay={relay}
         navigator={ctx.navigation}
-        clock={{ subscribe: subscribeClock, read: readClock }}
+        clock={{ subscribe: subscribePageClock, read: readClock }}
       />
     ),
   });

@@ -31,6 +31,9 @@ import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
+import { ChannelJoinNotice } from "./ChannelJoinNotice";
+import { useListedChannel } from "../relay/listed-channel";
+import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { Reading, readingPositioned } from "./use-reading";
@@ -310,11 +313,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           }
         />
       ) : (
-        !error && (
-          <p className={styles.empty} role="status">
-            Loading thread…
-          </p>
-        )
+        !error && <ThreadLoading />
       )}
     </>
   );
@@ -412,9 +411,7 @@ function OwnedThreadPanel({
       canOpenLink={canOpenLink}
     />
   ) : (
-    <p className={styles.empty} role="status">
-      Loading thread…
-    </p>
+    <ThreadLoading />
   );
 }
 function ThreadMessages({
@@ -465,6 +462,25 @@ function ThreadMessages({
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
   canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
+  const channelAccess = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) => {
+      const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.readOnly && !channel.cached) {
+        return !channel.archived &&
+          (channel.channelType === "stream" || channel.channelType === "forum")
+          ? "joinable"
+          : "preview";
+      }
+      return listed && !listed.readOnly && !listed.archived
+        ? "member"
+        : "other";
+    },
+  );
+  const preview = channelAccess === "joinable" || channelAccess === "preview";
+  const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  const [joining, setJoining] = useState(false);
   const snapshot = useSyncExternalStore(
     view.subscribe,
     view.snapshot,
@@ -660,10 +676,12 @@ function ThreadMessages({
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
     targetAnchor.current = selectedOffset();
+    setInitialPositioned(true);
+    captureResizePosition();
     readingSettled.current = true;
     readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
-  }, [navigation, selectedOffset]);
+  }, [captureResizePosition, navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
@@ -740,6 +758,11 @@ function ThreadMessages({
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
+  useEffect(() => {
+    if (!joining || channelAccess !== "member") return;
+    setJoining(false);
+    if (active) setReplyFocus((value) => value + 1);
+  }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
     setReplyParent(undefined);
     setReplyFocus((value) => value + 1);
@@ -871,13 +894,11 @@ function ThreadMessages({
     if (
       (revealSelected && !inlineReveal) ||
       (revealSignal && revealed.current !== revealSignal) ||
+      // Seeded rows are not yet the thread: hold the loader until this view's
+      // first page lands. Later pages and repairs keep presented rows showing.
       (!positioned.current &&
-        ((snapshot.status !== "ready" &&
-          !(
-            snapshot.status === "loading" &&
-            snapshot.readKind === "refresh" &&
-            snapshot.root
-          )) ||
+        !(snapshot.root && snapshot.direction) &&
+        (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
@@ -1238,6 +1259,13 @@ function ThreadMessages({
         ref={scroller}
         data-message-scroller
         className={styles.threadHistory}
+        style={
+          {
+            "--channel-preview-inset": preview
+              ? `calc(${joinNoticeHeight}px + var(--space-3))`
+              : "0px",
+          } as CSSProperties
+        }
         aria-label="Thread messages"
         aria-busy={positioning}
         data-positioning={positioning || undefined}
@@ -1359,7 +1387,7 @@ function ThreadMessages({
             </p>
           )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <p role="status">Loading thread…</p>
+          <ThreadLoading />
         ) : null}
         {snapshot.targetStatus === "unavailable" && !selectionNotice && (
           <p role="status">Selected message unavailable.</p>
@@ -1397,7 +1425,23 @@ function ThreadMessages({
           </div>
         )}
       </section>
-      {snapshot.root &&
+      {preview && (
+        <ChannelJoinNotice
+          ready={
+            !positioning &&
+            (snapshot.status === "ready" ||
+              snapshot.status === "error" ||
+              !!rows.length)
+          }
+          channelId={channelId}
+          lifecycle={session.channelLifecycle}
+          joinable={channelAccess === "joinable"}
+          onJoin={() => setJoining(true)}
+          onHeightChange={setJoinNoticeHeight}
+        />
+      )}
+      {!preview &&
+        snapshot.root &&
         (!requireReadyRoot ||
           (snapshot.root.id === messageId &&
             snapshot.targetStatus === "ready")) && (
@@ -1472,5 +1516,20 @@ function ThreadMessages({
           />
         )}
     </MessageEditScope>
+  );
+}
+/** Holds the thread's area with the Buzz mark until its first page can show. */
+function ThreadLoading() {
+  return (
+    <div className={styles.threadLoading} role="status">
+      <picture>
+        <source
+          media="(prefers-reduced-motion: reduce)"
+          srcSet="/buzz-mark.svg"
+        />
+        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
+      </picture>
+      <span className="sr-only">Loading thread…</span>
+    </div>
   );
 }

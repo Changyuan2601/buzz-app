@@ -11,6 +11,91 @@ test.use({
   developmentReact: true,
 });
 
+// Browser-only: pane geometry and hit testing must follow the actual workspace
+// and interface size, rather than the window's unscaled width.
+test("thread stays beside the channel whenever both panes fit", async ({
+  page,
+  app,
+}, testInfo) => {
+  await open(page, app);
+  await page
+    .getByRole("separator", { name: "Resize channel sidebar" })
+    .press("Home");
+  const channel = page.getByRole("article", {
+    name: "Conversation",
+    exact: true,
+  });
+  const input = channel.getByRole("textbox", { name: "Message #Alpha" });
+  const draft =
+    "A long channel draft that must wrap before the thread pane. ".repeat(4);
+  await input.fill(draft);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  await channel
+    .locator(`[data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(thread).toBeVisible();
+
+  for (const [width, scale, mode] of [
+    [1000, 1, "light"],
+    [900, 0.8, "dark"],
+    [1440, 1.5, "light"],
+  ]) {
+    await page.evaluate(
+      ({ scale, mode }) => {
+        localStorage.setItem("buzz-font-scale.v1", String(scale));
+        localStorage.setItem("buzz-appearance.v1", mode);
+        window.dispatchEvent(
+          new StorageEvent("storage", { key: null, storageArea: localStorage }),
+        );
+      },
+      { scale, mode },
+    );
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.locator("html")).toHaveCSS(
+      "font-size",
+      `${16 * scale}px`,
+    );
+    const bounds = await channel.boundingBox();
+    const pane = await thread.boundingBox();
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x);
+    await expect(input).toHaveText(draft.trimEnd());
+    await channel
+      .getByRole("button", { name: "Send message", exact: true })
+      .click({ trial: true });
+    await page.screenshot({
+      path: testInfo.outputPath(`thread-layout-${width}-${scale}-${mode}.png`),
+    });
+  }
+
+  // At the physical navigation breakpoint the thread still fills the page,
+  // even when the smaller interface would otherwise fit two columns.
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-font-scale.v1", "0.8");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-font-scale.v1",
+        storageArea: localStorage,
+      }),
+    );
+  });
+  await page.setViewportSize({ width: 640, height: 900 });
+  await expect(page.locator("html")).toHaveCSS("font-size", "12.8px");
+  const narrowChannel = await channel.boundingBox();
+  const narrowThread = await page.locator("[data-panel-dock]").boundingBox();
+  expect(narrowThread.y).toBe(narrowChannel.y);
+  expect(narrowThread.height).toBe(narrowChannel.height);
+  await expect(
+    page.getByRole("separator", { name: "Resize main and secondary panels" }),
+  ).toBeHidden();
+});
+
 // Browser-only: child-only activity layout and composer resizing must preserve
 // bottom/reading intent, including intermediate rendering opportunities.
 test("thread preserves bottom and reading position through activity and composer resizing", async ({
@@ -266,6 +351,36 @@ test.describe("exact history resize ownership", () => {
       app.relay.publish("primary", event);
       return event;
     };
+    // Hold the reveal's completion frame while live replies commit, so resize
+    // ownership cannot rely on a later parent render to finish initialization.
+    await page.evaluate((targetId) => {
+      const raf = window.requestAnimationFrame;
+      const cancel = window.cancelAnimationFrame;
+      const heldFrames = new Map();
+      let holding = true;
+      window.requestAnimationFrame = (callback) => {
+        const id = raf((time) => {
+          if (
+            holding &&
+            document.activeElement?.getAttribute("data-message-id") === targetId
+          )
+            heldFrames.set(id, callback);
+          else callback(time);
+        });
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        heldFrames.delete(id);
+        cancel(id);
+      };
+      window.releaseExactReveal = () => {
+        holding = false;
+        window.requestAnimationFrame = raf;
+        window.cancelAnimationFrame = cancel;
+        for (const callback of heldFrames.values()) raf(callback);
+        heldFrames.clear();
+      };
+    }, app.exact.target.id);
     try {
       await page.evaluate(
         (value) => {
@@ -289,6 +404,7 @@ test.describe("exact history resize ownership", () => {
       await expect(
         history.getByText("Review live reply 14", { exact: true }),
       ).toHaveCount(1);
+      await page.evaluate(() => window.releaseExactReveal());
       await settle(page, history);
       const y = () =>
         target.evaluate(
@@ -317,6 +433,7 @@ test.describe("exact history resize ownership", () => {
         "later update must not repeat resize correction",
       ).toBeLessThan(4);
     } finally {
+      await page.evaluate(() => window.releaseExactReveal());
       release();
     }
   });

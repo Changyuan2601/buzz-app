@@ -509,8 +509,9 @@ base with `origin/main`. Documentation-only, native-only and Rust-only pushes
 skip this runner. Shared JS configuration/dependency
 changes, source deletions, or a missing base run the full Vitest suite instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
-inputs, and the app composition test for source edits that its Vite loader hides
-from the import graph.
+inputs, the Vite config test for `vite.config.ts` (unit tests use
+`vitest.config.ts`, so it selects only its importers), and the app composition
+test for source edits that its Vite loader hides from the import graph.
 A separate **design-system** job runs `design:typecheck` and `design:check` after
 types/unit tests. A separate **rust-clippy** job runs the pinned Clippy over the
 whole Cargo workspace with the same invocation as the `native` CI lane
@@ -561,7 +562,7 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
+- **Browser journeys:** eighteen runners (Chromium and WebKit, nine file-level shards
   per engine), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu
   job builds the native plugin-manager fixture once with Hermit's pinned Cargo.
@@ -589,8 +590,10 @@ the complete suite still runs with `pnpm test` / `just scan`:
   before, between or after tests, or the file is new; removed lines are judged
   against the base revision's test bodies). `flake_vitest`
   then runs that selection ten times with the JavaScript lane's two workers, and
-  `flake_browser` runs `--repeat-each=10` once per engine (Chromium and WebKit)
-  on the shard container with the same native fixture. Measurement specs and
+  `flake_browser` runs `--repeat-each=10` per engine (Chromium and WebKit)
+  on the shard container with the same native fixture, spreading the
+  repetitions over one shard per five journeys (at most eight) so a whole-file
+  selection fits the job timeout. Measurement specs and
   journeys tagged `@classic-scrollbars`, `@local-webkit` or `@media-recorder`
   are excluded; their own lanes cover them. The step summary shows a test ×
   iteration table. The lanes skip when no test changed and report as their own

@@ -196,11 +196,19 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
 
   // The built sidebar and broker share one queue: a pending section sort must
   // not conceal an optimistic Move, and both must survive confirmed reload.
+  // Open from the keyboard, like openMove. The menu opens on mousedown and a
+  // mouseup off the trigger cancels it, so a pointer click races startup
+  // notices (Loading Me placement…) that shift the sidebar after a reload.
+  // Pointer opening is covered by navigation-sorting.
   const openSort = async () => {
     await page
       .getByRole("button", { name: "More actions for Channels" })
-      .click();
-    await page.getByRole("menuitem", { name: "Sort", exact: true }).focus();
+      .focus();
+    await page.keyboard.press("Enter");
+    // Keyboard opening highlights the first item, Sort, asynchronously.
+    const sort = page.getByRole("menuitem", { name: "Sort", exact: true });
+    await expect(sort).toHaveAttribute("data-highlighted", "");
+    await sort.focus();
     await page.keyboard.press("ArrowRight");
     return page.getByRole("menu", { name: "Sort", exact: true });
   };
@@ -211,8 +219,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     await sortHeld.promise;
     await route.continue();
   });
-  const sorted = page.waitForResponse("**/sidebar-sort");
-  const moved = page.waitForResponse("**/sidebar-star");
+  let sorted, moved;
   try {
     const sortMenu = await openSort();
     await sortMenu.getByRole("menuitemradio", { name: "Recent" }).click();
@@ -230,6 +237,10 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
   } finally {
+    // Both writes are held behind the sort gate. Start their response waits
+    // immediately before release, not before the pending UI interactions.
+    sorted = page.waitForResponse("**/sidebar-sort");
+    moved = page.waitForResponse("**/sidebar-star");
     sortHeld.resolve();
   }
   for (const response of [await sorted, await moved]) {
@@ -911,10 +922,10 @@ test("Create new retains its draft when preferences fail before submission and r
     );
     held.resolve();
     await failed;
+    // The one recovery notice reports it; there is no separate preferences toast.
+    // The modal makes the page inert, so match the inline notice by attribute.
     await expect(
-      page.getByRole("dialog", {
-        name: "Saved sidebar preferences couldn’t refresh",
-      }),
+      page.locator('[role="status"][aria-label="Reconnecting to relay…"]'),
     ).toBeVisible();
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).toBeVisible();
@@ -936,6 +947,7 @@ test("Create new retains its draft when preferences fail before submission and r
     ).toBeEnabled();
     await expect(field).toHaveValue("Retained launch");
     await page.unroute("**/sidebar-preferences", failLegacy);
+    // The modal covers the recovery notice, so it keeps its own Retry.
     await dialog
       .getByRole("button", { name: "Retry preferences", exact: true })
       .click();

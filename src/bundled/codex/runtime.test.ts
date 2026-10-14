@@ -3,13 +3,14 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
+import { ownerReads } from "../../features/agents/reads";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import type { Wire } from "./rpc";
@@ -229,9 +230,12 @@ function fixture(
     dispose: vi.fn(),
   };
   const memoryOpen = vi.fn(() => memoryView);
+  // The owner's view, with no channel filed in Me unless a test does so.
+  const personal = new Set<string>();
   const snapshot = {
     status: "ready",
     scope: scope as string | undefined,
+    viewer: owner,
     session: {
       workflowAuthority: undefined as string | undefined,
       profiles: {
@@ -247,6 +251,12 @@ function fixture(
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
         }),
       },
+      mePlacement: {
+        state: { status: "ready" } as { status: string; error?: string },
+        snapshot: () => snapshot.session.mePlacement.state,
+        refresh: vi.fn(async () => {}),
+        has: (id: string) => personal.has(id),
+      },
     },
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
@@ -256,7 +266,11 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
-  const runtime = new CodexRuntime(spawn, () => relay, store);
+  const runtime = new CodexRuntime(
+    spawn,
+    (pubkey) => ownerReads(relay, pubkey),
+    store,
+  );
   runtimes.push(runtime);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
@@ -453,6 +467,7 @@ function fixture(
     complete,
     interrupt,
     snapshot,
+    personal,
     exits,
   };
 }
@@ -507,10 +522,11 @@ it("hands over promptly and runs conversations independently on one server", asy
       },
     },
   });
+  // The thread already carries the static prompt; turns carry only what changes.
   expect(f.starts()[1]?.params).toMatchObject({
     additionalContext: {
       "buzz.instructions": {
-        value: expect.stringContaining(
+        value: expect.not.stringContaining(
           "Your `core` memory is auto-injected into your context every turn",
         ),
       },
@@ -577,6 +593,15 @@ it("serves every agent from one server and routes each tool call to its own agen
   expect(contents(f.publish)).toEqual(["FROM CODEX"]);
   expect(contents(b.agent.publish as never)).toEqual(["FROM OTHER"]);
   expect(f.runtime.sessions("9".repeat(64))[0]?.status).toBe("Idle");
+});
+it("warms the server before a mention, which then reuses it", async () => {
+  const f = fixture();
+  f.runtime.warm();
+  f.runtime.warm();
+  expect(servers(f)).toHaveLength(1);
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(servers(f)).toHaveLength(1);
 });
 it("stops a removed agent's turn without ending the server the others share", async () => {
   const f = fixture();
@@ -1234,13 +1259,52 @@ it.each([false, true])(
     gate.resolve();
     await done;
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith([
-      creator.pubkey,
-    ]);
+    expect(f.snapshot.session.profiles.ensure).toHaveBeenCalledWith(
+      [creator.pubkey],
+      "foreground",
+    );
     await f.complete();
     expect(f.publish).toHaveBeenCalled();
   },
 );
+it("starts no work when the agent stops while its channel is read", async () => {
+  const f = fixture();
+  const relay = { snapshot: () => f.snapshot } as unknown as RelayData;
+  const gate = deferred<void>();
+  const channel = vi.fn();
+  const runtime = new CodexRuntime(
+    f.spawn,
+    (key) => {
+      const reads = ownerReads(relay, key);
+      return (
+        reads && {
+          ...reads,
+          channel: async (id: string) => {
+            channel(id);
+            await gate.promise;
+            return reads.channel(id);
+          },
+        }
+      );
+    },
+    { getItem: () => null, setItem: () => {} } as unknown as Storage,
+  );
+  runtimes.push(runtime);
+  runtime.sync([{ pubkey } as Agent]);
+  const controller = new AbortController();
+  const done = runtime.run({
+    ...f.delivery("work"),
+    signal: controller.signal,
+  });
+  await vi.waitFor(() => expect(channel).toHaveBeenCalledWith("channel"));
+  runtime.sync([]);
+  controller.abort();
+  gate.resolve();
+  await expect(done).rejects.toMatchObject({ name: "AbortError" });
+  expect(f.spawn).not.toHaveBeenCalled();
+  expect(f.workingUntil).not.toHaveBeenCalled();
+  expect(runtime.sessions(pubkey)).toEqual([]);
+});
 it("ignores a relay workflow mention without explicit community authority", async () => {
   const f = fixture();
   const relay = keypair();
@@ -1289,29 +1353,25 @@ it("answers another agent its owner attested, telling the owner of failures", as
   await f.runtime.run({ ...ask, agent: { ...ask.agent, owner } });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   // A failure tells the owner: tagging the sibling would wake it to fail too.
-  f.complete(0, "");
+  f.exits.resolve(3);
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   const failure = f.publish.mock.calls[0]?.[0] as { tags: string[][] };
   expect(failure.tags).toContainEqual(["p", owner]);
   expect(failure.tags).not.toContainEqual(["p", sibling]);
 });
-it("publishes unexpected exit and empty-completion failures instead of silently losing work", async () => {
+it("ends a turn without a reply silently, and publishes an unexpected exit", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.complete(0, "");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    content: expect.stringContaining("without a final reply"),
-  });
-  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
-    ok: false,
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
   });
   await f.runtime.run(f.delivery("next"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   f.exits.resolve(3);
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
-  expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("Codex exited"),
   });
   await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
@@ -1828,6 +1888,119 @@ it("gives each turn the agent's current core memory, and goes on without it when
   warn.mockRestore();
 });
 
+it("gives a turn no memory read through a connection that was replaced", async () => {
+  const f = fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  type Listing = Awaited<ReturnType<typeof f.memoryRead>>;
+  let release!: (listing: Listing) => void;
+  f.memoryRead.mockImplementationOnce(
+    () =>
+      new Promise<Listing>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const instructions = (index: number) =>
+    (
+      f.starts()[index]?.params as
+        | { additionalContext?: Record<string, { value: string }> }
+        | undefined
+    )?.additionalContext?.["buzz.instructions"]?.value;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.memoryRead).toHaveBeenCalledTimes(1));
+  const freshRead = vi.fn(async () => ({
+    entries: [{ slug: "core", body: "I am the new owner's.", createdAt: 1 }],
+    partial: false,
+  }));
+  f.snapshot.session = {
+    ...f.snapshot.session,
+    agentMemories: { ...f.snapshot.session.agentMemories, read: freshRead },
+  };
+  release({
+    entries: [{ slug: "core", body: "I am the old owner's.", createdAt: 1 }],
+    partial: false,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(instructions(0)).not.toContain("old owner");
+  expect(instructions(0)).not.toContain("<core-memory>");
+  f.complete(0, "FIRST");
+  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(freshRead).toHaveBeenCalledTimes(1);
+  expect(instructions(1)).toContain("I am the new owner's.");
+  warn.mockRestore();
+});
+
+it("splits turn context into ordered values that Codex does not truncate", async () => {
+  const f = fixture();
+  // Codex truncates the middle of any value over 4,000 UTF-8 bytes.
+  const instructions = `${Array.from({ length: 400 }, (_, line) => `Rule ${line}.`).join("\n")}\n${"é".repeat(3_000)}`;
+  await f.remember("core", `CORE START ${"c".repeat(6_000)} CORE END`, 0);
+  await f.runtime.run({
+    ...f.delivery("@Codex big"),
+    config: {
+      workspace: "/tmp/codex-test",
+      model: "test-model",
+      effort: "low",
+      instructions,
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const context =
+    (
+      f.starts()[0]?.params as
+        | {
+            additionalContext: Record<string, { kind: string; value: string }>;
+          }
+        | undefined
+    )?.additionalContext ?? {};
+  const keys = Object.keys(context).sort();
+  expect(keys.length).toBeGreaterThan(3);
+  expect(keys.slice(0, 2)).toEqual([
+    "buzz.instructions",
+    "buzz.instructions.001",
+  ]);
+  for (const key of keys) {
+    expect(context[key]?.kind).toBe("application");
+    expect(
+      new TextEncoder().encode(context[key]?.value).length,
+    ).toBeLessThanOrEqual(4_000);
+  }
+  const text = keys.map((key) => context[key]?.value).join("");
+  expect(text).toContain(
+    `<agent-instructions>\n${instructions}\n</agent-instructions>`,
+  );
+  expect(text).toContain(`CORE START ${"c".repeat(6_000)} CORE END`);
+  expect(context["buzz.instructions.001"]?.value).toMatch(/^Rule \d+\.\n/);
+});
+
+it("gives a resumed conversation the agent's current name", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  const renamed = f.delivery("@Renamed second");
+  await f.runtime.run({
+    ...renamed,
+    agent: { ...renamed.agent, name: "Renamed" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // Codex keeps a resumed thread's original developer instructions.
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({
+    threadId: (f.starts()[0]?.params as { threadId?: string } | undefined)
+      ?.threadId,
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    additionalContext: {
+      "buzz.instructions": {
+        value: expect.stringMatching(/^You are Renamed \(pubkey /),
+      },
+    },
+  });
+});
+
 it("does not declare core missing when the owner listing is partial", async () => {
   const f = fixture();
   f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
@@ -2298,7 +2471,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v4:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v5:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2335,7 +2508,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v4:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v5:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -2388,4 +2561,149 @@ describe("programs", () => {
     expect(programs("a; b; c; d; e")).toBe("a, b, c and 2 more");
     expect(programs("")).toBeUndefined();
   });
+});
+
+/** Files the fixture's channel in its owner's Me. */
+function inMe(f: ReturnType<typeof fixture>) {
+  f.personal.add("channel");
+  return f.personal;
+}
+const inputText = (wire: Wire | undefined) =>
+  JSON.stringify((wire?.params as { input?: unknown } | undefined)?.input);
+const tagsOf = (f: ReturnType<typeof fixture>) =>
+  f.publish.mock.calls.map(([event]) => (event as EventData).tags);
+
+it("continues an owner's Me chat as one channel conversation posted at the top level", async () => {
+  const f = fixture();
+  inMe(f);
+  const first = f.delivery("@Codex first", root);
+  const activity = {
+    step: vi.fn(),
+    acknowledged: vi.fn(),
+    superseded: vi.fn(),
+  };
+  await f.runtime.run({ ...first, ...activity });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain('\\"posting\\":\\"top-level\\"');
+  expect(inputText(f.starts()[0])).toContain(
+    JSON.stringify(TOP_LEVEL_PROMPT).slice(1, 40),
+  );
+  expect(inputText(f.starts()[0])).not.toContain("reply_to");
+  expect(inputText(f.starts()[0])).toContain("conversation-context");
+  // A message in another thread of the chat steers the same turn and takes
+  // over its activity, as one conversation.
+  const next = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
+  await f.runtime.run({
+    ...f.delivery("@Codex also", "e".repeat(64)),
+    ...next,
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
+  );
+  await vi.waitFor(() => expect(activity.superseded).toHaveBeenCalledOnce());
+  await f.tool("send", { audience: "everyone", text: "Progress" });
+  if (first.trigger.type !== "mention") throw new Error("Expected mention");
+  // A stale reply into the chat is returned for correction, not posted.
+  expect(
+    (
+      await f.tool("send", {
+        audience: "everyone",
+        text: "threaded",
+        reply: first.trigger.event.id,
+      })
+    )?.result,
+  ).toMatchObject({
+    success: false,
+    contentItems: [
+      {
+        text: "This chat stays at the top level: send again without reply.",
+      },
+    ],
+  });
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // A later prompt in a different thread resumes the same Codex thread.
+  await f.runtime.run(f.delivery("@Codex later", "7".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.find((w) => w.method === "thread/resume")?.params,
+  ).toMatchObject({ threadId: "thread-1" });
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(f.publish.mock.calls[2]?.[0]).toMatchObject({
+    content: expect.stringContaining("Codex exited"),
+  });
+  // Progress, final answer and the runtime's own failure notice.
+  expect(tagsOf(f)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["p", owner],
+    ],
+  ]);
+});
+
+it("finishes a Me turn under its policy when the chat is shared mid-turn", async () => {
+  const f = fixture();
+  const personal = inMe(f);
+  const channelScope = (delivery: Delivery) => ({
+    ...delivery,
+    config: { ...(delivery.config as object), scope: "channel" },
+  });
+  await f.runtime.run(channelScope(f.delivery("@Codex first")));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  personal.delete("channel");
+  await f.runtime.run(channelScope(f.delivery("@Codex after share")));
+  // The shared chat's request waits for the Me turn instead of steering in.
+  await f.tool("send", { audience: "everyone", text: "Progress" });
+  expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
+  expect(f.starts()).toHaveLength(1);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("reply_to");
+  await f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  expect(tagsOf(f)).toEqual([
+    [["h", "channel"]],
+    [["h", "channel"]],
+    [
+      ["h", "channel"],
+      ["e", root, "", "reply"],
+    ],
+  ]);
+});
+
+it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+  const f = fixture();
+  const placement = f.snapshot.session.mePlacement;
+  placement.state = { status: "error", error: "Recipe read failed" };
+  await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
+    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+  );
+  expect(placement.refresh).toHaveBeenCalledOnce();
+  expect(f.starts()).toEqual([]);
+  expect(f.workingUntil).not.toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalled();
+  placement.state = { status: "ready" };
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("keeps Messages routing for a channel filed in someone else's Me", async () => {
+  const f = fixture();
+  inMe(f);
+  Object.assign(f.snapshot, { viewer: "9".repeat(64) });
+  await f.runtime.run(f.delivery("@Codex hi"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });

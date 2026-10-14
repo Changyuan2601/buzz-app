@@ -1,31 +1,72 @@
-import { BUZZ_PROMPT, coreMemory } from "../../buzz-mcp/prompt";
+import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import type { AgentHandle } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Config } from "./config";
-import basePrompt from "./base_prompt.md?raw";
 
-export type Conversation = { channelId: string; name: string; root?: string };
+/** `topLevel` is an owner's Me chat: one channel conversation, posted at
+ * its top level. */
+export type Conversation = {
+  channelId: string;
+  name: string;
+  root?: string;
+  topLevel?: true;
+};
 const quoted = (value: unknown) =>
   JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 export const rootOf = (event: EventData) =>
   threadReference(event)?.rootId ?? event.id;
-export function developerInstructions(
+export function developerInstructions(agent: AgentHandle) {
+  return `You are ${agent.name} (pubkey ${agent.pubkey}), a coding agent in Buzz.
+The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Buzz access and signing are handled by the host. Do not invoke the buzz CLI or look for credentials. Use Codex's native coding tools in the workspace.
+
+${BASE_PROMPT}
+
+${BUZZ_PROMPT}`;
+}
+
+/** Codex truncates the middle of any additional-context value over 1,000
+ * tokens, which it estimates as 4 UTF-8 bytes each. */
+const CONTEXT_VALUE_BYTES = 4_000;
+const bytes = (text: string) => new TextEncoder().encode(text).length;
+/** The agent's current identity, instructions, team, and core memory as turn
+ * context: a resumed Codex thread keeps its original developer instructions.
+ * Codex orders values by key, so text over its per-value limit continues in
+ * `buzz.instructions.001` onward, split at line breaks where possible. */
+export function turnContext(
   agent: AgentHandle,
-  settings?: Config,
+  settings: Config,
   team = "",
   /** The agent's `core` memory: `null` when it has none, undefined if unread. */
   memory?: string | null,
 ) {
-  const core = coreMemory(memory);
-  return `You are ${agent.name} (pubkey ${agent.pubkey}), a coding agent in Buzz.
-The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Buzz access and signing are handled by the host. Do not invoke the buzz CLI or look for credentials. Use Codex's native coding tools in the workspace.
-
-${basePrompt.trim()}
-
-${BUZZ_PROMPT}
-
-${settings ? `Current Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}` : ""}`;
+  const core = coreMemorySection(memory);
+  const text = `You are ${agent.name} (pubkey ${agent.pubkey}).\nCurrent Buzz custom instructions replace all prior Buzz custom instructions. An empty section means no custom instructions apply.\n<agent-instructions>\n${settings.instructions}\n</agent-instructions>\n\nCurrent team sections replace all prior team sections. None means you are on no team.${team ? `\n${team}` : ""}${core ? `\n\nCurrent core memory replaces all prior core memory.\n${core}` : ""}`;
+  const values = [""];
+  let size = 0;
+  for (const line of text.split(/(?<=\n)/)) {
+    // A line over the limit splits by code point.
+    const pieces = bytes(line) > CONTEXT_VALUE_BYTES ? [...line] : [line];
+    for (const piece of pieces) {
+      const length = bytes(piece);
+      if (size + length > CONTEXT_VALUE_BYTES) {
+        values.push("");
+        size = 0;
+      }
+      values[values.length - 1] += piece;
+      size += length;
+    }
+  }
+  return Object.fromEntries(
+    values.map((value, index) => [
+      index
+        ? `buzz.instructions.${String(index).padStart(3, "0")}`
+        : "buzz.instructions",
+      { kind: "application", value },
+    ]),
+  );
 }
 
 export function turnInput(
@@ -38,7 +79,10 @@ export function turnInput(
   const section = steering
     ? "new-message-arrived-while-you-were-working"
     : "buzz-event";
-  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", session_thread: conversation.root, reply_to: rootOf(event) })}\n</context>\n<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
+  const routing = conversation.topLevel
+    ? { posting: "top-level" }
+    : { session_thread: conversation.root, reply_to: rootOf(event) };
+  return `<context>\n${quoted({ channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${TOP_LEVEL_PROMPT}\n` : ""}<${section}>\n${quoted(event)}\nRequest: ${quoted(text)}\n</${section}>${interest ? `\n<interest>\n${quoted(interest)}\n</interest>` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

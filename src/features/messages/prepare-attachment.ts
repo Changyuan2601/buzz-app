@@ -1,4 +1,5 @@
 import { encodeWebp } from "./encode-webp";
+import { cleanEncodedJpeg } from "./jpeg-metadata";
 import { UploadError } from "../relay/attachments";
 import {
   imageType,
@@ -88,6 +89,8 @@ export async function prepareAttachment(
           output = cleanPng(new Uint8Array(await blob.arrayBuffer()), snapshot);
         else if (blob.type === "image/webp")
           output = cleanWebp(new Uint8Array(await blob.arrayBuffer()), false);
+        else if (blob.type === "image/jpeg")
+          output = cleanEncodedJpeg(new Uint8Array(await blob.arrayBuffer()));
         else if (blob.type === target) output = blob;
         else throw new Error("This browser cannot prepare this image format.");
       } finally {

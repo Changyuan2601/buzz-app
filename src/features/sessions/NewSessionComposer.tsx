@@ -22,6 +22,9 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
+import { AgentChoice } from "./AgentChoice";
+import { SessionProjectControl } from "./SessionProjectControl";
+import { writeSelectedAssistant } from "./selected-assistant";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -60,6 +63,26 @@ export function NewSessionComposer({
         ? `${namespace}:section:${sectionId}`
         : namespace);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState(() => {
+    const receipt = readPending(scope, draftKey);
+    if (receipt?.invitationId) return receipt.agent ?? "";
+    const saved = readView<unknown>(
+      scope,
+      `${draftKey}:new-agent`,
+      receipt?.agent ?? "",
+    );
+    return typeof saved === "string" && /^[0-9a-f]{64}$/.test(saved)
+      ? saved
+      : "";
+  });
+  const [selectedProject, setSelectedProject] = useState(() => {
+    const saved = readView<unknown>(
+      scope,
+      `${draftKey}:new-project`,
+      sectionId ?? "",
+    );
+    return typeof saved === "string" ? saved : (sectionId ?? "");
+  });
   const [draftCanvas, setDraftCanvas] = useState<string | undefined>(() => {
     const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
     return typeof saved === "string" ? saved : undefined;
@@ -123,6 +146,10 @@ export function NewSessionComposer({
     const mentions = mentionDraft(current.draft).recipients.map(
       (item) => item.pubkey,
     );
+    if (personal && !current.messageId) {
+      if (!mentions.length && selectedAgent) current.agent = selectedAgent;
+      else delete current.agent;
+    }
     let recipients = [
       ...new Set(
         mentions.length ? mentions : current.agent ? [current.agent] : [],
@@ -131,18 +158,25 @@ export function NewSessionComposer({
     try {
       if (current.setup !== undefined) {
         current.setup = parseSessionSetup(current.setup);
-        if (current.setup.sectionId && current.setup.sectionId !== sectionId)
+        if (
+          current.setup.sectionId &&
+          current.setup.sectionId !== selectedProject
+        )
           throw new Error(
             "The saved session belongs to a different section. Reopen its original section to retry.",
           );
       }
-      if (sectionId && !current.setup && !current.creationId) {
-        current.setup = await loadSessionSetup(session, sectionId, personal);
+      if (selectedProject && !current.setup && !current.creationId) {
+        current.setup = await loadSessionSetup(
+          session,
+          selectedProject,
+          personal,
+        );
         if (!mounted.current) return;
       }
       if (!current.setup && !current.creationId && draftCanvas !== undefined) {
         current.setup = parseSessionSetup({
-          ...(sectionId ? { sectionId } : {}),
+          ...(selectedProject ? { sectionId: selectedProject } : {}),
           canvas: draftCanvas,
           agents: [],
         });
@@ -309,6 +343,8 @@ export function NewSessionComposer({
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-agent`, "");
+      writeView(scope, `${draftKey}:new-project`, null);
+      writeSelectedAssistant(scope, current.id, selectedAgent);
       setPending(undefined);
       onStarted(current.id);
     } catch (reason) {
@@ -337,6 +373,7 @@ export function NewSessionComposer({
         if (failedId === next.invitationId) {
           delete next.invitationId;
           delete next.agent;
+          setSelectedAgent("");
           writeView(scope, `${draftKey}:new-agent`, "");
         } else delete next.messageId;
         save(next);
@@ -351,13 +388,13 @@ export function NewSessionComposer({
   }
   const composer = (
     <div id="new-session-prompt" ref={prompt}>
-      {sectionId && (
+      {selectedProject && (
         <p className={styles.availability}>
-          New session in{" "}
+          New chat in{" "}
           {(personal ? session.mePreferences : session.sidebarPreferences)
             .snapshot()
-            .data?.sections.find((section) => section.id === sectionId)?.name ??
-            "this section"}
+            .data?.sections.find((section) => section.id === selectedProject)
+            ?.name ?? "this project"}
         </p>
       )}
       <MessageComposer
@@ -369,6 +406,40 @@ export function NewSessionComposer({
         channelName={parent?.name ?? "this session"}
         label={personal ? "Message your agents" : "Message this session"}
         inviteAgents
+        selectedAgent={personal ? selectedAgent : undefined}
+        trailingTool={
+          personal ? (
+            <>
+              <AgentChoice
+                session={session}
+                value={selectedAgent}
+                onChange={(agent) => {
+                  setSelectedAgent(agent);
+                  writeView(scope, `${draftKey}:new-agent`, agent);
+                }}
+                disabled={
+                  busy || !!pending?.invitationId || !!pending?.messageId
+                }
+                emptyLabel="Choose follow-up assistant"
+                clearLabel="No assistant"
+              />
+              {session.mePreferences && (
+                <SessionProjectControl
+                  session={session}
+                  value={selectedProject}
+                  onChange={(project) => {
+                    if (project === selectedProject) return;
+                    setSelectedProject(project);
+                    writeView(scope, `${draftKey}:new-project`, project);
+                    setDraftCanvas(undefined);
+                    writeView(scope, `${draftKey}:settings`, null);
+                  }}
+                  disabled={busy || !!pending}
+                />
+              )}
+            </>
+          ) : undefined
+        }
         submission={{
           draftKey: `${draftKey}:new-draft`,
           initialDraft: pending?.draft ?? pending?.text,
@@ -449,7 +520,7 @@ export function NewSessionComposer({
               <MenuIcon>
                 <GearIcon size={16} />
               </MenuIcon>
-              Session settings…
+              {personal ? "Chat settings…" : "Session settings…"}
             </MenuItem>
           </MenuPopup>
         </MenuRoot>
@@ -460,7 +531,7 @@ export function NewSessionComposer({
         <DraftSessionSettings
           personal={personal}
           session={session}
-          sectionId={sectionId}
+          sectionId={selectedProject || undefined}
           canvas={draftCanvas}
           close={() => setSettingsOpen(false)}
           save={(canvas) => {

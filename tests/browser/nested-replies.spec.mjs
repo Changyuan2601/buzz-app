@@ -635,10 +635,37 @@ for (const width of [1492, 1280, 1024, 700, 390])
           .toBe(true);
         await row.hover();
       }
-      for (const button of await actions.getByRole("button").all()) {
-        await expect(button).toBeInViewport();
-        await button.click({ trial: true });
-      }
+      // Every action is on screen, enabled and owns the pointer at its centre.
+      // One page-side check per row: a trial click per button made this test
+      // the slowest in its shard and timed it out on slow WebKit runners.
+      await expect
+        .poll(() =>
+          actions.evaluate((bar) => {
+            // Row-width reductions remove actions from layout, not from the DOM.
+            const buttons = [...bar.querySelectorAll("button")].filter(
+              (button) =>
+                button.getClientRects().length > 0 &&
+                getComputedStyle(button).visibility !== "hidden",
+            );
+            return (
+              buttons.length > 0 &&
+              buttons.every((button) => {
+                const box = button.getBoundingClientRect();
+                const x = (box.left + box.right) / 2;
+                const y = (box.top + box.bottom) / 2;
+                return (
+                  x >= 0 &&
+                  y >= 0 &&
+                  x < window.innerWidth &&
+                  y < window.innerHeight &&
+                  !button.disabled &&
+                  button.contains(document.elementFromPoint(x, y))
+                );
+              })
+            );
+          }),
+        )
+        .toBe(true);
       // The bar must not cover this row's own message text. Compare against the
       // rendered body only, inset by half-leading so leading is not read as ink.
       // Include headerless continuation rows: the shared lift must clear them too.

@@ -243,7 +243,7 @@ scroll(
   },
 );
 
-test("joined surface, sidebar pages, real link panel and compact community navigation", async ({
+test("separate sidebar and workspace surfaces, real link panel and compact community navigation", async ({
   page,
   app,
 }, testInfo) => {
@@ -257,11 +257,51 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     name: "Conversation",
     exact: true,
   });
-  // Real CSS geometry is the contract: one outer surface, flush inner regions.
-  await expect(page.locator(".shell-body > [data-joined]")).toHaveCSS(
-    "border-top-width",
-    "1px",
+  // Sidebar and main workspace own independent rounded surfaces. Inner
+  // conversation regions still join the main panel.
+  const mainPanel = page.locator("#main-content > [data-joined]");
+  await expect(mainPanel).toHaveCSS("border-top-width", "1px");
+  await expect(mainPanel).toHaveCSS("border-radius", "16px");
+  await expect(page.locator(".shell-content")).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
   );
+  const navigation = page.getByRole("complementary", {
+    name: "Channel sidebar",
+  });
+  await expect(navigation).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(navigation).toHaveCSS("border-radius", "16px");
+  await expect(navigation).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(mainPanel).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  expect(
+    await navigation.evaluate((element) => getComputedStyle(element).boxShadow),
+  ).not.toBe("none");
+  expect(
+    await mainPanel.evaluate((element) => getComputedStyle(element).boxShadow),
+  ).not.toBe("none");
+  near((await box(mainPanel)).x - sidebar.x - sidebar.width, 4);
+  const sidebarHandle = page.getByRole("separator", {
+    name: "Resize channel sidebar",
+  });
+  const gripTarget = await box(sidebarHandle);
+  near(gripTarget.width, 16);
+  near(gripTarget.x + gripTarget.width / 2, sidebar.x + sidebar.width + 2);
+  await sidebarHandle.hover();
+  await expect
+    .poll(() =>
+      sidebarHandle.evaluate(
+        (element) => getComputedStyle(element, "::after").opacity,
+      ),
+    )
+    .toBe("0.5");
+  await expect
+    .poll(() =>
+      sidebarHandle.evaluate(
+        (element) => getComputedStyle(element, "::after").left,
+      ),
+    )
+    .toBe("8px");
+  await page.mouse.move(0, 0);
   await expect(conversation).toHaveCSS("border-radius", "0px");
   await expect(conversation).toHaveCSS("border-top-width", "0px");
   await expect(conversation).toHaveCSS("box-shadow", "none");
@@ -271,7 +311,7 @@ test("joined surface, sidebar pages, real link panel and compact community navig
   );
   near(rail.width, 48);
   near(sidebar.x, rail.x + rail.width);
-  near(before.x - sidebar.x - sidebar.width, 1);
+  near(before.x - sidebar.x - sidebar.width, 5);
   near(before.y, 49);
   near(before.height, 766);
   const background = await page
@@ -469,7 +509,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
     page.getByRole("article", { name: "Conversation", exact: true }),
   );
   const dock = await box(page.locator("[data-panel-workspace]"));
-  near(conversation.x - sidebar.x - sidebar.width, 1);
+  near(conversation.x - sidebar.x - sidebar.width, 5);
   near(dock.x, conversation.x);
   expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
   // Separate stacking contexts: assert actual hit testing, not unrelated z-index numbers.
@@ -531,6 +571,51 @@ async function virtuaIdle(page) {
   await settle(page);
 }
 
+readingTest(
+  "simultaneous row shrink above and growth below preserve bottom follow",
+  async ({ page, app }) => {
+    await open(page, app);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const expectBottom = () =>
+      expect
+        .poll(() =>
+          history.evaluate(
+            (element) =>
+              element.scrollHeight - element.scrollTop - element.clientHeight,
+          ),
+        )
+        .toBeLessThan(4);
+    await settle(page);
+    await expectBottom();
+    const rows = await history.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      const mounted = [...element.querySelectorAll("[data-message-id]")];
+      const above = mounted.findLast(
+        (row) => row.getBoundingClientRect().bottom <= top,
+      );
+      const newest = mounted.at(-1);
+      if (!above || !newest || above === newest) return null;
+      above.style.paddingBottom = "100px";
+      return {
+        above: above.dataset.messageId,
+        newest: newest.dataset.messageId,
+      };
+    });
+    expect(rows).not.toBeNull();
+    await settle(page);
+    await expectBottom();
+    await history.evaluate((element, ids) => {
+      const row = (id) =>
+        element.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+      row(ids.above).style.removeProperty("padding-bottom");
+      row(ids.newest).style.paddingBottom = "120px";
+    }, rows);
+    await settle(page);
+    await expectBottom();
+  },
+);
 readingTest(
   "panel resizing preserves bottom follow and the visible reading anchor",
   async ({ page, app }) => {

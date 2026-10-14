@@ -22,7 +22,7 @@ import { AvatarEditor } from "./AvatarEditor";
 import { useAvatarPreview } from "./use-avatar-preview";
 
 const community = "https://unjoined.example";
-const picture = `${community}/media/avatar.png`;
+const picture = `${community}/media/${"a".repeat(64)}.png`;
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -162,7 +162,7 @@ it("retires registration on destination change and unmount, ignoring late comple
   view.rerender(
     preview(
       "card",
-      "https://second.example/media/avatar.png",
+      `https://second.example/media/${"b".repeat(64)}.png`,
       "https://second.example",
     ),
   );

@@ -58,17 +58,6 @@
   /* An open pane shares the selected tab fill, rather than a held press. */
   --interaction-pressed: var(--affordance-subtle);
 }
-.sidebarScroll {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  /* Keep row focus outlines inside the scrollport without shifting content.
-     The end padding exceeds the 4px ring because scroll offsets snap to
-     whole pixels while content height can be fractional. */
-  margin-inline: calc(-1 * var(--sidebar-padding))
-    calc(-1 * var(--sidebar-padding-end));
-  padding: 0 var(--sidebar-padding-end) var(--space-1h) var(--sidebar-padding);
-}
 .sidebarBrand {
   height: var(--space-6);
   display: flex;
@@ -211,6 +200,11 @@
   flex-direction: column;
   gap: var(--space-half);
   padding-block-end: var(--sidebar-padding);
+}
+/* Inset Retry like a row, so its focus ring stays inside the scrollport. */
+.channelListContent > button {
+  align-self: flex-start;
+  margin-inline-start: var(--channel-row-fill-start);
 }
 /* Keep the prominent unread cue while matching the timeline reveal motion. */
 .unreadEdge {
@@ -518,7 +512,8 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-@media (max-width: 62.5rem) {
+/* Match the shell's physical navigation breakpoint, regardless of interface size. */
+@media (max-width: 650px) {
   .board,
   .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
@@ -538,7 +533,7 @@
     box-shadow: var(--elevation-dock);
   }
 }
-/* A widened persistent sidebar can leave less room than viewport width implies. */
+/* Otherwise use available workspace width, including sidebar and interface sizing. */
 @container (max-width: 40.6875rem) {
   .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
@@ -557,6 +552,15 @@
     z-index: 2;
     box-shadow: var(--elevation-dock);
   }
+}
+/* The shell's space-1 gutter follows the sidebar. Center the existing hit
+   target in that gutter without changing its width or the sidebar's geometry. */
+.sidebarResizeHandle[aria-orientation="vertical"] {
+  --resize-grip-opacity: 0.5;
+  translate: calc(-1 * var(--space-1) / 2) 0;
+}
+.sidebarResizeHandle[aria-orientation="vertical"]::after {
+  left: 50%;
 }
 /* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {

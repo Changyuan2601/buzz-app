@@ -134,6 +134,7 @@ export class AgentSessions {
         const process = await ClaudeProcess.start(this.options.spawn, {
           cwd: launch.cwd,
           ...(launch.model ? { model: launch.model } : {}),
+          ...(launch.effort ? { effort: launch.effort } : {}),
           systemPrompt: "",
         });
         discovery.process = process;
@@ -389,13 +390,15 @@ export class AgentSessions {
   }
 }
 
-/** Where a process runs and its model: all a spare is started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "model">;
-const place = ({ cwd, model }: Where) => JSON.stringify([cwd, model ?? ""]);
+/** Where a process runs, its model and effort: all a spare is started with. */
+type Where = Pick<ClaudeLaunch, "cwd" | "model" | "effort">;
+const place = ({ cwd, model, effort }: Where) =>
+  JSON.stringify([cwd, model ?? "", effort ?? ""]);
 
 /** One process started ahead of need, for whichever agent next starts a
- * conversation where it runs and with its model. Starting is most of the wait
- * before a new conversation's first reply; giving the process its prompt is not.
+ * conversation where it runs and with its model and effort. Starting is most
+ * of the wait before a new conversation's first reply; giving the process its
+ * prompt is not.
  * It is kept only where the runtime's agents run, and follows the latest new
  * conversation among those places, the likeliest place for the next. */
 export class Spare {

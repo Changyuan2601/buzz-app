@@ -2,16 +2,16 @@
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
+import { claudeRun, TYPE_ID } from "./run";
 import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
 
-export const TYPE_ID = "claude-code";
-/** A turn's run returns once Claude has it, so this bounds only the hand-over. */
-const HANDOVER_MS = 2 * 60_000;
+export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
@@ -27,7 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const providerDefaults = new ClaudeDefaults();
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
-    agents.relay,
+    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
     localStorage,
     (raw) => providerDefaults.resolve(raw),
   );
@@ -71,6 +71,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   } = createTabs({ setup, defaults: providerDefaults, runtime });
   agents.register<Config>({
     id: TYPE_ID,
@@ -95,9 +96,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     describeMigration: (saved) => {
-      const { model, scope } = config(saved);
+      const { model, effort, scope } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
+        { id: "thinking", label: "Thinking", isOverride: Boolean(effort) },
         {
           id: "sessions",
           label: "Sessions",
@@ -130,13 +132,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
         role: "settings",
         component: SettingsTab,
       },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
+      },
     ],
-    models: (agent) => runtime.models(agent.pubkey),
     // A mention during the first download waits for it, within its deadline.
-    run: async (delivery) => {
-      await setup.installed(delivery.signal);
-      return runtime.run(delivery);
-    },
-    timeoutMs: HANDOVER_MS,
+    ...claudeRun(runtime, (signal) => setup.installed(signal)),
   });
 };

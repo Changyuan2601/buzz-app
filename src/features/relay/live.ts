@@ -20,7 +20,11 @@ export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
 /** Channel REQs awaiting EOSE at once. `scripts/live-setup-probe.mjs` compares others. */
 export const SETUP_CONCURRENCY = 4;
+/** How long one channel REQ may wait for EOSE before its route fails. */
+export const SETUP_TIMEOUT_MS = 10_000;
 const MAX_QUOTA_RETRIES = 3;
+const BASE_RECONNECT_DELAY = 500;
+const MAX_RECONNECT_DELAY = 30_000;
 /** Host-owned server cooldown survives socket/POST replacement.
  * Healthy traffic has no inter-request delay; outstanding work is bounded below. */
 export function createLiveAdmission() {
@@ -211,6 +215,7 @@ export function subscribeRelayTraffic(
   socketFactory: (url: string) => WebSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
   setupConcurrency = SETUP_CONCURRENCY,
+  setupTimeoutMs = SETUP_TIMEOUT_MS,
 ): LiveSubscription {
   const log = getLogger("relay-ws");
   const peer = relayLabel(url);
@@ -220,8 +225,8 @@ export function subscribeRelayTraffic(
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
-  let attempts = 0,
-    generation = 0,
+  let reconnectDelay = BASE_RECONNECT_DELAY;
+  let generation = 0,
     serial = 0;
   let authenticated = false;
   let connection: LiveSnapshot["status"] = "connecting";
@@ -344,6 +349,9 @@ export function subscribeRelayTraffic(
   }
   function recover() {
     if (closed || !authenticated) return;
+    // A minute authenticated restores prompt recovery for the next rollout;
+    // opening/authenticating alone must not reset backoff on a flapping relay.
+    reconnectDelay = BASE_RECONNECT_DELAY;
     const current = generation;
     // Only multi-channel scopes can be silently pruned by this relay. Singleton
     // preview/legacy callers retain their existing CLOSED/retry behavior.
@@ -562,7 +570,7 @@ export function subscribeRelayTraffic(
             "Live subscription setup timed out; retry available",
             true,
           );
-      }, 10000);
+      }, setupTimeoutMs);
       active++;
       if (route.id === "observer") {
         route.since = Math.floor(Date.now() / 1000);
@@ -668,13 +676,11 @@ export function subscribeRelayTraffic(
       for (const route of routes.values())
         if (route.status !== "limited") route.status = "pending";
       notify();
-      if (attempts >= 5) {
-        connection = "error";
-        connectionError = "Live reconnect attempts exhausted; retry available";
-        notify();
-        return;
-      }
-      retryTimer = setTimeout(connect, 500 * 2 ** attempts++);
+      // Transient outages must recover without manual retry. Equal jitter
+      // spreads reconnects while retaining a minimum delay under sustained failure.
+      const delay = reconnectDelay * (0.5 + Math.random() / 2);
+      reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
+      retryTimer = setTimeout(connect, delay);
     };
     const terminal = (reason: string) => {
       if (!valid()) return;
@@ -1055,7 +1061,7 @@ export function subscribeRelayTraffic(
     retry() {
       if (closed) return;
       clearTimeout(retryTimer);
-      attempts = 0;
+      reconnectDelay = BASE_RECONNECT_DELAY;
       if (authenticated) {
         for (const route of routes.values()) {
           if (route.status !== "error") continue;

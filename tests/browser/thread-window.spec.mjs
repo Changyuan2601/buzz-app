@@ -94,7 +94,10 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     await history.hover();
     await page.mouse.wheel(0, -4000);
     await expect(replies).toHaveCount(60);
-    await page.evaluate(() => window.messagesFixture.failOlderPages(2));
+    await page.evaluate(() => {
+      window.messagesFixture.failOlderPages(2);
+      window.messagesFixture.holdOlderPage();
+    });
     // Re-establish the scrollback boundary after the first page settles. One
     // wheel step alone can stop mid-history in WebKit's hosted viewport.
     await history.evaluate((el) => {
@@ -103,6 +106,16 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     });
     await history.hover();
     await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(3);
+    // The full-image root can fill the viewport. Read the reply cue before
+    // releasing the request so recovery is measured from that position.
+    await replies.first().scrollIntoViewIfNeeded();
+    await expect(replies.first()).toBeInViewport();
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Retry thread" });
     await expect(error).toContainText("Older page failed");
@@ -133,6 +146,9 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
       expect(filter.before_id).toBe(filters[2].before_id);
     }
   } finally {
+    await page
+      .evaluate(() => window.messagesFixture.releaseOlderPage())
+      .catch(() => {});
     await server.close();
   }
 });
@@ -296,6 +312,8 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(continuation.before_id).toBeDefined();
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
     // Newly prepended content preserves the reply being read.
+    await replies.first().scrollIntoViewIfNeeded();
+    await expect(replies.first()).toBeInViewport();
     const readingId = await history.evaluate((el) => {
       const viewport = el.getBoundingClientRect();
       const visible = [...el.querySelectorAll("ol [data-message-id]")].filter(

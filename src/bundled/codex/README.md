@@ -59,6 +59,11 @@ current turn finishes. Expect the marker.
 
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
+A mention in a chat filed in the owner's Me is one conversation whatever the
+scope: the agent continues the channel's session and posts at its top level, and
+its tools refuse a reply into a thread there. A turn keeps the routing it started
+with, so a mention after the chat is shared waits for it and then threads as
+usual. Watches keep their own routing.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities does not end an agent's work. Removing the agent, leaving or
 disconnecting from its community interrupts its turns and asks Codex to end
@@ -68,7 +73,7 @@ If a saved Codex thread no longer exists, the next mention starts a fresh one.
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
-`send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
+`send`, `edit`, `react`, `read`, `channels`, `channel`, `members`, `users`, `dm`, `mem_get`,
 `mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
@@ -133,16 +138,18 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
 - Replies use Agents' host signer. Codex receives no Buzz agent key and does not
-  publish through the Buzz CLI. The Buzz base prompt and custom instructions are
-  supplied as developer instructions, preserving Codex’s native coding prompt.
+  publish through the Buzz CLI. The shared Buzz base prompt, custom instructions
+  and the agent's `core` memory are supplied as developer instructions, preserving
+  Codex’s native coding prompt. Each turn reads `core` fresh through the shared
+  `features/agent-harness` reader, as Claude does for each new session.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
   Claude's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
   are disabled.
 - Shared Agent Activity integration is deferred because this Agents delivery
-  contract has no live-activity API. The Runtime diagnostics disclosure in the
-  agent's Settings shows conversation status and the latest command/output.
-  Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. Final sends preserve background processes, such as a dev server it started.
+  contract has no live-activity API. The agent's Activity tab shows
+  conversation status and the latest command/output.
+  Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. A turn that has nothing new to say ends without posting. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;
   RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.
 - Uses experimental app-server APIs for dynamic tools, model discovery, application context, and terminal

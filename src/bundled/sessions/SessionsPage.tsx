@@ -1,8 +1,9 @@
+import { profileActivityViewTarget } from "../../features/profiles/target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { activityTarget } from "../../features/agents/activity-target";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -30,6 +31,7 @@ import {
   PencilSimpleIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import {
   useCallback,
@@ -65,7 +67,14 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
+import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
+import { SessionProjectControl } from "../../features/sessions/SessionProjectControl";
+import {
+  readSelectedAssistant,
+  writeSelectedAssistant,
+} from "../../features/sessions/selected-assistant";
 import {
   SessionColumn,
   SessionHeading,
@@ -213,12 +222,7 @@ function LiveSessions({
     <PanelFrame companion={companion}>
       <section className={styles.empty}>
         {placement.status !== "ready" ? (
-          <div role="status">
-            <p>{placement.error ?? "Loading Me placement…"}</p>
-            <Button onClick={() => void session.mePlacement.refresh()}>
-              Retry Me
-            </Button>
-          </div>
+          <p role="status">{placement.error ?? "Loading Me placement…"}</p>
         ) : list.status === "loading" ? (
           <p role="status">Loading your conversation…</p>
         ) : (
@@ -280,9 +284,17 @@ function SessionWork({
   navigator?: Navigation | undefined;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
+  const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState(() =>
+    readSelectedAssistant(scope, channel.id),
+  );
+  const selectAgent = (agent: string) => {
+    setSelectedAgent(agent);
+    writeSelectedAssistant(scope, channel.id, agent);
+  };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
   const list = useChannelList(session.channels);
@@ -331,9 +343,9 @@ function SessionWork({
       navigation?.signal.aborted
     )
       return;
-    const target = activityTarget(intent.agent, intent.channelId);
-    const panel = panels.resolve(target);
-    if (panel) {
+    const target = profileActivityViewTarget(intent.agent);
+    const panel = target && panels.resolve(target);
+    if (target && panel) {
       panelTrigger.current = intent.trigger;
       open({ channelId: intent.channelId, panel, target }, true);
     }
@@ -343,7 +355,7 @@ function SessionWork({
   const canOpenLink = (url: string) =>
     !!panels.resolve(url) ||
     (!!navigator && !!sessionLinkTarget(url, scope, session.viewer));
-  function openLink(url: string) {
+  function openLink(url: string, origin?: MessageLinkOrigin) {
     const connection = relay.snapshot();
     if (
       !mounted.current ||
@@ -364,7 +376,12 @@ function SessionWork({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    secondary.open({ channelId: channel.id, panel, target: url });
+    secondary.open({
+      channelId: channel.id,
+      ...(origin && { rootId: origin.rootId }),
+      panel,
+      target: url,
+    });
     return true;
   }
   useEffect(
@@ -434,22 +451,26 @@ function SessionWork({
                   <MenuIcon>
                     <GearIcon size={16} />
                   </MenuIcon>
-                  Session settings…
+                  {inMe ? "Chat settings…" : "Session settings…"}
                 </MenuItem>
               </MenuPopup>
             </MenuRoot>
-            <IconButton
-              ref={splitTrigger}
-              data-tab-pane-toggle=""
-              size="toolbar"
-              aria-label="Toggle tab pane"
-              title={showingPanel ? "Close tab pane" : "Open tab pane"}
-              aria-expanded={!!showingPanel}
-              icon={<SidebarRightIcon size="1rem" />}
-              disabled={!hasLocalPanel}
-              focusableWhenDisabled
-              onClick={() => tabState.setPaneOpen(!showingPanel)}
-            />
+            {!showingPanel && (
+              <span className={panelStyles.paneToggle}>
+                <IconButton
+                  ref={splitTrigger}
+                  data-tab-pane-toggle=""
+                  size="toolbar"
+                  aria-label="Toggle tab pane"
+                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
+                  aria-expanded={!!showingPanel}
+                  icon={<SidebarRightIcon size="1rem" />}
+                  disabled={!hasLocalPanel}
+                  focusableWhenDisabled
+                  onClick={() => tabState.setPaneOpen(!showingPanel)}
+                />
+              </span>
+            )}
           </SessionHeading>
           {renameOpen && (
             <RenameSession
@@ -469,13 +490,17 @@ function SessionWork({
               close={() => setSettingsOpen(false)}
             />
           )}
-          {placement.status !== "ready" && (
-            <div role="status">
-              <p>{placement.error ?? "Loading Me placement…"}</p>
+          {placement.status === "error" && !placement.transient ? (
+            <p role="status">
+              {placement.error}{" "}
               <Button onClick={() => void session.mePlacement.refresh()}>
                 Retry Me
               </Button>
-            </div>
+            </p>
+          ) : (
+            placement.status !== "ready" && (
+              <p role="status">Loading Me placement…</p>
+            )
           )}
           {!inMe && placement.status === "ready" && (
             <div role="status">
@@ -492,7 +517,9 @@ function SessionWork({
           <SessionColumn enabled={false}>
             <MessageManagementStatus />
             <div className={styles.timeline}>
-              {window.status === "error" && !window.rows.length ? (
+              {window.status === "error" &&
+              !window.rows.length &&
+              !recoveryShown ? (
                 <div className={styles.empty} role="alert">
                   <p>{window.error}</p>
                   <Button
@@ -508,6 +535,7 @@ function SessionWork({
                 </p>
               ) : (
                 <ChannelTimeline
+                  chatPresentation={inMe}
                   historyControl="scroll"
                   extensions={extensions}
                   queries={session}
@@ -522,9 +550,37 @@ function SessionWork({
               )}
             </div>
             <MessageComposer
+              chatPresentation={inMe}
               sessionConversation
               activityClickOpensPanel
               personalConversation={placement.status !== "ready" || inMe}
+              selectedAgent={inMe ? selectedAgent : undefined}
+              trailingTool={
+                inMe ? (
+                  <>
+                    <SessionAgentControl
+                      session={session}
+                      channelId={channel.id}
+                      value={selectedAgent}
+                      onChange={selectAgent}
+                      disabled={
+                        !!channel.archived ||
+                        placement.status !== "ready" ||
+                        !inMe
+                      }
+                    />
+                    <SessionProjectControl
+                      session={session}
+                      channelId={channel.id}
+                      disabled={
+                        !!channel.archived ||
+                        placement.status !== "ready" ||
+                        !inMe
+                      }
+                    />
+                  </>
+                ) : undefined
+              }
               onSend={setSent}
               extensions={extensions}
               session={session}
@@ -558,6 +614,19 @@ function SessionWork({
               {secondary.hosts}
               <PanelWorkspace
                 drag={secondary.drag.side}
+                actions={
+                  <IconButton
+                    data-tab-pane-toggle=""
+                    data-highlight-expanded="false"
+                    variant="subtle"
+                    size="toolbar"
+                    aria-label="Toggle tab pane"
+                    title="Close tab pane"
+                    aria-expanded={true}
+                    onClick={secondary.closePane}
+                    icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
+                  />
+                }
                 value={secondary.selectedTab}
                 select={secondary.selectPanelTab}
                 items={secondary.items}

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { wheel } from "./timeline.mjs";
+import { anchor, expectAnchor, settle, wheel } from "./timeline.mjs";
 
 // Setup only: callers hold image responses until navigation has finished, then
 // release them and assert stability without any corrective scrolling.
@@ -101,6 +101,8 @@ async function holdDecodes(page, holdVisibility = false) {
     ({ holdVisibility }) => {
       const realDecode = HTMLImageElement.prototype.decode;
       const pending = new Map();
+      const completed = new Map();
+      const rejected = new Map();
       const paints = [];
       const realPaint = CanvasRenderingContext2D.prototype.putImageData;
       CanvasRenderingContext2D.prototype.putImageData = function (...args) {
@@ -111,11 +113,17 @@ async function holdDecodes(page, holdVisibility = false) {
         await realDecode.call(this);
         if (!this.src.startsWith("https://image.test/")) return;
         const key = this.src;
-        await new Promise((resolve, reject) => {
-          const list = pending.get(key) ?? [];
-          list.push({ resolve, reject });
-          pending.set(key, list);
-        });
+        try {
+          await new Promise((resolve, reject) => {
+            const list = pending.get(key) ?? [];
+            list.push({ resolve, reject });
+            pending.set(key, list);
+          });
+        } catch (error) {
+          rejected.set(key, (rejected.get(key) ?? 0) + 1);
+          throw error;
+        }
+        completed.set(key, (completed.get(key) ?? 0) + 1);
       };
       const observers = [];
       // Record native observe() calls on canvases so a test can wait for the
@@ -140,6 +148,9 @@ async function holdDecodes(page, holdVisibility = false) {
       }
       window.imageTest = {
         paints,
+        completed: (name) =>
+          completed.get(`https://image.test/${name}.svg`) ?? 0,
+        rejected: (name) => rejected.get(`https://image.test/${name}.svg`) ?? 0,
         observed: (canvas) => observedCanvases.has(canvas),
         waiting: (name) => pending.has(`https://image.test/${name}.svg`),
         release(name) {
@@ -246,15 +257,21 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await page.screenshot({ path: testInfo.outputPath("held-blurhash.png") });
     await releaseDecode(page, "first");
     await shown(page);
-    // The original fills the stable frame; transparency never exposes old colors.
+    // The decoded original owns its frame; transparency never exposes old colors.
     await expect(frame(page).locator("canvas")).toHaveCount(0);
-    await expect(frame(page).locator("img")).toHaveCSS("object-fit", "cover");
+    await expect(frame(page).locator("img")).toHaveCSS("object-fit", "contain");
     await expect(frame(page)).toHaveCSS("clip-path", "none");
     await expect(frame(page).locator("[data-image-outline]")).toHaveCSS(
       "overflow",
       "visible",
     );
-    expect(await frame(page).boundingBox()).toEqual(bounds);
+    const decodedBounds = await frame(page).boundingBox();
+    expect(decodedBounds.width).toBe(20);
+    expect(decodedBounds.height).toBe(10);
+    await expect(frame(page).locator("span").first()).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
     await page.screenshot({
       path: testInfo.outputPath("transparent-original.png"),
     });
@@ -262,6 +279,22 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await waiting(page, "next");
     await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
     await expect(frame(page).locator("canvas")).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Restore original", exact: true })
+      .click();
+    await waiting(page, "first");
+    expect(await frame(page).boundingBox()).toEqual(bounds);
+    await expect(frame(page)).not.toHaveAttribute("data-image-ready");
+    await page.evaluate(() => window.imageTest.reject("first"));
+    await expect
+      .poll(() => page.evaluate(() => window.imageTest.rejected("first")))
+      .toBeGreaterThan(0);
+    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("canvas")).toHaveCount(1);
+    expect(await frame(page).boundingBox()).toEqual(bounds);
+    await expect(frame(page)).not.toHaveAttribute("data-image-ready");
+    await page.getByRole("button", { name: "Retarget", exact: true }).click();
+    await waiting(page, "next");
     await page
       .getByRole("button", { name: "Fail original", exact: true })
       .click();
@@ -416,3 +449,180 @@ for (const unavailable of ["canvas", "visibility"]) {
     }
   });
 }
+
+// Virtua measurement, native scroll clamping and actual eviction require a browser.
+test("decoded image resizing preserves reading and bottom following across remounts", async ({
+  page,
+}) => {
+  await holdDecodes(page);
+  await routeOriginals(page, []);
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/image-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    const latestImage = feed.locator('img[src="https://image.test/58.svg"]');
+    const bottomDistance = () =>
+      feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+    await waiting(page, "58");
+    await settle(page, feed);
+    expect(await bottomDistance()).toBeLessThan(4);
+    await releaseDecode(page, "58");
+    await expect(latestImage).toHaveCSS("visibility", "visible");
+    await settle(page, feed);
+    expect(await bottomDistance()).toBeLessThan(4);
+    const originalNode = await latestImage.elementHandle();
+    try {
+      await navigate(page, -1);
+      await expect(latestImage).toHaveCount(0);
+      expect(await originalNode.evaluate((node) => node.isConnected)).toBe(
+        false,
+      );
+      // A fraction of scroll extent can land on a text-only row. Position a
+      // partially visible image while every remaining decode is still held.
+      const readingImageId = await feed.evaluate((element) => {
+        const viewport = element.getBoundingClientRect();
+        const image = [
+          ...element.querySelectorAll("[data-media-preview] img"),
+        ].find((image) => {
+          const bounds = image.getBoundingClientRect();
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+        });
+        if (!image) throw new Error("No image intersects the reading viewport");
+        const bounds = image.getBoundingClientRect();
+        element.scrollTop += bounds.top + bounds.height / 2 - viewport.top;
+        return image.closest("[data-message-id]").dataset.messageId;
+      });
+      await settle(page, feed);
+      const visible = await feed.evaluate((element) => {
+        const top = element.getBoundingClientRect().top;
+        const row = [...element.querySelectorAll("[data-message-id]")].find(
+          (row) => row.getBoundingClientRect().bottom > top,
+        );
+        const image = row.querySelector("[data-media-preview] img");
+        const bounds = image?.getBoundingClientRect();
+        return {
+          id: row.dataset.messageId,
+          top: row.getBoundingClientRect().top,
+          name: image ? new URL(image.src).pathname.slice(1, -4) : null,
+          imageTop: bounds?.top,
+          imageBottom: bounds?.bottom,
+          viewportTop: top,
+        };
+      });
+      expect(visible.id).toBe(readingImageId);
+      expect(visible.name).not.toBeNull();
+      expect(visible.imageTop).toBeLessThan(visible.viewportTop);
+      expect(visible.imageBottom).toBeGreaterThan(visible.viewportTop);
+      const delayed = await feed
+        .locator("[data-media-preview] img")
+        .evaluateAll((images) =>
+          images
+            .filter((image) => {
+              const row = image.closest("[data-message-id]");
+              const viewport = image.closest(
+                '[aria-label="Channel message history"]',
+              );
+              return (
+                image.naturalWidth > 0 &&
+                getComputedStyle(image).visibility === "hidden" &&
+                row.getBoundingClientRect().bottom <=
+                  viewport.getBoundingClientRect().top
+              );
+            })
+            .map((image) => ({
+              name: new URL(image.src).pathname.slice(1, -4),
+              top: image.getBoundingClientRect().top,
+            })),
+        );
+      expect(delayed.length).toBeGreaterThan(0);
+      const names = delayed.map((image) => image.name);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (names) => names.every((name) => window.imageTest.waiting(name)),
+            names,
+          ),
+        )
+        .toBe(true);
+      await settle(page, feed);
+      const reading = await anchor(page);
+      const resized = feed.locator(
+        `img[src="https://image.test/${names.at(-1)}.svg"]`,
+      );
+      const beforeHeight = await resized.evaluate(
+        (image) => image.getBoundingClientRect().height,
+      );
+      expect(beforeHeight).toBeGreaterThan(10);
+      await page.evaluate((names) => {
+        for (const name of names) window.imageTest.release(name);
+      }, names);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (names) =>
+              names.every((name) => window.imageTest.completed(name) > 0),
+            names,
+          ),
+        )
+        .toBe(true);
+      await settle(page, feed);
+      await expect(resized).toHaveCSS("visibility", "visible");
+      expect(
+        await resized.evaluate((image) => image.getBoundingClientRect().height),
+      ).toBe(10);
+      await expectAnchor(page, reading);
+      expect(await bottomDistance()).toBeGreaterThan(400);
+
+      // A shrinking visible placeholder changes its following content, while
+      // Virtua retains the first visible message rather than the next paragraph.
+      await waiting(page, visible.name);
+      await releaseDecode(page, visible.name);
+      await expect(
+        feed.locator(`img[src="https://image.test/${visible.name}.svg"]`),
+      ).toHaveCSS("visibility", "visible");
+      await settle(page, feed);
+      const visibleRow = feed.locator(`[data-message-id="${visible.id}"]`);
+      await expect
+        .poll(() =>
+          visibleRow.evaluate(
+            (row, top) => Math.abs(row.getBoundingClientRect().top - top),
+            visible.top,
+          ),
+        )
+        .toBeLessThan(1);
+      expect(await bottomDistance()).toBeGreaterThan(400);
+
+      await navigate(page, 1);
+      await waiting(page, "58");
+      expect(
+        await latestImage.evaluate(
+          (node, previous) => node !== previous,
+          originalNode,
+        ),
+      ).toBe(true);
+      await expect(latestImage).toHaveCSS("visibility", "hidden");
+      await settle(page, feed);
+      const completed = await page.evaluate(() =>
+        window.imageTest.completed("58"),
+      );
+      await releaseDecode(page, "58");
+      await expect
+        .poll(() => page.evaluate(() => window.imageTest.completed("58")))
+        .toBeGreaterThan(completed);
+      await expect(latestImage).toHaveCSS("visibility", "visible");
+      await settle(page, feed);
+      expect(await bottomDistance()).toBeLessThan(4);
+    } finally {
+      await originalNode.dispose();
+    }
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "wait" });
+    } finally {
+      await server.close();
+    }
+  }
+});

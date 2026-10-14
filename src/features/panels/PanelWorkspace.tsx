@@ -55,6 +55,16 @@ export function usePanelTabTitle(label: string, icon?: ReactNode) {
   }, [title, owner, label, icon]);
 }
 
+// Keyboard opens and reduced motion skip the push. Deciding here, rather than
+// in CSS, keeps a suppressed animation from leaving the pane marked as
+// entering, which would replay the push once those conditions change.
+function suppressPush() {
+  return (
+    document.documentElement.dataset.keyboardInput !== undefined ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
+}
+
 /** The channel owns target tabs; private details retain their feature's lifetime. */
 export function PanelWorkspace({
   items,
@@ -157,21 +167,26 @@ export function PanelWorkspace({
       .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
   ]);
   const active = tabs.find((tab) => tab.id === selected);
+  const choose = (id: string) => {
+    const local = owned.find((tab) => tab.id === id);
+    setLocalSelection(local?.id);
+    select(local?.owner ?? id);
+  };
   useLayoutEffect(() => {
-    const close = (event: Event) => {
+    // With two tab hosts, the one containing focus owns Close and tab switching.
+    const owns = () => {
       const element = root.current;
-      if (
-        event.defaultPrevented ||
-        !active?.close ||
-        !element?.isConnected ||
-        // With two tab hosts, the one containing focus owns Close.
+      return (
+        !!element?.isConnected &&
         (document.activeElement?.closest(
           "[data-panel-workspace], [data-main-workspace]",
-        ) ?? (main ? null : element)) !== element ||
-        element.closest('[hidden], [inert], [aria-hidden="true"]') ||
-        !element.getClientRects().length
-      )
-        return;
+        ) ?? (main ? null : element)) === element &&
+        !element.closest('[hidden], [inert], [aria-hidden="true"]') &&
+        !!element.getClientRects().length
+      );
+    };
+    const close = (event: Event) => {
+      if (event.defaultPrevented || !active?.close || !owns()) return;
       event.preventDefault();
       // Match the X button, including local detail tabs and focus recovery.
       // Commit before another native menu request can reuse this selection.
@@ -180,13 +195,36 @@ export function PanelWorkspace({
         active.close?.();
       });
     };
+    // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
+    const step = (delta: -1 | 1) => (event: Event) => {
+      if (event.defaultPrevented || tabs.length < 2 || !owns()) return;
+      event.preventDefault();
+      const index = tabs.findIndex((tab) => tab.id === selected);
+      const target = tabs[(index + delta + tabs.length) % tabs.length];
+      if (!target) return;
+      // Like a browser, land in the next tab's content rather than the strip.
+      focusContent.current = true;
+      // Commit before a held accelerator's next request reads the selection.
+      flushSync(() => choose(target.id));
+    };
+    const showNext = step(1);
+    const showPrevious = step(-1);
     window.addEventListener("buzz:close-active-tab", close);
-    return () => window.removeEventListener("buzz:close-active-tab", close);
+    window.addEventListener("buzz:next-tab", showNext);
+    window.addEventListener("buzz:previous-tab", showPrevious);
+    return () => {
+      window.removeEventListener("buzz:close-active-tab", close);
+      window.removeEventListener("buzz:next-tab", showNext);
+      window.removeEventListener("buzz:previous-tab", showPrevious);
+    };
   });
   const previous = useRef<string>(focusOnMount ? undefined : selected);
   const instance = items.find((item) => item.id === selected)?.instance;
   const previousInstance = useRef<object>(focusOnMount ? undefined : instance);
   const adopted = useRef(adoptSelection);
+  // In the main pane, a newly selected closable tab (a thread) slides in over
+  // the tab it replaces; returning to the permanent tab stays immediate.
+  const [motion, setMotion] = useState<{ enter: string; leave: string }>();
   useLayoutEffect(() => {
     if (adopted.current !== adoptSelection) {
       adopted.current = adoptSelection;
@@ -222,6 +260,12 @@ export function PanelWorkspace({
         block: "nearest",
         inline: "nearest",
       });
+      if (main && previous.current && previous.current !== selected)
+        setMotion(
+          items.find((item) => item.id === selected)?.close && !suppressPush()
+            ? { enter: selected, leave: previous.current }
+            : undefined,
+        );
       previous.current = selected;
       previousInstance.current = instance;
       focusTab.current = false;
@@ -289,9 +333,7 @@ export function PanelWorkspace({
             onValueChange={(id) => {
               focusContent.current = pointerTab.current;
               pointerTab.current = false;
-              const local = owned.find((tab) => tab.id === id);
-              setLocalSelection(local?.id);
-              select(local?.owner ?? id);
+              choose(id);
             }}
           />
         }
@@ -312,6 +354,15 @@ export function PanelWorkspace({
               aria-labelledby={`${panelId(item.id)}-tab`}
               className={styles.workspacePane}
               data-covered={selected !== item.id || undefined}
+              data-entering={motion?.enter === item.id || undefined}
+              data-leaving={motion?.leave === item.id || undefined}
+              onAnimationEnd={(event) => {
+                if (
+                  event.target === event.currentTarget &&
+                  motion?.enter === item.id
+                )
+                  setMotion(undefined);
+              }}
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >

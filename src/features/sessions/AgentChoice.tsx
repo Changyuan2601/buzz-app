@@ -143,6 +143,7 @@ export function AgentChoice({
   parentMembers,
   parentName,
   emptyLabel = "Choose an agent",
+  clearLabel,
   side = "top",
 }: {
   session: RelaySession;
@@ -154,6 +155,7 @@ export function AgentChoice({
   parentMembers?: readonly string[] | undefined;
   parentName?: string | undefined;
   emptyLabel?: string;
+  clearLabel?: string | undefined;
   side?: "top" | "bottom";
 }) {
   const [open, setOpen] = useState(false);
@@ -190,7 +192,7 @@ export function AgentChoice({
     ? `Change agent: ${selected.name}`
     : value
       ? "Change selected agent"
-      : "Choose an agent";
+      : emptyLabel;
   const accessibleLabel =
     selectedPresence === "unknown" ? label : `${label}, ${selectedPresence}`;
   return (
@@ -323,6 +325,26 @@ export function AgentChoice({
             disabled={disabled}
           />
           <div className={`${styles.agentPickerChoices} buzz-thin-scrollbar`}>
+            {clearLabel && value && (
+              <NavigationItem
+                variant="option"
+                data-agent-choice=""
+                selected={false}
+                aria-pressed={false}
+                disabled={disabled}
+                onClick={() => select("")}
+                icon={
+                  <ChoiceAvatar
+                    alt=""
+                    fallback=""
+                    size="large"
+                    shape="squircle"
+                    fallbackContent={<RobotIcon size={16} aria-hidden="true" />}
+                  />
+                }
+                label={clearLabel}
+              />
+            )}
             {matches.map((agent) => {
               const admission = agentAdmission(
                 agent.pubkey,

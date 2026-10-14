@@ -61,6 +61,10 @@ export function appClient(
       check();
       options.remembered?.();
     },
+    templates: async () => {
+      check();
+      return agent.templates();
+    },
   };
 }
 

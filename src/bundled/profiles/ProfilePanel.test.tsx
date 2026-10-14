@@ -3,7 +3,6 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
-import { createAgentActivity } from "../../features/agents/activity";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -13,14 +12,12 @@ import {
   profileTarget,
   profileActivityViewTarget,
 } from "../../features/profiles/target";
-import { Context } from "@deepseek-ai/cordis";
-import { PanelsService } from "../../features/panels/service";
-import {
-  activitySelection,
-  activityTarget,
-} from "../../features/agents/activity-target";
-import { ActivityPanel } from "../agent-activity/ActivityPanel";
 import { ProfilePanel } from "./ProfilePanel";
+import type {
+  Agent,
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 
 import { agentDirectory } from "../../features/identity-names/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -254,94 +251,6 @@ it("recovers provider-owned names in the same live session and releases demand w
   }
 });
 
-it("offers the activity preview to known agents only, never to people", async () => {
-  const person = keypair();
-  const agent = keypair();
-  const localAgent = keypair();
-  const activity = createAgentActivity(true, vi.fn(), () => true);
-  const owner = createRelaySession({
-    viewer: key,
-    relayAuthor: keypair().pubkey,
-    media: () => undefined,
-    query: async () => [
-      profile(person, { name: "Plain person" }),
-      profile(agent, { name: "Declared agent", is_agent: true }),
-      profile(localAgent, { name: "Local agent" }),
-    ],
-    readAgentLibrary: async () => ({
-      definitions: [],
-      identities: [{ pubkey: localAgent.pubkey, name: "Local agent" }],
-    }),
-  });
-  const release = activity.queries.activate();
-  activity.state({
-    status: "connected",
-    routes: [{ id: "observer", status: "live", replay: "unknown" }],
-  });
-  const snapshot = {
-    status: "ready" as const,
-    generation: 1,
-    scope: `https://relay.example.test:${key}`,
-    viewer: key,
-    session: { ...owner.session, agentActivity: activity.queries },
-  };
-  const relay: RelayData = {
-    snapshot: () => snapshot,
-    subscribe: () => () => {},
-    retry() {},
-    disconnect() {},
-    clearCache: async () => {},
-  };
-  const context = {
-    channelId: "channel-a",
-    canOpen: () => true,
-    open: () => true,
-  };
-  const view = (pubkey: string) => (
-    <ProfilePanel
-      relay={relay}
-      target={profileTarget(pubkey) ?? ""}
-      context={context}
-      close={() => {}}
-    />
-  );
-  try {
-    const mounted = render(view(person.pubkey));
-    // The settled metadata read is the barrier: no agent evidence can follow it.
-    await screen.findByRole("heading", { name: "Plain person" });
-    expect(
-      screen.queryByRole("region", { name: "Activity preview" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "View activity" }),
-    ).not.toBeInTheDocument();
-    mounted.rerender(view(agent.pubkey));
-    await screen.findByRole("heading", { name: "Declared agent" });
-    expect(
-      await screen.findByRole("region", { name: "Activity preview" }),
-    ).toHaveTextContent("No activity yet");
-    expect(screen.getByRole("button", { name: "View activity" })).toBeEnabled();
-    mounted.rerender(view(localAgent.pubkey));
-    await screen.findByRole("heading", { name: "Local agent" });
-    await act(() => owner.session.agentChoices.refresh());
-    expect(owner.session.agentChoices.snapshot().identities).toEqual([
-      expect.objectContaining({ pubkey: localAgent.pubkey }),
-    ]);
-    expect(
-      owner.session.profiles.snapshot().get(localAgent.pubkey)?.isAgent,
-    ).not.toBe(true);
-    expect(
-      await screen.findByRole("region", { name: "Activity preview" }),
-    ).toHaveTextContent("No activity yet");
-    expect(screen.getByRole("button", { name: "View activity" })).toBeEnabled();
-  } finally {
-    cleanup();
-    release();
-    activity.dispose();
-    owner.dispose();
-  }
-});
-
 it("exposes thinking through the named profile avatar across tabs", async () => {
   const agent = keypair();
   const owner = createRelaySession({
@@ -437,25 +346,16 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
   }
 });
 
-it("opens profile Activity in its originating channel and retires a disabled contribution", async () => {
-  const root = new Context();
-  root.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
-  });
-  const panels = new PanelsService(root);
+function renderAgentActivity(
+  tabs: { title: string; role?: string }[],
+  rootId?: string,
+) {
   const owner = createRelaySession(null);
-  const activity = createAgentActivity(
-    true,
-    () => {},
-    () => true,
-  );
-  const activate = vi.fn(activity.queries.activate);
-  const session = {
-    ...owner.session,
-    agentActivity: { ...activity.queries, activate },
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
   };
-  const snapshot = { status: "ready" as const, generation: 1, session };
   const relay: RelayData = {
     snapshot: () => snapshot,
     subscribe: () => () => {},
@@ -463,98 +363,106 @@ it("opens profile Activity in its originating channel and retires a disabled con
     disconnect() {},
     clearCache: async () => {},
   };
-  const scope = root.extend({
-    pluginOwner: { id: "activity", revision: "one" },
-  });
-  const fiber = scope.plugin((ctx) =>
-    ctx.panels.register({
-      id: "activity",
-      title: "Activity",
-      matches: (target) => !!activitySelection(target),
-      component: (props) => <ActivityPanel {...props} relay={relay} />,
-    }),
+  const type = {
+    key: "test/echo",
+    title: "Echo",
+    tabs: tabs.map(({ title, role }) => ({
+      id: title.toLowerCase(),
+      title,
+      role,
+      component: ({
+        conversation,
+      }: {
+        conversation?: { channelId: string; rootId?: string };
+      }) => (
+        <>
+          <p>Echo {title.toLowerCase()}</p>
+          {conversation && (
+            <p>
+              Opened from {conversation.channelId}/
+              {conversation.rootId ?? "channel"}
+            </p>
+          )}
+        </>
+      ),
+    })),
+  } as unknown as RegisteredAgentType;
+  const agent = {
+    pubkey: key,
+    name: "Echo",
+    type: type.key,
+    place: "here",
+    config: {},
+    attention: {},
+  } as unknown as Agent;
+  const types = [type];
+  const agentsSnapshot = { agents: [agent], teams: [] };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => agentsSnapshot,
+    types: () => types,
+    find: (pubkey: string) => (pubkey === key ? agent : undefined),
+  } as unknown as Agents;
+  render(
+    <ProfilePanel
+      relay={relay}
+      agents={agents}
+      target={profileActivityViewTarget(key) ?? ""}
+      context={{
+        channelId: "originating-channel",
+        ...(rootId && { rootId }),
+        canOpen: () => true,
+        open: vi.fn(() => true),
+      }}
+      close={() => {}}
+    />,
   );
-  await fiber.await();
-  const context = {
-    channelId: "originating-channel",
-    canOpen: (target: string) => !!panels.resolve(target),
-    open: vi.fn(() => true),
+  return () => {
+    cleanup();
+    owner.dispose();
   };
+}
+
+it("opens an agent's activity on its type's Activity tab, the profile's only one", async () => {
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+  );
   try {
-    const view = render(
-      <ProfilePanel
-        relay={relay}
-        panels={panels}
-        target={profileActivityViewTarget(key) ?? ""}
-        context={context}
-        close={() => {}}
-      />,
-    );
     expect(
       screen.getByRole("tab", { name: "Activity", selected: true }),
     ).toBeVisible();
+    // The originating thread reaches the tab that selects its session.
     expect(
-      screen.getByRole("combobox", { name: "Conversation" }),
-    ).toHaveTextContent("originating-channel");
-    expect(screen.getByText(key, { exact: true })).toBeVisible();
-    expect(activate).not.toHaveBeenCalled();
-    await act(() => fiber.dispose());
-    expect(
-      screen.queryByRole("tab", { name: "Activity" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Agent activity" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("tab", { name: "Info", selected: true }),
+      screen.getByText("Opened from originating-channel/thread-root"),
     ).toBeVisible();
-
-    const replacement = root.extend({
-      pluginOwner: { id: "activity", revision: "two" },
-    });
-    await act(async () => {
-      await replacement
-        .plugin((ctx) =>
-          ctx.panels.register({
-            id: "activity",
-            title: "Activity",
-            matches: (target) => !!activitySelection(target),
-            component: ({ target }) => <p>Replacement: {target}</p>,
-          }),
-        )
-        .await();
-    });
-    expect(
-      screen.getByRole("tab", { name: "Info", selected: true }),
-    ).toBeVisible();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("tab", { name: "Activity" }));
-    expect(
-      screen.getByText(
-        `Replacement: ${activityTarget(key, context.channelId)}`,
-      ),
-    ).toBeVisible();
-    view.rerender(
-      <ProfilePanel
-        relay={relay}
-        panels={panels}
-        target={profileActivityViewTarget(key) ?? ""}
-        close={() => {}}
-      />,
-    );
-    expect(
-      screen.queryByRole("tab", { name: "Activity" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/^Replacement:/)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("tab", { name: "Info", selected: true }),
-    ).toBeVisible();
-    expect(activate).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("tab", { name: "Activity" })).toHaveLength(1);
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByText("Echo settings")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Echo activity")).toBeVisible();
   } finally {
-    cleanup();
-    owner.dispose();
-    activity.dispose();
-    await root.fiber.dispose();
+    dispose();
+  }
+});
+
+it("opens an agent's activity on its type's first tab when the type has no Activity tab", () => {
+  const dispose = renderAgentActivity([
+    { title: "Settings", role: "settings" },
+    { title: "Logs" },
+  ]);
+  try {
+    expect(
+      screen.getByRole("tab", { name: "Settings", selected: true }),
+    ).toBeVisible();
+    expect(screen.getByText("Echo settings")).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
+  } finally {
+    dispose();
   }
 });

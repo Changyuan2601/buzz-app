@@ -3192,6 +3192,24 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
   );
 });
 
+it.each([
+  ["  :party: \n\t :party:  ", true],
+  [":party:".repeat(24), true],
+  [Array(24).fill(":party:").join(" ") + " 😀", false],
+])(
+  "classifies images-only emoji drafts without changing their text: %s",
+  (draft, imagesOnly) => {
+    const h = mount();
+    h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+    h.fill(draft);
+    expect(h.input()).toHaveValue(draft);
+    expect(h.input()).toHaveAttribute("data-single-emoji", "true");
+    if (imagesOnly)
+      expect(h.input()).toHaveAttribute("data-emoji-images-only", "true");
+    else expect(h.input()).not.toHaveAttribute("data-emoji-images-only");
+  },
+);
+
 it("renders a leading custom emoji inline without changing trailing text", () => {
   const h = mount();
   h.setEmoji([{ shortcode: "bufo", url: "https://emoji.test/bufo.png" }]);
@@ -3983,6 +4001,77 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   expect(h.input()).toHaveValue("");
   setRememberAgentsPreference(true);
   expect(h.input()).toHaveValue("");
+});
+
+it("uses Me's selected assistant for plain follow-ups while explicit mentions override it", async () => {
+  const h = mount({
+    personalConversation: true,
+    sessionConversation: true,
+    selectedAgent: second.pubkey,
+  });
+  h.setLibrary([
+    { pubkey: first.pubkey, name: "Explicit" },
+    { pubkey: second.pubkey, name: "Selected" },
+  ]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Explicit", isAgent: true }],
+      [second.pubkey, { name: "Selected", isAgent: true }],
+    ]),
+  );
+  const channel = {
+    id: "channel",
+    channelType: "session" as const,
+    members: [first.pubkey, second.pubkey],
+  };
+  Object.assign(h.session, {
+    mePlacement: { has: () => true },
+    workSessions: {
+      refreshMembership: vi.fn(async () => channel),
+      addAgents: vi.fn(async () => {}),
+    },
+  });
+
+  h.fill("plain follow-up");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+
+  h.fill("override");
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps a Me draft when its selected assistant is unavailable", async () => {
+  const h = mount({
+    personalConversation: true,
+    sessionConversation: true,
+    selectedAgent: second.pubkey,
+  });
+  Object.assign(h.session, {
+    mePlacement: { has: () => true },
+    workSessions: {
+      refreshMembership: vi.fn(async () => ({
+        id: "channel",
+        channelType: "session" as const,
+        members: [],
+      })),
+      addAgents: vi.fn(async () => {}),
+    },
+  });
+  h.fill("keep this draft");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "selected assistant is no longer available",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("keep this draft");
 });
 
 it.each([

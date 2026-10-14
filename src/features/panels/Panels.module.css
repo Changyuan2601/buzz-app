@@ -226,10 +226,55 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   opacity: 0;
   pointer-events: none;
 }
+/* A thread opened in the main pane pushes across the conversation, which
+   drifts back underneath until the thread lands. Travelling the whole pane
+   needs longer and a gentler start than a panel entrance. Only transform and
+   opacity animate, so the compositor keeps the slide smooth while the thread
+   renders. */
+.workspaceBody {
+  --workspace-push-duration: 300ms;
+  --workspace-push-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+.workspaceBody:has(> [data-entering]) {
+  overflow: clip;
+}
+.workspacePane[data-entering] {
+  z-index: 1;
+  background: var(--surface-panel);
+  box-shadow: var(--elevation-dock);
+  animation: workspace-push-in var(--workspace-push-duration)
+    var(--workspace-push-easing);
+}
+.workspacePane[data-leaving][data-covered] {
+  visibility: visible;
+  animation: workspace-push-under var(--workspace-push-duration)
+    var(--workspace-push-easing) forwards;
+}
+@keyframes workspace-push-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes workspace-push-under {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0.6;
+    transform: translateX(-20%);
+  }
+}
 .tabDetail {
   --space-panel-inset: var(--space-5);
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: auto;
+}
+
+.paneToggle {
+  display: flex;
+  border-inline-start: 1px solid var(--border-standard);
+  padding-inline-start: var(--space-2);
 }

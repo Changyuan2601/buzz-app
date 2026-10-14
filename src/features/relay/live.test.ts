@@ -8,6 +8,7 @@ import {
 } from "./live";
 import { keypair, message, roster, signed, scriptedTransport } from "./testing";
 import { createRelaySession } from "./session";
+import { liveRecoveryStatus } from "./live-recovery";
 import { createPresence } from "../presence/presence";
 type WireFilter = {
   kinds: number[];
@@ -853,6 +854,88 @@ it("isolates denial, fences removed/readded routes and late sockets, and dispose
   expect(h.sockets).toHaveLength(2);
   expect(vi.getTimerCount()).toBe(0);
 });
+it("restores prompt reconnects after each healthy connection across repeated rollouts", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    for (let cycle = 0; cycle < 7; cycle++) {
+      const socket = h.sockets[cycle];
+      assert.exists(socket);
+      await socket.auth();
+      await vi.advanceTimersByTimeAsync(750);
+      for (const request of socket.requests())
+        await socket.receive(["EOSE", request[1]]);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+      socket.close();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(h.sockets).toHaveLength(cycle + 2);
+    }
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([0, 0.5])(
+  "keeps jittered recovery capped through auth flaps and a prolonged outage (random=%s)",
+  async (sample) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(sample);
+    const h = setup([]);
+    try {
+      const ceilings = [500, 1000, 2000, 4000, 8000, 16000, 30000, 30000];
+      for (const [cycle, ceiling] of ceilings.entries()) {
+        const socket = h.sockets[cycle];
+        assert.exists(socket);
+        // Authentication alone must not reset backoff on a flapping relay.
+        if (cycle < 4) await socket.auth();
+        socket.close();
+        const delay = ceiling * (0.5 + sample / 2);
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(h.sockets).toHaveLength(cycle + 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.sockets).toHaveLength(cycle + 2);
+      }
+      const recovered = h.sockets.at(-1);
+      assert.exists(recovered);
+      await recovered.auth();
+      await vi.advanceTimersByTimeAsync(750);
+      for (const request of recovered.requests())
+        await recovered.receive(["EOSE", request[1]]);
+      expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+      expect(h.callbacks.established).toHaveBeenCalled();
+      // Cancel a retry at the capped delay, not just the initial short delay.
+      recovered.close();
+      h.owner.dispose();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(h.sockets).toHaveLength(9);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      h.owner.dispose();
+      random.mockRestore();
+    }
+  },
+);
+
+it("does not automatically reconnect after an authentication rejection", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await h.first.receive(["AUTH", "challenge"]);
+    const auth = h.first.sent.find((frame) => frame[0] === "AUTH")?.[1] as {
+      id: string;
+    };
+    await h.first.receive(["OK", auth.id, false, "restricted: access denied"]);
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(h.sockets).toHaveLength(1);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("error");
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("times out individual setup, releases queue slots and never calls capped replay complete", async () => {
   vi.useFakeTimers();
   const h = setup(["a", "b", "c", "d"]);
@@ -2257,6 +2340,37 @@ it("logs authentication failure and retry reasons at Info without server payload
     timedOut?.owner.dispose();
     logger.setReporters(reporters);
     setLogLevel("info");
+  }
+});
+
+it("a rejected AUTH stays terminal for automatic recovery and reconnects only on explicit retry", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await h.first.receive(["AUTH", "challenge"]);
+    const auth = h.first.sent.find((frame) => frame[0] === "AUTH")?.[1] as {
+      id: string;
+    };
+    await h.first.receive(["OK", auth.id, false, "restricted: no"]);
+    const view = h.callbacks.state.mock.lastCall?.[0];
+    assert.exists(view);
+    expect(view).toMatchObject({
+      status: "error",
+      error: "Relay rejected live authentication",
+    });
+    // Recovery and wake signals skip it; the live layer schedules nothing.
+    expect(
+      liveRecoveryStatus({ ...view, roster: { state: "verified" }, heads: [] }),
+    ).toBe("settled");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.sockets).toHaveLength(1);
+    // The conversation's Retry live updates calls this after the user fixes
+    // the signer or access problem.
+    h.owner.retry();
+    expect(h.sockets).toHaveLength(2);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connecting");
+  } finally {
+    h.owner.dispose();
   }
 });
 

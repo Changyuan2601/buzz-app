@@ -16,6 +16,14 @@ export type InboxItem = Readonly<{
   preview: string;
   createdAt: number;
   mentioned: boolean;
+  /** Verified group members with time and viewer-mention classification. */
+  messages: readonly Readonly<{
+    id: string;
+    createdAt: number;
+    mentioned: boolean;
+  }>[];
+  /** The same conversation projected from explicit mention evidence only. */
+  mention?: InboxItem | undefined;
   thread: boolean;
   unreadCount: number;
   manual: boolean;

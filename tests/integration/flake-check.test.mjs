@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  browserShards,
   classify,
   hunkRanges,
   listBrowser,
@@ -330,4 +331,11 @@ test("measurement specs list no engine journeys, alone or beside functional spec
     "the listing keeps tagged journeys so they still own their line ranges",
   );
   assert.ok(repeatableLines(journeys).length < journeys.length);
+});
+
+test("browser repetitions get one shard per five journeys, at most eight", () => {
+  assert.deepEqual(
+    [0, 1, 5, 6, 18, 40, 41, 200].map(browserShards),
+    [1, 1, 1, 2, 4, 8, 8, 8],
+  );
 });

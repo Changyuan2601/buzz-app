@@ -104,6 +104,7 @@ it.each([
         ["channel_type", "stream"],
         ["about", "Updates for the team"],
         ["ttl", "604800"],
+        ["t", "release"],
       ],
     });
     const sessionCreation = signed(viewer, {
@@ -170,6 +171,7 @@ it.each([
           description: "Updates for the team",
           visibility: "private",
           ttlSeconds: 604800,
+          labels: ["release"],
         }),
       );
       await expect(
@@ -184,6 +186,7 @@ it.each([
           description: "Updates for the team",
           visibility: "private",
           ttlSeconds: 604800,
+          labels: ["release"],
         }),
       ).rejects.toThrow(/connection lost/);
       expect(sign).not.toHaveBeenCalled();
@@ -201,6 +204,7 @@ it.each([
           description: "Updates for the team",
           visibility: "private",
           ttlSeconds: 604800,
+          labels: ["release"],
         }),
       ).resolves.toBe(id);
       expect(sign).not.toHaveBeenCalled();
@@ -1668,4 +1672,81 @@ it("rejects an addition cancelled during delivery readback", async () => {
     test.service.delivered(event.id, () => active, true),
   ).rejects.toMatchObject({ name: "AbortError" });
   expect(test.outbox.retry).not.toHaveBeenCalled();
+});
+
+it("creates a stream with NIP-CL labels after about and ttl, and rejects bad labels before sending", () => {
+  const test = setup();
+  const id = "11111111-1111-4111-8111-111111111111";
+  test.service.createChannel(
+    id,
+    "Records",
+    "private",
+    "For You records",
+    604800,
+    undefined,
+    { labels: ["for-you", "app:records", "for-you"] },
+  );
+  expect(test.outbox.send).toHaveBeenLastCalledWith(
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Records"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", "For You records"],
+        ["ttl", "604800"],
+        ["t", "for-you"],
+        ["t", "app:records"],
+      ],
+    },
+    undefined,
+    undefined,
+  );
+  for (const labels of [["system"], ["Upper"], [""]])
+    expect(() =>
+      test.service.createChannel(
+        id,
+        "Records",
+        "private",
+        undefined,
+        undefined,
+        undefined,
+        { labels },
+      ),
+    ).toThrow(/channel labels/);
+  expect(test.outbox.send).toHaveBeenCalledTimes(1);
+});
+
+it("refuses a new labeled channel without signing when the relay does not advertise NIP-CL", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const sign = vi.fn();
+  const publish = vi.fn();
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async () => [],
+      writer: { kinds: [9, 9000, 9007], sign, publish },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  try {
+    await expect(
+      owner.session.channelCreation.create({
+        name: "Records",
+        visibility: "open",
+        labels: ["for-you"],
+      }),
+    ).rejects.toThrow(/does not support channel labels/);
+    expect(sign).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(owner.session.outbox?.snapshot() ?? []).toEqual([]);
+    expect(owner.session.channelCreation.snapshot()).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
 });

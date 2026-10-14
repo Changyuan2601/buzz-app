@@ -300,9 +300,10 @@ The host owns the single rounded outer surface and sidebar divider. Messages
 owns flush conversation and contributed-panel regions separated by one-pixel
 dividers. A single right panel fills the conversation height;
 the right-column grid splits available height evenly between a local link card
-and the launched companion card. Below 1000px
-the right column overlays the conversation; it also overlays when the content
-pane is too narrow for two columns. Below 650px it fills the page area.
+and the launched companion card. The right column stays beside the conversation
+whenever the workspace has room for both, accounting for sidebar width and
+interface size. It overlays when the content pane is too narrow for two columns.
+At 650px and below it fills the page area.
 Each region contains its own overflow, keeping the composer and close control visible.
 Ordinary thread opens show a loading status until bounded history and initial
 bottom positioning finish; the first painted replies are already in place.

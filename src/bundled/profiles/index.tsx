@@ -15,7 +15,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: (props) => (
       <ProfilePanel
         {...props}
-        panels={ctx.panels}
         relay={ctx.relay}
         navigation={ctx.navigation}
         agents={ctx.agents}

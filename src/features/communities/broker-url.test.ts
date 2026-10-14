@@ -198,7 +198,7 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
       code: "fixture",
       policy_receipt: "fixture-receipt",
     });
-    const media = transportA.media(`${a}/media/example`);
+    const media = transportA.media(`${a}/media/${"e".repeat(64)}`);
     assert.exists(media);
     expect((await fetch(media)).status).toBe(200);
     expect(
@@ -206,7 +206,7 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
         await fetch(
           endpoint(a, "media") +
             "?url=" +
-            encodeURIComponent(`${b}/media/example`),
+            encodeURIComponent(`${b}/media/${"e".repeat(64)}`),
         )
       ).status,
     ).toBe(403);

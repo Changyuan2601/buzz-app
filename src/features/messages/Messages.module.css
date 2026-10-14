@@ -2,6 +2,7 @@
 
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
+  position: relative;
   container-type: inline-size;
   container-name: messages;
   min-width: 0;
@@ -19,6 +20,8 @@
   background: transparent;
 }
 .feed {
+  --timeline-measure: 100%;
+
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -39,6 +42,9 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+.feed[data-chat-presentation] {
+  --timeline-measure: 52rem;
+}
 .threadHistory::-webkit-scrollbar {
   width: 8px;
 }
@@ -54,7 +60,7 @@
 /* Part of the final measured item, so end alignment includes breathing room.
    The spacer scrolls away with history instead of shortening its viewport. */
 .timelineEnd {
-  height: var(--space-3);
+  height: calc(var(--space-3) + var(--channel-preview-inset, 0px));
 }
 .feed ol {
   list-style: none;
@@ -62,8 +68,10 @@
   padding: 0;
 }
 .edge {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
-  height: 3.5rem;
+  min-height: var(--space-4);
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -74,24 +82,38 @@
   color: var(--text-subtle);
   gap: var(--space-2);
 }
+.edge[data-history-space] {
+  min-height: calc(var(--size-control) + var(--space-4));
+}
 .day {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   display: flex;
   align-items: center;
-  gap: 0;
-  color: var(--text-standard);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  margin: var(--space-3) 0;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  color: var(--text-subtle);
+  @apply text-caption;
+  margin: var(--space-5) 0;
 }
 .day::before,
 .day::after {
   content: "";
-  height: 1px;
-  background: var(--border-standard);
+  height: 0.5px;
+  min-width: 0;
   flex: 1;
+  background: var(--border-standard);
+}
+.dayLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .message {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   position: relative;
   container: message-row / inline-size;
   display: flex;
@@ -102,6 +124,9 @@
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
   gap: var(--space-2);
+}
+.message[data-viewer-message] {
+  flex-direction: row-reverse;
 }
 .message[data-layout="continuation"] {
   padding-block: var(--space-half);
@@ -124,6 +149,13 @@
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+.message[data-viewer-message] .messageBody {
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: min(85%, 42rem);
+  margin-inline-start: auto;
+  text-align: start;
 }
 .byline {
   display: flex;
@@ -152,7 +184,7 @@
   min-height: var(--size-emoji-line);
   margin-top: var(--space-1);
   font-size: var(--size-emoji-display);
-  line-height: var(--size-emoji-display);
+  line-height: var(--size-emoji-line);
 }
 .text a:not([data-link-renderer]) {
   color: inherit;
@@ -387,8 +419,11 @@
   display: block;
   width: 360px;
   max-width: 100%;
+  min-width: 1px;
+  min-height: 1px;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
+  scroll-margin-block: var(--space-1);
   border-radius: var(--media-preview-radius);
 }
 /* Clip the pixels, not the focusable link's outside keyboard outline. */
@@ -406,6 +441,9 @@
   clip-path: var(--media-corner-clip, none);
   background: var(--surface-inset);
 }
+.attachmentImage[data-image-ready] .attachmentImagePixels {
+  background: transparent;
+}
 .attachmentImage.mediaPlaceholder {
   border-radius: var(--media-preview-radius);
   background: var(--surface-inset);
@@ -419,27 +457,26 @@
   height: 100%;
 }
 .attachmentImage img {
-  object-fit: cover;
+  object-fit: contain;
 }
-/* Fixed tiles keep lazy loading from moving the reading position. */
+.attachmentImageUnavailable {
+  @apply text-caption;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  cursor: auto;
+  color: var(--text-subtle);
+}
 .imageGroup {
   min-width: 0;
   margin-top: var(--space-2);
 }
-.imageStrip {
+.imageList {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-2);
-  overflow-x: auto;
   padding: var(--space-1);
-  scroll-padding-inline: var(--space-1);
-  scrollbar-width: thin;
-}
-.attachmentImage[data-thumbnail],
-.imageUnavailable {
-  flex: 0 0 auto;
-  width: calc(var(--space-16) + var(--space-2));
-  aspect-ratio: 1;
-  margin: 0;
 }
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
   outline: 2px solid var(--border-focus);
@@ -449,15 +486,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   @apply text-caption;
   color: var(--text-subtle);
   margin-top: var(--space-1);
-}
-.imageUnavailable {
-  @apply text-caption;
-  display: grid;
-  place-items: center;
-  padding: var(--space-1);
-  border-radius: var(--radius-row);
-  background: var(--affordance-subtle-hover);
-  color: var(--text-subtle);
 }
 /* Optional plugin accessories use only the space they actually render. */
 .composerContext {
@@ -476,7 +504,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: relative;
   border: 1px solid var(--border-standard);
   background: var(--surface-panel);
-  border-radius: var(--radius-panel);
+  /* Match the send control plus its inset, measured from the outer border. */
+  border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
   margin: 0 var(--space-4) var(--space-4);
@@ -488,6 +517,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
+}
+.composer[data-chat-presentation] {
+  width: min(calc(100% - 2 * var(--space-4)), 52rem);
+  margin-inline: auto;
+  margin-bottom: var(--space-3);
 }
 .empty {
   padding: var(--space-8) var(--space-4);
@@ -511,7 +545,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-3)) var(--space-1);
+  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-1h)) var(--space-1);
   padding: var(--space-2) var(--space-3);
   background: var(--surface-inset);
   color: var(--text-secondary);
@@ -546,6 +580,33 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-1);
+}
+.composerToolRow {
+  display: contents;
+}
+.composerConversationControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerActions {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerToolRow {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerConversationControls {
+  width: 100%;
 }
 .backgroundUpload {
   display: flex;
@@ -607,8 +668,26 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   margin-top: var(--space-1h);
 }
-.day span {
-  padding: var(--space-1h) var(--space-3);
+.dayCalendar {
+  display: grid;
+  flex: none;
+  width: var(--space-5);
+  height: var(--space-5);
+  user-select: none;
+}
+.dayCalendar > * {
+  grid-area: 1 / 1;
+}
+.dayCalendar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* Matches the former SVG numeral: half the tile, centred below the red band. */
+.dayCalendar [data-calendar-date] {
+  place-self: center;
+  padding-top: calc(var(--space-5) * 7 / 24);
+  line-height: 1;
 }
 .threadUnread {
   width: 0.5rem;
@@ -648,20 +727,53 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   overflow: auto;
   padding: 0 var(--space-panel-inset);
   /* Scrollable end padding, not a fixed strip above the composer. */
-  padding-bottom: var(--space-3);
+  padding-bottom: calc(var(--space-3) + var(--channel-preview-inset));
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
-/* Measure loaded rows without painting a scroll position we will replace. */
+/* Measure loaded rows without painting a scroll position we will replace,
+   then fade them in once positioned. */
+.threadHistory > [data-thread-rows] {
+  transition: opacity var(--duration-state) var(--easing-state);
+}
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-.threadHistory[data-positioning] > [role="status"] {
+/* Fills whichever thread area is waiting. The mark waits one state change
+   before appearing, so a thread that loads at once never flashes it. */
+.threadLoading {
+  container-type: size;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  animation: thread-loading-in var(--duration-state) var(--easing-enter)
+    var(--duration-state) both;
+}
+.threadHistory > .threadLoading {
   position: absolute;
-  inset-block-start: var(--space-4);
-  inset-inline: var(--space-panel-inset);
-  color: var(--text-subtle);
+  inset: 0;
+}
+/* The mark scales with the waiting area: a side pane and a full main pane
+   both read it as the thread's placeholder, not a stray icon. */
+.threadLoading picture {
+  display: block;
+  width: clamp(5rem, 24cqmin, 10rem);
+  line-height: 0;
+}
+.threadLoading img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+:root[data-color-mode="dark"] .threadLoading picture {
+  filter: invert(1);
+}
+@keyframes thread-loading-in {
+  from {
+    opacity: 0;
+  }
 }
 .threadHistoryPageStatus {
   padding: var(--space-2);
@@ -1327,24 +1439,45 @@ button.mediaPreview {
   line-height: var(--text-mono-sm--line-height);
   letter-spacing: var(--text-mono-sm--letter-spacing);
 }
+/* The code scrolls inside its frame so the copy action stays in the corner. */
 .text pre {
+  position: relative;
   max-width: 100%;
-  overflow-x: auto;
+  overflow: hidden;
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-row);
   background: var(--surface-panel);
-  padding: var(--space-3) var(--space-3);
-  scrollbar-width: thin;
 }
 .text pre code {
   display: block;
-  width: max-content;
-  min-width: 100%;
+  overflow-x: auto;
   border-radius: 0;
   background: transparent;
-  padding: 0;
+  padding: var(--space-3) var(--space-3);
+  scrollbar-width: thin;
   white-space: pre;
   overflow-wrap: normal;
+}
+/* Keep every line end reachable beside the pinned action. */
+.text pre:has(> .codeCopy) code {
+  padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
+}
+/* `pre` clips, so a focusable scroller draws its ring inside. */
+html[data-keyboard-navigation] .text pre code:focus-visible {
+  outline-offset: -2px;
+}
+.codeCopy {
+  position: absolute;
+  top: var(--space-1);
+  inset-inline-end: var(--space-1);
+  border-radius: var(--radius-icon-button);
+  background: var(--surface-panel);
+  user-select: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .text pre:not(:hover, :focus-within) .codeCopy {
+    opacity: 0;
+  }
 }
 .text table {
   display: block;
@@ -1428,12 +1561,10 @@ button.mediaPreview {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: var(--space-2) 0 var(--space-4);
   color: var(--text-subtle);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  @apply text-caption;
 }
 .membership p {
   margin: 0;
@@ -1464,6 +1595,12 @@ button.mediaPreview {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 
+.membershipAvatar {
+  width: var(--space-5);
+  height: var(--space-5);
+  min-height: var(--space-5);
+}
+
 /* Overflow counts are group metadata, not profile artwork. */
 .membershipAvatarCount {
   display: inline-grid;
@@ -1481,6 +1618,8 @@ button.mediaPreview {
 }
 
 .membershipAvatarCount {
+  width: var(--space-5);
+  height: var(--space-5);
   margin-right: calc(-1 * var(--space-1h));
 }
 
@@ -1918,6 +2057,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-height: 16rem;
 }
 .mediaPreview[data-video-preview] .mediaExpand {
+  z-index: 4;
   top: 0.5rem;
   right: 0.5rem;
 }
@@ -2202,6 +2342,44 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   text-wrap-style: auto;
 }
 
+.channelJoinSurface {
+  @apply glass-secondary interaction-floating;
+  border-radius: var(--radius-capsule);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-state) var(--easing-enter),
+    transform var(--duration-settle) var(--easing-enter),
+    visibility 0s;
+  transition-delay: var(--duration-fast);
+
+  @starting-style {
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(50%);
+  }
+}
+.channelJoinSurface[data-ready="false"] {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(50%);
+  transition: none;
+}
+html[data-keyboard-navigation] .channelJoinSurface {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .channelJoinSurface {
+    transition-delay: 0s;
+    transition-property: opacity;
+    transform: none;
+
+    @starting-style {
+      transform: none;
+    }
+  }
+}
+
 .jumpToLatest {
   align-items: flex-start;
   position: sticky;
@@ -2212,9 +2390,15 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   justify-content: center;
   pointer-events: none;
 }
+:is(.feed, .threadHistory) .jumpToLatest {
+  top: calc(100% - var(--size-control-sm) - var(--channel-preview-inset, 0px));
+}
 /* Leave a separate floating lane when the composer has an activity pill. */
 :is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
-.jumpToLatest {
+.jumpToLatest,
+[data-channel-history]:has(~ .composerContext [data-agent-activity-trigger])
+  > .feed
+  .jumpToLatest {
   top: calc(100% - var(--size-control-sm) - 2 * var(--space-6));
 }
 .jumpToLatestSurface {
