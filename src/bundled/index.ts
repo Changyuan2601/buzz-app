@@ -28,6 +28,8 @@ import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
+import piManifest from "./pi/manifest.json";
+import * as pi from "./pi";
 import channelsManifest from "./channels/manifest.json";
 import usageManifest from "./channel-usage/manifest.json";
 import * as usage from "./channel-usage";
@@ -175,6 +177,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...codexManifest, apiVersion: 1 },
     module: codex,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...piManifest, apiVersion: 1 },
+    module: pi,
     enabledByDefault: true,
   },
   {

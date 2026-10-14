@@ -14,6 +14,9 @@ const nonIconDependencies = new Set([
   "@buzz/author",
   "@deepseek-ai/cordis",
   "@dnd-kit/core", // Pointer drag and drop for sidebar channel moves.
+  "@earendil-works/chord", // The Pi host's packages, which pi.sh installs.
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-durable",
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
@@ -53,6 +56,7 @@ const nonIconDependencies = new Set([
   "motion",
   "nostr-tools",
   "postcss",
+  "proper-lockfile", // The Pi host's lock on each agent's storage.
   "prosemirror-commands",
   "prosemirror-history",
   "prosemirror-model",

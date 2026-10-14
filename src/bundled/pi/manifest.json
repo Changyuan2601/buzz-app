@@ -1,0 +1,19 @@
+{
+  "id": "buzz.pi",
+  "name": "Pi",
+  "apiVersion": 1,
+  "host": {
+    "processes": [
+      {
+        "id": "pi-sh",
+        "program": "bash",
+        "args": ["-c"]
+      },
+      {
+        "id": "read",
+        "program": "base64",
+        "args": ["-i"]
+      }
+    ]
+  }
+}
