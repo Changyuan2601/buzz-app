@@ -1,17 +1,5 @@
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { CommunityUrlField } from "./CommunityUrlField";
-
-/**
- * Wireframe examples. A relay publishes only its NIP-11 icon before admission
- * and hard-codes `name: "Buzz Relay"`, so rows show the hostname (the client's
- * existing fallback) and nothing else.
- */
-const EXAMPLE_INVITES = [
-  "buzz.block.builderlab.xyz",
-  "design.builderlab.xyz",
-  "buzz.example.org",
-];
 
 /** First-run landing after setup. Only the community URL is a live action. */
 export function JoinCommunity({
@@ -29,23 +17,6 @@ export function JoinCommunity({
       <h1 id="welcome-title" className="text-title text-primary">
         Join a community
       </h1>
-      <ul
-        aria-label="Pending invites"
-        className="m-0 flex list-none flex-col gap-3 p-0"
-      >
-        {EXAMPLE_INVITES.map((host) => (
-          <li
-            key={host}
-            className="flex items-center gap-3 rounded-lg border border-standard p-3"
-          >
-            <Avatar alt="" fallback={host} />
-            <p className="m-0 min-w-0 flex-1 truncate text-label text-primary">
-              {host}
-            </p>
-            <Button disabled>Join</Button>
-          </li>
-        ))}
-      </ul>
       <div className="flex flex-col gap-3">
         <CommunityUrlField
           url={url}

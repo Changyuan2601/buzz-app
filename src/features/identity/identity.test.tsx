@@ -7,7 +7,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
@@ -751,15 +750,7 @@ function landingRelay() {
   return { relayCalls, info, lookup: [get("/"), get("/api/join-policy")] };
 }
 const urlField = () => screen.getByRole("textbox", { name: "Community URL" });
-/** The URL field's Join, not one of the example rows' (the page remounts, so look it up each time). */
-function urlJoin() {
-  const invites = screen.queryByRole("list", { name: "Pending invites" });
-  const button = screen
-    .getAllByRole("button", { name: "Join" })
-    .find((candidate) => !invites?.contains(candidate));
-  if (!button) throw new Error("Missing the URL field's Join");
-  return button;
-}
+const urlJoin = () => screen.getByRole("button", { name: "Join" });
 
 it("a landing URL is looked up before sign-in, setup then lands on Join Community, and Cancel reaches Join a community with the address kept", async () => {
   const relay = landingRelay();
@@ -1014,22 +1005,12 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   expect(screen.queryByText("Signed in")).toBeNull();
-  const invites = within(screen.getByRole("list", { name: "Pending invites" }));
-  const rows = invites.getAllByRole("listitem");
-  expect(rows).toHaveLength(3);
-  expect(rows[0]).toHaveTextContent("buzz.block.builderlab.xyz");
-  for (const row of rows) {
-    // Rows carry only the hostname: no subtitle, hints or status text.
-    expect(row).not.toHaveTextContent(/Coming soon|Terms|18\+/);
-    expect(within(row).getByRole("button", { name: "Join" })).toBeDisabled();
-  }
+  // No invite list yet: nothing serves pending invites, so the URL field is the only entry.
+  expect(screen.queryByRole("list")).toBeNull();
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
-  // Three row Joins plus the one beside the still-empty URL field, all disabled.
-  const joins = screen.getAllByRole("button", { name: "Join" });
-  expect(joins).toHaveLength(4);
-  for (const join of joins) expect(join).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
   for (const name of [
     "Scan a QR code — Coming soon",
     "Create a community — Coming soon",
@@ -1072,15 +1053,8 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   );
   await screen.findByRole("heading", { name: "Join a community" });
   const field = () => screen.getByRole("textbox", { name: "Community URL" });
-  // The page remounts after Cancel, so look the list up each time.
-  const join = () => {
-    const invites = screen.getByRole("list", { name: "Pending invites" });
-    const button = screen
-      .getAllByRole("button", { name: "Join" })
-      .find((candidate) => !invites.contains(candidate));
-    if (!button) throw new Error("Missing the URL field's Join");
-    return button;
-  };
+  // The page remounts after Cancel, so look the button up each time.
+  const join = () => screen.getByRole("button", { name: "Join" });
   expect(join()).toBeDisabled();
   await user.type(field(), "not a url{Enter}");
   expect(join()).toBeDisabled();

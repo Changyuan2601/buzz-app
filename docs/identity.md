@@ -34,10 +34,9 @@ exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finis
 setup** with the error and **Back** to the welcome screen. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
-three example pending-invite rows showing only what a relay publishes before
-admission — an icon placeholder and the hostname — each with a disabled **Join**,
-then a **Community URL** field with **Join** beside it, and **Scan a QR code** and
-**Create a community**, both *Coming soon*.
+a **Community URL** field with **Join** beside it, and **Scan a QR code** and
+**Create a community**, both *Coming soon*. No invite list is shown; nothing
+serves pending invites yet.
 
 The URL field is live. A typed address may omit its scheme (`relay.example.com`
 is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
