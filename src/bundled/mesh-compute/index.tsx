@@ -1,3 +1,6 @@
+import { MeshHistory } from "./meshTranscript";
+import { createMeshTranscriptTab } from "./MeshTranscriptTab";
+import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
@@ -162,6 +165,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = ctx.host?.spawn?.bind(ctx.host);
   if (isTauri() && spawn && ctx.agents) {
     const agents = ctx.agents;
+    const memoryReads = new MemoryReads();
+    const readMemory = async (agent: string, signal: AbortSignal) => {
+      const snapshot = agents.relay(agent)?.snapshot();
+      if (snapshot?.status !== "ready")
+        throw new Error("Buzz is not connected to this community");
+      const listing = await memoryReads.read(snapshot.session, agent, signal);
+      if (agents.relay(agent)?.snapshot() !== snapshot)
+        throw new Error("Community changed during memory read");
+      return listing;
+    };
     const runtime = new MeshAgentRuntime({
       spawn,
       origin: (agent) => agents.relay(agent)?.snapshot().origin,
@@ -187,29 +200,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
             .channels.find((row) => row.id === channelId)?.channelType === "dm"
         );
       },
-      memories: async (agent, signal) => {
-        signal.throwIfAborted();
-        const snapshot = agents.relay(agent)?.snapshot();
-        if (snapshot?.status !== "ready")
-          throw new Error("Buzz is not connected to this community");
-        const view = snapshot.session.agentMemories.open(agent);
-        const abort = () => view.dispose();
-        signal.addEventListener("abort", abort, { once: true });
+      memories: async (agent, signal) =>
+        (await readMemory(agent, signal)).entries,
+      coreMemory: async (agent, signal) => {
         try {
-          await view.refresh();
+          return coreOf(await readMemory(agent, signal));
+        } catch (error) {
           signal.throwIfAborted();
-          if (agents.relay(agent)?.snapshot() !== snapshot)
-            throw new Error("Community changed during memory read");
-          const { status, listing } = view.snapshot();
-          if (status !== "ready" || !listing)
-            throw new Error(`Memory unavailable (${status})`);
-          return listing.entries;
-        } finally {
-          signal.removeEventListener("abort", abort);
-          view.dispose();
+          console.warn("Mesh could not read the agent's memory", error);
+          return undefined;
         }
       },
-      storage: localStorage,
+      remembered: (agent) => {
+        const snapshot = agents.relay(agent)?.snapshot();
+        if (snapshot?.status === "ready")
+          memoryReads.forget(snapshot.session, agent);
+      },
     });
     ctx.effect(() => () => runtime.dispose());
     agents.register<MeshAgentConfig>({
@@ -219,10 +225,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
         "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
       defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
       summary: () => "Shared compute",
-      tabs: [{ id: "prompt", title: "Settings", component: MeshAgentTab }],
+      tabs: [
+        { id: "prompt", title: "Settings", component: MeshAgentTab },
+        {
+          id: "transcript",
+          title: "Transcripts",
+          component: createMeshTranscriptTab(new MeshHistory(spawn)),
+        },
+      ],
       // Covers compute startup (native waits up to 120s) plus one reply.
       timeoutMs: 5 * 60_000,
-      run: (delivery) => runtime.run(delivery),
+      run: (delivery) => {
+        const done = runtime.run(delivery);
+        if (delivery.config.mode === "chat") return done;
+        delivery.workingUntil(done);
+        // Release the host queue so a subsequent mention can steer this run.
+      },
       allowAgentWatch: allowMeshAgentWatch,
     });
   }

@@ -15,9 +15,9 @@
 // Conversations follow Codex and Claude Code: a DM, or every channel when
 // `scope` is "channel", is one conversation; otherwise each thread (or new
 // top-level mention) is. goose runs as one long-lived process per agent, with
-// one goose session per conversation; its id is kept so the conversation
-// resumes (`session/load`) after goose or the app restarts. A conversation's
-// turns run one at a time; a mention during a turn runs right after it.
+// one goose session per conversation. Idle sessions are closed; after restart
+// a fresh session receives Buzz conversation history. A mention during a turn
+// steers that run when possible, otherwise runs immediately after it.
 //
 // Bridge: goose only adds tools as stdio MCP servers it spawns, with no way to
 // call the client back. The app's own executable is both ends of a private
@@ -39,6 +39,8 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context, Memory } from "../../buzz-mcp/client";
+import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
 import { TOOLS } from "../../buzz-mcp/tools";
@@ -101,9 +103,9 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
 };
 
 /** Where goose keeps its own config, sessions and state for Mesh agents. */
-const GOOSE_ROOT = "~/.local/share/buzz-mesh-goose";
+export const GOOSE_ROOT = "~/.local/share/buzz-mesh-goose";
 /** A goose process with no turn for this long is stopped. */
-export const IDLE_MS = 10 * 60_000;
+export const IDLE_MS = 15 * 60_000;
 
 export type PreparedInference = Readonly<{
   baseUrl: string;
@@ -128,8 +130,11 @@ export type MeshAgentDeps = Readonly<{
   /** Whether the channel is a DM, so the whole DM is one conversation. */
   dm?(agent: string, channelId: string): boolean;
   memories?(agent: string, signal: AbortSignal): Promise<readonly Memory[]>;
-  /** Where goose session ids are kept across restarts. */
-  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  coreMemory?(
+    agent: string,
+    signal: AbortSignal,
+  ): Promise<string | null | undefined>;
+  remembered?(agent: string): void;
 }>;
 
 /** Provider, credential and Buzz identity variables a developer's shell might
@@ -208,6 +213,11 @@ export class AcpClient {
    * last message, not the narration between tool steps. */
   private readonly texts = new Map<string, string[]>();
   private readonly collecting = new Set<string>();
+  private readonly runs = new Map<string, string>();
+
+  activeRun(sessionId: string) {
+    return this.runs.get(sessionId);
+  }
 
   constructor(private readonly write: (line: string) => Promise<void>) {}
 
@@ -219,6 +229,7 @@ export class AcpClient {
    * last message before it; `trailing` says it came after the last call. */
   take(sessionId: string): { text: string; trailing: boolean } {
     this.collecting.delete(sessionId);
+    this.runs.delete(sessionId);
     const parts = this.texts.get(sessionId) ?? [""];
     this.texts.delete(sessionId);
     const last = (parts.at(-1) ?? "").trim();
@@ -251,6 +262,7 @@ export class AcpClient {
         sessionId?: string;
         update?: {
           sessionUpdate?: string;
+          _meta?: { goose?: { activeRunId?: string | null } };
           content?: { type?: string; text?: string };
         };
       };
@@ -265,6 +277,11 @@ export class AcpClient {
     if (message.method === "session/update") {
       const session = message.params?.sessionId ?? "";
       const update = message.params?.update;
+      if (update?.sessionUpdate === "session_info_update") {
+        const run = update._meta?.goose?.activeRunId;
+        if (typeof run === "string") this.runs.set(session, run);
+        else this.runs.delete(session);
+      }
       const parts = this.collecting.has(session)
         ? this.texts.get(session)
         : undefined;
@@ -367,7 +384,7 @@ export type TurnTools = Readonly<{
 /** The Buzz tools for one turn, as an MCP server: the same tools and handler as Codex and Claude Code. */
 export function turnTools(
   delivery: Delivery<MeshAgentConfig>,
-  deps: Pick<MeshAgentDeps, "spawn" | "memories">,
+  deps: Pick<MeshAgentDeps, "spawn" | "memories" | "remembered">,
   cwd: string,
   context: Context,
 ): TurnTools {
@@ -380,6 +397,7 @@ export function turnTools(
       if (!deps.memories) throw new Error("Memory reader unavailable");
       return deps.memories(delivery.agent.pubkey, delivery.signal);
     },
+    remembered: () => deps.remembered?.(delivery.agent.pubkey),
     signal: delivery.signal,
   });
   return {
@@ -502,10 +520,17 @@ async function openBridge(
 
 /** The appended system prompt: Buzz's shared guidance with Buzz access, then the
  * agent's own prompt. */
-export function instructions(config: MeshAgentConfig): string {
+export function instructions(
+  config: MeshAgentConfig,
+  memory?: string | null,
+): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
   if (!buzzAccess(config)) return prompt;
-  return `${BUZZ_PROMPT}
+  return `${BASE_PROMPT}
+
+${BUZZ_PROMPT}
+
+${coreMemorySection(memory)}
 
 Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
 
@@ -513,6 +538,13 @@ Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
 ${prompt}
 </agent-instructions>`;
 }
+
+/** Stable identity, not the agent's mutable display name. */
+export const historyTitle = (
+  agent: string,
+  place: { channelId: string; root?: string },
+) =>
+  `Buzz Mesh ${JSON.stringify([agent, place.channelId, place.root ?? null])}`;
 
 /** Codex and Claude Code's conversation key: a DM, or the channel in
  * channel scope, is one conversation; otherwise each thread root is. */
@@ -562,8 +594,7 @@ type Session = {
   seen: number;
   /** The appended system prompt goose has for this session. */
   prompt: string;
-  /** Records `seen`, kept with the session id across restarts. */
-  remember(seen: number): void;
+  idle?: ReturnType<typeof setTimeout>;
 };
 type Goose = {
   key: string;
@@ -575,7 +606,13 @@ type Goose = {
   dead: boolean;
 };
 
-const STORAGE_PREFIX = "buzz.mesh-agent.session:";
+type ActiveTurn = {
+  client: AcpClient;
+  session: Session;
+  config: string;
+  delivery: Delivery<MeshAgentConfig>;
+  steering: Set<Promise<boolean>>;
+};
 
 /** Chat alone may follow one sender explicitly selected by the owner's watch.
  * More general predicates do not grant non-owner triggering. */
@@ -595,7 +632,8 @@ export function allowMeshAgentWatch(
  * agent, a goose session per conversation, turns in a conversation in order. */
 export class MeshAgentRuntime {
   private readonly geese = new Map<string, Promise<Goose>>();
-  private readonly lanes = new Map<string, Promise<unknown>>();
+  private readonly lanes = new Map<string, Promise<void>>();
+  private readonly active = new Map<string, ActiveTurn>();
   private readonly starters = new Map<string, number>();
   private readonly startup = new Map<string, AbortController>();
   private disposed = false;
@@ -622,6 +660,89 @@ export class MeshAgentRuntime {
     const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
     const conversation = conversationKey(channelId, event, dm, config.scope);
     const lane = `${agent.pubkey}\n${conversation}`;
+    const active = this.active.get(lane);
+    if (
+      config.mode === "agent" &&
+      active &&
+      active.config === JSON.stringify(config)
+    ) {
+      const running = this.lanes.get(lane) ?? Promise.resolve();
+      return this.steer(active, delivery, event).then((accepted) =>
+        accepted
+          ? running
+          : this.enqueue(
+              lane,
+              delivery,
+              event,
+              channelId,
+              config,
+              dm,
+              conversation,
+            ),
+      );
+    }
+    return this.enqueue(
+      lane,
+      delivery,
+      event,
+      channelId,
+      config,
+      dm,
+      conversation,
+    );
+  }
+
+  private async steer(
+    active: ActiveTurn,
+    delivery: Delivery<MeshAgentConfig>,
+    event: EventData,
+  ) {
+    const runId = active.client.activeRun(active.session.id);
+    if (
+      !runId ||
+      active.session.turn?.finished() ||
+      delivery.signal.aborted ||
+      active.delivery.signal.aborted ||
+      (delivery.current && !delivery.current())
+    )
+      return false;
+    const pending = active.client
+      .request("_goose/unstable/session/steer", {
+        sessionId: active.session.id,
+        expectedRunId: runId,
+        prompt: [
+          {
+            type: "text",
+            text: `<new-message-arrived-while-you-were-working>\n${turnText(event, [])}\n</new-message-arrived-while-you-were-working>`,
+          },
+        ],
+      })
+      .then(
+        () => {
+          active.session.seen = Math.max(active.session.seen, event.created_at);
+          active.delivery.superseded?.();
+          delivery.acknowledged?.();
+          return true;
+        },
+        () => false,
+      );
+    active.steering.add(pending);
+    try {
+      return await pending;
+    } finally {
+      active.steering.delete(pending);
+    }
+  }
+
+  private enqueue(
+    lane: string,
+    delivery: Delivery<MeshAgentConfig>,
+    event: EventData,
+    channelId: string,
+    config: MeshAgentConfig,
+    dm: boolean,
+    conversation: string,
+  ) {
     const previous = this.lanes.get(lane) ?? Promise.resolve();
     const next = previous
       .catch(() => {})
@@ -672,7 +793,12 @@ export class MeshAgentRuntime {
     ];
     let content: string;
     try {
-      if (signal.aborted) return;
+      if (
+        signal.aborted ||
+        this.disposed ||
+        (delivery.current && !delivery.current())
+      )
+        return;
       const origin = this.deps.origin(agent.pubkey);
       if (!origin) throw new Error("No community is connected");
       const inference = await untilAborted(this.deps.prepare(origin), signal);
@@ -769,19 +895,20 @@ export class MeshAgentRuntime {
     }
     if (goose.idle) clearTimeout(goose.idle);
     try {
+      const memory =
+        buzzAccess(config) && this.deps.coreMemory
+          ? await untilAborted(
+              this.deps.coreMemory(agent.pubkey, signal),
+              signal,
+            )
+          : undefined;
+      const prompt = instructions(config, memory);
       const session = await untilAborted(
-        this.session(
-          delivery,
-          context,
-          goose,
-          sessionKey,
-          cwd,
-          config,
-          instructions(config),
-        ),
+        this.session(delivery, context, goose, sessionKey, cwd, config, prompt),
         signal,
       );
-      const prompt = instructions(config);
+      if (session.idle) clearTimeout(session.idle);
+      delete session.idle;
       if (session.prompt !== prompt) {
         await untilAborted(setPrompt(goose.client, session.id, prompt), signal);
         session.prompt = prompt;
@@ -810,6 +937,15 @@ export class MeshAgentRuntime {
           cancel();
         }
       }, 250);
+      const lane = `${agent.pubkey}\n${sessionKey.split("\n").slice(2).join("\n")}`;
+      const active: ActiveTurn = {
+        client: goose.client,
+        session,
+        config: JSON.stringify(config),
+        delivery,
+        steering: new Set(),
+      };
+      this.active.set(lane, active);
       goose.client.collect(session.id);
       try {
         await goose.client.request("session/prompt", {
@@ -817,10 +953,24 @@ export class MeshAgentRuntime {
           prompt: [{ type: "text", text: turnText(event, earlier) }],
         });
       } finally {
+        if (this.active.get(lane) === active) this.active.delete(lane);
+        await Promise.all(active.steering);
         clearInterval(watch);
         signal.removeEventListener("abort", cancel);
         session.turn = undefined;
-        session.remember(event.created_at);
+        session.seen = Math.max(session.seen, event.created_at);
+        const idle = setTimeout(() => {
+          void goose.sessions.get(sessionKey)?.then((current) => {
+            if (current !== session || session.idle !== idle) return;
+            delete session.idle;
+            goose.sessions.delete(sessionKey);
+            session.bridge?.close();
+            void goose.client
+              .request("session/close", { sessionId: session.id })
+              .catch(() => {});
+          });
+        }, IDLE_MS);
+        session.idle = idle;
       }
       // Degrade gracefully for models that fumble the tools: a final `send`
       // is the answer; after other sends, text that followed the last tool
@@ -949,7 +1099,7 @@ export class MeshAgentRuntime {
     return goose;
   }
 
-  /** The conversation's goose session: live, resumed by id, or new. */
+  /** The conversation's live session, or a fresh one after idle/restart. */
   private async session(
     delivery: Delivery<MeshAgentConfig>,
     context: Context,
@@ -962,22 +1112,18 @@ export class MeshAgentRuntime {
     const live = goose.sessions.get(key);
     if (live) {
       const session = await live;
-      if (Boolean(session.bridge) === buzzAccess(config)) return session;
-      // MCP servers are fixed when the session opens. Retire its bridge and
-      // saved id so changed access takes effect in a fresh conversation session.
+      if (Boolean(session.bridge) === buzzAccess(config)) {
+        if (session.idle) clearTimeout(session.idle);
+        delete session.idle;
+        return session;
+      }
+      // MCP servers are fixed when the session opens; changed access needs a fresh session.
       session.bridge?.close();
       goose.sessions.delete(key);
-      this.deps.storage?.removeItem(STORAGE_PREFIX + key);
+      if (session.idle) clearTimeout(session.idle);
+      await goose.client.request("session/close", { sessionId: session.id });
     }
-    const opened = this.open(
-      delivery,
-      context,
-      goose,
-      key,
-      cwd,
-      config,
-      prompt,
-    );
+    const opened = this.open(delivery, context, goose, cwd, config, prompt);
     goose.sessions.set(key, opened);
     opened.catch(() => {
       if (goose.sessions.get(key) === opened) goose.sessions.delete(key);
@@ -989,7 +1135,6 @@ export class MeshAgentRuntime {
     delivery: Delivery<MeshAgentConfig>,
     context: Context,
     goose: Goose,
-    key: string,
     cwd: string,
     config: MeshAgentConfig,
     prompt: string,
@@ -998,7 +1143,6 @@ export class MeshAgentRuntime {
       id: "",
       seen: 0,
       prompt,
-      remember: () => {},
     };
     const mcpServers: object[] = [];
     if (buzzAccess(config)) {
@@ -1010,48 +1154,23 @@ export class MeshAgentRuntime {
       mcpServers.push(session.bridge.server);
     }
     try {
-      const storage = this.deps.storage;
-      const stored = storage?.getItem(STORAGE_PREFIX + key);
-      let resumed = false;
-      if (stored) {
-        try {
-          const saved = JSON.parse(stored) as {
-            id: string;
-            seen: number;
-            buzz?: boolean;
-          };
-          // Older records do not prove which tools were installed; recreate once.
-          if (saved.buzz !== buzzAccess(config))
-            throw new Error("Buzz access changed");
-          await goose.client.request("session/load", {
-            sessionId: saved.id,
-            cwd,
-            mcpServers,
-          });
-          session.id = saved.id;
-          session.seen = saved.seen;
-          resumed = true;
-        } catch {
-          storage?.removeItem(STORAGE_PREFIX + key);
-        }
-      }
-      if (!resumed) {
-        const created = await goose.client.request<{ sessionId: string }>(
-          "session/new",
-          { cwd, mcpServers },
-        );
-        session.id = created.sessionId;
-      }
-      // The system prompt is not part of goose's saved session; set it each time.
+      const created = await goose.client.request<{ sessionId: string }>(
+        "session/new",
+        {
+          cwd,
+          mcpServers,
+          _meta: {
+            sessionTitle: historyTitle(delivery.agent.pubkey, {
+              channelId: context.channel ?? "",
+              ...(config.scope === "thread" && context.root
+                ? { root: context.root }
+                : {}),
+            }),
+          },
+        },
+      );
+      session.id = created.sessionId;
       await setPrompt(goose.client, session.id, prompt);
-      session.remember = (seen) => {
-        session.seen = seen;
-        storage?.setItem(
-          STORAGE_PREFIX + key,
-          JSON.stringify({ id: session.id, seen, buzz: buzzAccess(config) }),
-        );
-      };
-      session.remember(session.seen);
       return session;
     } catch (error) {
       session.bridge?.close();
@@ -1061,7 +1180,12 @@ export class MeshAgentRuntime {
 
   private closeBridges(goose: Goose) {
     for (const session of goose.sessions.values())
-      void session.then((item) => item.bridge?.close()).catch(() => {});
+      void session
+        .then((item) => {
+          if (item.idle) clearTimeout(item.idle);
+          item.bridge?.close();
+        })
+        .catch(() => {});
     goose.sessions.clear();
   }
 

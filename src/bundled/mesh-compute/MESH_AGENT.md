@@ -69,5 +69,14 @@ bin/pnpm tauri build --features mesh --bundles app \
 - Release packaging: the sidecar build and mesh Tauri config are explicit steps;
   the current `.github/workflows` do not invoke them. Packaged real-mesh
   acceptance remains required before declaring this path validated.
-- Turns are queued per conversation, not steered into an active turn.
+- Agent turns accept mid-turn steering for the same conversation/configuration;
+  a finished run falls back to the next turn. Chat stays sequential.
+- Idle sessions close after 15 minutes. App/process restart starts fresh from
+  recent Buzz conversation history, not `session/load`. Tool-enabled agents
+  receive fresh core memory via the shared agent-harness reader.
+- The Transcripts tab reads recent saved sessions through the managed binary,
+  without preparing inference. It shows a read-only snapshot (Refresh for new
+  activity), up to 50 sessions within five pages and 50 turns per session.
+  Older builds did not label sessions with stable agent/place metadata, so their
+  sessions are not listed. Chat has no Goose tool transcript.
 - Triggering verified only for explicit owner mentions.

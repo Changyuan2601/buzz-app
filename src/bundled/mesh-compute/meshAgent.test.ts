@@ -8,6 +8,8 @@ import {
 } from "../../features/agents/attention";
 import type { HostProcessOptions } from "../../features/host/service";
 import {
+  IDLE_MS,
+  historyTitle,
   conversationKey,
   gooseEnv,
   instructions,
@@ -43,6 +45,8 @@ type Seen = {
   relay?: (message: object) => void;
   bridgeOut: string[];
   failLoad?: boolean;
+  failSteer?: boolean;
+  promptGate?: () => Promise<void>;
   beforeRequest?: (method: string) => Promise<void>;
   /** Replaces the prompt's one reply chunk: a string is a text chunk, null a
    * tool call. */
@@ -102,6 +106,7 @@ function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
         const { id, method, params } = JSON.parse(line);
         seen.calls.push({ method, params });
         await seen.beforeRequest?.(method);
+        if (method === "session/close") out({ id, result: {} });
         if (method === "initialize") out({ id, result: {} });
         if (method === "_goose/unstable/session/system-prompt/set")
           out({ id, result: {} });
@@ -124,7 +129,25 @@ function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
             out({ id, result: {} });
           }
         }
+        if (method === "_goose/unstable/session/steer") {
+          out(
+            seen.failSteer
+              ? { id, error: { message: "run ended" } }
+              : { id, result: { runId: "run-1" } },
+          );
+        }
         if (method === "session/prompt") {
+          out({
+            method: "session/update",
+            params: {
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "session_info_update",
+                _meta: { goose: { activeRunId: "run-1" } },
+              },
+            },
+          });
+          await seen.promptGate?.();
           for (const item of seen.updates ?? [reply])
             out({
               method: "session/update",
@@ -146,16 +169,6 @@ function fakeSpawn(reply: string, seen: Seen): MeshAgentDeps["spawn"] {
   });
 }
 
-const memoryStorage = () => {
-  const map = new Map<string, string>();
-  return {
-    map,
-    getItem: (key: string) => map.get(key) ?? null,
-    setItem: (key: string, value: string) => void map.set(key, value),
-    removeItem: (key: string) => void map.delete(key),
-  };
-};
-
 function setup(
   over: Partial<MeshAgentDeps> = {},
   from = OWNER,
@@ -174,7 +187,6 @@ function setup(
     }),
     current: async () => true,
     chat: vi.fn(async () => "chat answer"),
-    storage: memoryStorage(),
     ...over,
   };
   const delivery = (event: object = {}) =>
@@ -261,6 +273,12 @@ describe("Mesh agent runtime", () => {
     expect(seen.calls.find((c) => c.method === "session/new")?.params).toEqual({
       cwd: "/home/u/.buzz",
       mcpServers: [],
+      _meta: {
+        sessionTitle: historyTitle(AGENT, {
+          channelId: "chan",
+          root: EVENT.id,
+        }),
+      },
     });
     expect(
       seen.calls.find(
@@ -350,13 +368,12 @@ describe("Mesh agent runtime", () => {
   );
 
   it.each([false, true])(
-    "does not resume a saved session after Buzz access changes from %s",
+    "restart creates a fresh session with the current Buzz access (%s)",
     async (buzz) => {
-      const storage = memoryStorage();
-      const first = setup({ storage }, OWNER, { mode: "agent", buzz });
+      const first = setup({}, OWNER, { mode: "agent", buzz });
       await first.runtime.run(first.delivery());
       first.runtime.dispose();
-      const second = setup({ storage }, OWNER, { mode: "agent", buzz: !buzz });
+      const second = setup({}, OWNER, { mode: "agent", buzz: !buzz });
       try {
         await second.runtime.run(second.delivery());
         expect(
@@ -400,70 +417,22 @@ describe("Mesh agent runtime", () => {
     expect(new Set(prompts(seen).map((p) => p.session)).size).toBe(1);
   });
 
-  it("resumes the conversation's saved session after a restart, ignoring replayed history", async () => {
-    const storage = memoryStorage();
-    const first = setup({ storage });
+  it("starts a fresh conversation after a restart", async () => {
+    const first = setup({});
     await first.runtime.run(first.delivery());
     first.runtime.dispose();
-    const second = setup({ storage });
+    const second = setup({});
     await second.runtime.run(second.delivery());
-    expect(
-      second.seen.calls.find((c) => c.method === "session/load")?.params,
-    ).toEqual({
-      sessionId: "s1",
-      cwd: "/home/u/.buzz",
-      mcpServers: [],
-    });
-    expect(second.seen.calls.some((c) => c.method === "session/new")).toBe(
+    expect(second.seen.calls.some((c) => c.method === "session/load")).toBe(
       false,
+    );
+    expect(second.seen.calls.some((c) => c.method === "session/new")).toBe(
+      true,
     );
     expect(second.publish.mock.calls[0]?.[0]).toMatchObject({
       content: "hi from mesh",
     });
   });
-
-  it("starts fresh when the saved session can't be loaded", async () => {
-    const storage = memoryStorage();
-    storage.setItem(
-      `buzz.mesh-agent.session:${AGENT}\nagent\nchan/${EVENT.id}`,
-      JSON.stringify({ id: "gone", seen: 0, buzz: false }),
-    );
-    const { delivery, seen, runtime, publish } = setup({ storage });
-    seen.failLoad = true;
-    await runtime.run(delivery());
-    expect(seen.calls.some((c) => c.method === "session/load")).toBe(true);
-    expect(seen.calls.some((c) => c.method === "session/new")).toBe(true);
-    expect(publish).toHaveBeenCalled();
-  });
-
-  it.each([false, true])(
-    "recreates a legacy saved session whose Buzz access is unknown (%s)",
-    async (buzz) => {
-      const storage = memoryStorage();
-      const key = `buzz.mesh-agent.session:${AGENT}\nagent\nchan/${EVENT.id}`;
-      storage.setItem(key, JSON.stringify({ id: "legacy", seen: 10 }));
-      const { delivery, seen, runtime } = setup({ storage }, OWNER, {
-        mode: "agent",
-        buzz,
-      });
-      try {
-        await runtime.run(delivery());
-        expect(seen.calls.some((call) => call.method === "session/load")).toBe(
-          false,
-        );
-        expect(
-          seen.calls.find((call) => call.method === "session/new")?.params
-            .mcpServers,
-        ).toHaveLength(buzz ? 1 : 0);
-        expect(JSON.parse(storage.getItem(key) ?? "null")).toMatchObject({
-          buzz,
-          seen: 1,
-        });
-      } finally {
-        runtime.dispose();
-      }
-    },
-  );
 
   it("runs a conversation's turns one at a time", async () => {
     const { delivery, seen, runtime } = setup();
@@ -475,6 +444,142 @@ describe("Mesh agent runtime", () => {
       1,
     );
     expect(prompts(seen)).toHaveLength(2);
+  });
+
+  it.each([false, true])(
+    "steers a live turn, or queues exactly once if its run ended (%s)",
+    async (failSteer) => {
+      const { delivery, seen, runtime, publish } = setup();
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      seen.failSteer = failSteer;
+      seen.promptGate = async () => {
+        entered();
+        await gate;
+      };
+      const first = runtime.run(delivery(inThread("1".repeat(64), 1)));
+      let second: Promise<void> | undefined;
+      try {
+        await started;
+        const acknowledged = vi.fn();
+        second = runtime.run({
+          ...delivery({
+            ...inThread("2".repeat(64), 2),
+            content: "Use the new requirement",
+          }),
+          acknowledged,
+        });
+        await vi.waitFor(() =>
+          expect(
+            seen.calls.filter((call) => call.method.endsWith("/steer")),
+          ).toHaveLength(1),
+        );
+        expect(prompts(seen)).toHaveLength(1);
+        expect(
+          seen.calls.find((call) => call.method.endsWith("/steer"))?.params,
+        ).toMatchObject({ expectedRunId: "run-1", sessionId: "s1" });
+        release();
+        await Promise.all([first, second]);
+        expect(prompts(seen)).toHaveLength(failSteer ? 2 : 1);
+        expect(publish).toHaveBeenCalledTimes(failSteer ? 2 : 1);
+        expect(acknowledged).toHaveBeenCalledTimes(failSteer ? 0 : 1);
+      } finally {
+        release();
+        await Promise.all([first, second]);
+        runtime.dispose();
+      }
+    },
+  );
+
+  it("keeps different conversations and access changes out of the active run", async () => {
+    const { delivery, seen, runtime } = setup();
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    seen.promptGate = async () => {
+      entered();
+      await gate;
+    };
+    const first = runtime.run(delivery(inThread("1".repeat(64), 1)));
+    try {
+      await started;
+      const other = runtime.run(delivery({ id: "5".repeat(64) }));
+      const changed = runtime.run({
+        ...delivery(inThread("2".repeat(64), 2)),
+        config: meshAgentConfig({ buzz: true }),
+      });
+      await vi.waitFor(() => expect(prompts(seen)).toHaveLength(2));
+      release();
+      await Promise.all([first, other, changed]);
+      expect(
+        seen.calls.filter((call) => call.method.endsWith("/steer")),
+      ).toHaveLength(0);
+      expect(prompts(seen)).toHaveLength(3);
+    } finally {
+      release();
+      runtime.dispose();
+    }
+  });
+
+  it("closes idle conversations and rebuilds their history without a saved-session load", async () => {
+    vi.useFakeTimers();
+    const { delivery, seen, runtime, query } = setup();
+    try {
+      await runtime.run(delivery(inThread("1".repeat(64), 1)));
+      await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
+      expect(seen.kills ?? 0).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      query.mockResolvedValue([{ ...EVENT, content: "earlier Buzz message" }]);
+      await runtime.run(delivery(inThread("2".repeat(64), 2)));
+      expect(
+        seen.calls.filter((call) => call.method === "session/new"),
+      ).toHaveLength(2);
+      expect(
+        seen.calls.filter((call) => call.method === "session/load"),
+      ).toHaveLength(0);
+      expect(prompts(seen).at(-1)?.text).toContain("earlier Buzz message");
+    } finally {
+      runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes core memory on each turn and keeps Buzz instructions out of no-access agents", async () => {
+    const coreMemory = vi
+      .fn()
+      .mockResolvedValueOnce("first memory")
+      .mockResolvedValueOnce("updated memory");
+    const { runtime, delivery, seen } = setup({ coreMemory }, OWNER, {
+      buzz: true,
+    });
+    try {
+      await runtime.run(delivery(inThread("1".repeat(64), 1)));
+      await runtime.run(delivery(inThread("2".repeat(64), 2)));
+      const prompts = seen.calls.filter((call) =>
+        call.method.endsWith("system-prompt/set"),
+      );
+      expect(prompts[0]?.params.text).toContain("<core-memory>\nfirst memory");
+      expect(prompts[1]?.params.text).toContain(
+        "<core-memory>\nupdated memory",
+      );
+      expect(prompts[1]?.params.text).toContain("Incoming Turn Contract");
+      expect(
+        instructions(meshAgentConfig({ buzz: false }), "private memory"),
+      ).not.toContain("private memory");
+    } finally {
+      runtime.dispose();
+    }
   });
 
   it("answers in chat mode with one completion and no goose", async () => {

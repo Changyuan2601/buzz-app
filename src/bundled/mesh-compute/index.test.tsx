@@ -1626,3 +1626,52 @@ it("prepares a background agent against its own community, not the foreground", 
     for (const cleanup of cleanups.reverse()) cleanup();
   }
 });
+
+it("releases the host queue while retaining Agent work for mid-turn delivery", async () => {
+  const { MeshAgentRuntime } = await import("./meshAgent");
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const runRuntime = vi
+    .spyOn(MeshAgentRuntime.prototype, "run")
+    .mockReturnValue(pending);
+  let run!: (
+    delivery: import("../../features/agents/service").Delivery,
+  ) => unknown;
+  const cleanups: (() => void)[] = [];
+  const snapshot = { status: "idle" };
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    host: { spawn: vi.fn() },
+    agents: {
+      register: (type: { run: typeof run }) => {
+        run = type.run;
+      },
+    },
+    effect: (setup: () => () => void) => {
+      cleanups.push(setup());
+    },
+    settingsCards: { register: () => {} },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  try {
+    const workingUntil = vi.fn();
+    expect(
+      run({
+        config: { mode: "agent" },
+        workingUntil,
+      } as unknown as import("../../features/agents/service").Delivery),
+    ).toBeUndefined();
+    expect(workingUntil).toHaveBeenCalledWith(pending);
+    expect(
+      run({
+        config: { mode: "chat" },
+        workingUntil,
+      } as unknown as import("../../features/agents/service").Delivery),
+    ).toBe(pending);
+  } finally {
+    release();
+    runRuntime.mockRestore();
+    for (const cleanup of cleanups.reverse()) cleanup();
+  }
+});
