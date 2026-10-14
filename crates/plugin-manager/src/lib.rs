@@ -246,6 +246,7 @@ fn enabled_by_default(id: &str) -> bool {
     matches!(
         id,
         "buzz.channels"
+            | "buzz.mesh-compute"
             | "buzz.feedback"
             | "buzz.diffs"
             | "buzz.identity-naming"

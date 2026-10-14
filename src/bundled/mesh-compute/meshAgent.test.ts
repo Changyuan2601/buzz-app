@@ -573,7 +573,7 @@ describe("Mesh agent runtime", () => {
       expect(prompts[1]?.params.text).toContain(
         "<core-memory>\nupdated memory",
       );
-      expect(prompts[1]?.params.text).toContain("Incoming Turn Contract");
+      expect(prompts[1]?.params.text).not.toContain("Incoming Turn Contract");
       expect(
         instructions(meshAgentConfig({ buzz: false }), "private memory"),
       ).not.toContain("private memory");
@@ -851,6 +851,8 @@ describe("Mesh agent runtime", () => {
   it("gives Buzz access the shared Buzz prompt and other modes only their own", () => {
     const tools = instructions(meshAgentConfig({ prompt: "be brief" }));
     expect(tools).toContain("## Posting Conventions");
+    expect(tools).not.toContain("Engineering Discipline");
+    expect(tools.length).toBeLessThan(2_000);
     expect(tools).toContain(
       "<agent-instructions>\nbe brief\n</agent-instructions>",
     );

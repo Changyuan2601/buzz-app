@@ -161,7 +161,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     lease = undefined;
   });
 
-  // Agents "Mesh" type: inference through shared compute only.
+  // Agents "Shared Compute" type: inference through shared compute only.
   const spawn = ctx.host?.spawn?.bind(ctx.host);
   if (isTauri() && spawn && ctx.agents) {
     const agents = ctx.agents;
@@ -220,7 +220,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.effect(() => () => runtime.dispose());
     agents.register<MeshAgentConfig>({
       id: "mesh",
-      title: "Mesh",
+      title: "Shared Compute",
       description:
         "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
       defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),

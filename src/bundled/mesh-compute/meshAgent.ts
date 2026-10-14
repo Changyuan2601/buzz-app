@@ -39,7 +39,6 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context, Memory } from "../../buzz-mcp/client";
-import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
@@ -527,9 +526,7 @@ export function instructions(
 ): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
   if (!buzzAccess(config)) return prompt;
-  return `${BASE_PROMPT}
-
-${BUZZ_PROMPT}
+  return `${BUZZ_PROMPT}
 
 ${coreMemorySection(memory)}
 

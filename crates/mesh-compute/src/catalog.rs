@@ -2,6 +2,7 @@
 use mesh_llm_host_runtime::models::{self, remote_catalog::RemoteCatalogModel};
 use mesh_llm_system::{hardware, vram};
 use serde::Serialize;
+use std::collections::HashSet;
 
 const CURATED_SMALL: &str = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 const CURATED_MEDIUM: &str = "unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
@@ -63,18 +64,28 @@ pub fn catalog() -> anyhow::Result<Catalog> {
         eprintln!("Mesh catalog metadata unavailable: {error}");
     }
     let survey = hardware::survey();
-    let installed = models::scan_installed_models();
     Ok(build(
         survey.gpu_name,
         survey.vram_bytes,
         models::remote_catalog::loaded_models().unwrap_or_default(),
-        |model| {
-            installed
-                .iter()
-                .any(|cached| canonical_curated_model_id(cached) == model)
-                || models::find_model_path(model).is_file()
-        },
+        installed_matcher(models::scan_installed_models()),
     ))
+}
+
+/// Answers "is this reference already downloaded?" for the whole catalog from one
+/// installed-model scan.
+///
+/// Probing `find_model_path` for each entry instead rescanned the entire Hugging
+/// Face cache once per entry — twice on a miss — which outran the picker's 30 s
+/// deadline when the cache is large or on network storage. `scan_installed_models`
+/// already covers every layout a chosen model can live in: HF hub snapshots and
+/// GGUF files at the cache root.
+fn installed_matcher(installed: Vec<String>) -> impl Fn(&str) -> bool {
+    let installed: HashSet<String> = installed
+        .into_iter()
+        .map(|name| canonical_curated_model_id(&name).to_owned())
+        .collect();
+    move |model| installed.contains(model)
 }
 
 fn exact_quant(file: &str, quant: &str) -> bool {
@@ -309,6 +320,20 @@ mod tests {
 #[cfg(test)]
 mod auto_tests {
     use super::*;
+
+    #[test]
+    fn installed_answers_come_from_one_scan_and_keep_the_legacy_aliases() {
+        let installed = installed_matcher(vec![
+            "Gemma-4-E4B-it-Q4_K_M".to_string(),
+            "unsloth/Qwen3.5-9B-GGUF:Q4_K_M".to_string(),
+        ]);
+
+        assert!(installed(CURATED_SMALL));
+        assert!(installed("unsloth/Qwen3.5-9B-GGUF:Q4_K_M"));
+        assert!(!installed(CURATED_LARGE));
+        assert!(!installed("unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M"));
+    }
+
     #[test]
     fn auto_follows_the_hardware_ladder_without_catalog_or_cache_fallback() {
         assert_eq!(

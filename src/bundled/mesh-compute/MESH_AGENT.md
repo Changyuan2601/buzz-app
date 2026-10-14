@@ -19,7 +19,9 @@ workspace (default `~/.buzz`).
   switched off. `GOOSE_MODE=auto`: tools run without asking. goose reads
   `AGENTS.md`/hints as it normally does.
 - **Prompt:** appended under goose's "Additional Instructions"
-  (`_goose/unstable/session/system-prompt/set`, mode `append`).
+  (`_goose/unstable/session/system-prompt/set`, mode `append`). Mesh keeps only
+  concise posting/tool guidance, fresh core memory and the agent instructions;
+  it does not inject the shared engineering base prompt.
 
 ## Modes (per agent, Settings)
 

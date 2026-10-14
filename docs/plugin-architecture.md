@@ -228,7 +228,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
-Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
+Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, Shared compute, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Me is an empty, optional default-enabled page. Me and Channels request topbar

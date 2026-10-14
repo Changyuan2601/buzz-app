@@ -63,7 +63,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
