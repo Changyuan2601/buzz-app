@@ -320,16 +320,21 @@ it("loads a shared connection's catalog after login and saves its exact model ro
       {
         id: "databricks-gpt-6-sol",
         label: "Team GPT",
-        api: "openai-responses",
+        apis: ["mlflow/v1/responses"],
         family: "gpt",
       },
       {
         id: "databricks-gemini-3-5-flash",
         label: "Gemini",
-        api: "openai-responses",
+        apis: ["mlflow/v1/responses"],
         family: "gemini",
       },
     ],
+    connection: async () => ({
+      host: "https://workspace.example",
+      command: "buzz",
+      args: [],
+    }),
     Connection: ({ onChange }) => (
       <Button
         onClick={() => {
@@ -387,10 +392,15 @@ it("does not save a shared connection in settings until a model is chosen", asyn
       {
         id: "databricks-gpt-6-sol",
         label: "Team GPT",
-        api: "openai-responses",
+        apis: ["mlflow/v1/responses"],
         family: "gpt",
       },
     ],
+    connection: async () => ({
+      host: "https://workspace.example",
+      command: "buzz",
+      args: [],
+    }),
     Connection: () => null,
   };
   const fake = fakeSpawn({});

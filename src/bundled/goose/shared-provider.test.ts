@@ -20,16 +20,21 @@ it("uses the shared catalog and launch credentials without saving them in goose"
       {
         id: "databricks-gpt-6-sol",
         label: "Team model",
-        api: "openai-responses",
+        apis: ["mlflow/v1/responses"],
         family: "gpt",
       },
       {
         id: "databricks-gemini-3-5-flash",
         label: "Gemini",
-        api: "openai-responses",
+        apis: ["mlflow/v1/responses"],
         family: "gemini",
       },
     ],
+    connection: async () => ({
+      host: "https://workspace.example",
+      command: "buzz",
+      args: [],
+    }),
     Connection: () => null,
   };
   const fake = fakeSpawn({
@@ -95,6 +100,11 @@ it("keeps other Goose providers usable when the shared connection cannot be read
       throw new Error("Sign in again");
     },
     models: async () => [],
+    connection: async () => ({
+      host: "https://workspace.example",
+      command: "buzz",
+      args: [],
+    }),
     Connection: () => null,
   };
   const fake = fakeSpawn({

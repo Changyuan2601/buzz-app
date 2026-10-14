@@ -32,7 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <div className="grid gap-3">
         <p className="m-0 text-body-sm text-secondary">
           Connect to Block’s Databricks workspace once. This connection can be
-          used by every Goose agent.
+          used by every goose and Pi agent.
         </p>
         <p role="status" className="m-0 text-body-sm">
           {state.committing
@@ -75,6 +75,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     name: provider.name,
     connected: () => provider.connected(),
     models: provider.models,
+    connection: provider.connection,
     Connection,
   });
   ctx.settingsCards.register({

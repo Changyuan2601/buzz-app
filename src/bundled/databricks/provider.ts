@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import {
   DATABRICKS_ID,
+  type ProviderConnection,
   type ProviderModel,
   type SharedProvider,
 } from "../../features/providers/shared";
@@ -76,6 +77,7 @@ export class DatabricksProvider {
     }
   }
   models = () => this.call<readonly ProviderModel[]>("models");
+  connection = () => this.call<ProviderConnection>("helper");
 
   async signIn() {
     if (this.attempt || this.disposed) return;

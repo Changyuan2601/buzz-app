@@ -1,19 +1,19 @@
 //! Goose-specific binding of the shared Databricks connection. Goose owns all
 //! model requests; this writes its supported command-auth configuration.
+use crate::databricks_provider::{helper, HELPER_ARG};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
 type Result<T> = std::result::Result<T, String>;
 const ROUTE: &str = "ai-gateway/mlflow/v1/responses";
+/// The catalog's name for that route.
+const API: &str = "mlflow/v1/responses";
 
 fn env(model: &str) -> Value {
     json!({"GOOSE_PROVIDER":"buzz_databricks", "GOOSE_MODEL":model})
 }
 fn definition() -> Result<PathBuf> {
     Ok(goose_config_directory()?.join("custom_providers/buzz_databricks.json"))
-}
-fn helper() -> Result<PathBuf> {
-    std::env::current_exe().map_err(|_| "Could not find the Buzz credential helper".into())
 }
 
 /// The launch environment when the written configuration already offers this
@@ -29,7 +29,15 @@ pub(crate) fn reuse(model: &str) -> Option<Value> {
     (listed && current).then(|| env(model))
 }
 
-pub(crate) fn prepare(host: &str, models: &[Value], model: &str) -> Result<Value> {
+pub(crate) fn prepare(host: &str, catalog: &[Value], model: &str) -> Result<Value> {
+    let models: Vec<&Value> = catalog
+        .iter()
+        .filter(|m| {
+            m["apis"]
+                .as_array()
+                .is_some_and(|apis| apis.iter().any(|a| a == API))
+        })
+        .collect();
     if !models.iter().any(|m| m["id"] == model) {
         return Err("This Databricks model is unavailable or has no Responses route".into());
     }
@@ -41,7 +49,7 @@ pub(crate) fn prepare(host: &str, models: &[Value], model: &str) -> Result<Value
         "base_url":host, "base_path":ROUTE,
         "models":models.iter().map(|m| json!({"name":m["id"]})).collect::<Vec<_>>(),
         "supports_streaming":true, "dynamic_models":false,
-        "auth":{"command":helper()?,"args":["--databricks-provider-token"],"refresh_interval":30,"timeout_seconds":45}
+        "auth":{"command":helper()?,"args":[HELPER_ARG],"refresh_interval":30,"timeout_seconds":45}
     });
     crate::databricks_provider::write_file(
         definition()?,
@@ -76,8 +84,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::env::set_var("GOOSE_PATH_ROOT", root.path());
         assert_eq!(reuse("served-gpt"), None);
-        let catalog = [json!({"id":"served-gpt", "family":"gpt"})];
+        let catalog = [
+            json!({"id":"served-gpt", "family":"gpt", "apis":[API]}),
+            json!({"id":"chat-only", "family":"gpt", "apis":["mlflow/v1/chat/completions"]}),
+        ];
         assert!(prepare("https://workspace.example", &catalog, "other-model").is_err());
+        assert!(prepare("https://workspace.example", &catalog, "chat-only").is_err());
         prepare("https://workspace.example", &catalog, "served-gpt").unwrap();
         assert_eq!(reuse("served-gpt"), Some(env("served-gpt")));
         assert_eq!(reuse("other-model"), None);

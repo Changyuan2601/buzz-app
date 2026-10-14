@@ -20,7 +20,11 @@ const GOOSE_MODELS = [
   "databricks-grok-4-7",
 ];
 export const gooseModels = (models: readonly ProviderModel[]) =>
-  GOOSE_MODELS.flatMap((id) => models.filter((model) => model.id === id));
+  GOOSE_MODELS.flatMap((id) =>
+    models.filter(
+      (model) => model.id === id && model.apis.includes("mlflow/v1/responses"),
+    ),
+  );
 
 export async function sharedProviderEnv(
   provider: string,

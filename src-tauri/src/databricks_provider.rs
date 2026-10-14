@@ -241,13 +241,17 @@ async fn token(client: &reqwest::Client, dir: &Path) -> Result<Credential> {
     write(dir, &next)?;
     Ok(next)
 }
+/// Ready, tool-capable gateway endpoints, with the API routes each serves.
+/// Each harness picks the routes it can use.
 fn chat_models(data: &Value) -> Vec<Value> {
     data["endpoints"].as_array().into_iter().flatten().filter_map(|ep| {
         let id = ep["name"].as_str()?;
         if ep["state"]["ready"] != "READY" || ep["task"] != "llm/v1/chat" || ep["capabilities"]["function_calling"] != true { return None; }
         let foundation = ep["config"]["served_entities"].as_array()?.iter().find_map(|e| e.get("foundation_model"))?;
-        if foundation["ai_gateway_v2_supported"] != true || !foundation["api_types"].as_array()?.iter().any(|a| a == "mlflow/v1/responses") { return None; }
-        Some(json!({"id":id, "label":foundation["display_name"].as_str().unwrap_or(id), "api":"openai-responses", "family":foundation["model_class"].as_str().unwrap_or("")}))
+        if foundation["ai_gateway_v2_supported"] != true { return None; }
+        let apis: Vec<&str> = foundation["api_types"].as_array()?.iter().filter_map(Value::as_str).collect();
+        if apis.is_empty() { return None; }
+        Some(json!({"id":id, "label":foundation["display_name"].as_str().unwrap_or(id), "family":foundation["model_class"].as_str().unwrap_or(""), "apis":apis}))
     }).collect()
 }
 async fn models(client: &reqwest::Client, dir: &Path) -> Result<Vec<Value>> {
@@ -317,6 +321,8 @@ async fn execute(operation: &str, input: &Value) -> Result<Value> {
             Ok(json!({"connected":false, "host":HOST}))
         }
         "models" => Ok(json!(models(&client, &dir).await?)),
+        // A harness process runs this for fresh access tokens; it prints one.
+        "helper" => Ok(json!({"host":HOST, "command":helper()?, "args":[HELPER_ARG]})),
         "goose" => {
             let model = argument(input, "model")?;
             if read(&dir)?.is_none() {
@@ -333,6 +339,11 @@ async fn execute(operation: &str, input: &Value) -> Result<Value> {
     }
 }
 
+pub(crate) const HELPER_ARG: &str = "--databricks-provider-token";
+pub(crate) fn helper() -> Result<PathBuf> {
+    std::env::current_exe().map_err(|_| "Could not find the Buzz credential helper".into())
+}
+
 #[tauri::command]
 pub(crate) async fn databricks_provider(operation: String, input: Value) -> Result<Value> {
     execute(&operation, &input).await
@@ -340,7 +351,7 @@ pub(crate) async fn databricks_provider(operation: String, input: Value) -> Resu
 
 /// Credential-command mode prints only the access token to Goose's pipe.
 pub fn run_token_helper() -> bool {
-    if std::env::args().nth(1).as_deref() != Some("--databricks-provider-token") {
+    if std::env::args().nth(1).as_deref() != Some(HELPER_ARG) {
         return false;
     }
     let result = (|| {
@@ -525,13 +536,15 @@ mod tests {
         no_tools["capabilities"]["function_calling"] = json!(false);
         let mut not_ready = ready.clone();
         not_ready["state"]["ready"] = json!("NOT_READY");
-        let mut other_route = ready.clone();
-        other_route["config"]["served_entities"][0]["foundation_model"]["api_types"] =
-            json!(["anthropic/v1/messages"]);
+        let mut no_gateway = ready.clone();
+        no_gateway["config"]["served_entities"][0]["foundation_model"]["ai_gateway_v2_supported"] =
+            json!(false);
+        let mut no_routes = ready.clone();
+        no_routes["config"]["served_entities"][0]["foundation_model"]["api_types"] = json!([]);
         assert_eq!(
-            chat_models(&json!({"endpoints":[ready,no_tools,not_ready,other_route]})),
+            chat_models(&json!({"endpoints":[ready,no_tools,not_ready,no_gateway,no_routes]})),
             vec![
-                json!({"id":"served-model", "label":"GPT", "api":"openai-responses", "family":"gpt"})
+                json!({"id":"served-model", "label":"GPT", "family":"gpt", "apis":["mlflow/v1/responses"]})
             ]
         );
         assert!(endpoint(
