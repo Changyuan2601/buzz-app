@@ -228,12 +228,12 @@ describe("Mesh agent runtime", () => {
     });
   });
 
-  it("posts the last message when the turn ends on a tool call", async () => {
+  it("reports missing final prose rather than posting pre-tool narration", async () => {
     const { delivery, publish, seen, runtime } = setup();
     seen.updates = ["Here it is: 4.", null];
     await runtime.run(delivery());
     expect(publish.mock.calls[0]?.[0]).toMatchObject({
-      content: "Here it is: 4.",
+      content: "⚠️ Mesh agent couldn't answer: The mesh model returned no text",
     });
   });
 
@@ -848,10 +848,12 @@ describe("Mesh agent runtime", () => {
     expect(meshAgentConfig({ preset: "nope" }).preset).toBeUndefined();
   });
 
-  it("gives Buzz access the shared Buzz prompt and other modes only their own", () => {
+  it("gives Buzz access automatic response delivery guidance", () => {
     const tools = instructions(meshAgentConfig({ prompt: "be brief" }));
-    expect(tools).toContain("## Posting Conventions");
+    expect(tools).not.toContain("## Posting Conventions");
+    expect(tools).toContain("final prose response is automatically delivered");
     expect(tools).not.toContain("Engineering Discipline");
+    expect(tools).not.toContain("pass `final: true`");
     expect(tools.length).toBeLessThan(2_000);
     expect(tools).toContain(
       "<agent-instructions>\nbe brief\n</agent-instructions>",
@@ -891,11 +893,59 @@ describe("Mesh agent Buzz tools", () => {
   it("lists the same Buzz tools as Codex and Claude Code", async () => {
     const tools = turnTools(delivery(), { spawn }, "/w", { channel: "chan" });
     const reply = (await tools.serve({ id: 1, method: "tools/list" })) as {
-      result: { tools: { name: string }[] };
+      result: {
+        tools: {
+          name: string;
+          inputSchema: { properties: Record<string, unknown> };
+        }[];
+      };
     };
     expect(reply.result.tools.map((tool) => tool.name).sort()).toEqual(
       TOOLS.map((tool) => tool.name).sort(),
     );
+    expect(
+      reply.result.tools.find((tool) => tool.name === "send")?.inputSchema
+        .properties,
+    ).not.toHaveProperty("final");
+  });
+
+  it("delivers final prose after an optional send, even with legacy final", async () => {
+    const { runtime, delivery, seen, publish } = setup({}, OWNER, {
+      mode: "agent",
+      buzz: true,
+    });
+    seen.promptGate = async () => {
+      seen.relay?.({
+        id: 42,
+        method: "tools/call",
+        params: {
+          name: "send",
+          arguments: {
+            text: "Working on it",
+            audience: "everyone",
+            final: true,
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(seen.bridgeOut.some((line) => JSON.parse(line).id === 42)).toBe(
+          true,
+        ),
+      );
+    };
+    try {
+      await runtime.run(delivery());
+      expect(
+        publish.mock.calls.map(
+          ([event]) => (event as { content: string }).content,
+        ),
+      ).toEqual(["Working on it", "hi from mesh"]);
+      expect(seen.calls.some((call) => call.method === "session/cancel")).toBe(
+        false,
+      );
+    } finally {
+      runtime.dispose();
+    }
   });
 
   it("ignores notifications", async () => {
@@ -905,7 +955,7 @@ describe("Mesh agent Buzz tools", () => {
     ).toBeUndefined();
   });
 
-  it("posts with send as the agent and ends the turn on final", async () => {
+  it("keeps send available without a completion side effect", async () => {
     const publish = vi.fn(async (event: object) => ({ ...event, id: "e1" }));
     const tools = turnTools(delivery(publish), { spawn }, "/w", {
       channel: "chan",
@@ -920,8 +970,6 @@ describe("Mesh agent Buzz tools", () => {
       },
     });
     expect(publish).toHaveBeenCalled();
-    expect(tools.sent()).toBe(true);
-    expect(tools.finished()).toBe(true);
   });
 });
 
@@ -1080,13 +1128,13 @@ describe("Mesh recovery contracts", () => {
     }
   });
 
-  it("routes Buzz-access MCP send directly in a DM", async () => {
+  it("routes both an optional send and final prose directly in a DM", async () => {
     const { runtime, delivery, seen, publish } = setup(
       { dm: () => true },
       OWNER,
       { mode: "agent" },
     );
-    seen.updates = [null];
+    seen.updates = [null, "Final DM answer"];
     seen.beforeRequest = async (method) => {
       if (method !== "session/prompt") return;
       seen.relay?.({
@@ -1106,11 +1154,18 @@ describe("Mesh recovery contracts", () => {
     };
     try {
       await runtime.run(delivery());
-      expect(publish).toHaveBeenCalledTimes(1);
+      expect(publish).toHaveBeenCalledTimes(2);
       const posted = publish.mock.calls[0]?.[0] as {
         content: string;
         tags: string[][];
       };
+      const final = publish.mock.calls[1]?.[0] as {
+        content: string;
+        tags: string[][];
+      };
+      expect(final.content).toBe("Final DM answer");
+      expect(final.tags).toContainEqual(["h", "chan"]);
+      expect(final.tags.some((tag) => tag[0] === "e")).toBe(false);
       expect(posted.content).toBe("DM answer");
       expect(posted.tags).toContainEqual(["h", "chan"]);
       expect(posted.tags.some((tag) => tag[0] === "e")).toBe(false);

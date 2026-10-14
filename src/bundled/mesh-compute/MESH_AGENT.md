@@ -43,8 +43,9 @@ workspace (default `~/.buzz`).
   path as Chat.
 - **Agent with Buzz access (default on):** also the shared Buzz MCP tools
   (`src/buzz-mcp/tools.ts`), executed in the plugin via `appClient` and signed
-  by Agents' host signer; goose never holds a key. A `send` with `final: true`
-  ends the turn. If the turn never calls `send`, its text is posted as the reply.
+  by Agents' host signer; goose never holds a key. Final prose is always posted as the reply. Optional `send` calls neither
+  suppress that response nor end the turn. Mesh omits `final` from its send
+  schema; the shared tool behavior for other providers is unchanged.
 
 Buzz access uses the app's native relay (`src-tauri/src/tool_relay.rs`) as its
 sole Buzz-tool transport. The plugin starts the app with `--tool-listen`;

@@ -10,7 +10,7 @@
 // - "agent" with `buzz` access: also the shared Buzz tools
 //   (`buzz-mcp/tools.ts`), the same tools and handler as Codex and Claude Code, executed here through
 //   `appClient` so Agents' host signer signs as the agent; goose never holds a
-//   key. A turn that never calls `send` still has its text posted.
+//   key. Final prose is always posted, independently of optional tool sends.
 //
 // Conversations follow Codex and Claude Code: a DM, or every channel when
 // `scope` is "channel", is one conversation; otherwise each thread (or new
@@ -40,7 +40,6 @@ import { threadReference } from "../../features/relay/thread-reference";
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context, Memory } from "../../buzz-mcp/client";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
 import { TOOLS } from "../../buzz-mcp/tools";
 import { MESH_AGENT_PRESETS } from "./meshAgentPresets";
@@ -375,10 +374,6 @@ type Message = Readonly<{
 export type TurnTools = Readonly<{
   /** Answers one MCP message from goose; undefined for notifications. */
   serve(message: Message): Promise<object | undefined>;
-  /** Set once the model has called `send` with `final: true`. */
-  finished(): boolean;
-  /** Whether the model posted anything with `send`. */
-  sent(): boolean;
 }>;
 
 /** The Buzz tools for one turn, as an MCP server: the same tools and handler as Codex and Claude Code. */
@@ -388,8 +383,6 @@ export function turnTools(
   cwd: string,
   context: Context,
 ): TurnTools {
-  let sent = false;
-  let finished = false;
   const client = appClient(delivery.agent, {
     spawn: deps.spawn,
     cwd,
@@ -401,27 +394,28 @@ export function turnTools(
     signal: delivery.signal,
   });
   return {
-    sent: () => sent,
-    finished: () => finished,
     async serve(message) {
-      const { id, method, params = {} } = message;
+      const { id, method } = message;
       if (id === undefined || id === null) return undefined;
-      const name = String(params.name);
-      const reply = (await respond(client, context, message)) as {
-        result?: { isError?: boolean };
-      };
-      if (
-        method === "tools/call" &&
-        name === "send" &&
-        !reply.result?.isError
-      ) {
-        sent = true;
-        if (
-          (params.arguments as { final?: unknown } | undefined)?.final === true
-        )
-          finished = true;
+      if (method === "tools/list") {
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            tools: TOOLS.map((tool) => {
+              if (tool.name !== "send") return tool;
+              const properties = { ...tool.inputSchema.properties };
+              delete properties.final;
+              return {
+                ...tool,
+                description: `${tool.description} Optional: your final prose response is delivered automatically; sending does not end your turn.`,
+                inputSchema: { ...tool.inputSchema, properties },
+              };
+            }),
+          },
+        };
       }
-      return reply;
+      return respond(client, context, message);
     },
   };
 }
@@ -526,11 +520,9 @@ export function instructions(
 ): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
   if (!buzzAccess(config)) return prompt;
-  return `${BUZZ_PROMPT}
+  return `Your final prose response is automatically delivered to the person in the current conversation. Return the answer itself, not a report that you replied. You do not need to use Buzz send to answer. Buzz send remains available for optional updates or messages elsewhere; it does not finish your turn. When sending in the current conversation, omit channel and reply to use the host's destination.
 
 ${coreMemorySection(memory)}
-
-Reply with \`send\`, and pass \`final: true\` on your last message of the turn.
 
 <agent-instructions>
 ${prompt}
@@ -698,7 +690,6 @@ export class MeshAgentRuntime {
     const runId = active.client.activeRun(active.session.id);
     if (
       !runId ||
-      active.session.turn?.finished() ||
       delivery.signal.aborted ||
       active.delivery.signal.aborted ||
       (delivery.current && !delivery.current())
@@ -806,7 +797,6 @@ export class MeshAgentRuntime {
           () => [] as EventData[],
         );
       let reply: string;
-      let sent = false;
       if (config.mode === "chat") {
         const earlier = await untilAborted(read(), signal);
         signal.throwIfAborted();
@@ -834,11 +824,8 @@ export class MeshAgentRuntime {
           read,
         );
         reply = result.text;
-        sent = result.sent;
       }
       if (signal.aborted) return;
-      // The model already answered through `send`.
-      if (sent) return;
       if (!reply) throw new Error("The mesh model returned no text");
       // Stale-result mitigation only; see the module comment.
       if (!(await this.deps.current(inference.lease))) {
@@ -863,7 +850,7 @@ export class MeshAgentRuntime {
     context: Context,
     sessionKey: string,
     read: () => Promise<EventData[]>,
-  ): Promise<{ text: string; sent: boolean }> {
+  ): Promise<{ text: string }> {
     const { agent, signal } = delivery;
     const cwd = await untilAborted(
       resolveWorkspace(this.deps, config.workspace),
@@ -928,13 +915,6 @@ export class MeshAgentRuntime {
           .notify("session/cancel", { sessionId: session.id })
           .catch(() => {});
       signal.addEventListener("abort", cancel, { once: true });
-      // A final `send` ends the turn, as for Codex and Claude Code.
-      const watch = setInterval(() => {
-        if (tools?.finished()) {
-          clearInterval(watch);
-          cancel();
-        }
-      }, 250);
       const lane = `${agent.pubkey}\n${sessionKey.split("\n").slice(2).join("\n")}`;
       const active: ActiveTurn = {
         client: goose.client,
@@ -953,7 +933,6 @@ export class MeshAgentRuntime {
       } finally {
         if (this.active.get(lane) === active) this.active.delete(lane);
         await Promise.all(active.steering);
-        clearInterval(watch);
         signal.removeEventListener("abort", cancel);
         session.turn = undefined;
         session.seen = Math.max(session.seen, event.created_at);
@@ -970,16 +949,9 @@ export class MeshAgentRuntime {
         }, IDLE_MS);
         session.idle = idle;
       }
-      // Degrade gracefully for models that fumble the tools: a final `send`
-      // is the answer; after other sends, text that followed the last tool
-      // call is still posted; a tool call written as text is salvaged.
+      // Only final prose is an answer; never publish pre-tool narration.
       const taken = goose.client.take(session.id);
-      const text = salvageReply(taken.text);
-      const sent = tools?.sent() ?? false;
-      return {
-        text,
-        sent: Boolean(tools?.finished()) || (sent && !(taken.trailing && text)),
-      };
+      return { text: taken.trailing ? salvageReply(taken.text) : "" };
     } catch (error) {
       if (signal.aborted && goose.busy === 1) this.retire(agent.pubkey, goose);
       throw error;
