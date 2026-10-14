@@ -23,11 +23,12 @@ screen shows it pending (**Cancel sign-in**, with the field disabled). Cancel
 sign-in, and **Back** from a sign-in or setup failure, return to the welcome
 screen with the address kept and do not look it up again.
 
-Success continues to a **Setting up Buzz** page that runs four steps in order,
+Success continues to a **Setting up Buzz** page that runs its steps in order,
 showing the current label with a spinner: *Downloading keys*, *Creating keys*,
-*Uploading keys*, *Finding communities*. Only **Creating keys** does real work: it
+*Uploading keys*, and — only when no community URL was supplied on the welcome
+screen — *Finding communities*. Only **Creating keys** does real work: it
 generates a Nostr key through the same native create command as the key setup
-screen, so the next launch opens as a returning user. The other three are
+screen, so the next launch opens as a returning user. The others are
 placeholders marked `[TODO]` that wait two seconds each until their backends
 exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finish
 setup** with the error and **Back** to the welcome screen. Setup then lands on

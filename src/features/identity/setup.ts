@@ -26,14 +26,21 @@ async function createKey(identity: Identity) {
 /**
  * First-run steps after Builderlab sign-in, in order. `[TODO]` steps have no
  * backend yet and only wait; replace their `run` with the real call and drop the
- * marker from the label.
+ * marker from the label. Setup started from a community URL already knows
+ * which community to join, so it skips "Finding communities".
  */
-export function setupSteps(identity: Identity, delay = wait): SetupStep[] {
+export function setupSteps(
+  identity: Identity,
+  delay = wait,
+  { findCommunities = true } = {},
+): SetupStep[] {
   return [
     { label: "Downloading keys… [TODO]", run: () => delay(2000) },
     { label: "Creating keys…", run: () => createKey(identity) },
     { label: "Uploading keys… [TODO]", run: () => delay(2000) },
-    { label: "Finding communities… [TODO]", run: () => delay(2000) },
+    ...(findCommunities
+      ? [{ label: "Finding communities… [TODO]", run: () => delay(2000) }]
+      : []),
   ];
 }
 
@@ -50,8 +57,8 @@ export function discoverAuthentication(_found: FoundCommunity): Authentication {
   return "builderlab";
 }
 
-/** Runs the steps once, stopping at the first failure. */
-export function createSetup(steps: readonly SetupStep[]) {
+/** Runs the given steps once, stopping at the first failure. */
+export function createSetup() {
   let state: SetupSnapshot = { status: "idle" };
   const listeners = new Set<() => void>();
   const publish = (next: SetupSnapshot) => {
@@ -66,7 +73,7 @@ export function createSetup(steps: readonly SetupStep[]) {
         listeners.delete(listener);
       };
     },
-    async start() {
+    async start(steps: readonly SetupStep[]) {
       if (state.status !== "idle") return;
       for (const step of steps) {
         publish({ status: "running", label: step.label });

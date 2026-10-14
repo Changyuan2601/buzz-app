@@ -765,6 +765,7 @@ it("a landing URL is looked up before sign-in, setup then lands on Join Communit
   const relay = landingRelay();
   const released = deferred<Credential>();
   const connect = vi.fn((_signal: AbortSignal) => released.promise);
+  const { delay, release } = gatedDelay();
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -772,7 +773,7 @@ it("a landing URL is looked up before sign-in, setup then lands on Join Communit
       identity={identity}
       communities={noJoin}
       connect={connect}
-      delay={vi.fn().mockResolvedValue(undefined)}
+      delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -802,6 +803,16 @@ it("a landing URL is looked up before sign-in, setup then lands on Join Communit
   expect(urlField()).toHaveValue("relay.example.com:8443");
   expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
   await act(async () => released.resolve(credential));
+  // Setup skips "Finding communities": the URL already names the community.
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Downloading keys… [TODO]",
+  );
+  await release(0);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Uploading keys… [TODO]",
+  );
+  await release(1);
+  expect(delay.mock.calls).toEqual([[2000], [2000]]);
   // Setup ran (the key exists) and landed on the find page for that URL, not
   // on the choices page.
   expect(

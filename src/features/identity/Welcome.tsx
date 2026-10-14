@@ -46,7 +46,7 @@ export function Welcome({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [login] = useState(() => createOAuthSession(connect));
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
-  const [setup] = useState(() => createSetup(setupSteps(identity, delay)));
+  const [setup] = useState(createSetup);
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
@@ -73,9 +73,11 @@ export function Welcome({
     [login],
   );
   if (state.status === "ready" && progress.status === "idle") return children;
-  const signIn = async () => {
+  /** `findCommunities` is false when a landing-page URL already names the community. */
+  const signIn = async (findCommunities: boolean) => {
     await login.signIn();
-    if (login.snapshot().status === "signed-in") void setup.start();
+    if (login.snapshot().status === "signed-in")
+      void setup.start(setupSteps(identity, delay, { findCommunities }));
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
@@ -232,7 +234,8 @@ export function Welcome({
             url={finding}
             onCancel={backToLanding}
             onFound={(found) => {
-              if (discoverAuthentication(found) === "builderlab") void signIn();
+              if (discoverAuthentication(found) === "builderlab")
+                void signIn(false);
             }}
             titleId="welcome-title"
           />
@@ -252,7 +255,7 @@ export function Welcome({
                 size="lg"
                 onClick={() => {
                   if (auth.status === "pending") backToLanding();
-                  else void signIn();
+                  else void signIn(true);
                 }}
               >
                 {auth.status === "pending"
