@@ -20,8 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [main, css1068, notrace, shard8]
-        copy: [1, 2]
+        variant: [notrace, css1068-notrace]
+        copy: [1, 2, 3]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -35,7 +35,7 @@ jobs:
       - name: Install gdb
         run: apt-get update -qq && apt-get install -y -qq gdb >/dev/null
       - name: Revert 1068 CSS
-        if: matrix.variant == 'css1068'
+        if: matrix.variant == 'css1068-notrace'
         run: |
           f=src/features/messages/ComposerAttachments.module.css
           perl -0pi -e 's/(\.list \{\n  display: flex;\n  flex-wrap: nowrap;\n  gap: )var\(--space-3\)/$1var(--space-2)/; s/transform: translate\(calc\(var\(--space-5\) \/ 2\), -50%\);/transform: translate(50%, -50%);/' $f
@@ -44,8 +44,8 @@ jobs:
         if: matrix.variant != 'shard8'
         run: |
           extra=""
-          if [ "${{ matrix.variant }}" = notrace ]; then extra="--trace off"; fi
-          ./bin/pnpm test:browser:ci --project webkit --no-deps --workers=2 --repeat-each=16 --timeout 60000 -g "local previews stay interactive" --reporter=list $extra
+          extra="--trace off"
+          ./bin/pnpm test:browser:ci --project webkit --no-deps --workers=2 --repeat-each=24 --timeout 60000 -g "local previews stay interactive" --reporter=list $extra
       - name: Shard 8 replica
         if: matrix.variant == 'shard8'
         run: ./bin/pnpm test:browser:ci --project webkit --no-deps --shard=8/9 --timeout 60000 --reporter=list

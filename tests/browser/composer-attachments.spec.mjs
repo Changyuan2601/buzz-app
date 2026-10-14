@@ -1179,7 +1179,8 @@ test("PNG and JPEG preparation uploads metadata-free browser-encoded bytes", asy
 import { execSync as diagExec } from "node:child_process";
 import { writeFileSync as diagWrite } from "node:fs";
 test.afterEach(async ({}, testInfo) => {
-  if (testInfo.status !== "timedOut" || process.platform !== "linux") return;
+  if (testInfo.status === testInfo.expectedStatus || process.platform !== "linux") return;
+  if (!/Timeout/.test(String(testInfo.error?.message))) return;
   const run = (cmd) => {
     try {
       return diagExec(cmd, { timeout: 60_000, maxBuffer: 64 << 20 }).toString();
