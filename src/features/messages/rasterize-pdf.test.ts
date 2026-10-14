@@ -42,9 +42,23 @@ function fakePdf(numPages = 1, [width, height] = [612, 792]) {
     pdf: { numPages, getPage: async () => page },
   };
 }
-function stubToBlob(blob: Blob | null) {
+const RED = [255, 0, 0, 255];
+const WHITE = [255, 255, 255, 255];
+/** Fakes the blank-page sample (`pixels`, RGBA) and the PNG encoder. */
+function stubCanvas(blob: Blob | null, pixels: number[] = RED) {
+  const samples: { width: number; height: number }[] = [];
   const encodes: { width: number; height: number; type: string | undefined }[] =
     [];
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
+    function (this: HTMLCanvasElement) {
+      samples.push({ width: this.width, height: this.height });
+      return {
+        fillRect() {},
+        drawImage() {},
+        getImageData: () => ({ data: new Uint8ClampedArray(pixels) }),
+      } as unknown as CanvasRenderingContext2D;
+    },
+  );
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
     this: HTMLCanvasElement,
     callback,
@@ -53,7 +67,7 @@ function stubToBlob(blob: Blob | null) {
     encodes.push({ width: this.width, height: this.height, type });
     callback(blob);
   });
-  return encodes;
+  return { samples, encodes };
 }
 const pdfFile = (name = "diagram.pdf", body = "%PDF-1.7\n%%EOF") =>
   new File([body], name, { type: "application/pdf", lastModified: 1234 });
@@ -74,7 +88,9 @@ it("recognizes PDF headers and bounds the render scale", () => {
 it("renders page one of a single-page PDF onto a white 2x canvas as a PNG", async () => {
   const fake = fakePdf();
   fake.loading.resolve(fake.pdf);
-  const encodes = stubToBlob(new Blob(["png"], { type: "image/png" }));
+  const { samples, encodes } = stubCanvas(
+    new Blob(["png"], { type: "image/png" }),
+  );
   const result = await pdfPageImage(pdfFile(), new AbortController().signal);
   expect(result?.name).toBe("diagram.png");
   expect(result?.type).toBe("image/png");
@@ -89,8 +105,32 @@ it("renders page one of a single-page PDF onto a white 2x canvas as a PNG", asyn
       viewport: { width: 1224, height: 1584 },
     }),
   );
+  // The blank-page check samples a copy downscaled to a 64 px long edge.
+  expect(samples).toEqual([{ width: 49, height: 64 }]);
   expect(encodes).toEqual([{ width: 1224, height: 1584, type: "image/png" }]);
   expect(fake.destroy).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a PDF whose page renders wholly white as a file attachment", async () => {
+  const signal = new AbortController().signal;
+  const blank = fakePdf();
+  blank.loading.resolve(blank.pdf);
+  const { encodes } = stubCanvas(new Blob(["png"], { type: "image/png" }), [
+    ...WHITE,
+    ...WHITE,
+    ...WHITE,
+    ...WHITE,
+  ]);
+  expect(await pdfPageImage(pdfFile(), signal)).toBeUndefined();
+  expect(blank.render).toHaveBeenCalledTimes(1);
+  expect(encodes).toEqual([]);
+  expect(blank.destroy).toHaveBeenCalledTimes(1);
+
+  const marked = fakePdf();
+  marked.loading.resolve(marked.pdf);
+  const faint = [...WHITE, ...WHITE, 255, 255, 254, 255, ...WHITE];
+  stubCanvas(new Blob(["png"], { type: "image/png" }), faint);
+  expect((await pdfPageImage(pdfFile(), signal))?.name).toBe("diagram.png");
 });
 
 it("leaves non-PDF, oversized and multi-page documents as file attachments", async () => {
@@ -105,7 +145,7 @@ it("leaves non-PDF, oversized and multi-page documents as file attachments", asy
 
   const fake = fakePdf(2);
   fake.loading.resolve(fake.pdf);
-  const encodes = stubToBlob(new Blob(["png"], { type: "image/png" }));
+  const { encodes } = stubCanvas(new Blob(["png"], { type: "image/png" }));
   expect(await pdfPageImage(pdfFile(), signal)).toBeUndefined();
   expect(fake.render).not.toHaveBeenCalled();
   expect(encodes).toEqual([]);
@@ -125,7 +165,7 @@ it("falls back to the original file when pdf.js rejects the document or the rend
     promise: Promise.reject(new Error("Unable to decode inline image")),
     cancel() {},
   });
-  const encodes = stubToBlob(new Blob(["png"], { type: "image/png" }));
+  const { encodes } = stubCanvas(new Blob(["png"], { type: "image/png" }));
   expect(await pdfPageImage(pdfFile(), signal)).toBeUndefined();
   expect(encodes).toEqual([]);
   expect(broken.destroy).toHaveBeenCalledTimes(1);
@@ -133,18 +173,30 @@ it("falls back to the original file when pdf.js rejects the document or the rend
 
 it("keeps PDFs that need the unshipped wasm decoders as files without loading pdf.js", async () => {
   const signal = new AbortController().signal;
-  for (const filter of ["JBIG2Decode", "JPXDecode", "CCITTFaxDecode"]) {
-    const body = `%PDF-1.5\n5 0 obj\n<< /Type /XObject /Subtype /Image /Filter /${filter} >>\nendobj`;
+  const image = (filter: string) =>
+    `%PDF-1.5\n5 0 obj\n<< /Type /XObject /Subtype /Image /Filter /${filter} >>\nendobj`;
+  for (const filter of [
+    "JBIG2Decode",
+    "JPXDecode",
+    "CCITTFaxDecode",
+    "JPX",
+    "CCF",
+  ]) {
     expect(
-      await pdfPageImage(pdfFile("scan.pdf", body), signal),
+      await pdfPageImage(pdfFile("scan.pdf", image(filter)), signal),
     ).toBeUndefined();
   }
   expect(pdfjs.getDocument).not.toHaveBeenCalled();
   const fake = fakePdf();
   fake.loading.resolve(fake.pdf);
-  stubToBlob(new Blob(["png"], { type: "image/png" }));
+  stubCanvas(new Blob(["png"], { type: "image/png" }));
   const flate = pdfFile("page.pdf", "%PDF-1.5\n<< /Filter /FlateDecode >>");
   expect((await pdfPageImage(flate, signal))?.name).toBe("page.png");
+  // Documented gap: a `#`-escaped name passes the byte scan and reaches pdf.js,
+  // where the blank-page check is the remaining safeguard.
+  const escaped = pdfFile("scan.pdf", image("JBIG2#44ecode"));
+  expect((await pdfPageImage(escaped, signal))?.name).toBe("scan.png");
+  expect(pdfjs.getDocument).toHaveBeenCalledTimes(2);
 });
 
 it("rethrows an abort while loading instead of falling back, and destroys the task", async () => {
@@ -163,7 +215,7 @@ it("rejects a page image above the image byte limit", async () => {
   fake.loading.resolve(fake.pdf);
   const blob = new Blob(["png"], { type: "image/png" });
   Object.defineProperty(blob, "size", { value: 50 * 1024 * 1024 + 1 });
-  stubToBlob(blob);
+  stubCanvas(blob);
   await expect(
     pdfPageImage(pdfFile(), new AbortController().signal),
   ).rejects.toEqual(new UploadError("size"));

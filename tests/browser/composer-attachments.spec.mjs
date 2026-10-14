@@ -248,12 +248,17 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
         mimeType: "application/pdf",
         buffer: await fixture("jpx-page.pdf"),
       },
+      {
+        name: "empty.pdf",
+        mimeType: "application/pdf",
+        buffer: await fixture("blank-page.pdf"),
+      },
     ]);
     const image = form
       .getByRole("button", { name: "Preview diagram.png", exact: true })
       .locator("img");
     await expect(image).toBeVisible();
-    await expect(form.getByText(/Ready$/)).toHaveCount(3);
+    await expect(form.getByText(/Ready$/)).toHaveCount(4);
     // 200x100 pt page at 2x, white background, red rectangle filling the centre.
     expect(
       await image.evaluate(async (img) => {
@@ -289,13 +294,22 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
     });
     await expect(scan).toBeVisible();
     await expect(scan.locator("img")).toHaveCount(0);
+    // A page that renders wholly white (here genuinely empty; in practice an
+    // image pdf.js dropped) is sampled on a real canvas and kept as a file.
+    const empty = form.getByRole("button", {
+      name: "Preview empty.pdf",
+      exact: true,
+    });
+    await expect(empty).toBeVisible();
+    await expect(empty.locator("img")).toHaveCount(0);
     expect(uploads).toEqual([
       "image/png",
       "application/pdf",
       "application/pdf",
+      "application/pdf",
     ]);
     await expect(
-      form.getByRole("button", { name: /diagram\.pdf|scan\.png/ }),
+      form.getByRole("button", { name: /diagram\.pdf|scan\.png|empty\.png/ }),
     ).toHaveCount(0);
   } finally {
     await server.close();

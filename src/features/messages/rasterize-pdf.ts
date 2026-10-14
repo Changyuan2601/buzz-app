@@ -1,3 +1,9 @@
+/**
+ * Rasterizes single-page PDFs into image attachments with pdf.js. Buzz ships
+ * neither its wasm decoders nor its CMaps, so scans in wasm-only formats and
+ * fonts using a predefined CMap (non-embedded CJK) fall back to the file chip
+ * until `wasmUrl`/`cMapUrl` assets are shipped.
+ */
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { UploadError } from "../relay/attachments";
 import { MIB, mediaByteLimit } from "../relay/attachment-limits";
@@ -9,10 +15,16 @@ const MAX_EDGE_PX = 4096;
 /**
  * pdf.js decodes these only through wasm modules Buzz does not ship, and it
  * drops an undecodable image XObject even with `stopAtErrors`, so such a scan
- * would render as a blank page. Stream dictionaries are never compressed into
- * object streams, so the filter name is visible in the raw bytes.
+ * would render as a blank page. Stream dictionaries are never packed into
+ * object streams, so the filter name is usually visible in the raw bytes;
+ * `/JPX` and `/CCF` are the abbreviations pdf.js accepts for any stream.
+ * Accepted fail-open gaps, caught later by the blank-page check: `#`-escaped
+ * names such as `/JBIG2#44ecode`, and an indirect `/Filter 7 0 R` whose value
+ * lives in an object stream.
  */
-const WASM_ONLY_FILTERS = /\/(?:JBIG2|JPX|CCITTFax)Decode\b/;
+const WASM_ONLY_FILTERS = /\/(?:(?:JBIG2|JPX|CCITTFax)Decode|JPX|CCF)\b/;
+/** Long edge of the downscaled copy sampled by the blank-page check. */
+const SAMPLE_EDGE_PX = 64;
 
 export function isPdf(header: Uint8Array): boolean {
   return String.fromCharCode(...header.subarray(0, 5)) === "%PDF-";
@@ -31,6 +43,32 @@ function raced<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
       signal.removeEventListener("abort", abort);
     });
   });
+}
+
+/**
+ * pdf.js paints nothing for an image XObject or annotation it cannot decode,
+ * even with `stopAtErrors`, so a wholly white page means content was lost (an
+ * empty page is not worth attaching either). Averaging a downscaled copy keeps
+ * the check cheap at 4096 px.
+ */
+function isBlank(canvas: HTMLCanvasElement): boolean {
+  const scratch = document.createElement("canvas");
+  try {
+    const scale = SAMPLE_EDGE_PX / Math.max(canvas.width, canvas.height);
+    scratch.width = Math.max(1, Math.round(canvas.width * scale));
+    scratch.height = Math.max(1, Math.round(canvas.height * scale));
+    const context = scratch.getContext("2d");
+    if (!context) return false;
+    context.imageSmoothingQuality = "high";
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, scratch.width, scratch.height);
+    context.drawImage(canvas, 0, 0, scratch.width, scratch.height);
+    const { data } = context.getImageData(0, 0, scratch.width, scratch.height);
+    return data.every((channel) => channel === 255);
+  } finally {
+    scratch.width = 0;
+    scratch.height = 0;
+  }
 }
 
 /** Page 1 as a PNG, or undefined when pdf.js cannot render the whole single page. */
@@ -72,6 +110,7 @@ async function renderSinglePage(
       page.render({ canvas, viewport, background: "#ffffff" }).promise,
       signal,
     );
+    if (isBlank(canvas)) return undefined;
     return await raced(
       new Promise<Blob>((resolve, reject) =>
         canvas.toBlob(
