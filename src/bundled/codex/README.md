@@ -21,13 +21,13 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
    keeps it off if the installed copy was off.
 2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
    optionally pick a model beside it and add instructions. Name the agent and
-   click **Create agent**. The Codex tab checks the installed CLI and existing
-   account. If needed, install Codex
-   and run `codex login` in a terminal, then click **Check again**.
-3. **Agents → More → Provider settings → Codex** manages the device connection and
-   explicit-save model/thinking defaults. A blank agent choice inherits those
-   defaults without changing its saved record. The **Workspace** defaults to
-   `~/.buzz`, like Claude. In the agent's
+   click **Create agent**.
+3. **Agents → More → Provider settings → Codex** checks Buzz's copy of Codex and
+   its account. If it says Codex is not installed, click **Install Codex**; if
+   it needs you to sign in, click **Sign in** and finish in the browser. It also
+   manages explicit-save model/thinking defaults. A blank agent choice inherits
+   those defaults without changing its saved record. The **Workspace** defaults
+   to `~/.buzz`, like Claude. In the agent's
    **Settings** tab, you can set an absolute or `~/…` path instead; clearing it
    restores the default. A disposable directory is useful for the first test.
    Choose model, thinking, session scope, and instructions, then **Save**.
@@ -59,6 +59,11 @@ current turn finishes. Expect the marker.
 
 Thread scope is the default. Channel scope shares a session across channel
 threads; DMs always share a conversation. Workspace changes start a fresh session.
+A mention in a chat filed in the owner's Me is one conversation whatever the
+scope: the agent continues the channel's session and posts at its top level, and
+its tools refuse a reply into a thread there. A turn keeps the routing it started
+with, so a mention after the chat is shared waits for it and then threads as
+usual. Watches keep their own routing.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities does not end an agent's work. Removing the agent, leaving or
 disconnecting from its community interrupts its turns and asks Codex to end
@@ -106,13 +111,37 @@ malformed output, and consumer exception containment. Runtime tests cover
 conversation routing, ordinary message delivery, persistence, defaults, failures,
 and cleanup.
 
+## Buzz's copy of Codex
+
+The plugin never runs the `codex` on PATH. It runs Buzz's own copy from
+`~/Library/Application Support/Buzz/codex/<version>/bin/codex`, or
+`${XDG_DATA_HOME:-~/.local/share}/buzz/codex` on Linux; a `current` file names
+the version in use. `~/.codex` is shared, so the sign-in and settings are the
+same as in the terminal. [`codex.sh`](codex.sh) is the launcher and installer;
+the plugin runs each step through the one declared `bash -c` process.
+
+Releases come from OpenAI's channel, `releases.openai.com/codex/channels/latest`,
+as `codex-package-<target>.tar.gz` with the sha256 the channel lists. After the
+checksum check, Buzz runs `--version` and checks that `app-server` lists models;
+only then does it switch `current`. A release that fails is skipped and the
+previous copy stays in use. Switching takes a lock shared by every Buzz build,
+which the system releases when the build holding it stops, and checks the copy
+again once it holds the lock. It keeps the new copy, the previous one and any
+newer one another build may be testing. A mention sent before Buzz has found a
+copy, or while it downloads the first one, waits for it. If that download
+failed, a mention tries it again.
+Buzz checks when the agents load and every 6 hours; the first download (about
+130 MB) waits until a Codex agent is running, or **Install Codex** is clicked.
+
 ## Limits and boundaries
 
 - Only the owner's events start work. Event watches support those events; timers
   are unsupported and report an error.
 - Replies use Agents' host signer. Codex receives no Buzz agent key and does not
-  publish through the Buzz CLI. The Buzz base prompt and custom instructions are
-  supplied as developer instructions, preserving Codex’s native coding prompt.
+  publish through the Buzz CLI. The shared Buzz base prompt, custom instructions
+  and the agent's `core` memory are supplied as developer instructions, preserving
+  Codex’s native coding prompt. Each turn reads `core` fresh through the shared
+  `features/agent-harness` reader, as Claude does for each new session.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`, matching
   Claude's `bypassPermissions`: it can write outside its workspace, reach the
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
@@ -120,7 +149,7 @@ and cleanup.
 - Shared Agent Activity integration is deferred because this Agents delivery
   contract has no live-activity API. The Runtime diagnostics disclosure in the
   agent's Settings shows conversation status and the latest command/output.
-  Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. Final sends preserve background processes, such as a dev server it started.
+  Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. A turn that has nothing new to say ends without posting. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;
   RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.
 - Uses experimental app-server APIs for dynamic tools, model discovery, application context, and terminal

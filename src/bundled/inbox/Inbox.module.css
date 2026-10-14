@@ -15,6 +15,11 @@
   align-items: center;
 }
 
+.filterSummary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .refreshStatus {
   min-width: 0;
   overflow: hidden;
@@ -46,6 +51,11 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.scroll {
+  container-name: inbox-list;
+  container-type: inline-size;
 }
 
 .detail {
@@ -193,10 +203,20 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 .rowSurface {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-row-gap);
   min-width: 0;
+}
+
+/* Keep the sibling action from consuming the label in a narrow list pane. */
+@container inbox-list (max-width: 24rem) {
+  .rowSurface {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rowArchive {
+    justify-self: end;
+  }
 }
 
 .unreadSlot {
@@ -204,6 +224,22 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   place-items: center;
   width: var(--space-2);
   height: var(--space-2);
+}
+
+/* Revealed on hover or keyboard focus; always shown without a hover pointer. */
+.rowArchive {
+  opacity: 0;
+}
+
+.row:hover .rowArchive,
+.row:focus-within .rowArchive {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowArchive {
+    opacity: 1;
+  }
 }
 
 .unreadDot {
@@ -239,6 +275,8 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 .sourceLine {
   display: flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
 }
 
