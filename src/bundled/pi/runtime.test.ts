@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -94,7 +95,9 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
-  const runtime = new PiRuntime({ spawn: host.spawn }, () => relay);
+  const runtime = new PiRuntime({ spawn: host.spawn }, (pubkey) =>
+    ownerReads(relay, pubkey),
+  );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,

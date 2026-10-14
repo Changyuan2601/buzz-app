@@ -3,6 +3,7 @@
 // storage; each conversation the agent is in is one continuing, durable Pi
 // conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -20,7 +21,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
-  const runtime = new PiRuntime(host, agents.relay);
+  const runtime = new PiRuntime(host, (pubkey) =>
+    ownerReads(agents.relay(pubkey), pubkey),
+  );
   const { Create, CreateModelMenu, createModelLabel, SettingsTab } = createTabs(
     { setup: runtime.setup, runtime },
   );

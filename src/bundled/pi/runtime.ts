@@ -11,17 +11,16 @@ import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
 import type { Tool } from "../../buzz-mcp/tools";
 import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
-import { meChat } from "../../features/agents/me-chat";
-import {
-  type Agent,
-  type AgentHandle,
-  type Delivery,
-  fromOwner,
-  type Models,
+import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import type { AgentReads } from "../../features/agents/reads";
+import type {
+  Agent,
+  AgentHandle,
+  Delivery,
+  Models,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
-import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import { Lanes } from "../claude-code/lanes";
 import {
@@ -149,8 +148,8 @@ export class PiRuntime {
 
   constructor(
     private readonly host: Pick<Host, "spawn">,
-    /** The owner's connection to each agent's own community. */
-    private readonly relay: (pubkey: string) => RelayData | undefined,
+    /** What each agent's turns read of its community, while it can be read. */
+    private readonly reads: (pubkey: string) => AgentReads | undefined,
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -210,7 +209,7 @@ export class PiRuntime {
     return places
       .map(({ key, conversation, seen }) => {
         const [channelId = key, root] = key.split("/");
-        const name = this.summary(pubkey, channelId)?.name;
+        const name = this.reads(pubkey)?.channelName(channelId);
         return {
           key,
           conversation,
@@ -285,15 +284,12 @@ export class PiRuntime {
     // A watch is the agent's own attention: its event is observed data,
     // framed as such, from anyone.
     if (trigger.type === "mention") {
-      const snapshot = this.relay(agent.pubkey)?.snapshot();
-      const session =
-        snapshot?.status === "ready" ? snapshot.session : undefined;
       if (
-        !(await fromOwner(trigger.event, agent.owner, {
-          agent: agent.pubkey,
-          authority: session?.workflowAuthority,
-          profiles: session?.profiles,
-        }))
+        !(await fromOwner(
+          trigger.event,
+          agent.owner,
+          workflowOf(this.reads(agent.pubkey), agent.pubkey),
+        ))
       ) {
         ignored?.();
         return;
@@ -312,15 +308,12 @@ export class PiRuntime {
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
-    const topLevel = await meChat(
-      () => this.relay(agent.pubkey),
-      agent.owner,
-      channel,
-      signal,
-    );
+    const topLevel =
+      (await this.reads(agent.pubkey)?.meChat(agent.owner, channel, signal)) ??
+      false;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const key = this.key(entry, agent.pubkey, event, channel, topLevel);
+    const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
     const root = threadReference(event)?.rootId ?? event.id;
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
@@ -737,26 +730,17 @@ export class PiRuntime {
 
   /** The conversation the event's turn goes to: a Me chat or DM is one
    * conversation, as is a channel for an agent with channel scope. */
-  private key(
+  private async key(
     entry: Entry,
     self: string,
     event: EventData,
     channelId: string,
     topLevel: boolean,
   ) {
-    return topLevel ||
-      this.summary(self, channelId)?.channelType === "dm" ||
-      entry.config.scope === "channel"
+    const summary = await this.reads(self)?.channel(channelId);
+    return topLevel || summary?.dm === true || entry.config.scope === "channel"
       ? channelId
       : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
-  }
-  private summary(self: string, channelId: string) {
-    const snapshot = this.relay(self)?.snapshot();
-    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    return (
-      session?.channels.list().channels.find((item) => item.id === channelId) ??
-      session?.channels.get?.(channelId)
-    );
   }
 
   /** What the event's prompt needs: its channel and thread, and the messages
@@ -769,25 +753,24 @@ export class PiRuntime {
     topLevel: boolean,
     seen: number,
   ) {
-    const snapshot = this.relay(self)?.snapshot();
-    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    const summary = this.summary(self, channelId);
-    const dm = summary?.channelType === "dm";
+    const reads = this.reads(self);
+    const summary = await reads?.channel(channelId);
+    const dm = summary?.dm === true;
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm || topLevel))
+    if (reads && (thread || dm || topLevel))
       try {
-        const events = await session.read(
+        const events = await reads.read(
           thread && !topLevel
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
+          AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
         );
         earlier = events
           .filter(
@@ -813,9 +796,9 @@ export class PiRuntime {
           .map((tag) => tag[1] ?? ""),
       ]),
     ].filter(Boolean);
-    if (session)
+    if (reads)
       await Promise.race([
-        session.profiles.ensure(pubkeys, "foreground").catch(() => undefined),
+        reads.profiles(pubkeys).catch(() => undefined),
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
@@ -831,10 +814,7 @@ export class PiRuntime {
       ...(thread ? { thread } : {}),
       context: unseen,
       total: earlier.length + 1,
-      name: (pubkey: string) =>
-        session?.names.resolve(pubkey, undefined, members) ??
-        session?.profiles.snapshot().get(pubkey)?.name ??
-        undefined,
+      name: (pubkey: string) => reads?.name(pubkey, members),
     };
   }
 
@@ -864,13 +844,12 @@ export class PiRuntime {
     return spawn;
   }
 
-  /** The agent's memory, read back through the owner's session. */
+  /** The agent's memory, as its community's reads give it. */
   private memories(pubkey: string) {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status !== "ready")
-      return Promise.reject(new Error("Buzz is not connected"));
+    const reads = this.reads(pubkey);
+    if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
-      snapshot.session,
+      reads,
       pubkey,
       AbortSignal.timeout(MEMORY_TIMEOUT_MS),
     );
@@ -886,9 +865,8 @@ export class PiRuntime {
     }
   }
   private forgetMemory(pubkey: string) {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status === "ready")
-      this.memoryReads.forget(snapshot.session, pubkey);
+    const reads = this.reads(pubkey);
+    if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
 
