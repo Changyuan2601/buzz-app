@@ -651,11 +651,6 @@ function MessageRowContent({
             )}
             <div className={styles.messageHeader}>
               {!row.membership && !renderMessage && messageActions()}
-              {renderMessage && (
-                <span className={styles.audienceTimestamp}>
-                  <MessageTimestamp createdAt={row.createdAt} />
-                </span>
-              )}
               {/* Screen-reader text stays out of selections: the clipboard carries
                 what the reader saw, so a continuation copies without a byline. */}
               <div

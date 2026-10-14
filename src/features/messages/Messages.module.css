@@ -151,10 +151,6 @@
   flex: 1;
   min-width: 0;
 }
-/* Coordination timestamps and prose share the first line, not a flex column. */
-.audienceBody .messageBody {
-  display: block;
-}
 .message[data-viewer-message] .messageBody {
   flex: 0 1 auto;
   width: fit-content;
@@ -2763,23 +2759,6 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
     2
   );
   color: var(--text-subtle);
-}
-/* The expanded clock shares the first prose line; subsequent lines regain
-   the full reading width instead of reserving an entire metadata column. */
-.audienceBody .messageHeader,
-.audienceBody :where(.messagePayload) {
-  display: contents;
-}
-.audienceTimestamp {
-  float: inline-end;
-  max-inline-size: 100%;
-  margin-inline-start: var(--space-2);
-  color: var(--text-subtle);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  font-weight: var(--text-caption--font-weight);
-  font-variant-numeric: tabular-nums;
 }
 .audienceBody .message[data-layout="continuation"] {
   padding-inline-end: var(--space-1);

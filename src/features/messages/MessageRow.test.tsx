@@ -2364,11 +2364,9 @@ it("shows a message for agents as one line from its author to whom it addresses"
     const expanded = screen.getByText("run").closest("[data-message-id]");
     expect(expanded?.querySelector('[class*="messageBubble"]')).toBeNull();
     expect(expanded?.querySelector("[data-own]")).toBeNull();
-    expect(line.parentElement?.querySelectorAll("time")).toHaveLength(1);
-    expect(line.parentElement?.querySelector("time")).toHaveAttribute(
-      "datetime",
-      new Date(quiet.createdAt * 1000).toISOString(),
-    );
+    expect(line.parentElement?.querySelector("time")).toBeNull();
+    fireEvent.pointerEnter(expanded ?? line);
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     // Base UI binds the trigger to its panel. One stable message anchor stays
     // outside the animated content, including while that content is retiring.
     const panelId = line.getAttribute("aria-controls");
