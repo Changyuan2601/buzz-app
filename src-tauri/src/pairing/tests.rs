@@ -224,14 +224,14 @@ fn legacy_phone_still_needs_explicit_desktop_confirmation() {
 #[tokio::test]
 async fn old_session_cleanup_cannot_cancel_or_overwrite_replacement() {
     let manager = Pairing::default();
-    let old = register(&manager, active("same", Status::Transferring));
-    let new = register(&manager, active("same", Status::Connecting));
+    let old = register(&manager, active("old", Status::Transferring));
+    let new = register(&manager, active("new", Status::Connecting));
     manager.update(&old, Status::Complete);
     manager.expire(&old);
     assert_eq!(visible(&manager), Status::Connecting);
     assert!(try_grant(&manager, &old).is_none());
     assert!(try_grant(&manager, &new).is_some());
-    assert_eq!(manager.cancel("same").await.unwrap(), Status::Uncertain);
+    assert_eq!(manager.cancel("new").await.unwrap(), Status::Uncertain);
     manager.update(&new, Status::Complete);
     assert_eq!(visible(&manager), Status::Uncertain);
 }
@@ -1156,4 +1156,50 @@ async fn renderer_id_reuse_cannot_alias_a_retained_delivery_outcome() {
         manager.0.lock().unwrap().retired.get("retained"),
         Some(&Status::Uncertain)
     );
+}
+
+#[tokio::test]
+async fn delayed_legacy_decisions_cannot_be_retargeted_by_renderer_id_reuse() {
+    for cancel_first in [false, true] {
+        let manager = Pairing::default();
+        let comparison = Status::Code {
+            code: "123456".into(),
+            code_entry: false,
+        };
+        register(&manager, active("old", comparison.clone()));
+        if cancel_first {
+            assert_eq!(manager.cancel("old").await.unwrap(), Status::Cancelled);
+        }
+        assert!(
+            manager
+                .admit(
+                    active("old", comparison.clone()),
+                    human(),
+                    b"https://relay.test".to_vec()
+                )
+                .is_err(),
+            "a delayed old approval must not name a new attempt"
+        );
+
+        let (tx, mut decisions) = mpsc::channel(1);
+        let mut replacement = active("new", comparison);
+        replacement.confirm = tx;
+        register(&manager, replacement);
+        assert!(manager
+            .admit(
+                active("old", Status::Connecting),
+                human(),
+                b"https://relay.test".to_vec()
+            )
+            .is_err());
+        assert!(decide(&manager, "old", Decision::Confirm).is_err());
+        assert!(decide(&manager, "old", Decision::Deny).is_err());
+        assert_eq!(manager.cancel("old").await.unwrap(), Status::Cancelled);
+        assert!(matches!(
+            decisions.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        decide(&manager, "new", Decision::Confirm).unwrap();
+        assert!(matches!(decisions.try_recv(), Ok(Decision::Confirm)));
+    }
 }

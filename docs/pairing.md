@@ -118,9 +118,11 @@ that initial publication and every AUTH replay use identical signed ciphertext
 bytes. Complete requires an incoming validated success acknowledgement from the
 admitted payload's peer/session; local completion construction and relay receipts
 cannot create that witness. Transport failure/expiry/cancellation after admission
-preserves possible delivery. Renderer IDs with retained outcomes cannot be reused
-to alias a different attempt's status; unreleased pending replacement may reuse
-an ID while native generation checks still fence the old worker.
+preserves possible delivery. Every admitted renderer ID is retained through
+cancellation and replacement and cannot be reused. A delayed confirmation, denial,
+cancel or status request therefore cannot name a different attempt. The client
+already generates a fresh UUID for each new start; native generations separately
+fence worker release and status updates.
 
 ### Refinement and conditional adapters
 
@@ -135,7 +137,7 @@ boundaries and owner/integration tests:
   QR session derivation and the desktop code RNG supply the claimed authenticated
   facts. Crypto errors do not authorize release. The verified policy performs the
   actual code comparison; it assumes no comparison result from an adapter.
-- **Parsing and authenticated dispatch:** `validate_event_common`,
+- **Parsing and authenticated dispatch:** `validate_event_basics`,
   `validate_event_from_peer`, `decrypt_message` and offer/code parsing validate
   event signature/kind/recipient, deduplication, locked peer, session/version and
   negotiated mode before supplying policy inputs. Failed/duplicate/out-of-order
@@ -198,7 +200,7 @@ revocation/closure, distinct release, deadline, retry bytes, persistence and
 success-acknowledgement guards in copies of the actual production owner. Each
 must fail verification with proof errors, then the copy is restored byte for
 byte; the checkout hash must remain unchanged. Native tests also exercise a
-controlled release-time clock, same-renderer-ID replacement, sign-out ordering,
+controlled release-time clock, renderer-ID reuse denial, sign-out ordering,
 and real local TCP/WebSocket identity release/AUTH replay/success in both modes.
 These Linux synthetic checks do not establish attended macOS/Windows GUI,
 secure-store consent, a durable phone import or human acceptance.

@@ -53,7 +53,8 @@ struct Active {
 struct Registry {
     active: Option<Active>,
     policy: Native,
-    // Preserve possible delivery when a new attempt replaces the visible one.
+    // Retain every admitted ID: delayed IPC decisions must never name a new
+    // attempt, and retired outcomes must preserve possible delivery.
     retired: std::collections::HashMap<String, Status>,
 }
 #[derive(Clone, Default)]
@@ -74,6 +75,9 @@ fn stop(registry: &mut Registry) -> Option<(CancellationToken, Status)> {
     active.status = status(outcome, active.status.clone());
     let stopped = (active.finished.clone(), active.status.clone());
     if active.status == Status::Cancelled {
+        registry
+            .retired
+            .insert(active.id.clone(), Status::Cancelled);
         registry.active = None;
     }
     Some(stopped)
@@ -102,7 +106,6 @@ impl Pairing {
                 .active
                 .as_ref()
                 .is_some_and(|old| old.id == active.id)
-                && (registry.policy.has_release() || registry.policy.outcome() != Outcome::Pending)
         {
             return Err("Create a new pairing request before trying again.".into());
         }
@@ -128,12 +131,7 @@ impl Pairing {
                 },
                 old.status.clone(),
             );
-            if matches!(
-                terminal,
-                Status::Uncertain | Status::Complete | Status::Expired | Status::Error { .. }
-            ) {
-                registry.retired.insert(old.id, terminal);
-            }
+            registry.retired.insert(old.id, terminal);
         }
         registry.active = Some(active);
         Ok(attempt)
