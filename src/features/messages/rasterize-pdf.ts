@@ -23,7 +23,7 @@ const MAX_EDGE_PX = 4096;
  * lives in an object stream.
  */
 const WASM_ONLY_FILTERS = /\/(?:(?:JBIG2|JPX|CCITTFax)Decode|JPX|CCF)\b/;
-/** Long edge of the downscaled copy sampled by the blank-page check. */
+/** The blank-page check halves the page until its long edge fits this. */
 const SAMPLE_EDGE_PX = 64;
 
 export function isPdf(header: Uint8Array): boolean {
@@ -48,26 +48,37 @@ function raced<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 /**
  * pdf.js paints nothing for an image XObject or annotation it cannot decode,
  * even with `stopAtErrors`, so a wholly white page means content was lost (an
- * empty page is not worth attaching either). Averaging a downscaled copy keeps
- * the check cheap at 4096 px.
+ * empty page is not worth attaching either). The page is halved until its long
+ * edge fits the sample: each 2:1 `drawImage` is an exact box filter in both
+ * engines, whereas a single-shot downscale is bilinear in WebKit (depending on
+ * the canvas backing) and can sample between a hairline and read pure white.
  */
 function isBlank(canvas: HTMLCanvasElement): boolean {
-  const scratch = document.createElement("canvas");
+  const scratch: HTMLCanvasElement[] = [];
   try {
-    const scale = SAMPLE_EDGE_PX / Math.max(canvas.width, canvas.height);
-    scratch.width = Math.max(1, Math.round(canvas.width * scale));
-    scratch.height = Math.max(1, Math.round(canvas.height * scale));
-    const context = scratch.getContext("2d");
+    let source = canvas;
+    let context: CanvasRenderingContext2D | null = null;
+    while (Math.max(source.width, source.height) > SAMPLE_EDGE_PX) {
+      const half = document.createElement("canvas");
+      scratch.push(half);
+      half.width = Math.max(1, Math.ceil(source.width / 2));
+      half.height = Math.max(1, Math.ceil(source.height / 2));
+      context = half.getContext("2d");
+      if (!context) return false;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, half.width, half.height);
+      context.drawImage(source, 0, 0, half.width, half.height);
+      source = half;
+    }
+    context ??= source.getContext("2d");
     if (!context) return false;
-    context.imageSmoothingQuality = "high";
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, scratch.width, scratch.height);
-    context.drawImage(canvas, 0, 0, scratch.width, scratch.height);
-    const { data } = context.getImageData(0, 0, scratch.width, scratch.height);
+    const { data } = context.getImageData(0, 0, source.width, source.height);
     return data.every((channel) => channel === 255);
   } finally {
-    scratch.width = 0;
-    scratch.height = 0;
+    for (const half of scratch) {
+      half.width = 0;
+      half.height = 0;
+    }
   }
 }
 

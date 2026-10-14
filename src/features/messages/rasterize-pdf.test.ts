@@ -44,7 +44,7 @@ function fakePdf(numPages = 1, [width, height] = [612, 792]) {
 }
 const RED = [255, 0, 0, 255];
 const WHITE = [255, 255, 255, 255];
-/** Fakes the blank-page sample (`pixels`, RGBA) and the PNG encoder. */
+/** Fakes the blank-page halving chain (`pixels`, RGBA, read last) and the PNG encoder. */
 function stubCanvas(blob: Blob | null, pixels: number[] = RED) {
   const samples: { width: number; height: number }[] = [];
   const encodes: { width: number; height: number; type: string | undefined }[] =
@@ -105,8 +105,14 @@ it("renders page one of a single-page PDF onto a white 2x canvas as a PNG", asyn
       viewport: { width: 1224, height: 1584 },
     }),
   );
-  // The blank-page check samples a copy downscaled to a 64 px long edge.
-  expect(samples).toEqual([{ width: 49, height: 64 }]);
+  // The blank-page check halves the page until the long edge is within 64 px.
+  expect(samples).toEqual([
+    { width: 612, height: 792 },
+    { width: 306, height: 396 },
+    { width: 153, height: 198 },
+    { width: 77, height: 99 },
+    { width: 39, height: 50 },
+  ]);
   expect(encodes).toEqual([{ width: 1224, height: 1584, type: "image/png" }]);
   expect(fake.destroy).toHaveBeenCalledTimes(1);
 });

@@ -1,0 +1,2 @@
+# Hand-assembled PDF fixtures carry spec-mandated trailing spaces in xref entries.
+*.pdf binary

@@ -253,12 +253,17 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
         mimeType: "application/pdf",
         buffer: await fixture("blank-page.pdf"),
       },
+      {
+        name: "rule.pdf",
+        mimeType: "application/pdf",
+        buffer: await fixture("hairline-page.pdf"),
+      },
     ]);
     const image = form
       .getByRole("button", { name: "Preview diagram.png", exact: true })
       .locator("img");
     await expect(image).toBeVisible();
-    await expect(form.getByText(/Ready$/)).toHaveCount(4);
+    await expect(form.getByText(/Ready$/)).toHaveCount(5);
     // 200x100 pt page at 2x, white background, red rectangle filling the centre.
     expect(
       await image.evaluate(async (img) => {
@@ -302,14 +307,40 @@ test("a single-page PDF attaches as its page image while a multi-page PDF stays 
     });
     await expect(empty).toBeVisible();
     await expect(empty.locator("img")).toHaveCount(0);
+    // A letter page whose only ink is a 1 px rule must still convert: a
+    // single-shot downscale is bilinear in WebKit for some canvas backings and
+    // sampled between the rule, reading the page as blank.
+    const rule = form
+      .getByRole("button", { name: "Preview rule.png", exact: true })
+      .locator("img");
+    await expect(rule).toBeVisible();
+    expect(
+      await rule.evaluate(async (img) => {
+        await img.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const context = canvas.getContext("2d");
+        context.drawImage(img, 0, 0);
+        // The 0.5 pt rule from y = 700 pt fills exactly row 183 at 2x.
+        const [r, g, b] = context.getImageData(600, 183, 1, 1).data;
+        return {
+          size: [img.naturalWidth, img.naturalHeight],
+          white: r === 255 && g === 255 && b === 255,
+        };
+      }),
+    ).toEqual({ size: [1224, 1584], white: false });
     expect(uploads).toEqual([
       "image/png",
       "application/pdf",
       "application/pdf",
       "application/pdf",
+      "image/png",
     ]);
     await expect(
-      form.getByRole("button", { name: /diagram\.pdf|scan\.png|empty\.png/ }),
+      form.getByRole("button", {
+        name: /diagram\.pdf|scan\.png|empty\.png|rule\.pdf/,
+      }),
     ).toHaveCount(0);
   } finally {
     await server.close();

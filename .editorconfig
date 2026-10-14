@@ -10,3 +10,7 @@ trim_trailing_whitespace = true
 
 [*.rs]
 indent_size = 4
+
+# xref entries end in a spec-mandated space; see .gitattributes.
+[*.pdf]
+trim_trailing_whitespace = false
