@@ -1,4 +1,9 @@
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   hasIntegratedWindowControls,
@@ -8,6 +13,7 @@ import { macTitleBarDragHandlers } from "../../app/shell/title-bar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { Identity } from "./service";
+import { RestoreIdentity } from "./RestoreIdentity";
 
 export function IdentitySetup({
   identity,
@@ -19,6 +25,25 @@ export function IdentitySetup({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
+  const [backupAvailable, setBackupAvailable] = useState(false);
+  const missing = state.status === "missing";
+  useEffect(() => {
+    if (!missing) return;
+    let active = true;
+    void identity.backupAvailable().then(
+      (available) => active && setBackupAvailable(available),
+      () => active && setBackupAvailable(false),
+    );
+    return () => {
+      active = false;
+    };
+  }, [identity, missing]);
+  useEffect(
+    () => () => {
+      void identity.cancelRecovery();
+    },
+    [identity],
+  );
   const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
   const integratedWindowControls = hasIntegratedWindowControls();
   if (state.status === "ready") return children;
@@ -56,7 +81,9 @@ export function IdentitySetup({
             automatically.
           </p>
           {state.error && <p role="alert">{state.error}</p>}
-          {importing ? (
+          {state.recovery ? (
+            <RestoreIdentity identity={identity} recovery={state.recovery} />
+          ) : importing ? (
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -114,9 +141,19 @@ export function IdentitySetup({
               >
                 Create a new identity
               </Button>
+              {backupAvailable && (
+                <Button
+                  disabled={state.busy}
+                  onClick={() => void identity.beginRecovery()}
+                >
+                  Restore from backup
+                </Button>
+              )}
             </div>
           )}
-          {state.busy && <p role="status">Saving your identity securely…</p>}
+          {state.busy && !state.recovery && (
+            <p role="status">Saving your identity securely…</p>
+          )}
         </>
       )}
     </main>

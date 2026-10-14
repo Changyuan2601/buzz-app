@@ -2,15 +2,34 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export type IdentitySnapshot =
   | { status: "loading" }
-  | { status: "missing"; busy: boolean; error?: string }
+  | {
+      status: "missing";
+      busy: boolean;
+      error?: string;
+      recovery?: RecoveryState;
+    }
   | { status: "error"; error: string }
   | { status: "ready"; viewer: string };
+
+export type RecoveryResult = {
+  candidates: { handle: string; pubkey: string }[];
+  currentPubkey: string | null;
+  failedCount: number;
+};
+export type RecoveryState =
+  | { status: "waiting" }
+  | { status: "saving" }
+  | { status: "canceling" }
+  | ({ status: "choosing" } & RecoveryResult)
+  | { status: "error"; error: string };
 
 // App-owned, not registered on the plugin context. Snapshots contain public data only.
 export function createIdentity() {
   let state: IdentitySnapshot = { status: "loading" };
   let disposed = false;
   let busy = false;
+  let recoveryGeneration = 0;
+  let recoveryAttempt: Promise<{ attempt: string }> | undefined;
   const listeners = new Set<() => void>();
   let resolveReady!: (viewer: string) => void;
   const ready = new Promise<string>((resolve) => {
@@ -22,6 +41,112 @@ export function createIdentity() {
     if (next.status === "ready") resolveReady(next.viewer);
     for (const listener of listeners) listener();
   };
+  const recoveryError = (reason: unknown) =>
+    typeof reason === "string"
+      ? reason
+      : "Couldn’t restore your identity. Try again.";
+  async function cancelRecovery() {
+    const attempt = recoveryAttempt;
+    const generation = ++recoveryGeneration;
+    if (!attempt) return true;
+    update({
+      status: "missing",
+      busy: true,
+      recovery: { status: "canceling" },
+    });
+    try {
+      const result = await attempt.catch(() => undefined);
+      if (result) await invoke("nsec_restore_cancel", result);
+      if (generation !== recoveryGeneration) return false;
+      recoveryAttempt = undefined;
+      busy = false;
+      update({ status: "missing", busy: false });
+      return true;
+    } catch {
+      if (disposed || generation !== recoveryGeneration) return false;
+      update({
+        status: "missing",
+        busy: true,
+        recovery: {
+          status: "error",
+          error: "Couldn’t cancel recovery. Try Back again.",
+        },
+      });
+      return false;
+    }
+  }
+  async function beginRecovery() {
+    if (disposed || state.status !== "missing") return;
+    if (recoveryAttempt) {
+      if (
+        state.recovery?.status !== "error" &&
+        !(
+          state.recovery?.status === "choosing" &&
+          state.recovery.candidates.length === 0
+        )
+      )
+        return;
+      if (!(await cancelRecovery())) return;
+    }
+    if (busy || disposed) return;
+    busy = true;
+    const generation = ++recoveryGeneration;
+    update({ status: "missing", busy: true, recovery: { status: "waiting" } });
+    const attempt = invoke<{ attempt: string }>("nsec_restore_begin");
+    recoveryAttempt = attempt;
+    try {
+      const result = await attempt;
+      if (disposed || generation !== recoveryGeneration) return;
+      const recovered = await invoke<RecoveryResult>(
+        "nsec_restore_wait",
+        result,
+      );
+      if (disposed || generation !== recoveryGeneration) return;
+      update({
+        status: "missing",
+        busy: true,
+        recovery: { status: "choosing", ...recovered },
+      });
+    } catch (reason) {
+      if (disposed || generation !== recoveryGeneration) return;
+      update({
+        status: "missing",
+        busy: true,
+        recovery: { status: "error", error: recoveryError(reason) },
+      });
+    }
+  }
+  async function installRecovery(handle: string) {
+    if (disposed || state.status !== "missing" || !recoveryAttempt) return;
+    const recovery = state.recovery;
+    if (recovery?.status !== "choosing") return;
+    const selected = recovery.candidates.find(
+      (candidate) => candidate.handle === handle,
+    );
+    if (!selected) return;
+    const generation = recoveryGeneration;
+    update({ status: "missing", busy: true, recovery: { status: "saving" } });
+    try {
+      const { attempt } = await recoveryAttempt;
+      const viewer = await invoke<string>("nsec_restore_install", {
+        attempt,
+        handle,
+      });
+      if (disposed || generation !== recoveryGeneration) return;
+      if (viewer !== selected.pubkey)
+        throw "The restored identity could not be verified. Restart the app.";
+      recoveryAttempt = undefined;
+      busy = false;
+      update({ status: "ready", viewer });
+    } catch (reason) {
+      if (disposed || generation !== recoveryGeneration) return;
+      update({
+        status: "missing",
+        busy: true,
+        recovery: { status: "error", error: recoveryError(reason) },
+      });
+    }
+  }
   async function run(
     command: "identity_restore" | "identity_create" | "identity_import",
     nsec?: string,
@@ -70,6 +195,10 @@ export function createIdentity() {
     retry: () => run("identity_restore"),
     importKey: (nsec: string) => run("identity_import", nsec),
     create: () => run("identity_create"),
+    backupAvailable: () => invoke<boolean>("nsec_backup_available"),
+    beginRecovery,
+    installRecovery,
+    cancelRecovery,
     exportKey: () => invoke<string>("identity_export"),
     /** Why this build can't wipe, if it can't; `sign_out` enforces it either way. */
     wipeRefusal: () => invoke<string | null>("sign_out_wipe_refusal"),
@@ -78,6 +207,7 @@ export function createIdentity() {
       invoke<void>("sign_out", choices),
     dispose() {
       disposed = true;
+      void cancelRecovery();
       listeners.clear();
     },
   };
