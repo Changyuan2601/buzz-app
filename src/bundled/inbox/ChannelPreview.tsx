@@ -19,12 +19,14 @@ export function ChannelPreview({
   anchor,
   draft = false,
   onDraftSaved,
+  label = "Conversation preview",
 }: {
   /** The conversation's preview label, such as a DM's participants. */
   channelName: string;
   anchor?: string | undefined;
   draft?: boolean;
   onDraftSaved?: () => void;
+  label?: string;
 }) {
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
@@ -79,7 +81,7 @@ export function ChannelPreview({
     <MessageEditScope>
       <section
         className={styles.previewFrame}
-        aria-label="Conversation preview"
+        aria-label={label}
         data-reading-surface=""
       >
         <div className={styles.previewHistory}>
