@@ -77,6 +77,9 @@ export const test = base.extend({
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
+  // Performance harness corpus (tests/browser/perf, docs/performance-harness.md):
+  // {channels, reference, queryDelayMs, olderReadDelayMs}; fixture broker only.
+  corpus: [null, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   localAgentActivity: [false, { option: true, scope: "worker" }],
@@ -134,6 +137,7 @@ export const test = base.extend({
       launchAnimation,
       historyCounts,
       channelIds: channels,
+      corpus,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -141,8 +145,9 @@ export const test = base.extend({
     use,
     testInfo,
   ) => {
+    // Fixed keys keep event ids (and so ordering) identical across iterations.
     const key = (seed) =>
-      actionProfile
+      actionProfile || corpus
         ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
         : generateSecretKey();
     const relayKey = key(1);
@@ -764,6 +769,28 @@ export const test = base.extend({
         ),
       );
     }
+    let corpusData;
+    if (corpus) {
+      if (productionBroker || actionProfile)
+        throw new Error(
+          "The perf corpus runs in fixture broker HTTP mode only",
+        );
+      const { buildCorpus } = await import("./perf/corpus.mjs");
+      corpusData = buildCorpus({
+        ...corpus,
+        sign: (key, template) => finalizeEvent(template, key),
+        relayKey,
+        viewerKey: userKey,
+      });
+      for (const [id, rows] of corpusData.histories)
+        histories.set(`primary/${id}`, rows);
+      threadSummaries.push(...corpusData.summaries);
+      targetEvents.push(...corpusData.aux);
+      for (const [root, list] of corpusData.replies)
+        threadReplies.set(root, list);
+      for (const event of corpusData.profiles)
+        servedProfiles.set(event.pubkey, event);
+    }
     const report = {
       state: {
         head: execFileSync("git", ["rev-parse", "HEAD"], {
@@ -819,6 +846,15 @@ export const test = base.extend({
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(JSON.stringify(body));
     };
+    // Corpus reads answer after the modelled latency; cleared at teardown.
+    const delays = [];
+    const sendLater = (response, body, delayMs) =>
+      delays.push(
+        setTimeout(() => {
+          if (!response.writableEnded && !response.destroyed)
+            send(response, body);
+        }, delayMs),
+      );
     const answer = (community, filter) => {
       if (filter.kinds?.includes(13535)) {
         expect(filter).toEqual({
@@ -1145,11 +1181,17 @@ export const test = base.extend({
         filter.authors
       )
         return [];
+      // Corpus replies are searchable too, as on the relay.
       if (filter.search !== undefined)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)
           .concat(community === "primary" ? targetEvents : [])
+          .concat(
+            community === "primary" && corpusData
+              ? [...threadReplies.values()].flat()
+              : [],
+          )
           .filter(
             (event) =>
               filter.kinds.includes(event.kind) &&
@@ -1481,7 +1523,7 @@ export const test = base.extend({
       return filter.include_aux
         ? [
             ...events,
-            ...(actionProfile
+            ...(actionProfile || corpusData
               ? targetEvents.filter((aux) =>
                   aux.tags.some(
                     ([k, id]) =>
@@ -1771,6 +1813,21 @@ export const test = base.extend({
           throw new Error(`Unexpected community: ${request.url}`);
         if (route === "gif-info" && request.method === "GET")
           return send(response, {});
+        // Corpus media (relay-hosted URLs the app proxies here), cacheable so
+        // remounted rows behave as in production.
+        if (
+          corpusData &&
+          route.startsWith("media?") &&
+          request.method === "GET"
+        ) {
+          const [type, body] = corpusData.serveMedia(request.url);
+          response.writeHead(200, {
+            "Content-Type": type,
+            "Content-Length": body.length,
+            "Cache-Control": "public, max-age=86400",
+          });
+          return response.end(body);
+        }
         if (
           (route === "info" || route === "icon-info") &&
           request.method === "GET"
@@ -1914,11 +1971,17 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
-        if (
+        const older =
           filter.search === undefined &&
           filter.until !== undefined &&
-          filter["#h"]?.length
-        ) {
+          filter["#h"]?.length;
+        if (corpus)
+          sendLater(
+            response,
+            result,
+            older ? corpus.olderReadDelayMs : corpus.queryDelayMs,
+          );
+        else if (older) {
           pending.push({
             community,
             channel: filter["#h"][0],
@@ -2011,14 +2074,23 @@ export const test = base.extend({
         preview: { host: "127.0.0.1", port: 0, strictPort: true },
       });
       const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-      await context.route("**/*", (route) => {
-        if (new URL(route.request().url()).origin === origin)
-          return route.continue();
-        report.unexpected.push(
-          `Blocked external request: ${route.request().url()}`,
-        );
-        return route.abort();
-      });
+      // The perf corpus leaves requests uninterrupted with the HTTP cache on;
+      // its config resolves no external host, and any attempt still fails.
+      if (corpus)
+        context.on("request", (request) => {
+          const url = request.url();
+          if (!/^(data|blob):/.test(url) && new URL(url).origin !== origin)
+            report.unexpected.push(`Unexpected external request: ${url}`);
+        });
+      else
+        await context.route("**/*", (route) => {
+          if (new URL(route.request().url()).origin === origin)
+            return route.continue();
+          report.unexpected.push(
+            `Blocked external request: ${route.request().url()}`,
+          );
+          return route.abort();
+        });
       await context.routeWebSocket("**/*", (socket) => {
         report.unexpected.push(`Blocked WebSocket: ${socket.url()}`);
         socket.close();
@@ -2107,6 +2179,7 @@ export const test = base.extend({
         },
         origin,
         report,
+        corpus: corpusData,
         watchPageErrors(other) {
           const watched = watchPageErrors(other);
           watchedPages.push(watched);
@@ -2476,6 +2549,7 @@ export const test = base.extend({
       // All page errors stay in the evidence; only known engine reports pass.
       expect(unexplainedPageErrors()).toEqual([]);
     } finally {
+      for (const timer of delays) clearTimeout(timer);
       if (iconCongestion)
         for (const response of heldIcons)
           if (!response.writableEnded) send(response, {});

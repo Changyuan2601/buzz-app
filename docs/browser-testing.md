@@ -315,6 +315,10 @@ The existing 2,400-row data-path test enforces deterministic fold/notification
 counts and unaffected identities. It logs synchronous send time for comparison;
 it does not impose a runner-dependent latency threshold or guarantee latency.
 
+To compare rendering quality across builds (blank space while scrolling, row
+jumps and overlap, channel/search/thread opening), use the opt-in
+[performance harness](performance-harness.md); it is not part of this gate.
+
 ## Reading-position contract
 
 View intent stores `{offset,bottom,anchor?:{id,y}}`, partitioned by community/viewer
