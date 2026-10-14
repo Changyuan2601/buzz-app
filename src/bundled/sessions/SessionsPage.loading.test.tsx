@@ -286,13 +286,12 @@ it.each([
   ["archive", "Archive channel"],
   ["delete", "Delete channel"],
 ] as const)(
-  "runs %s from Session actions and leaves only after access ends",
+  "runs %s from Session actions and leaves the conversation",
   async (action, label) => {
     const f = fixture();
     f.mount();
     const user = userEvent.setup();
-    const trigger = screen.getByRole("button", { name: "Session actions" });
-    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Session actions" }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
     const dialog = screen.getByRole("dialog", {
       name: `${label}: Planning`,
@@ -304,11 +303,7 @@ it.each([
       id,
       expect.any(AbortSignal),
     );
-    if (action === "archive") {
-      expect(screen.getByText("Archived")).toBeVisible();
-      expect(f.open).not.toHaveBeenCalled();
-      expect(trigger).toHaveFocus();
-    } else expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
   },
 );
 
@@ -340,4 +335,19 @@ it("drops a pending Delete confirmation when its visit ends", async () => {
   expect(screen.queryByRole("dialog")).toBeNull();
   await act(async () => finish());
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("returns focus to Session actions when the confirmation is cancelled", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session actions" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive channel" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(trigger).toHaveFocus();
+  expect(f.run).not.toHaveBeenCalled();
 });

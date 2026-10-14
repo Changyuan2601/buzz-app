@@ -144,15 +144,11 @@ type Lifecycle = {
   origin?: AbortSignal | undefined;
 };
 
-// Delete and Leave remove the conversation, so its dialog outlives the view
-// but not the visit that opened it.
+// Lifecycle actions remove the conversation from Me, so the dialog outlives
+// the view but not the visit that opened it.
 function LiveSessions(props: LiveProps) {
   const { session, scope, navigator } = props;
   const [lifecycle, setLifecycle] = useState<Lifecycle>();
-  const restore = () => {
-    if (lifecycle?.trigger?.isConnected)
-      lifecycle.trigger.focus({ preventScroll: true });
-  };
   return (
     <>
       <SessionsView {...props} chooseLifecycle={setLifecycle} />
@@ -164,13 +160,12 @@ function LiveSessions(props: LiveProps) {
           lifecycle={session.channelLifecycle}
           close={() => {
             setLifecycle(undefined);
-            restore();
+            if (lifecycle.trigger?.isConnected)
+              lifecycle.trigger.focus({ preventScroll: true });
           }}
           completed={() => {
             setLifecycle(undefined);
-            // Archive keeps access and the destination; other actions end it.
-            if (lifecycle.action === "archive") restore();
-            else void navigator?.open(meTarget(scope));
+            void navigator?.open(meTarget(scope));
           }}
         />
       )}
@@ -443,81 +438,7 @@ function SessionWork({
           onDragOver={rejectUnhandledFileDrop}
           onDrop={rejectUnhandledFileDrop}
         >
-          <SessionHeading
-            channel={channel}
-            parentName={parentName}
-            actions={
-              <>
-                <MenuRoot>
-                  <MenuTrigger
-                    render={
-                      <IconButton
-                        ref={menuTrigger}
-                        size="toolbar"
-                        aria-label="Session actions"
-                        title="Session actions"
-                        icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
-                      />
-                    }
-                  />
-                  <MenuPopup aria-label="Session actions" align="end">
-                    <MenuItem
-                      disabled={
-                        !!channel.readOnly || !session.channelDetails?.available
-                      }
-                      onClick={() => setRenameOpen(true)}
-                    >
-                      <MenuIcon>
-                        <PencilSimpleIcon size={16} />
-                      </MenuIcon>
-                      Rename
-                    </MenuItem>
-                    <MenuItem
-                      disabled={!!channel.readOnly || !session.canvas.available}
-                      onClick={() => setSettingsOpen(true)}
-                    >
-                      <MenuIcon>
-                        <GearIcon size={16} />
-                      </MenuIcon>
-                      Session settings…
-                    </MenuItem>
-                    {!channel.readOnly &&
-                      !channel.cached &&
-                      !channel.archived && (
-                        <ChannelLifecycleMenu
-                          channelId={channel.id}
-                          lifecycle={session.channelLifecycle}
-                          disabled={false}
-                          separator
-                          choose={(action) =>
-                            chooseLifecycle(
-                              action,
-                              menuTrigger.current ?? undefined,
-                            )
-                          }
-                        />
-                      )}
-                  </MenuPopup>
-                </MenuRoot>
-                {!showingPanel && (
-                  <span className={panelStyles.paneToggle}>
-                    <IconButton
-                      ref={splitTrigger}
-                      data-tab-pane-toggle=""
-                      size="toolbar"
-                      aria-label="Toggle tab pane"
-                      title={showingPanel ? "Close tab pane" : "Open tab pane"}
-                      aria-expanded={!!showingPanel}
-                      icon={<SidebarRightIcon size="1rem" />}
-                      disabled={!hasLocalPanel}
-                      focusableWhenDisabled
-                      onClick={() => tabState.setPaneOpen(!showingPanel)}
-                    />
-                  </span>
-                )}
-              </>
-            }
-          >
+          <SessionHeading channel={channel} parentName={parentName}>
             <ChannelMembersButton session={session} channelId={channel.id} />
             {drawer.launchers}
             <SessionShare
@@ -535,6 +456,68 @@ function SessionWork({
                 if (target) void navigator?.open(target);
               }}
             />
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    ref={menuTrigger}
+                    size="toolbar"
+                    aria-label="Session actions"
+                    title="Session actions"
+                    icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                  />
+                }
+              />
+              <MenuPopup aria-label="Session actions" align="end">
+                <MenuItem
+                  disabled={
+                    !!channel.readOnly || !session.channelDetails?.available
+                  }
+                  onClick={() => setRenameOpen(true)}
+                >
+                  <MenuIcon>
+                    <PencilSimpleIcon size={16} />
+                  </MenuIcon>
+                  Rename
+                </MenuItem>
+                <MenuItem
+                  disabled={!!channel.readOnly || !session.canvas.available}
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <MenuIcon>
+                    <GearIcon size={16} />
+                  </MenuIcon>
+                  Session settings…
+                </MenuItem>
+                {!channel.readOnly && !channel.cached && !channel.archived && (
+                  <ChannelLifecycleMenu
+                    channelId={channel.id}
+                    lifecycle={session.channelLifecycle}
+                    disabled={false}
+                    separator
+                    choose={(action) =>
+                      chooseLifecycle(action, menuTrigger.current ?? undefined)
+                    }
+                  />
+                )}
+              </MenuPopup>
+            </MenuRoot>
+            {!showingPanel && (
+              <span className={panelStyles.paneToggle}>
+                <IconButton
+                  ref={splitTrigger}
+                  data-tab-pane-toggle=""
+                  size="toolbar"
+                  aria-label="Toggle tab pane"
+                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
+                  aria-expanded={!!showingPanel}
+                  icon={<SidebarRightIcon size="1rem" />}
+                  disabled={!hasLocalPanel}
+                  focusableWhenDisabled
+                  onClick={() => tabState.setPaneOpen(!showingPanel)}
+                />
+              </span>
+            )}
           </SessionHeading>
           {renameOpen && (
             <RenameSession
