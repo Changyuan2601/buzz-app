@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { BestieIcon } from "../../shared/design-system/icons";
 import type { PluginModule } from "../../plugins/api";
@@ -14,11 +15,19 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type {} from "../builderlab/service";
+import { ChannelPreview } from "../inbox/ChannelPreview";
 import { createRemoteBestie, type RemoteBestie } from "./setup";
 import { rhythmsComplete } from "./rhythms";
 
-export const inject = ["pages", "relay", "navigation", "agents"];
+export const inject = [
+  "pages",
+  "relay",
+  "navigation",
+  "agents",
+  "conversation",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   let bestie: RemoteBestie | undefined;
   const listeners = new Set<() => void>();
@@ -58,7 +67,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
         source.snapshot,
         source.snapshot,
       );
-      return <BestiePage bestie={current} navigation={ctx.navigation} />;
+      return (
+        <BestiePage
+          bestie={current}
+          navigation={ctx.navigation}
+          extensions={ctx.conversation}
+        />
+      );
     },
   });
 };
@@ -66,9 +81,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
 export function BestiePage({
   bestie,
   navigation,
+  extensions,
 }: {
   bestie?: RemoteBestie | undefined;
   navigation: Navigation;
+  extensions?: ConversationExtensions | undefined;
 }) {
   return (
     <div className="h-full min-h-0">
@@ -82,50 +99,52 @@ export function BestiePage({
               />
             }
           />
-          <div className="min-h-0 flex-1 overflow-auto p-6">
-            <div className="mx-auto flex max-w-md flex-col items-center gap-4 text-center">
-              <img
-                src="/bestie.png"
-                alt=""
-                className="size-20 object-contain"
-              />
-              <h2 className="text-heading">Meet your Bestie</h2>
-              {bestie ? (
-                <Setup bestie={bestie} navigation={navigation} />
-              ) : (
-                <>
-                  <p className="m-0 text-body-sm text-muted" role="status">
-                    Bestie runs on Builderlab. Turn on the Builderlab plugin in
-                    the Buzz desktop app to set it up.
-                  </p>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      void navigation.open({
-                        version: 1,
-                        kind: "settings",
-                        section: "plugins",
-                      })
-                    }
-                  >
-                    Plugin settings
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
+          {bestie ? (
+            <Setup bestie={bestie} extensions={extensions} />
+          ) : (
+            <Intro>
+              <p className="m-0 text-body-sm text-muted" role="status">
+                Bestie runs on Builderlab. Turn on the Builderlab plugin in the
+                Buzz desktop app to set it up.
+              </p>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  void navigation.open({
+                    version: 1,
+                    kind: "settings",
+                    section: "plugins",
+                  })
+                }
+              >
+                Plugin settings
+              </Button>
+            </Intro>
+          )}
         </div>
       </FullPageSurface>
     </div>
   );
 }
 
+function Intro({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-0 flex-1 overflow-auto p-6">
+      <div className="mx-auto flex max-w-md flex-col items-center gap-4 text-center">
+        <img src="/bestie.png" alt="" className="size-20 object-contain" />
+        <h2 className="text-heading">Meet your Bestie</h2>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function Setup({
   bestie,
-  navigation,
+  extensions,
 }: {
   bestie: RemoteBestie;
-  navigation: Navigation;
+  extensions?: ConversationExtensions | undefined;
 }) {
   const state = useSyncExternalStore(
     bestie.subscribe,
@@ -133,7 +152,8 @@ function Setup({
     bestie.snapshot,
   );
   const { record, connection } = state;
-  const [navigationError, setNavigationError] = useState("");
+  const [home, setHome] = useState<string>();
+  const [homeError, setHomeError] = useState("");
   const lifetime = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
     const controller = new AbortController();
@@ -144,15 +164,14 @@ function Setup({
     !!record?.complete &&
     !!record.agent &&
     ["ready", "idle", "error"].includes(state.status);
-  const openChat = useCallback(async () => {
+  // Show the conversation here only after its roster is still just you and Bestie.
+  const checkHome = useCallback(async () => {
     const controller = lifetime.current;
     const agent = record?.agent;
-    const origin = connection?.origin;
     if (
       !record?.complete ||
       !agent ||
       !connection ||
-      !origin ||
       !controller ||
       controller.signal.aborted
     )
@@ -167,53 +186,67 @@ function Setup({
         controller.signal,
       );
       if (!active()) return;
-      const home = await connection.session.workSessions.refreshMembership(
+      const channel = await connection.session.workSessions.refreshMembership(
         record.channelId,
       );
       if (!active()) return;
       if (
         details.visibility !== "private" ||
-        home.channelType !== "stream" ||
-        home.archived ||
-        !home.members?.includes(record.owner) ||
-        !home.members.includes(agent) ||
-        home.members.some(
+        channel.channelType !== "stream" ||
+        channel.archived ||
+        !channel.members?.includes(record.owner) ||
+        !channel.members.includes(agent) ||
+        channel.members.some(
           (member) => member !== record.owner && member !== agent,
         )
       )
         throw new Error(
           "Bestie's channel must be private and contain only you and Bestie. Review its members before continuing.",
         );
-      const result = await navigation.open(
-        {
-          version: 1,
-          kind: "conversation",
-          channelId: record.channelId,
-          scope: { viewer: record.owner, communityOrigin: origin },
-        },
-        { replace: true },
-      );
-      if (active())
-        setNavigationError(
-          result.status === "failed"
-            ? "Could not open Bestie's channel. Try again."
-            : "",
-        );
+      setHomeError("");
+      setHome(record.channelId);
     } catch (error) {
-      if (active())
-        setNavigationError(
-          error instanceof Error
-            ? error.message
-            : "Could not open Bestie's channel. Try again.",
-        );
+      if (!active()) return;
+      setHome(undefined);
+      setHomeError(
+        error instanceof Error
+          ? error.message
+          : "Could not open Bestie's channel. Try again.",
+      );
     }
-  }, [bestie, navigation, connection, record]);
-  // Arriving at a finished setup opens the conversation, as setup itself does.
+  }, [bestie, connection, record]);
   useEffect(() => {
-    if (state.status === "ready") void openChat();
-  }, [openChat, state.status]);
+    if (complete) void checkHome();
+  }, [checkHome, complete]);
+  if (complete && connection && home === record.channelId)
+    return (
+      <>
+        <div className="flex flex-wrap items-center gap-3 px-6 py-3">
+          <p
+            className="m-0 text-body-sm text-muted"
+            role={state.status === "error" ? "alert" : "status"}
+          >
+            {state.status === "error"
+              ? state.message
+              : "If Bestie doesn't reply, ask your Builderlab workspace admin to allow this community to use inference."}
+          </p>
+          {!rhythmsComplete(record.rhythms) && (
+            <Button variant="outline" onClick={() => void bestie.setup()}>
+              Set up Bestie workflows
+            </Button>
+          )}
+        </div>
+        <ChannelPreview
+          session={connection.session}
+          channelId={home}
+          channelName="Bestie"
+          extensions={extensions}
+          label="Bestie conversation"
+        />
+      </>
+    );
   return (
-    <div className="flex flex-col items-center gap-4">
+    <Intro>
       <p
         className="m-0 text-body-sm text-muted"
         role={state.status === "error" ? "alert" : "status"}
@@ -222,25 +255,14 @@ function Setup({
       </p>
       {complete ? (
         <>
-          {navigationError && (
+          {homeError && (
             <p role="alert" className="m-0 text-body-sm text-danger">
-              {navigationError}
+              {homeError}
             </p>
           )}
-          <div className="flex flex-wrap justify-center gap-3">
-            <Button variant="prominent" onClick={() => void openChat()}>
-              Open Bestie conversation
-            </Button>
-            {!rhythmsComplete(record?.rhythms) && (
-              <Button variant="outline" onClick={() => void bestie.setup()}>
-                Set up Bestie workflows
-              </Button>
-            )}
-          </div>
-          <p className="m-0 text-body-sm text-muted">
-            If Bestie doesn't reply, ask your Builderlab workspace admin to
-            allow this community to use inference.
-          </p>
+          <Button variant="prominent" onClick={() => void checkHome()}>
+            Open Bestie conversation
+          </Button>
         </>
       ) : state.status === "unavailable" ? null : (
         <>
@@ -293,6 +315,6 @@ function Setup({
           </div>
         </>
       )}
-    </div>
+    </Intro>
   );
 }

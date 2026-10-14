@@ -8,6 +8,7 @@ import {
 import type { ClientSnapshot } from "../../features/communities/service";
 import { HostService } from "../../features/host/service";
 import type { Navigation } from "../../features/navigation/controller";
+import { ConversationService } from "../../features/conversation/service";
 import { PagesService } from "../../features/pages/service";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { OutgoingEvent } from "../../features/relay/outbox";
@@ -246,6 +247,7 @@ export async function bestieFixture(invoke: Mock) {
   );
   new HostService(root);
   new SettingsCardsService(root);
+  new ConversationService(root);
   const pages = new PagesService(root);
   const open = vi.fn(async () => ({ status: "opened" }));
   const navigation = { open } as unknown as Navigation;
