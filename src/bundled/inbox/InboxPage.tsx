@@ -345,16 +345,21 @@ export function InboxView({
       );
     }
   }, [archiveScope, archiveRevision, inbox.items]);
-  const activityItems = viewItems.filter((item) =>
-    matchesActivity(
-      item,
-      activity,
-      list.channels.some(
-        (channel) =>
-          channel.id === item.channelId && channel.channelType === "dm",
-      ),
-    ),
-  );
+  const activityItems = viewItems
+    .map((item) => (activity === "mentions" ? item.mention : item))
+    .filter(
+      (item): item is InboxItem =>
+        !!item &&
+        matchesActivity(
+          item,
+          activity,
+          list.channels.some(
+            (channel) =>
+              channel.id === item.channelId && channel.channelType === "dm",
+          ),
+        ),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
   // Keep the captured visit mounted if its archive membership changes while open.
@@ -440,7 +445,10 @@ export function InboxView({
       (senderFilter === "everyone" ||
         senderKind(item.authorId) ===
           (senderFilter === "agents" ? "agent" : "human")) &&
-      (!unreadOnly || hasUnread(item) || item.id === selectedId),
+      (!unreadOnly ||
+        hasUnread(item) ||
+        (item.id === selectedId &&
+          item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const visible = matching;
   const archiveView = useRef({ show, visible, selected });
@@ -550,6 +558,15 @@ export function InboxView({
     });
   }
   function archive(item: InboxItem, value: boolean, navigate = value) {
+    // Archive captures the conversation, not just the activity-filter projection.
+    const conversation = session.unread
+      .inbox()
+      .items.find(
+        (current) =>
+          current.channelId === item.channelId &&
+          current.messageIds.includes(item.messageId),
+      );
+    if (!conversation) return;
     cancelRetry();
     // Retry repeats this click's cutoff, not a later clock or newly arrived mention.
     const at = Math.floor(Date.now() / 1000);
@@ -587,7 +604,7 @@ export function InboxView({
         const index = current.visible.findIndex(
           (row) =>
             row.channelId === item.channelId &&
-            row.messageIds.includes(item.messageId),
+            (row.id === item.id || row.messageIds.includes(item.messageId)),
         );
         const next =
           leaves && index >= 0
@@ -596,7 +613,7 @@ export function InboxView({
         const open =
           current.selected?.channelId === item.channelId &&
           current.selected.messageIds.includes(item.messageId);
-        updateArchive(archiveScope, item, value, at);
+        updateArchive(archiveScope, conversation, value, at);
         setMenu(undefined);
         if (!leaves) return;
         // Archiving the selected row advances; unselected actions leave the reader alone.

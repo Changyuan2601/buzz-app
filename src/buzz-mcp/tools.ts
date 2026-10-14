@@ -2,8 +2,18 @@
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
 import { decode } from "nostr-tools/nip19";
+import {
+  canonicalDetailsName,
+  detailsDraftErrors,
+} from "../features/relay/channel-details-protocol";
+import {
+  lifecycleChannelId,
+  lifecycleTemplate,
+} from "../features/relay/channel-lifecycle-protocol";
+import { sessionMetadata } from "../features/sessions/metadata";
 import type { BuzzClient, BuzzEvent, Context, Upload } from "./client";
 
+const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
 const int = { type: "integer" } as const;
@@ -60,8 +70,50 @@ export const TOOLS: readonly Tool[] = [
     "Read a thread (default: current), a channel's latest, or search with q.",
     { channel: str, thread: str, q: str, limit: int, before: int },
   ),
-  tool("channels", "Channels you are in.", { q: str }),
-  tool("members", "A channel's members.", { channel: str }),
+  tool("channels", "Channels you are in; with all, every one you can see.", {
+    q: str,
+    all: { type: "boolean" },
+  }),
+  tool(
+    "channel",
+    "Channel details (default: current), or an action on it. create may use your owner's template, by name. delete is permanent.",
+    {
+      channel: str,
+      action: {
+        type: "string",
+        enum: [
+          "create",
+          "update",
+          "join",
+          "leave",
+          "archive",
+          "unarchive",
+          "delete",
+        ],
+      },
+      name: str,
+      about: str,
+      visibility: { type: "string", enum: ["open", "private"] },
+      type: { type: "string", enum: ["stream", "forum"] },
+      ttl: {
+        type: "integer",
+        description: "Seconds without a message before it archives; 0: never.",
+      },
+      topic: str,
+      purpose: str,
+      template: str,
+    },
+  ),
+  tool(
+    "members",
+    "A channel's members; add or remove pubkeys or npubs, giving those added a role.",
+    {
+      channel: str,
+      add: strs,
+      remove: strs,
+      role: { type: "string", enum: ROLES },
+    },
+  ),
   tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
   tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
   tool("mem_get", "Read memory; without slug, list slugs.", { slug: str }),
@@ -83,6 +135,17 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
+/** The `channel` arguments each action takes. */
+const ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  details: [],
+  create: ["name", "about", "visibility", "type", "ttl", "template"],
+  update: ["name", "about", "visibility", "ttl", "topic", "purpose"],
+  join: [],
+  leave: [],
+  archive: [],
+  unarchive: [],
+  delete: [],
+};
 
 type Args = Readonly<Record<string, unknown>>;
 /** A tool's answer: text, or an image (base64 `data`) for the agent to see. */
@@ -252,16 +315,21 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const ids = [
       ...new Set(memberships.map((event) => tag(event, "d")).filter(Boolean)),
     ] as string[];
-    if (!ids.length) return "No channels.";
+    const all = args.all === true;
+    if (!ids.length && !all) return "No channels.";
     const channels = await client.query([
-      { kinds: [39000], "#d": ids, limit: ids.length },
+      all
+        ? { kinds: [39000], limit: 500 }
+        : { kinds: [39000], "#d": ids, limit: ids.length },
     ]);
     const q = text(args.q)?.toLowerCase();
     const rows = channels
       .map((event) => {
         const flags = [
-          tag(event, "t") === "dm" ? "dm" : "",
-          event.tags.some((t) => t[0] === "archived") ? "archived" : "",
+          tag(event, "t") === "stream" ? "" : tag(event, "t"),
+          has(event, "private") ? "private" : "",
+          has(event, "archived") ? "archived" : "",
+          ids.includes(tag(event, "d") ?? "") ? "" : "not joined",
         ].filter(Boolean);
         return `${tag(event, "d")} ${tag(event, "name") ?? ""}${flags.length ? ` (${flags.join(", ")})` : ""}`;
       })
@@ -269,9 +337,87 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return rows.join("\n") || "No channels.";
   },
 
+  async channel(tools, args) {
+    const { client } = tools;
+    const action = args.action ?? "details";
+    const fields =
+      typeof action === "string" && Object.hasOwn(ACTIONS, action)
+        ? ACTIONS[action]
+        : undefined;
+    if (typeof action !== "string" || !fields)
+      throw new Error(
+        `action must be one of ${Object.keys(ACTIONS).join(", ")}.`,
+      );
+    const extra = Object.keys(args).filter(
+      (key) => key !== "channel" && key !== "action" && !fields.includes(key),
+    );
+    if (extra.length)
+      throw new Error(`${extra.join(", ")} cannot be used with ${action}.`);
+    if (action === "create") {
+      if (args.channel !== undefined)
+        throw new Error("create makes a new channel; leave out channel.");
+      return tools.create(args);
+    }
+    const channel = target(tools, args);
+    if (action === "details") return tools.details(channel);
+    if (action === "update") return tools.update(channel, args);
+    const { kind, content, tags } = lifecycleTemplate(
+      action as "join" | "leave" | "archive" | "unarchive" | "delete",
+      channel,
+    );
+    await client.publish({ kind, content, tags });
+    // The relay can accept a change it then fails to make, so it is reported
+    // only once the channel shows it.
+    const shown = async () => {
+      if (action === "join" || action === "leave")
+        return (
+          (await tools.roster(channel)).some(
+            (member) => member.pubkey === client.pubkey,
+          ) ===
+          (action === "join")
+        );
+      const metadata = await tools.metadata(channel);
+      if (action === "delete") return !metadata;
+      return !!metadata && has(metadata, "archived") === (action === "archive");
+    };
+    const done: Readonly<Record<string, string>> = {
+      join: "joined",
+      leave: "left",
+      archive: "archived",
+      unarchive: "unarchived",
+      delete: "deleted",
+    };
+    const now = await until(shown, Boolean).catch(unread);
+    if (now === true) return `${done[action]} ${channel}`;
+    return `The community accepted ${action} but ${now ? now.message : "does not show it yet"}.`;
+  },
+
   async members(tools, args) {
-    const channel = text(args.channel) ?? tools.context.channel;
-    if (!channel) throw new Error("channel is required here.");
+    const channel = target(tools, args);
+    const add = keys(args, "add");
+    const remove = keys(args, "remove");
+    const role = args.role;
+    if (role !== undefined && !ROLES.includes(role as string))
+      throw new Error(`role must be one of ${ROLES.join(", ")}.`);
+    if (role !== undefined && !add.length)
+      throw new Error("role is for the members you add.");
+    if (add.length || remove.length) {
+      lifecycleChannelId(channel);
+      if ([...add, ...remove].includes(tools.client.pubkey))
+        throw new Error("For yourself, use channel with action join or leave.");
+      if (add.some((key) => remove.includes(key)))
+        throw new Error("Add or remove someone, not both.");
+      if (add.length + remove.length > 50)
+        throw new Error("Change at most 50 members at a time.");
+      const { lines, changed } = await tools.change(
+        channel,
+        add,
+        remove,
+        role as string | undefined,
+      );
+      if (!changed) throw new Error(lines.join("\n"));
+      return lines.join("\n");
+    }
     const members = await tools.members(channel);
     const names = await tools.names(members.map((member) => member.pubkey));
     return members
@@ -450,14 +596,235 @@ class Tools {
   }
 
   members(channel: string) {
-    return this.once(`members/${channel}`, async () => {
-      const [list] = await this.client.query([
-        { kinds: [39002], "#d": [channel], limit: 1 },
-      ]);
-      return (list?.tags ?? [])
-        .filter((t) => t[0] === "p" && t[1])
-        .map((t) => ({ pubkey: t[1] as string, role: t[3] || "member" }));
+    return this.once(`members/${channel}`, () => this.roster(channel));
+  }
+
+  /** The channel's members now, uncached. */
+  async roster(channel: string) {
+    const [list] = await this.client.query([
+      { kinds: [39002], "#d": [channel], limit: 1 },
+    ]);
+    return (list?.tags ?? [])
+      .filter((t) => t[0] === "p" && t[1])
+      .map((t) => ({ pubkey: t[1] as string, role: t[3] || "member" }));
+  }
+
+  /** The channel's metadata now, if the agent can see it. */
+  async metadata(channel: string) {
+    const [metadata] = await this.client.query([
+      { kinds: [39000], "#d": [channel], limit: 1 },
+    ]);
+    return metadata;
+  }
+
+  async details(channel: string) {
+    const metadata = await this.metadata(channel);
+    if (!metadata) throw new Error(`No channel ${channel} that you can see.`);
+    const role = (await this.roster(channel)).find(
+      (member) => member.pubkey === this.client.pubkey,
+    )?.role;
+    const flags = [
+      tag(metadata, "t"),
+      has(metadata, "private") ? "private" : "open",
+      has(metadata, "archived") ? "archived" : "",
+      tag(metadata, "ttl")
+        ? `archives after ${tag(metadata, "ttl")}s idle`
+        : "",
+    ].filter(Boolean);
+    return [
+      `${channel} ${tag(metadata, "name") ?? ""} (${flags.join(", ")})`,
+      ...(["about", "topic", "purpose"] as const).flatMap((key) =>
+        tag(metadata, key) ? [`${key}: ${tag(metadata, key)}`] : [],
+      ),
+      `you: ${role ?? "not a member"}`,
+    ].join("\n");
+  }
+
+  async create(args: Args) {
+    const name = canonicalDetailsName(required(args, "name"));
+    const about = optional(args, "about") || undefined;
+    const ttl = seconds(args.ttl);
+    checkDetails(name, about, ttl);
+    if (args.visibility !== "open" && args.visibility !== "private")
+      throw new Error("visibility must be open or private.");
+    const type = args.type ?? "stream";
+    if (type !== "stream" && type !== "forum")
+      throw new Error("type must be stream or forum.");
+    // Found first, so a wrong name creates nothing.
+    const template =
+      args.template === undefined
+        ? undefined
+        : await this.template(required(args, "template"));
+    const id = crypto.randomUUID();
+    await this.client.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", name],
+        ["visibility", args.visibility],
+        ["channel_type", type],
+        ...(about ? [["about", about]] : []),
+        ...(ttl ? [["ttl", String(ttl)]] : []),
+      ],
     });
+    const shown = await until(() => this.metadata(id), Boolean).catch(unread);
+    if (!shown || shown instanceof Error)
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}.`;
+    const lines = [`created ${id}`];
+    if (!template) return lines.join("\n");
+    // The template's own agents, as Buzz adds them; each is tried.
+    const agents = template.agents.filter((key) => key !== this.client.pubkey);
+    if (template.canvas.trim())
+      try {
+        await this.client.publish({
+          kind: 40100,
+          content: template.canvas,
+          tags: [
+            ["h", id],
+            ["expected-revision", "none"],
+          ],
+        });
+        lines.push("started the Canvas");
+      } catch (error) {
+        // As in Buzz, agents join only once the template's Canvas is started.
+        lines.push(
+          `Canvas not started${agents.length ? ", so no agents were added" : ""}: ${reason(error)}`,
+        );
+        return lines.join("\n");
+      }
+    if (agents.length) lines.push(...(await this.change(id, agents, [])).lines);
+    return lines.join("\n");
+  }
+
+  /** The owner's template named `name`, as one, without guessing. */
+  async template(name: string) {
+    if (!this.client.templates)
+      throw new Error(
+        "Channel templates are kept in Buzz Desktop and are unavailable here.",
+      );
+    const templates = await this.client.templates();
+    const found = templates.filter(
+      (template) => template.name.toLowerCase() === name.trim().toLowerCase(),
+    );
+    if (found.length > 1)
+      throw new Error(
+        `${found.length} templates are named ${name}; your owner should rename one.`,
+      );
+    if (!found[0])
+      throw new Error(
+        `No template named ${name}. ${templates.length ? `Templates: ${templates.map((t) => t.name).join(", ")}.` : "Your owner has none."}`,
+      );
+    return found[0];
+  }
+
+  async update(channel: string, args: Args) {
+    const metadata = await this.metadata(channel);
+    if (!metadata) throw new Error(`No channel ${channel} that you can see.`);
+    const wanted: [string, string][] = [];
+    if (args.name !== undefined)
+      wanted.push(["name", canonicalDetailsName(required(args, "name"))]);
+    for (const key of ["about", "topic", "purpose"]) {
+      const value = optional(args, key);
+      if (value !== undefined) wanted.push([key, value]);
+    }
+    if (args.visibility !== undefined) {
+      if (args.visibility !== "open" && args.visibility !== "private")
+        throw new Error("visibility must be open or private.");
+      wanted.push(["visibility", args.visibility]);
+    }
+    if (args.ttl !== undefined)
+      wanted.push(["ttl", String(seconds(args.ttl) ?? "")]);
+    if (!wanted.length)
+      throw new Error("Give name, about, visibility, ttl, topic or purpose.");
+    const value = (key: string) => wanted.find((t) => t[0] === key)?.[1];
+    checkDetails(
+      value("name"),
+      value("about"),
+      Number(value("ttl")) || undefined,
+    );
+    if (
+      sessionMetadata(tag(metadata, "about")) &&
+      wanted.some(([key]) => key !== "name")
+    )
+      throw new Error("Only the name of a session can be changed.");
+    await this.client.publish({
+      kind: 9002,
+      content: "",
+      tags: [["h", lifecycleChannelId(channel)], ...wanted],
+    });
+    const shows = (now: BuzzEvent | undefined) =>
+      !!now &&
+      wanted.every(([key, value]) =>
+        key === "visibility"
+          ? has(now, "private") === (value === "private")
+          : (tag(now, key) ?? "") === value,
+      );
+    const now = await until(() => this.metadata(channel), shows).catch(unread);
+    if (now instanceof Error)
+      return `The community accepted the update but ${now.message}.`;
+    return shows(now)
+      ? `updated ${channel}`
+      : "The community accepted the update but does not show it yet.";
+  }
+
+  /** Adds and removes members, each tried on its own, and reports each as the
+   * roster shows it. `changed` is whether any was accepted. */
+  async change(
+    channel: string,
+    add: readonly string[],
+    remove: readonly string[],
+    role?: string,
+  ) {
+    const refused = new Map<string, string>();
+    for (const [targets, kind] of [
+      [add, 9000],
+      [remove, 9001],
+    ] as const)
+      for (const key of targets)
+        try {
+          await this.client.publish({
+            kind,
+            content: "",
+            tags: [
+              ["h", channel],
+              ["p", key],
+              ...(kind === 9000 && role ? [["role", role]] : []),
+            ],
+          });
+        } catch (error) {
+          refused.set(key, reason(error));
+        }
+    const added = (roster: Member[], key: string) =>
+      roster.some((m) => m.pubkey === key && (!role || m.role === role));
+    const removed = (roster: Member[], key: string) =>
+      !roster.some((m) => m.pubkey === key);
+    const roster = await until(
+      () => this.roster(channel),
+      (now) =>
+        add.every((key) => refused.has(key) || added(now, key)) &&
+        remove.every((key) => refused.has(key) || removed(now, key)),
+    ).catch(unread);
+    const names = await this.names([...add, ...remove]).catch(
+      () => new Map<string, string>(),
+    );
+    const who = (key: string) =>
+      names.has(key) ? `${key} ${names.get(key)}` : key;
+    const report = (key: string, verb: string, done?: typeof added) =>
+      refused.has(key)
+        ? `not ${verb} ${who(key)}: ${refused.get(key)}`
+        : roster instanceof Error
+          ? `${who(key)}: the community accepted it but ${roster.message}`
+          : done?.(roster, key)
+            ? `${verb} ${who(key)}${verb === "added" && role ? ` as ${role}` : ""}`
+            : `${who(key)}: the community accepted it but does not show it yet`;
+    return {
+      changed: refused.size < add.length + remove.length,
+      lines: [
+        ...add.map((key) => report(key, "added", added)),
+        ...remove.map((key) => report(key, "removed", removed)),
+      ],
+    };
   }
 
   /** Display names of `pubkeys` that have a profile. */
@@ -652,6 +1019,74 @@ function parse(content: string): Record<string, unknown> {
 }
 const tag = (event: BuzzEvent, name: string) =>
   event.tags.find((t) => t[0] === name)?.[1];
+const has = (event: BuzzEvent, name: string) =>
+  event.tags.some((t) => t[0] === name);
+type Member = Readonly<{ pubkey: string; role: string }>;
+const reason = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+/** Loads until `done` holds, a few times, and returns the last load: the
+ * relay updates a channel's state just after answering. */
+async function until<T>(load: () => Promise<T>, done: (value: T) => boolean) {
+  let value = await load();
+  for (let tries = 1; !done(value) && tries < 5; tries++) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    value = await load();
+  }
+  return value;
+}
+
+/** A failed read after a write, as the reason the write is not confirmed. */
+const unread = (error: unknown) =>
+  new Error(`its state could not be read back: ${reason(error)}`);
+
+/** The `channel` argument, or the current channel only when it is left out. */
+function target(tools: Tools, args: Args) {
+  if (args.channel === undefined) {
+    if (!tools.context.channel) throw new Error("channel is required here.");
+    return tools.context.channel;
+  }
+  const channel = text(args.channel);
+  if (!channel) throw new Error("channel must be a channel ID.");
+  return channel;
+}
+
+/** A list of pubkeys or npubs, each once; any other entry is refused, not dropped. */
+function keys(args: Args, name: string) {
+  const value = args[name];
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+    throw new Error(`${name} must be a list of pubkeys.`);
+  return [...new Set(value.map(pubkey))];
+}
+
+/** An optional text argument, trimmed; refused when it is not text. */
+function optional(args: Args, key: string) {
+  const value = args[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${key} must be text.`);
+  return value.trim();
+}
+
+/** A `ttl` argument: undefined when absent or 0, which means never. */
+function seconds(value: unknown) {
+  if (value === undefined || value === 0) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    throw new Error("ttl must be a whole number of seconds.");
+  return value;
+}
+
+/** The checks Buzz makes on a channel's name, description and lifetime. */
+function checkDetails(name?: string, about?: string, ttl?: number) {
+  const errors = detailsDraftErrors({
+    name: name ?? "-",
+    description: about ?? "",
+    visibility: "public",
+    ttlSeconds: ttl,
+  });
+  const error = errors.name ?? errors.description ?? errors.lifetime;
+  if (error) throw new Error(error);
+}
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
 const list = (value: unknown) =>

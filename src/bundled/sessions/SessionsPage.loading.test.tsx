@@ -84,6 +84,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     rows: [],
   };
   const set = vi.fn(async () => {});
+  const refresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
     channels: {
@@ -110,6 +111,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
       available: true,
       snapshot: () => state,
       ensure() {},
+      refresh,
       set,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -151,6 +153,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     mount,
     abort,
     set,
+    refresh,
     open,
     scope,
     session,
@@ -185,6 +188,8 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   );
   expect(screen.getByText("Preferences offline")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Retry Me" }));
+  expect(f.refresh).toHaveBeenCalledOnce();
   act(() => f.update({ ...f.state, status: "ready" }));
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
@@ -232,9 +237,7 @@ it("opens a pending Me start through its original receipt after its section was 
     setup: { sectionId: "deleted", canvas: "Frozen instructions", agents: [] },
   });
   f.mount();
-  expect(
-    screen.getByRole("region", { name: "New conversation" }),
-  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "New chat" })).toBeVisible();
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
 

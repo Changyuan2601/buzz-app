@@ -290,6 +290,31 @@ it("requests relay thumbnails only for small media", async () => {
   );
 });
 
+it("loads the still image of a desktop animated avatar", async () => {
+  vi.stubGlobal("fetch", async () =>
+    Response.json({
+      viewer: key.pubkey,
+      relayAuthor: "relay",
+      relayUrl: "https://relay.test",
+    }),
+  );
+  const transport = await connectBrokerTransport();
+  const hash = "1".repeat(64);
+  const still = `https://relay.test/media/${hash}.png`;
+  const animated = `${still}#buzz-anim=${encodeURIComponent(
+    `https://relay.test/media/${"2".repeat(64)}.png`,
+  )}`;
+
+  expect(transport.media(animated)).toBe(
+    `/api/relay/media?url=${encodeURIComponent(still)}`,
+  );
+  expect(transport.media(animated, "small")).toBe(
+    `/api/relay/media?url=${encodeURIComponent(
+      `https://relay.test/media/${hash}.thumb.jpg`,
+    )}`,
+  );
+});
+
 it.each([null, 42, "", "A".repeat(64), "b".repeat(64)])(
   "rejects malformed or mismatched broker archive authority %j",
   async (archiveAuthority) => {

@@ -260,10 +260,13 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let (_, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
-    for kind in [5, 7, 9, 20002, 40003, 40100, 41010] {
+    for kind in [
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+    ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
             vec!["h".to_owned(), "channel".to_owned()],
+            vec!["p".to_owned(), agent.owner.clone(), "admin".to_owned()],
         ];
         let event = agent.sign(&key, kind, "hi".into(), tags).unwrap();
         assert_eq!(event["kind"], kind);
@@ -274,7 +277,11 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         assert!(ms[1].parse::<u16>().unwrap() < 1000);
         assert_eq!(
             tags,
-            [vec!["h".to_owned(), "channel".to_owned()], saved.clone()]
+            [
+                vec!["h".to_owned(), "channel".to_owned()],
+                vec!["p".to_owned(), agent.owner.clone(), "admin".to_owned()],
+                saved.clone()
+            ]
         );
     }
     // A plugin cannot pick its own `ms`, and events outside a channel get none.
@@ -288,7 +295,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let event = agent.sign(&key, 7, "+".into(), vec![]).unwrap();
     let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
     assert!(tags.iter().all(|tag| tag[0] != "ms"));
-    for kind in [0, 1, 3, 9000, 24242, 27235, 30078, 30174, 40002] {
+    for kind in [0, 1, 3, 9003, 10100, 24242, 27235, 30078, 30174, 40002] {
         assert!(agent.sign(&key, kind, String::new(), vec![]).is_err());
     }
     assert!(agent

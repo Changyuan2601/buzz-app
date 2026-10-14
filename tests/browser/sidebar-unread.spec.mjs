@@ -185,22 +185,25 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   await holdReadingFocus(page);
   // Visible rows can precede the post-establishment catch-up. Force that late
   // ordering, then account for its head read before measuring cue-triggered work.
+  // Release as soon as the first head is sent: the app's live-setup deadline is
+  // real time, and a slow runner can take longer than it to render the page.
   app.relay.holdEose("alpha");
+  const alphaHeads = () =>
+    heads(app).filter(
+      ({ community, filter }) =>
+        community === "primary" &&
+        filter["#h"][0] === "alpha" &&
+        filter.top_level === true &&
+        filter.until === undefined,
+    );
+  const opening = open(page, app);
   try {
-    await open(page, app);
-    const alphaHeads = () =>
-      heads(app).filter(
-        ({ community, filter }) =>
-          community === "primary" &&
-          filter["#h"][0] === "alpha" &&
-          filter.top_level === true &&
-          filter.until === undefined,
-      );
-    expect(alphaHeads()).toHaveLength(1);
+    await expect.poll(() => alphaHeads().length).toBe(1);
     app.relay.releaseEose("alpha");
     await expect.poll(() => alphaHeads().length).toBe(2);
   } finally {
     app.relay.releaseEose("alpha");
+    await opening;
   }
   const ordinary = row(page, "alpha");
   await expect(ordinary).toHaveAttribute("aria-current", "page");

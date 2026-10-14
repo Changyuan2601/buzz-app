@@ -15,7 +15,6 @@ import {
 } from "@testing-library/react";
 import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
-import { activityTarget } from "../agents/activity-target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
@@ -2237,24 +2236,15 @@ it("keeps an agents message that opens with prose, or is only a mention, as writ
   expect(line("@Rivet")).toBe("Morgarita: @Rivet");
 });
 
-it.each([
-  "available",
-  "human",
-  "activity disabled",
-  "profiles disabled",
-  "retired",
-])(
+it.each(["available", "human", "profiles disabled", "retired"])(
   "message activity action respects exact agent and active destinations: %s",
   async (mode) => {
     const author = "ab".repeat(32);
     let retired = false;
     const target = profileActivityViewTarget(author);
-    const raw = activityTarget(author, row.channelId);
     const open = vi.fn();
     const canOpen = (value: string) =>
-      !retired &&
-      !(mode === "activity disabled" && value === raw) &&
-      !(mode === "profiles disabled" && value === target);
+      !retired && !(mode === "profiles disabled" && value === target);
     try {
       renderDom(
         <MessageRow

@@ -188,6 +188,10 @@ async function testRelease(spawn: Spawn, version: string) {
 export type SetupState = Readonly<{
   status: ClaudeStatus | undefined;
   models: readonly ClaudeModel[];
+  /** Model discovery is running. */
+  loadingModels: boolean;
+  /** Why the last model discovery failed. */
+  modelsError: string | undefined;
   checking: boolean;
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
@@ -202,6 +206,8 @@ export class ClaudeSetup {
   private state: SetupState = {
     status: undefined,
     models: [],
+    loadingModels: false,
+    modelsError: undefined,
     checking: false,
     running: undefined,
     output: "",
@@ -210,7 +216,6 @@ export class ClaudeSetup {
   private readonly listeners = new Set<() => void>();
   private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
-  private loadingModels = false;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
@@ -285,16 +290,17 @@ export class ClaudeSetup {
     if (
       !this.spawn ||
       this.state.status?.state !== "ready" ||
-      this.loadingModels
+      this.state.loadingModels
     )
       return;
-    this.loadingModels = true;
+    this.set({ loadingModels: true, modelsError: undefined });
     try {
-      this.set({ models: await queryModels(this.spawn) });
-    } catch {
-      // Model metadata is optional; setup remains usable when discovery fails.
-    } finally {
-      this.loadingModels = false;
+      const models = await queryModels(this.spawn);
+      if (!models.length) throw new Error("Claude did not list its models");
+      this.set({ models, loadingModels: false });
+    } catch (error) {
+      // Setup stays usable; the pickers say so and offer to try again.
+      this.set({ loadingModels: false, modelsError: message(error) });
     }
   }
 

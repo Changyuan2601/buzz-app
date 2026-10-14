@@ -312,9 +312,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await toggleMe(true);
   // Conversation creation lives in Me and still uses the production broker.
   await openPage(page, "Me");
-  await page
-    .getByRole("button", { name: "New conversation", exact: true })
-    .click();
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeFocused();

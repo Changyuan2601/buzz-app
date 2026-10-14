@@ -1673,6 +1673,26 @@ it("reopening waits for the prior visit's queued unread and reconciles its sideb
   expect(h.snapshot().manual).toBe("none");
 });
 
+it("leaving a channel during its catch-up save withdraws the read without a sync error", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([bottom]);
+  const lease = h.session.unread.reading("room");
+  const { started, release } = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  await started; // The visit ends while its storage update is held.
+  try {
+    lease.dispose();
+  } finally {
+    release();
+  }
+  await expect(pending).rejects.toThrow("Reading observation expired");
+  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.session.unread.sync().error).toBeUndefined();
+  expect(h.session.unread.sync().status).not.toBe("error");
+});
+
 it("without a signer, own descendants do not require read frontiers to clear a forced peer subtree", async () => {
   const peer = message(keypair(), "room", "peer", 11);
   const h = setup({}, false, (journal) => ({
@@ -2520,6 +2540,49 @@ it("exposes immutable verified member facts through the shared session without I
   expect(unread.inbox().items).toEqual([]);
   unsubscribe();
   stop();
+});
+
+it("inbox projects only matching mention evidence when a followed thread has newer unread progress", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const root = message(h.viewer, "room", "My thread", 20);
+  const mention = message(h.alice, "room", "Please decide", 21, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([root, mention]);
+  const unread = h.session.unread;
+  await unread.markThrough(
+    { kind: "thread", channelId: "room", rootId: root.id },
+    mention.id,
+  );
+  const progress = message(h.alice, "room", "Ordinary progress", 23, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = message(h.alice, "dm", "Direct hello", 24, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([progress, dm]);
+  const item = unread.inbox().items.find((item) => item.channelId === "room");
+  expect(item).toMatchObject({ unreadCount: 1, preview: "Ordinary progress" });
+  expect(item?.mention).toMatchObject({
+    messageId: mention.id,
+    latestMessageId: mention.id,
+    messageIds: [mention.id],
+    preview: "Please decide",
+    unreadCount: 0,
+    readThrough: [
+      {
+        target: { kind: "thread", channelId: "room", rootId: root.id },
+        messageId: mention.id,
+      },
+    ],
+  });
+  expect(
+    unread.inbox().items.find((item) => item.channelId === "dm")?.mention,
+  ).toBeUndefined();
 });
 
 it("inbox groups relevant conversations, preserves read rows and exact unread resume points", async () => {

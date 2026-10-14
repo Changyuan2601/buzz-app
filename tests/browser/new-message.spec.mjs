@@ -485,7 +485,11 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await page.screenshot({
     path: info.outputPath("new-message-one-result.png"),
   });
-  expect(app.reads.filter((filter) => filter.search).length).toBe(searchReads);
+  // The reopened picker searches the relay again behind the local match.
+  await expect
+    .poll(() => app.reads.filter((filter) => filter.search).length)
+    .toBe(searchReads + 1);
+  await expect(loading).toHaveCount(0);
   app.showPeople();
   await input.press("ArrowDown");
   await input.press("Enter");

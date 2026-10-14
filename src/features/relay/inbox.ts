@@ -22,6 +22,8 @@ export type InboxItem = Readonly<{
     createdAt: number;
     mentioned: boolean;
   }>[];
+  /** The same conversation projected from explicit mention evidence only. */
+  mention?: InboxItem | undefined;
   thread: boolean;
   unreadCount: number;
   manual: boolean;

@@ -50,7 +50,10 @@ it("registers only where the desktop app can run codex and base64", () => {
     icon: CodexLogoIcon,
   });
   expect(type?.provider).toBeDefined();
-  expect(type?.tabs?.map((tab) => tab.title)).toEqual(["Settings"]);
+  expect(type?.tabs?.map(({ title, role }) => [title, role])).toEqual([
+    ["Settings", "settings"],
+    ["Activity", "activity"],
+  ]);
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   expect(applied()).toBeDefined();
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");

@@ -322,8 +322,9 @@ it("makes the compact avatar and tool preview one action, retaining the popup wh
         canOpen={(target) => !target.startsWith("buzz:profile?")}
       />,
     );
-    expect(row).toBeDisabled();
-    fireEvent.click(row);
+    expect(
+      screen.queryByRole("button", { name: "View activity for Blossom" }),
+    ).not.toBeInTheDocument();
     expect(f.props.open).toHaveBeenCalledOnce();
   } finally {
     view.unmount();

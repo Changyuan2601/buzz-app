@@ -73,7 +73,7 @@ If a saved Codex thread no longer exists, the next mention starts a fresh one.
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
-`send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
+`send`, `edit`, `react`, `read`, `channels`, `channel`, `members`, `users`, `dm`, `mem_get`,
 `mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
@@ -147,8 +147,8 @@ Buzz checks when the agents load and every 6 hours; the first download (about
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
   are disabled.
 - Shared Agent Activity integration is deferred because this Agents delivery
-  contract has no live-activity API. The Runtime diagnostics disclosure in the
-  agent's Settings shows conversation status and the latest command/output.
+  contract has no live-activity API. The agent's Activity tab shows
+  conversation status and the latest command/output.
   Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. A turn that has nothing new to say ends without posting. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;
   RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.

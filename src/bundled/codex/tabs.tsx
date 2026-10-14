@@ -613,7 +613,9 @@ export function createTabs(
     );
   }
 
-  function Conversations({
+  /** The agent's sessions: the one it was opened from, recent ones, and their
+   * transcripts. */
+  function ActivityTab({
     agent,
     conversation,
   }: {
@@ -720,12 +722,7 @@ export function createTabs(
   }
 
   /** What the agent runs with. Saving applies to the next turn. */
-  function SettingsTab({
-    agent,
-    save,
-    settingsHost,
-    conversation,
-  }: AgentViewProps<Config>) {
+  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
@@ -878,12 +875,6 @@ export function createTabs(
             {saving ? "Saving…" : "Save"}
           </Button>
         </div>
-        <details className="grid gap-2">
-          <summary>Runtime diagnostics</summary>
-          <div className="mt-2">
-            <Conversations agent={agent} conversation={conversation} />
-          </div>
-        </details>
       </form>
     );
   }
@@ -894,5 +885,6 @@ export function createTabs(
     createModelLabel,
     ProviderDialogBody,
     SettingsTab,
+    ActivityTab,
   };
 }

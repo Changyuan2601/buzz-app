@@ -5,6 +5,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type RelayEvent } from "../relay/events";
 import { keypair, signed } from "../relay/testing";
 import type { LiveBatch, LiveListener } from "../relay/incoming";
@@ -3110,4 +3111,28 @@ it("stops trying presence on a session that cannot send it", async () => {
   await vi.advanceTimersByTimeAsync(0);
   expect(presence).toHaveBeenCalledTimes(2);
   warn.mockRestore();
+});
+
+it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  const team = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [sibling],
+  });
+  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
+    {
+      id: "t",
+      name: "Launch",
+      teams: [team.id],
+      agents: [other, bot],
+      canvas: "# Plan",
+    },
+  ]);
+  const { templates } = await handleOf(run, emit);
+  expect(templates()).toEqual([
+    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
+  ]);
 });

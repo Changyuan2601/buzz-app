@@ -3,7 +3,6 @@ import { config, type Config } from "./runtime";
 export type ClaudeProviderDefaults = Readonly<{ model: string }>;
 const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({ model: "" });
 const STORAGE_KEY = "buzz.claude-code.provider-defaults.v1";
-const MODELS = new Set(["", "opus", "sonnet", "haiku"]);
 
 /** Device-wide defaults are separate from agent records; a blank agent value
  * inherits this store and a blank store value leaves Claude Code in charge. */
@@ -28,7 +27,7 @@ export class ClaudeDefaults {
     };
   }
   save(next: ClaudeProviderDefaults) {
-    const model = MODELS.has(next.model) ? next.model : "";
+    const { model } = next;
     this.storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, model }));
     this.state = Object.freeze({ model });
     for (const listener of this.listeners) listener();
@@ -42,8 +41,7 @@ export class ClaudeDefaults {
         value &&
         typeof value === "object" &&
         (value as { version?: unknown }).version === 1 &&
-        typeof (value as { model?: unknown }).model === "string" &&
-        MODELS.has((value as { model: string }).model)
+        typeof (value as { model?: unknown }).model === "string"
       )
         return Object.freeze({ model: (value as { model: string }).model });
     } catch {

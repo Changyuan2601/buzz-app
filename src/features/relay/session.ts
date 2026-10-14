@@ -23,6 +23,11 @@ import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
 import { canonicalDetailsName } from "./channel-details-protocol";
+import {
+  channelIdentityUnsupported,
+  MAX_CHANNEL_LABELS,
+  validChannelLabel,
+} from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -86,7 +91,7 @@ import {
   type EventData,
 } from "./events";
 import { eventVisibility } from "./event-access";
-import { ReadError, readErrorKind } from "./errors";
+import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
   PublishRejected,
   browserOutboxStorage,
@@ -101,6 +106,12 @@ import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
+import { liveRecoveryStatus } from "./live-recovery";
+import {
+  createRecovery,
+  type RecoverySource,
+  type RecoveryStatus,
+} from "./recovery";
 import { createReminders } from "./reminders";
 import {
   retainEvents,
@@ -139,7 +150,11 @@ function parseChannelCreation(
 ): PendingChannelCreation | undefined {
   if (item.event.kind !== 9007) return;
   const tags = item.event.tags.filter(([name]) => name !== "client-id");
-  const [h, name, visibility, channelType, ...optional] = tags;
+  const firstLabel = tags.findIndex(([name]) => name === "t");
+  const labelTags = firstLabel < 0 ? [] : tags.slice(firstLabel);
+  const [h, name, visibility, channelType, ...optional] =
+    firstLabel < 0 ? tags : tags.slice(0, firstLabel);
+  const labels = labelTags.map(([, label]) => label ?? "");
   const id = h?.[1];
   const channelName = name?.[1];
   const channelVisibility = visibility?.[1];
@@ -167,7 +182,12 @@ function parseChannelCreation(
     channelType[0] !== "channel_type" ||
     channelType[1] !== "stream" ||
     !validOptionalOrder ||
-    optional.some((tag) => tag.length !== 2)
+    optional.some((tag) => tag.length !== 2) ||
+    labelTags.some(
+      (tag) => tag.length !== 2 || tag[0] !== "t" || !validChannelLabel(tag[1]),
+    ) ||
+    labels.length > MAX_CHANNEL_LABELS ||
+    new Set(labels).size !== labels.length
   )
     return;
   const description = optional.find(([key]) => key === "about")?.[1]?.trim();
@@ -186,6 +206,7 @@ function parseChannelCreation(
     visibility: channelVisibility as "open" | "private",
     ...(description ? { description } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+    ...(labels.length ? { labels: Object.freeze(labels) } : {}),
   });
   return Object.freeze({
     signature: JSON.stringify(input),
@@ -702,6 +723,7 @@ export function createRelaySession(
           viewer: transport.viewer,
           relayAuthor: transport.relayAuthor,
           archiveAuthority: transport.archiveAuthority,
+          channelIdentity: transport.channelIdentity,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
@@ -735,6 +757,7 @@ export function createRelaySession(
   const details = createChannelDetails({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
     writer: transport?.channelDetails,
+    labels: transport?.channelIdentity === true,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     canAccess: (id) => !closed && channels.canParticipate(id),
@@ -885,37 +908,55 @@ export function createRelaySession(
     generation: number;
     state: "pending" | "verified" | "deferred" | "error";
     error?: string | undefined;
+    transient?: boolean;
     retryAt?: number;
   };
   const catchups = new Map<string, Catchup>();
   let liveGeneration = 0;
-  let liveView = Object.freeze({
-    ...liveSnapshot,
-    roster: channels.roster(),
-    heads: Object.freeze(
-      [] as {
+  /** Suspended-preview metadata rechecks in flight. */
+  let previewChecks = 0;
+  type LiveView = LiveSnapshot &
+    Readonly<{
+      roster: ReturnType<typeof channels.roster>;
+      heads: readonly Readonly<{
         channelId: string;
         state: "pending" | "verified" | "deferred" | "error";
         error?: string;
-      }[],
-    ),
+        transient?: true;
+      }>[];
+      /** Public previews closed by the relay, awaiting a metadata recheck. A
+       * failed recheck keeps them suspended; recovery retries it. */
+      previews?: "checking" | "suspended";
+    }>;
+  let liveView: LiveView = Object.freeze({
+    ...liveSnapshot,
+    roster: channels.roster(),
+    heads: Object.freeze([]),
   });
   const publishLive = () => {
     if (closed) return;
+    const suspended = channels.suspendedPreviews().length > 0;
     liveView = Object.freeze({
       ...liveSnapshot,
-      ...(channels.suspendedPreviews().length
+      ...(suspended
         ? {
-            error:
-              "Public preview access needs rechecking; retry live updates.",
+            error: "Public preview access needs rechecking.",
           }
         : {}),
       roster: channels.roster(),
       heads: Object.freeze(
-        [...catchups].map(([channelId, { state, error }]) =>
-          Object.freeze({ channelId, state, ...(error ? { error } : {}) }),
+        [...catchups].map(([channelId, { state, error, transient }]) =>
+          Object.freeze({
+            channelId,
+            state,
+            ...(error ? { error } : {}),
+            ...(error && transient ? { transient: true as const } : {}),
+          }),
         ),
       ),
+      ...(suspended
+        ? { previews: previewChecks ? "checking" : "suspended" }
+        : {}),
     });
     for (const listener of liveListeners) notify(listener);
   };
@@ -1297,6 +1338,7 @@ export function createRelaySession(
               input.description,
               input.ttlSeconds,
               active,
+              { labels: input.labels },
             ),
           delivered: (id, active) =>
             workSessions.delivered(
@@ -1443,8 +1485,12 @@ export function createRelaySession(
     async create(input: ChannelCreationInput) {
       input = { ...input, name: canonicalDetailsName(input.name) };
       if (!transport) throw new Error("The community connection changed.");
+      // A relay without NIP-CL drops label tags: refuse before any new write.
+      // A saved creation that was already signed may still be retried below.
+      const unsupported = !!input.labels?.length && !transport.channelIdentity;
       await writes?.ready;
       if (channelSetup && !pendingCreation()) {
+        if (unsupported) throw channelIdentityUnsupported();
         const run = channelSetup.run(input, transport.viewer);
         let opened: string | undefined;
         void run.completion.catch((error) => {
@@ -1469,6 +1515,9 @@ export function createRelaySession(
         ...(input.ttlSeconds !== undefined
           ? { ttlSeconds: input.ttlSeconds }
           : {}),
+        ...(input.labels?.length
+          ? { labels: Object.freeze([...new Set(input.labels)]) }
+          : {}),
       };
       const signature = JSON.stringify(normalized);
       await writes?.ready;
@@ -1478,6 +1527,7 @@ export function createRelaySession(
           throw new Error(
             "Another channel is still awaiting confirmation. Retry it before changing the details.",
           );
+        if (unsupported) throw channelIdentityUnsupported();
         const id = crypto.randomUUID();
         pendingChannelCreation = {
           signature,
@@ -1489,6 +1539,8 @@ export function createRelaySession(
             normalized.visibility,
             normalized.description,
             normalized.ttlSeconds,
+            undefined,
+            { labels: normalized.labels },
           ),
         };
         restoredOperation = pendingChannelCreation.operation;
@@ -1545,6 +1597,65 @@ export function createRelaySession(
     },
     writes?.local,
   );
+  const recoverable = (
+    subscribe: (listener: () => void) => () => void,
+    status: () => RecoveryStatus,
+    retry: () => void,
+  ): RecoverySource => Object.freeze({ subscribe, status, retry });
+  // Only failures a retry can fix enter recovery. A denial or a deterministic
+  // failure stays visible on its own surface; see isTransientFailure.
+  const loadState = (
+    state: Readonly<{ status: string; transient?: true | undefined }>,
+  ): RecoveryStatus =>
+    state.status === "error"
+      ? state.transient
+        ? "failed"
+        : "settled"
+      : state.status === "loading"
+        ? "busy"
+        : "settled";
+  // Background reads only. A failed read always retries; see recovery.ts.
+  // The live source also owns the channel roster and suspended public
+  // previews (live.retry retries both).
+  const liveRecovery = recoverable(
+    live.subscribe,
+    () => liveRecoveryStatus(live.snapshot()),
+    live.retry,
+  );
+  const recovery = transport
+    ? createRecovery([
+        liveRecovery,
+        recoverable(
+          channelKit.capability.subscribe,
+          () => loadState(channelKit.capability.snapshot()),
+          () => void channelKit.capability.refresh(),
+        ),
+        recoverable(
+          mePreferences.placement.subscribe,
+          () => loadState(mePreferences.placement.snapshot()),
+          () => void mePreferences.placement.refresh(),
+        ),
+        recoverable(
+          sidebarPreferences.queries.subscribe,
+          () => loadState(sidebarPreferences.queries.snapshot()),
+          () => void sidebarPreferences.queries.refresh(),
+        ),
+        recoverable(
+          lifecycle.capability.subscribe,
+          () => loadState(lifecycle.capability.snapshot()),
+          () => void lifecycle.capability.refreshVisibility(),
+        ),
+      ])
+    : undefined;
+  // A live stream that connects again proves the relay answers: retry the
+  // other failed reads now instead of waiting out their delay.
+  let liveWasConnected = liveView.status === "connected";
+  const stopLiveRecovery = live.subscribe(() => {
+    const connected = live.snapshot().status === "connected";
+    // The live layer owns its own reconnect recovery; retry the rest.
+    if (connected && !liveWasConnected) recovery?.retryNow(liveRecovery);
+    liveWasConnected = connected;
+  });
   const session = Object.freeze({
     memberAdditions,
     presence,
@@ -1647,6 +1758,8 @@ export function createRelaySession(
     mePlacement: mePreferences.placement,
     reminders: reminders?.capability,
     live,
+    /** The one automatic retry owner for background reads. Undefined offline. */
+    recovery,
     profiling,
     attachments:
       uploadAttachment && writes?.outbox.supports(9)
@@ -1977,14 +2090,20 @@ export function createRelaySession(
     },
   });
   function revalidatePreviews(ids: readonly string[]) {
+    if (!channels.queries.resolve) return;
     for (let start = 0; start < ids.length; start += 128) {
+      previewChecks++;
       void channels.queries
-        .resolve?.(ids.slice(start, start + 128), { signal: lifetime.signal })
-        // A failed/cancelled lookup stays suspended and visible in live status.
-        // Retry is deliberate; no independent recovery timer or signed denial.
+        .resolve(ids.slice(start, start + 128), { signal: lifetime.signal })
+        // A failed/cancelled lookup stays suspended until fresh signed
+        // metadata arrives. Session recovery retries it; it is not a denial.
         .catch(() => {})
-        .finally(publishLive);
+        .finally(() => {
+          previewChecks--;
+          publishLive();
+        });
     }
+    if (ids.length) publishLive();
   }
   /** Named member-added hints awaiting one exact read, the confirmation in
    * flight for each channel, and whether the running full pass inherited grants
@@ -2241,6 +2360,7 @@ export function createRelaySession(
       if (!valid()) return;
       job.state = readErrorKind(error) === "cancelled" ? "deferred" : "error";
       job.error = job.state === "error" ? String(error) : undefined;
+      job.transient = isTransientFailure(error);
       if (error instanceof ReadError && error.retryAfterMs !== undefined) {
         job.retryAt = performance.now() + error.retryAfterMs;
         // Keep lightweight obligations, not paced requests inside reader deadlines.
@@ -2249,6 +2369,7 @@ export function createRelaySession(
           if (queued) {
             queued.state = "error";
             queued.error = job.error;
+            queued.transient = job.transient;
             queued.retryAt = job.retryAt;
             channels.catchUpFailed(id, error);
           }
@@ -2596,6 +2717,8 @@ export function createRelaySession(
     dispose() {
       stopMeGroups();
       closed = true;
+      stopLiveRecovery();
+      recovery?.dispose();
       projects.clearHomes();
       typing.dispose();
       lifetime.abort();

@@ -12,7 +12,7 @@ test.use({
 
 // Browser-only boundary: real popup focus/geometry and existing tab navigation
 // must retain the live thread. Identity/lifecycle matrices live in Vitest.
-test("message activity opens a grouped preview and profile Activity without losing the thread", async ({
+test("message activity opens a grouped preview and the agent's profile without losing the thread", async ({
   page,
   app,
 }, testInfo) => {
@@ -278,12 +278,10 @@ test("message activity opens a grouped preview and profile Activity without losi
     name: "Profile details",
     exact: true,
   });
+  // Browser builds register no agent type, so there is no Activity tab to land on.
   await expect(
-    profile.getByRole("tab", { name: "Activity", selected: true }),
+    profile.getByRole("tab", { name: "Info", selected: true }),
   ).toBeVisible();
-  await expect(
-    profile.getByRole("combobox", { name: "Conversation", exact: true }),
-  ).toHaveText(/#Alpha.*whole channel/);
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(reply).toHaveText("Keep this draft while inspecting activity");
   publish(keys[0], 9, "Agent reply with plain avatar", typingTags);
