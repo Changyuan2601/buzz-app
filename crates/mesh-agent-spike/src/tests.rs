@@ -338,7 +338,7 @@ async fn compaction_uses_upstream_summary_and_keeps_tool_catalog() {
                 1 => {
                     assert_eq!(system, "original system");
                     assert_eq!(tools[0].name, "send");
-                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages.len(), 2);
                     assert!(messages[0].as_concat_text().contains("Summary:"));
                     call("after-compact", "send", json!({"text":"still working"}))
                 }
@@ -356,7 +356,10 @@ async fn compaction_uses_upstream_summary_and_keeps_tool_catalog() {
     }
     let p = Compact(AtomicUsize::new(0));
     let tools = Capability::new("alice");
-    let mut history = vec![Message::user().with_text("older detail ".repeat(2500))];
+    let mut history = vec![
+        Message::user().with_text("older detail ".repeat(2500)),
+        Message::user().with_text("latest request"),
+    ];
     let trace = Mutex::new(Vec::new());
     let result = run_observed(
         &p,
@@ -534,4 +537,290 @@ async fn real_local_tools_write_edit_shell_and_skill_results_are_bounded() {
         .all(|r| serde_json::to_vec(r).unwrap().len() <= TOOL_RESULT_BYTES));
     assert_eq!(results[2].is_error, Some(false));
     assert_eq!(results[3].is_error, Some(true));
+}
+
+struct BurstTools(AtomicUsize);
+#[async_trait]
+impl Tools for BurstTools {
+    fn definitions(&self) -> Vec<Tool> {
+        Capability::new("fixture").definitions()
+    }
+    async fn call(&self, _: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            "x".repeat(32 * 1024 - 200),
+        )]))
+    }
+}
+struct RecoveryProvider {
+    calls: AtomicUsize,
+    summary: Message,
+    cancel: Option<CancellationToken>,
+}
+#[async_trait]
+impl Provider for RecoveryProvider {
+    fn get_name(&self) -> &str {
+        "recovery"
+    }
+    async fn stream(
+        &self,
+        _: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        let index = self.calls.fetch_add(1, Ordering::SeqCst);
+        let message = if index == 0 {
+            let mut batch = Message::assistant();
+            for id in 0..8 {
+                batch
+                    .content
+                    .extend(call(&id.to_string(), "send", json!({"text":"once"})).content);
+            }
+            batch
+        } else if tools.is_empty() {
+            assert!(system.len() < 300 * 1024);
+            assert!(system.contains("latest request"));
+            assert!(system.contains("Completed tool result omitted"));
+            if let Some(cancel) = &self.cancel {
+                cancel.cancel();
+                std::future::pending::<()>().await;
+            }
+            self.summary.clone()
+        } else {
+            assert!(messages
+                .iter()
+                .any(|m| m.as_concat_text() == "latest request"));
+            Message::assistant().with_text("done")
+        };
+        Ok(Box::pin(futures::stream::iter([Ok((Some(message), None))])))
+    }
+}
+#[tokio::test]
+async fn burst_recovery_preserves_request_trace_and_never_repeats_effects() {
+    for mode in 0..5 {
+        let cancel = CancellationToken::new();
+        let p = RecoveryProvider {
+            calls: AtomicUsize::new(0),
+            summary: Message::assistant().with_text(match mode {
+                1 => "".into(),
+                2 => "s".repeat(13 * 1024),
+                _ => "completed eight effects".into(),
+            }),
+            cancel: (mode == 3).then(|| cancel.clone()),
+        };
+        let tools = BurstTools(AtomicUsize::new(0));
+        let mut history = vec![
+            Message::user().with_text("h".repeat(8 * 1024)),
+            Message::user().with_text("latest request"),
+        ];
+        let original = history.clone();
+        let trace = Mutex::new(Vec::new());
+        let result = run_observed(
+            &p,
+            &ModelConfig::new("fixture"),
+            "",
+            &mut history,
+            &tools,
+            cancel,
+            if mode == 4 { 1 } else { 3 },
+            |m| trace.lock().unwrap().push(m.clone()),
+        )
+        .await;
+        assert_eq!(tools.0.load(Ordering::SeqCst), 8);
+        assert_eq!(
+            trace
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| !m.get_tool_response_ids().is_empty())
+                .count(),
+            8
+        );
+        if mode == 0 {
+            assert_eq!(result.unwrap(), "done");
+            assert!(history[0]
+                .as_concat_text()
+                .contains("Completed tool result omitted"));
+        } else {
+            assert!(result.is_err());
+            assert_eq!(history, original);
+        }
+        if mode == 4 {
+            assert_eq!(p.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+#[tokio::test]
+async fn provider_overflow_compacts_and_retries_inference_only() {
+    struct Overflow {
+        calls: AtomicUsize,
+        fail_again: bool,
+    }
+    #[async_trait]
+    impl Provider for Overflow {
+        fn get_name(&self) -> &str {
+            "overflow"
+        }
+        async fn stream(
+            &self,
+            _: &ModelConfig,
+            _: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 || (self.fail_again && !tools.is_empty()) {
+                return Err(ProviderError::ContextLengthExceeded("fixture".into()));
+            }
+            let message = if tools.is_empty() {
+                Message::assistant().with_text("short summary")
+            } else {
+                assert!(serde_json::to_vec(messages).unwrap().len() < 1024);
+                assert_eq!(messages.last().unwrap().as_concat_text(), "latest request");
+                Message::assistant().with_text("done")
+            };
+            Ok(Box::pin(futures::stream::iter([Ok((Some(message), None))])))
+        }
+    }
+    for fail_again in [false, true] {
+        let p = Overflow {
+            calls: AtomicUsize::new(0),
+            fail_again,
+        };
+        let tools = Capability::new("fixture");
+        let mut history = vec![
+            Message::user().with_text("old ".repeat(2048)),
+            Message::user().with_text("latest request"),
+        ];
+        let result = run(
+            &p,
+            &ModelConfig::new("fixture"),
+            "",
+            &mut history,
+            &tools,
+            CancellationToken::new(),
+            3,
+        )
+        .await;
+        assert_eq!(result.is_err(), fail_again);
+        assert!(tools.calls.lock().unwrap().is_empty());
+        assert!(p.calls.load(Ordering::SeqCst) <= 5);
+    }
+}
+
+#[tokio::test]
+async fn overflow_after_completed_effect_retries_without_dispatch_and_keeps_partial_trace() {
+    struct AfterEffect {
+        calls: AtomicUsize,
+        summary_mode: usize,
+        cancel: CancellationToken,
+    }
+    #[async_trait]
+    impl Provider for AfterEffect {
+        fn get_name(&self) -> &str {
+            "after-effect"
+        }
+        async fn stream(
+            &self,
+            _: &ModelConfig,
+            _: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            let message = match n {
+                0 => call("effect", "send", json!({"text":"once"})),
+                1 => return Err(ProviderError::ContextLengthExceeded("fixture".into())),
+                2 => {
+                    assert!(tools.is_empty());
+                    match self.summary_mode {
+                        1 => return Err(ProviderError::ExecutionError("summary failed".into())),
+                        2 => {
+                            self.cancel.cancel();
+                            std::future::pending::<()>().await;
+                        }
+                        3 => {
+                            return Err(ProviderError::ContextLengthExceeded(
+                                "summary overflow".into(),
+                            ))
+                        }
+                        _ => {}
+                    }
+                    Message::assistant().with_text("effect completed")
+                }
+                3 if self.summary_mode == 3 => {
+                    return Err(ProviderError::ContextLengthExceeded(
+                        "still overflow".into(),
+                    ))
+                }
+                3 => {
+                    assert_eq!(messages.last().unwrap().as_concat_text(), "latest request");
+                    Message::assistant().with_text("done")
+                }
+                _ => panic!("unexpected retry"),
+            };
+            Ok(Box::pin(futures::stream::iter([Ok((Some(message), None))])))
+        }
+    }
+    for mode in 0..4 {
+        let cancel = CancellationToken::new();
+        let p = AfterEffect {
+            calls: AtomicUsize::new(0),
+            summary_mode: mode,
+            cancel: cancel.clone(),
+        };
+        let tools = Capability::new("fixture");
+        let mut history = vec![
+            Message::user().with_text("old ".repeat(1024)),
+            Message::user().with_text("latest request"),
+        ];
+        let original = history.clone();
+        let trace = Mutex::new(Vec::new());
+        let result = run_observed(
+            &p,
+            &ModelConfig::new("fixture"),
+            "",
+            &mut history,
+            &tools,
+            cancel,
+            3,
+            |m| trace.lock().unwrap().push(m.clone()),
+        )
+        .await;
+        assert_eq!(*tools.calls.lock().unwrap(), ["fixture:once"]);
+        assert_eq!(
+            trace
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| !m.get_tool_response_ids().is_empty())
+                .count(),
+            1
+        );
+        assert_eq!(result.is_err(), mode != 0);
+        if mode != 0 {
+            assert_eq!(history, original);
+        }
+        assert!(p.calls.load(Ordering::SeqCst) <= 4);
+    }
+}
+
+#[tokio::test]
+async fn oversized_initial_history_is_rejected_before_summary_or_tools() {
+    let tools = Capability::new("fixture");
+    let p = Script(Mutex::new(Vec::new()));
+    let error = run(
+        &p,
+        &ModelConfig::new("fixture"),
+        "",
+        &mut vec![Message::user().with_text("x".repeat(256 * 1024))],
+        &tools,
+        CancellationToken::new(),
+        2,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("context byte limit"));
+    assert!(tools.calls.lock().unwrap().is_empty());
 }

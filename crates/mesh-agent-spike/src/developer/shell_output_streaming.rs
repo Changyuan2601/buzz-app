@@ -1,3 +1,5 @@
+// Adapted from Goose at 69de89c5 (Apache-2.0); modified for the Mesh host.
+// Origin, adaptation details and licence: PROVENANCE.md and LICENSE.
 use std::time::Duration;
 
 use rmcp::model::{CustomNotification, ServerNotification};

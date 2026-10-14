@@ -49,7 +49,17 @@ sends. Each turn receives Buzz conversation history; exact older messages can be
 read with the Buzz read tool when enabled. Follow-ups queue, not steer.
 
 Compaction calls upstream goose-context-management between completed tool rounds
-above 24 KiB serialized conversation, accepting a summary under 12 KiB. This is a
+above 24 KiB serialized conversation, accepting a generated summary under 12 KiB.
+The latest user request is retained verbatim alongside the summary. Before summary
+work, admission and round guards remain enforced; completed tool-result payloads
+crossing 256 KiB are replaced oldest-first with explicit omission markers. Original
+results remain in the observer trace. Markers survive subsequent compaction.
+Provider context overflow permits at most two inference retries, each with strictly
+smaller conversation input, using the same upstream summarizer. This does not
+redispatch tools. Summary calls are bounded to 300 KiB (including formatted history
+and template); upstream summary retries must strictly shrink their actual input.
+A retained large request may keep context above the trigger, so unchanged compacted
+input is not summarized repeatedly. This is a
 low byte policy, not a token-count or model-window guarantee. The system/catalog
 remain separate. Empty/failed/oversized summaries fail visibly. Hard context bound
 256 KiB; response payload 64 KiB/4096 chunks; whole turn 240 seconds/24 rounds in

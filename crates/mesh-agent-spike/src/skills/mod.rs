@@ -1,3 +1,5 @@
+// Adapted from Goose at 69de89c5 (Apache-2.0); modified for the Mesh host.
+// Origin, adaptation details and licence: ../developer/PROVENANCE.md and LICENSE.
 //! Goose Skills filesystem core, extracted at the pin in ../developer/PROVENANCE.md.
 //! Host-supplied roots replace Goose config/plugins/builtins. No relay skills.
 mod arguments;

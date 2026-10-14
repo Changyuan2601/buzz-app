@@ -1,3 +1,5 @@
+// Adapted from Goose at 69de89c5 (Apache-2.0); modified for the Mesh host.
+// Origin, adaptation details and licence: ../developer/PROVENANCE.md and LICENSE.
 use super::split_command_args;
 use anyhow::Result;
 use regex::{Captures, Regex};

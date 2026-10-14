@@ -111,6 +111,7 @@ async fn completion(
 }
 
 struct SummaryModel<'a> {
+    previous_bytes: std::sync::atomic::AtomicUsize,
     provider: &'a dyn Provider,
     model: &'a ModelConfig,
 }
@@ -121,6 +122,18 @@ impl goose_context_management::CompactionModel for SummaryModel<'_> {
         system: &str,
         messages: &[Message],
     ) -> std::result::Result<(Message, ProviderUsage), ProviderError> {
+        let bytes = system.len()
+            + serde_json::to_vec(messages)
+                .map_err(|e| ProviderError::ExecutionError(e.to_string()))?
+                .len();
+        let previous = self
+            .previous_bytes
+            .swap(bytes, std::sync::atomic::Ordering::Relaxed);
+        if bytes > 300 * 1024 || bytes >= previous {
+            return Err(ProviderError::ExecutionError(
+                "summary input exceeds bound or retry made no progress".into(),
+            ));
+        }
         completion(self.provider, self.model, system, messages, &[]).await
     }
 }
