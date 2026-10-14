@@ -21,6 +21,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { JoinCommunity } from "./JoinCommunity";
+import { ProfileStep } from "./ProfileStep";
 import type { Identity } from "./service";
 import { createSetup, setupSteps, wait } from "./setup";
 import { SetupWindowHeader } from "./SetupWindowHeader";
@@ -38,7 +39,7 @@ export function Welcome({
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
-  communities: Pick<Communities, "snapshot" | "joined">;
+  communities: Pick<Communities, "snapshot" | "joined" | "saveProfile">;
   children: ReactNode;
   connect?: (signal: AbortSignal) => Promise<Credential>;
   delay?: (ms: number) => Promise<void>;
@@ -58,6 +59,11 @@ export function Welcome({
     denied?: FoundCommunity;
   }>();
   const [retrying, setRetrying] = useState(false);
+  // Set once the user's first membership is saved; the gate lifts when it exits.
+  const [profileStep, setProfileStep] = useState<{
+    found: FoundCommunity;
+    read: Awaited<ReturnType<typeof inspectProfile>>;
+  }>();
   useEffect(
     () => () => {
       if (login.snapshot().status === "pending") login.cancel();
@@ -73,7 +79,8 @@ export function Welcome({
    * The same join the Add-a-community dialog performs without an invite code:
    * a signed profile read proves admission, then the membership is saved
    * through the live Communities service, which selects it, so the app opens
-   * on that community when the gate lifts. Nothing is published.
+   * on that community when the gate lifts. The join itself publishes nothing;
+   * a first community continues to the profile step, which may.
    */
   const join = async (found: FoundCommunity) => {
     const fail = (error: string, title = "Couldn’t join community") =>
@@ -81,6 +88,9 @@ export function Welcome({
     const client = communities.snapshot();
     if (client.status !== "ready")
       return fail(client.error ?? "Your saved communities aren’t ready yet.");
+    // Read before `joined` adds this one: a device record restored with the key
+    // (or a development seed) means this is not the user's first community.
+    const first = client.memberships.length === 0;
     let read: Awaited<ReturnType<typeof inspectProfile>>;
     try {
       read = await inspectProfile(found.url);
@@ -107,8 +117,11 @@ export function Welcome({
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }
-    // A profile step belongs here, once the membership is saved and before the
-    // gate lifts; today the new key enters the app with no published profile.
+    if (first) setProfileStep({ found, read });
+    else setup.reset();
+  };
+  const finishProfile = () => {
+    setProfileStep(undefined);
     setup.reset();
   };
   const retry = async (found: FoundCommunity) => {
@@ -142,7 +155,15 @@ export function Welcome({
             </Button>
           </>
         ) : progress.status === "done" ? (
-          joinError ? (
+          profileStep ? (
+            <ProfileStep
+              found={profileStep.found}
+              read={profileStep.read}
+              defaultName={auth.account?.email.split("@")[0] ?? ""}
+              communities={communities}
+              onDone={finishProfile}
+            />
+          ) : joinError ? (
             // Back returns to the find page, which looks the community up again.
             <Failure
               title={joinError.title}

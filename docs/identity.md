@@ -57,8 +57,8 @@ for the key's own kind 0) proves the relay admits this key, then the membership 
 the canonical origin as id, the hostname as name, the NIP-11 icon if set — is
 saved to this device and selected, and the gate lifts into the app on that
 community. While the read is in flight the page shows *Joining…* with Join and
-Cancel disabled. Nothing is published: no kind 0, no policy receipt or invite
-claim. The ticked boxes are the client's record of consent, as on the dialog's
+Cancel disabled. The join itself publishes nothing: no kind 0, no policy receipt
+or invite claim. The ticked boxes are the client's record of consent, as on the dialog's
 code-less path; a relay that requires an invite answers the read with 401/403,
 shown as **This community needs an invite**. Admins admit people by npub, so
 that page tells the user to send their public key to a community administrator
@@ -69,10 +69,26 @@ the same join for that community, so an admin's add takes effect without
 retyping the address; **Back** returns to the find page (the typed address stays
 in the URL field behind it). There is no invite code field. A relay that cannot
 be reached shows the lookup's unreachable copy; a device record that will not
-save shows the service's storage message. Both offer **Back**. An existing relay profile seeds the empty local default; a new
-key enters the app with no published profile until Settings → Profile (a profile
-step is planned between the save and app entry). Denied/unavailable/corrupt
-storage is not first run and keeps the **Retry secure storage access** path.
+save shows the service's storage message. Both offer **Back**. An existing relay
+profile seeds the empty local default.
+
+When the saved membership is the key's first (the device record held none
+before the join; a record restored with the key, or the `VITE_BUZZ_OPEN_RELAY`
+development seed, counts as having communities), the gate stays up for **Set up
+your profile** (`src/features/identity/ProfileStep.tsx`): the shared profile
+fields — avatar, required display name, optional description — prefilled from
+the relay's existing profile, or otherwise with the local part of the Builderlab
+email as the name. **Continue** publishes the kind 0 to that one relay through
+the same signed `relay_sign` + `POST /events` route Settings → Profile uses
+(skipped when an existing relay profile is left unchanged), keeps the result as
+the device's local default for later joins, and enters the app on the community.
+Unlike Settings → Profile and the Add-a-community dialog, it does not read the
+profile back after the accepted receipt. A rejected publish stays on the step
+with the error inline and the draft intact. **Skip for now** enters the app with
+the membership alone and publishes nothing; Settings → Profile remains the
+editor. A key that already had a community enters the app directly.
+Denied/unavailable/corrupt storage is not first run and keeps the **Retry
+secure storage access** path.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an

@@ -72,17 +72,20 @@ const noJoin: ComponentProps<typeof Welcome>["communities"] = {
   joined() {
     throw new Error("Welcome joined without a join");
   },
+  saveProfile() {
+    throw new Error("Welcome saved a profile without a join");
+  },
 };
 const roots: Context[] = [];
 /** The production shape: the service exists at startup and hydrates once the key is ready. */
-function communitiesFor(identity: Identity) {
+function communitiesFor(identity: Identity, openRelay = "") {
   const ctx = new Context();
   roots.push(ctx);
   return createCommunities(
     ctx,
     false,
     undefined,
-    "",
+    openRelay,
     undefined,
     identity.ready,
     connectNativeTransport,
@@ -963,7 +966,8 @@ it("a found community shows Join Community after exactly the two unauthenticated
  * A native first run against a relay that answers: the key setup creates is the
  * one the host signs with, so `identity_restore` learns it only after
  * `identity_create`. The kind-0 read waits on `query` so the pending join is
- * observable; `admitted` decides whether that read is answered or refused.
+ * observable; `admitted` decides whether that read is answered or refused, and
+ * `publish` whether a kind 0 posted to `/events` is accepted or fails with 500.
  */
 function nativeRelay(member: ReturnType<typeof keypair>) {
   const relayKey = keypair();
@@ -978,6 +982,7 @@ function nativeRelay(member: ReturnType<typeof keypair>) {
     origin,
     calls,
     admitted: true,
+    publish: true,
     profile: undefined as ReturnType<typeof profile> | undefined,
     query: Promise.resolve(),
   };
@@ -1029,12 +1034,17 @@ function nativeRelay(member: ReturnType<typeof keypair>) {
       if (!relay.admitted) return answer(403, { error: "membership required" });
       return answer(200, relay.profile ? [relay.profile] : []);
     }
+    if (request.path === "/events") {
+      if (!relay.publish) return answer(500);
+      relay.profile = body as ReturnType<typeof profile>;
+      return answer(200, { accepted: true, event_id: relay.profile.id });
+    }
     return answer(404);
   });
   return relay;
 }
-async function joinCommunityPage(identity: Identity) {
-  const communities = communitiesFor(identity);
+async function joinCommunityPage(identity: Identity, openRelay = "") {
+  const communities = communitiesFor(identity, openRelay);
   const user = userEvent.setup();
   render(
     <Welcome
@@ -1061,10 +1071,12 @@ async function joinCommunityPage(identity: Identity) {
   return { communities, user };
 }
 
-it("Join proves admission with the signed profile read, saves the membership, and opens the app on it", async () => {
+const eventsCalls = (relay: ReturnType<typeof nativeRelay>) =>
+  relay.calls.filter((call) => call.path === "/events");
+
+it("Join proves admission with the signed profile read, saves the membership, and continues to the profile step, whose Continue publishes the kind 0 and opens the app", async () => {
   const member = keypair();
   const relay = nativeRelay(member);
-  relay.profile = profile(member, { name: "Ada", picture: "" });
   const gate = deferred<void>();
   relay.query = gate.promise;
   const identity = createIdentity();
@@ -1103,7 +1115,12 @@ it("Join proves admission with the signed profile read, saves the membership, an
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(communities.snapshot().memberships).toEqual([]);
   await act(async () => gate.resolve());
-  expect(await screen.findByText("Signed in")).toBeVisible();
+  // The membership is saved and selected, but the first community continues
+  // to the profile step rather than into the app.
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
   const membership = {
     id: relay.origin,
     name: "relay.example.com:8443",
@@ -1115,8 +1132,39 @@ it("Join proves admission with the signed profile read, saves the membership, an
     memberships: [membership],
     selected: relay.origin,
   });
-  // The device record the next launch restores: the relay's existing profile
-  // seeds the empty local default; nothing was published to get there.
+  expect(
+    screen.getByText(/agent handoffs in relay\.example\.com:8443\./),
+  ).toBeVisible();
+  // The relay holds no profile for the new key: the Builderlab email's local
+  // part is suggested, focused, and Continue needs a name.
+  const name = screen.getByRole("textbox", { name: "Display name" });
+  expect(name).toHaveValue("a");
+  expect(name).toHaveFocus();
+  await user.clear(name);
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
+  await user.type(name, "Ada{Enter}");
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(eventsCalls(relay)).toEqual([
+    {
+      community: relay.origin,
+      path: "/events",
+      method: "POST",
+      body: expect.objectContaining({
+        kind: 0,
+        pubkey: member.pubkey,
+        tags: [],
+        content: JSON.stringify({
+          name: "Ada",
+          display_name: "Ada",
+          picture: "",
+          about: "",
+        }),
+      }),
+    },
+  ]);
+  // The device record the next launch restores carries the published name as
+  // the local default for later joins.
   expect(
     JSON.parse(localStorage.getItem(`buzz-client.v1:${member.pubkey}`) ?? ""),
   ).toEqual({
@@ -1124,7 +1172,106 @@ it("Join proves admission with the signed profile read, saves the membership, an
     memberships: [membership],
     selected: relay.origin,
   });
-  expect(relay.calls.some((call) => call.path === "/events")).toBe(false);
+  expect(communities.snapshot().selected).toBe(relay.origin);
+  identity.dispose();
+});
+
+it("Skip for now enters the app with the relay's existing profile as the local default and publishes nothing", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.profile = profile(member, { name: "Ada", picture: "" });
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  await screen.findByRole("heading", { name: "Set up your profile" });
+  // An existing relay profile is what the fields start from.
+  expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue(
+    "Ada",
+  );
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  const membership = {
+    id: relay.origin,
+    name: "relay.example.com:8443",
+    icon: "https://cdn.example.com/icon.png",
+  };
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [membership],
+    selected: relay.origin,
+  });
+  // The relay's existing profile seeds the empty local default; nothing was
+  // published to get there.
+  expect(
+    JSON.parse(localStorage.getItem(`buzz-client.v1:${member.pubkey}`) ?? ""),
+  ).toEqual({
+    profile: { name: "Ada", picture: "", about: "" },
+    memberships: [membership],
+    selected: relay.origin,
+  });
+  expect(eventsCalls(relay)).toEqual([]);
+  identity.dispose();
+});
+
+it("a relay that rejects the profile publish keeps the step with the error inline, and Skip still enters the app", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.publish = false;
+  const identity = createIdentity();
+  const { communities, user } = await joinCommunityPage(identity);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  await screen.findByRole("heading", { name: "Set up your profile" });
+  const name = screen.getByRole("textbox", { name: "Display name" });
+  await user.clear(name);
+  await user.type(name, "Ada");
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Community request failed (500)",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(name).toHaveValue("Ada");
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
+  expect(eventsCalls(relay)).toHaveLength(1);
+  // The membership stands; the rejected name never became the local default.
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: relay.origin }],
+    selected: relay.origin,
+    profile: { name: "", picture: "", about: "" },
+  });
+  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(eventsCalls(relay)).toHaveLength(1);
+  expect(communities.snapshot().profile).toEqual({
+    name: "",
+    picture: "",
+    about: "",
+  });
+  identity.dispose();
+});
+
+it("a key whose device record already holds a community skips the profile step and enters the app on the new one", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  const identity = createIdentity();
+  // The development seed: one membership before this join.
+  const { communities, user } = await joinCommunityPage(
+    identity,
+    "https://other.example.com",
+  );
+  expect(communities.snapshot().memberships).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Set up your profile" }),
+  ).toBeNull();
+  expect(communities.snapshot()).toMatchObject({
+    memberships: [{ id: "https://other.example.com" }, { id: relay.origin }],
+    selected: relay.origin,
+  });
+  expect(eventsCalls(relay)).toEqual([]);
   identity.dispose();
 });
 
@@ -1212,6 +1359,8 @@ it("Try again on the invite page repeats the signed read and enters the app once
   ]);
   expect(screen.queryByText("Signed in")).toBeNull();
   await act(async () => gate.resolve());
+  // Admitted on retry: the first community continues to the profile step.
+  await user.click(await screen.findByRole("button", { name: "Skip for now" }));
   expect(await screen.findByText("Signed in")).toBeVisible();
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relay.origin, name: "relay.example.com:8443" }],

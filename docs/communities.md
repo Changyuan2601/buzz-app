@@ -46,7 +46,9 @@ setup fails or is cancelled. The native first-run **Join Community** page
 (`features/identity/Welcome.tsx`, [identity](identity.md)) is the only other
 caller of `communities.joined`: it takes the dialog's code-less path — the
 signed profile read proves admission, the membership is saved and selected — and
-publishes no profile.
+the join itself publishes no profile; the first-run profile step that follows a
+key's first community may publish one through `publishProfile` and keep it with
+`communities.saveProfile`.
 
 Profile editing preserves existing fields that this editor does not expose.
 After a confirmed Settings save, the profile also becomes the device-local
