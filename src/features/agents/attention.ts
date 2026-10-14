@@ -250,6 +250,7 @@ export function validateObject(
 // Filter grammar: predicate := or; or := and ("||" and)*; and := atom ("&&" atom)*;
 // atom := "!" atom | "(" predicate ")" | true | false | is_reply
 //       | (author | content) "==" string
+//       | content has_word string (case-insensitive, whole letters/digits word)
 type Predicate = (event: EventData) => boolean;
 const MAX_DEPTH = 32;
 const MAX_NODES = 256;
@@ -303,6 +304,17 @@ export function compileFilter(source: string): Predicate {
     if (take("is_reply")) return isReply;
     for (const field of ["author", "content"] as const)
       if (take(field)) {
+        if (field === "content" && take("has_word")) {
+          const word = string();
+          if (!/^[\p{L}\p{N}]+$/u.test(word))
+            fail("has_word needs a non-empty word of letters or digits");
+          // The validated literal cannot contain regular-expression syntax.
+          const pattern = new RegExp(
+            `(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`,
+            "iu",
+          );
+          return (event) => pattern.test(event.content);
+        }
         if (!take("==")) fail("Expected == in filter");
         const expected = string();
         return field === "author"

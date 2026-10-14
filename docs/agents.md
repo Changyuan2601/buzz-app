@@ -655,6 +655,18 @@ Packaged GUI quit/relaunch, real-relay agent ownership admission and hosted
 cross-platform checks are separate gates; consult the pull request for results
 tied to its head.
 
+## Topic watches
+
+Interest instructions guide a reply after a watch wakes the agent. They do not
+filter messages. For a literal topic condition, set the event watch's `filter`,
+for example `content has_word "MUD" || content has_word "MUDs"`. `has_word` matches
+case-insensitively at letter/digit boundaries; it accepts a non-empty word of
+letters or digits, treats Markdown punctuation as a boundary, and does not match
+`muddy` or `MUD1`. Existing equality and boolean filters retain their behavior.
+This filter runs before the agent turn on both browser and desktop clients.
+Direct mentions retain the app's separate, always-on mention path. Saved filters
+using `has_word` require a client version that supports that operator.
+
 ## Shared identity names
 
 Distinct agent keys with the same displayed name receive a short npub suffix,

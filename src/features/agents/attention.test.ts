@@ -125,6 +125,43 @@ describe("validateObject", () => {
 });
 
 describe("compileFilter", () => {
+  it("matches case-insensitive topic words without matching parts of other words", () => {
+    const filter = compileFilter(
+      'content has_word "MUD" || content has_word "MUDs"',
+    );
+    for (const content of [
+      "MUD ideas?",
+      "a mud game",
+      "Play MuDs!",
+      "**MUD**",
+      "_MUD_",
+      "MUD-based games",
+    ])
+      expect(filter(event({ content })), content).toBe(true);
+    for (const content of [
+      "what is going on @Palmer?",
+      "muddy roads",
+      "smudges",
+      "MUD1",
+      "αMUDβ",
+      "",
+    ])
+      expect(filter(event({ content })), content).toBe(false);
+    expect(
+      compileFilter('content has_word "café"')(event({ content: "CAFÉ!" })),
+    ).toBe(true);
+    for (const source of [
+      'content has_word ""',
+      'content has_word "MUD.*"',
+      'content has_word "two words"',
+      'author has_word "MUD"',
+      'content has_wordish "MUD"',
+    ])
+      expect(() => compileFilter(source), source).toThrow();
+    expect(
+      validateObject("watch/w", { ...watch, filter: 'content has_word "MUD"' }),
+    ).toBeUndefined();
+  });
   it("evaluates the grammar with precedence and negation", () => {
     const filter = compileFilter(
       `!is_reply && (content == "go" || author == "${"c".repeat(64)}")`,

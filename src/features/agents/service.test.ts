@@ -1873,6 +1873,58 @@ it("keeps the cleanup for later when the session closes while archive state is r
   expect(archives.request).toHaveBeenCalledOnce();
 });
 
+it("a topic watch ignores an unrelated Palmer mention and still wakes for MUDs or direct mentions", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("Missing fixture watch");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": {
+        ...watch,
+        filter: 'content has_word "MUD" || content has_word "MUDs"',
+      },
+    },
+  });
+  emit({
+    events: [
+      event("palmer", {
+        content: "what is going on @Palmer?",
+        tags: [
+          ["h", channel],
+          ["p", sibling],
+        ],
+      }),
+      event("muddy", { content: "muddy roads" }),
+      event("topic", { content: "Let's build some muds!" }),
+      event("addressed", {
+        content: "Hello",
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  // The final direct mention is a queue barrier: preceding unrelated events
+  // cannot start a late turn after it has run.
+  await vi.waitFor(() =>
+    expect(run.mock.calls.at(-1)?.[0].trigger).toMatchObject({
+      type: "mention",
+      event: { id: event("addressed").id },
+    }),
+  );
+  expect(run.mock.calls.map(([delivery]) => delivery.trigger.type)).toEqual([
+    "watch",
+    "mention",
+  ]);
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    type: "watch",
+    event: { id: event("topic").id },
+  });
+});
+
 it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
