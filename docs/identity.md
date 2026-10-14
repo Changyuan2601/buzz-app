@@ -37,6 +37,34 @@ old Buzz service/account and copy the selected agent key into this app's separat
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
+## Automatic backup
+
+Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
+`BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity silently after an existing
+Builderlab or Hosted communities login and matching key binding. These are paired
+native build-process inputs; unset leaves the feature disabled. The service URL
+includes its API prefix and must use HTTPS. Existing login credentials are accepted
+only for the matching trusted build origin. Without a qualifying login, backup
+defers without opening a browser or delaying identity readiness.
+
+The native host validates enrollment and seals with the reviewed HPKE v1 protocol.
+Only encrypted pending bytes and public completion metadata are saved in the OS
+account's `.buzz-foundation/nsec-backups/<human credential service>` folder, scoped
+separately for debug and release. A shared lock serializes cooperating
+copies. Pending bytes and IDs survive restart; later login/binding/key-install
+events retry them, including a coalesced follow-up when an event arrives during an
+active pass. Upload success requires a matching stored receipt. Backup
+failure never replaces or deletes the local identity.
+
+Plain signout retains backup records; Sign out and erase removes this credential
+service's records through the existing resumable wipe before clearing its marker.
+
+Rollout requires the backend backup endpoints, private-organization
+authorization, database migration, and configured KMS recipient/permissions. The
+client inputs must match that service's namespace. Synthetic HTTP/storage tests
+do not establish live sign-in, KMS or installed-app
+secure-storage acceptance. No backend provisioning or activation is part of this change.
+
 A shared credential blob can reduce repeated OS prompts by caching many credentials
 after one read. For this one human key, one cached item retains that read-once benefit without
 coupling human writes to agent credentials or old-app blob writers. This is not a

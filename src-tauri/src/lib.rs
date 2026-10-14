@@ -29,6 +29,9 @@ mod host_command;
 mod host_process;
 mod host_request;
 mod identity;
+mod nsec_backup;
+mod nsec_backup_config;
+use nsec_backup::{nsec_backup_available, nsec_backup_retry, nsec_backup_session, NsecBackupHost};
 mod image_clipboard;
 
 mod notifications;
@@ -467,6 +470,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        nsec_backup_available,
+        nsec_backup_session,
+        nsec_backup_retry,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
         app_agents::app_agent_portable,
@@ -650,6 +656,7 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(HostProcesses::default())
         .manage(OAuthCallbackHost::default())
+        .manage(NsecBackupHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
@@ -681,6 +688,7 @@ pub fn run() {
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
+                webview.state::<NsecBackupHost>().document_load();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 // Processes belong to the page that started them.
                 webview.state::<HostProcesses>().stop_all();
@@ -718,6 +726,7 @@ pub fn run() {
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<NsecBackupHost>().close();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();

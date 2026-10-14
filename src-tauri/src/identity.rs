@@ -1028,16 +1028,31 @@ pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Op
     with_identity(host.inner().clone(), Identity::restore).await
 }
 #[tauri::command]
-pub async fn identity_import(host: tauri::State<'_, IdentityHost>, nsec: String) -> Result<String> {
+pub async fn identity_import(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+    nsec: String,
+) -> Result<String> {
     let nsec = Zeroizing::new(nsec);
-    with_identity(host.inner().clone(), move |identity| {
+    let public = with_identity(host.inner().clone(), move |identity| {
         identity.save(Some(&nsec))
     })
-    .await
+    .await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
 }
 #[tauri::command]
-pub async fn identity_create(host: tauri::State<'_, IdentityHost>) -> Result<String> {
-    with_identity(host.inner().clone(), |identity| identity.save(None)).await
+pub async fn identity_create(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+) -> Result<String> {
+    let public = with_identity(host.inner().clone(), |identity| identity.save(None)).await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
 }
 #[tauri::command]
 pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<String> {
