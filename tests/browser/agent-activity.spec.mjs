@@ -1029,6 +1029,9 @@ test.describe("thread activity", () => {
       .click();
     // Activity and Thread share the detail pane; return to the thread.
     await openThread();
+    // The activity detour can outlast thread typing's 8s freshness on slow
+    // runners; refresh it, as each later section does, before using the trigger.
+    sendTyping(root.id);
     // Popup semantics and keyboard operation need real browsers.
     await threadTrigger.focus();
     await page.keyboard.press("Enter");
