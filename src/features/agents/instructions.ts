@@ -70,6 +70,9 @@ type Entry = Readonly<{
   /** This device's last save until a scan or receipt installs its version:
    * the submitted text and its event id, kept for Save again (§2.5). */
   submitted?: Readonly<{ id: string; text: string }>;
+  /** Saves replaced by Save again while still unconfirmed (§2.5): never
+   * re-sent, settled when they arrive, and handed to cleanup by Delete Agent. */
+  originals?: readonly string[];
 }>;
 
 type CleanupEntry = Readonly<{
@@ -114,6 +117,8 @@ export class InstructionStore {
    * resolves as absent. */
   private scans = new Map<string, number>();
   private intents = new Map<string, AgentIntent>();
+  /** `owner:community` pairs whose relay explicitly refused kind 44300 (§3). */
+  private unsupported = new Set<string>();
   /** In memory only, re-derived through native decode. */
   private decoded = new Map<string, Decoded>();
   private listeners = new Set<() => void>();
@@ -125,6 +130,7 @@ export class InstructionStore {
           entries?: Record<string, unknown>;
           scans?: Record<string, unknown>;
           intents?: Record<string, unknown>;
+          unsupported?: unknown;
         }
       | undefined;
     for (const [key, value] of Object.entries(store?.entries ?? {}))
@@ -134,6 +140,9 @@ export class InstructionStore {
     for (const [key, value] of Object.entries(store?.intents ?? {}))
       if (validIntent(value) && value.intentId === key)
         this.intents.set(key, value);
+    if (Array.isArray(store?.unsupported))
+      for (const key of store.unsupported)
+        if (typeof key === "string") this.unsupported.add(key);
     const had = parse(storage.getItem(HAD_VERSION_KEY));
     if (Array.isArray(had))
       for (const key of had) if (typeof key === "string") this.had.add(key);
@@ -186,6 +195,15 @@ export class InstructionStore {
   hadVersion(key: string) {
     return this.had.has(key);
   }
+  refusesHistory(owner: string, community: string) {
+    return this.unsupported.has(`${owner}:${community}`);
+  }
+  /** §3: the relay refused kind 44300 itself, not auth or a transient error. */
+  markRefusesHistory(owner: string, community: string) {
+    const key = `${owner}:${community}`;
+    if (!this.unsupported.has(key))
+      this.commit(() => this.unsupported.add(key));
+  }
 
   write(key: string, entry: Entry) {
     this.commit(() => this.entries.set(key, entry));
@@ -233,10 +251,12 @@ export class InstructionStore {
       [...keys].filter((key) => !owner || !key.startsWith(`${owner}:`));
     const entries = others(this.entries.keys());
     const scans = others(this.scans.keys());
-    if (!entries.length && !scans.length) return;
+    const unsupported = others(this.unsupported);
+    if (!entries.length && !scans.length && !unsupported.length) return;
     this.commit(() => {
       for (const key of entries) this.entries.delete(key);
       for (const key of scans) this.scans.delete(key);
+      for (const key of unsupported) this.unsupported.delete(key);
     });
   }
 
@@ -289,12 +309,13 @@ export class InstructionStore {
       new Map(this.entries),
       new Map(this.scans),
       new Map(this.intents),
+      new Set(this.unsupported),
     ] as const;
     apply();
     try {
       this.persist();
     } catch (error) {
-      [this.entries, this.scans, this.intents] = before;
+      [this.entries, this.scans, this.intents, this.unsupported] = before;
       throw error;
     }
   }
@@ -305,6 +326,7 @@ export class InstructionStore {
         entries: Object.fromEntries(this.entries),
         scans: Object.fromEntries(this.scans),
         intents: Object.fromEntries(this.intents),
+        unsupported: [...this.unsupported],
       }),
     );
     this.changed();
@@ -396,9 +418,10 @@ export function resolveInstructions(
   return { source: "none", text: "" };
 }
 
-/** §3: before this community's first complete scan, configured local text
- * that never had a version stays the agent's instructions and is edited in
- * place ("History isn't available yet"); a new device has none and waits. */
+/** §3: before this community's first complete scan, or while its relay
+ * explicitly refuses kind 44300, configured local text that never had a
+ * version stays the agent's instructions and is edited in place ("History
+ * isn't available yet"); a new device has none and waits. */
 export function localOnly(
   store: InstructionStore,
   owner: string,
@@ -407,7 +430,8 @@ export function localOnly(
 ) {
   const key = subjectKey(owner, community, agent);
   return (
-    store.scanned(owner, community) === undefined &&
+    (store.scanned(owner, community) === undefined ||
+      store.refusesHistory(owner, community)) &&
     !store.hadVersion(key) &&
     store.entry(key)?.migration.state === "staged"
   );
@@ -490,7 +514,9 @@ export type InstructionPorts = Readonly<{
 type Subject = {
   versions: Map<string, RelayEvent>;
   deleted: Set<string>;
-  counter: number;
+  /** Changes on every change to `versions` or `deleted`: an install decided
+   * at an older revision never commits. */
+  revision: number;
   pendingDeletion: boolean;
 };
 type Token = Readonly<{ n: number }>;
@@ -504,18 +530,27 @@ export class ConflictError extends Error {
 const newer = (a: EventData, b: EventData) =>
   a.created_at !== b.created_at ? a.created_at > b.created_at : a.id < b.id;
 
+/** The relay's answer when it does not accept a kind at all (§3). */
+const refusesKind = (state: SaveState) =>
+  state.state === "rejected" && state.reason.includes("unknown event kind");
+
 /** One binding's instructions sync: scan tokens, live merge, saves, recovery,
- * the Delete Agent sweep and the cleanup list. Dropped with its binding. */
+ * the Delete Agent sweep and the cleanup list. Dropped with its binding.
+ *
+ * Every writer of an agent's entry or installed head commits only after its
+ * last await, and only if the binding, the agent's eligibility, its registered
+ * subject and that subject's revision are all still what it started from. */
 export class InstructionSync {
   private subjects = new Map<string, Subject>();
   private token: Token | undefined;
   private tokens = 0;
-  /** Version ids the running scan returned, admitted for deletions before
-   * they are merged into subjects. */
-  private scanning = new Set<string>();
-  /** Version ids learned live or by a subject read since the scan began; a
-   * completed scan keeps them even if it did not return them. */
-  private since = new Set<string>();
+  /** The current scan's returned version ids, admitted for deletions before
+   * they are merged into subjects. Owned by that scan's token. */
+  private scanned: Readonly<{ token: Token; ids: Set<string> }> | undefined;
+  /** One set per running reconcile (full scan or subject read): versions
+   * learned elsewhere since it began, which it keeps even if its read missed
+   * them. */
+  private reconciling = new Set<Set<string>>();
   private inventory: Inventory = {
     state: "loading",
     known: new Set(),
@@ -539,12 +574,37 @@ export class InstructionSync {
       value = {
         versions: new Map(),
         deleted: new Set(),
-        counter: 0,
+        revision: 0,
         pendingDeletion: false,
       };
       this.subjects.set(agent, value);
     }
     return value;
+  }
+  /** Adds a candidate version; every running reconcile but `from` keeps it. */
+  private learn(s: Subject, event: RelayEvent, from?: Set<string>) {
+    if (s.versions.has(event.id)) return false;
+    s.versions.set(event.id, event);
+    s.revision++;
+    for (const seen of this.reconciling) if (seen !== from) seen.add(event.id);
+    return true;
+  }
+  /** A reconcile keeps only what its read returned, plus what was learned
+   * elsewhere since it began. */
+  private reconcile(s: Subject, returned: Set<string>, since: Set<string>) {
+    for (const id of [...s.versions.keys()])
+      if (!returned.has(id) && !since.has(id)) {
+        s.versions.delete(id);
+        s.revision++;
+      }
+  }
+  /** Writes the agent's entry only while it exists and may still change. */
+  private update(agent: string, change: (entry: Entry) => Entry) {
+    const key = this.key(agent);
+    const entry = this.ports.store.entry(key);
+    if (!entry || !this.alive || !this.eligible(agent)) return false;
+    this.ports.store.write(key, change(entry));
+    return true;
   }
 
   start() {
@@ -569,9 +629,10 @@ export class InstructionSync {
   }
 
   /** A deletion may target any version this device knows: in a subject, in
-   * the running scan, or a cached head. */
+   * the current scan, or a cached head. */
   private admits(id: string) {
-    if (this.scanning.has(id)) return true;
+    if (this.scanned?.token === this.token && this.scanned?.ids.has(id))
+      return true;
     if ([...this.subjects.values()].some((s) => s.versions.has(id)))
       return true;
     const { store, owner, community } = this.ports;
@@ -603,7 +664,8 @@ export class InstructionSync {
           event.id,
           "text" in row ? { text: row.text } : { invalid: row.invalid },
         );
-      else store.write(key, { ...latest, head: { unknown: true } });
+      else
+        this.update(agent, (entry) => ({ ...entry, head: { unknown: true } }));
     }
     store.touch();
   }
@@ -688,30 +750,28 @@ export class InstructionSync {
   /** §2.3 full scan: versions then deletions, each to an empty page. Only a
    * complete scan under the current token writes. */
   private async scan(token: Token) {
-    this.since = new Set();
-    const versions = await this.page(this.versionsFilter(), token);
-    const scanned = new Map<string, RelayEvent[]>();
-    for (const event of versions) {
-      const agent = instructionsSubject(event.tags);
-      if (!agent || event.pubkey !== this.ports.owner) continue;
-      scanned.set(agent, [...(scanned.get(agent) ?? []), event]);
-      this.scanning.add(event.id);
-    }
+    const since = new Set<string>();
+    this.reconciling.add(since);
     try {
+      const versions = await this.page(this.versionsFilter(), token);
+      const scanned = new Map<string, RelayEvent[]>();
+      const ids = new Set<string>();
+      for (const event of versions) {
+        const agent = instructionsSubject(event.tags);
+        if (!agent || event.pubkey !== this.ports.owner) continue;
+        scanned.set(agent, [...(scanned.get(agent) ?? []), event]);
+        ids.add(event.id);
+      }
+      this.scanned = { token, ids };
       const deletions = await this.page(this.deletionsFilter(), token);
       if (!this.current(token)) return;
       // Authoritative: what the scan didn't return, and nothing re-established
       // since it began, is gone (§2.3 full-scan reconciliation).
-      for (const s of this.subjects.values())
-        for (const id of s.versions.keys())
-          if (!this.scanning.has(id) && !this.since.has(id)) {
-            s.versions.delete(id);
-            s.counter++;
-          }
+      for (const s of this.subjects.values()) this.reconcile(s, ids, since);
       for (const [agent, events] of scanned) {
         if (!this.eligible(agent)) continue;
         const s = this.subject(agent);
-        for (const event of events) s.versions.set(event.id, event);
+        for (const event of events) this.learn(s, event, since);
       }
       for (const deletion of deletions) this.applyDeletion(deletion, false);
       const scanId = token.n;
@@ -721,8 +781,7 @@ export class InstructionSync {
         ...this.ports.store.agents(this.ports.owner, this.ports.community),
       ])) {
         if (!this.eligible(agent)) continue;
-        const s = this.subject(agent);
-        await this.install(agent, s.counter, token, scanId);
+        await this.install(agent, this.subject(agent).revision, token, scanId);
       }
       // Complete only once every subject's result is installed, so a fresh
       // subject never resolves through the fallback while its decode is held.
@@ -733,33 +792,38 @@ export class InstructionSync {
         scanId,
       );
     } finally {
-      this.scanning.clear();
+      this.reconciling.delete(since);
+      if (this.scanned?.token === token) this.scanned = undefined;
     }
     await this.recover(token);
     await this.sweepCleanup();
   }
 
-  /** §2.3 "Identity becomes known" and head-deletion re-reads. */
+  /** §2.3 "Identity becomes known" and head-deletion re-reads: reconciled
+   * like the full scan, for one subject. */
   private async readSubject(agent: string, token: Token) {
     if (!this.eligible(agent)) return;
     const s = this.subject(agent);
-    const counter = s.counter;
-    const versions = await this.page(this.versionsFilter(agent), token);
-    const deletions = await this.page(this.deletionsFilter(), token);
-    if (!this.current(token) || !this.eligible(agent)) return;
-    for (const event of versions)
-      if (instructionsSubject(event.tags) === agent) {
-        s.versions.set(event.id, event);
-        this.since.add(event.id);
-      }
-    for (const deletion of deletions) this.applyDeletion(deletion, false);
-    // A deletion or live write that arrived meanwhile is reconciled first.
-    await this.install(
-      agent,
-      s.counter === counter ? counter : s.counter,
-      token,
-    );
-    if (s.versions.size > 0) this.ports.store.markHadVersion(this.key(agent));
+    const since = new Set<string>();
+    this.reconciling.add(since);
+    try {
+      const versions = (
+        await this.page(this.versionsFilter(agent), token)
+      ).filter((event) => instructionsSubject(event.tags) === agent);
+      const deletions = await this.page(this.deletionsFilter(), token);
+      if (
+        !this.current(token) ||
+        !this.eligible(agent) ||
+        this.subjects.get(agent) !== s
+      )
+        return;
+      this.reconcile(s, new Set(versions.map((event) => event.id)), since);
+      for (const event of versions) this.learn(s, event, since);
+      for (const deletion of deletions) this.applyDeletion(deletion, false);
+    } finally {
+      this.reconciling.delete(since);
+    }
+    await this.install(agent, s.revision, token);
   }
 
   private applyDeletion(event: RelayEvent, live: boolean) {
@@ -768,7 +832,7 @@ export class InstructionSync {
       for (const [agent, s] of this.subjects) {
         if (!s.versions.has(id) || s.deleted.has(id)) continue;
         s.deleted.add(id);
-        s.counter++;
+        s.revision++;
         const head = this.ports.store.entry(this.key(agent))?.head;
         if (head && "event" in head && head.event.id === id) {
           s.pendingDeletion = true;
@@ -782,11 +846,17 @@ export class InstructionSync {
   /** Installs the newest undeleted version as head, decoding it first. */
   private async install(
     agent: string,
-    counter: number,
+    revision: number,
     token: Token,
     scanId?: number,
   ) {
-    const s = this.subject(agent);
+    const s = this.subjects.get(agent);
+    const fresh = () =>
+      this.current(token) &&
+      this.eligible(agent) &&
+      this.subjects.get(agent) === s &&
+      s?.revision === revision;
+    if (!s || !fresh()) return;
     const key = this.key(agent);
     let best: RelayEvent | undefined;
     for (const event of s.versions.values())
@@ -794,32 +864,37 @@ export class InstructionSync {
         best = event;
     if (best && !this.ports.store.decodedText(best.id)) {
       const [row] = await this.ports.codec.decode(agent, [best]);
-      if (!this.current(token) || s.counter !== counter) return;
+      if (!fresh()) return;
       if (row?.id === best.id)
         this.ports.store.remember(
           best.id,
           "text" in row ? { text: row.text } : { invalid: row.invalid },
         );
     }
-    if (!this.current(token) || s.counter !== counter) return;
+    if (!fresh()) return;
     const entry = this.ports.store.entry(key) ?? {
       head: { unknown: true } as const,
       migration: { state: "never" } as const,
     };
     if (s.versions.size) this.ports.store.markHadVersion(key);
+    s.pendingDeletion = false;
     const head: Head = best
       ? { event: best }
       : { absent: true, scanId: scanId ?? token.n };
-    if (s.counter === counter) s.pendingDeletion = false;
     // This device's save is confirmed once its version is installed, and only
-    // then restarts the agent's sessions, onto this head (§5.1).
-    const { submitted, ...rest } = entry;
-    this.ports.store.write(
-      key,
-      submitted && s.versions.has(submitted.id)
-        ? { ...rest, head, localSave: nextLocalSave(entry, Date.now()) }
-        : { ...entry, head },
-    );
+    // then restarts the agent's sessions, onto this head (§5.1). A replaced
+    // original that arrived is settled: it is a version like any other.
+    const { submitted, originals, ...rest } = entry;
+    const confirmed = submitted && s.versions.has(submitted.id);
+    const unsettled = originals?.filter((id) => !s.versions.has(id));
+    this.ports.store.write(key, {
+      ...rest,
+      head,
+      ...(confirmed
+        ? { localSave: nextLocalSave(entry, Date.now()) }
+        : submitted && { submitted }),
+      ...(unsettled?.length && { originals: unsettled }),
+    });
   }
 
   /** Delivery changed: a save the relay accepted is received like any version. */
@@ -844,13 +919,10 @@ export class InstructionSync {
         const agent = instructionsSubject(event.tags);
         if (!agent || !this.eligible(agent)) continue;
         const s = this.subject(agent);
-        if (s.versions.has(event.id)) continue;
-        s.versions.set(event.id, event);
-        this.since.add(event.id);
-        s.counter++;
+        if (!this.learn(s, event)) continue;
         this.ports.store.markHadVersion(this.key(agent));
         const token = this.token;
-        if (token) await this.install(agent, s.counter, token).catch(() => {});
+        if (token) await this.install(agent, s.revision, token).catch(() => {});
         if (settle) await this.settleSaved(event.id);
       } else if (event.kind === 5) this.applyDeletion(event, true);
     }
@@ -880,17 +952,16 @@ export class InstructionSync {
    * earlier save that was refused, or couldn't be confirmed after the resend
    * window, is replaced only by this explicit save (Save again, §2.5). */
   async save(agent: string, text: string, base: string | undefined) {
-    const { outbox, codec, owner, community, signal } = this.ports;
+    const { outbox, codec, owner, community, signal, store } = this.ports;
     if (!this.eligible(agent)) throw new Error("This agent was deleted");
     if (!outbox) throw new Error("This community can't save instructions");
     await outbox.ready();
     const earlier = this.pendingSave(agent);
+    const earlierState = earlier && saveState(earlier, this.ports.now());
     // Anything else is left to the outbox: a stored entry stays as Delete
     // Agent's proof until its echo retires it.
     const replacing =
-      earlier && replaceable(saveState(earlier, this.ports.now()))
-        ? earlier.event.id
-        : undefined;
+      earlierState && replaceable(earlierState) ? earlier : undefined;
     const content = await codec.prepare(agent, text);
     signal.throwIfAborted();
     const [head] = await this.ports.read(
@@ -899,7 +970,24 @@ export class InstructionSync {
     );
     if ((head?.id ?? undefined) !== base) throw new ConflictError(head?.id);
     if (!this.eligible(agent)) throw new Error("This agent was deleted");
-    if (replacing) await outbox.retire(replacing);
+    const key = this.key(agent);
+    const blank: Entry = {
+      head: { unknown: true },
+      migration: { state: "never" },
+    };
+    if (replacing) {
+      // An unconfirmed original may still land: kept durably before its
+      // outbox entry goes, so a late arrival settles and Delete Agent cleans it.
+      if (earlierState?.state === "uncertain") {
+        const entry = store.entry(key) ?? blank;
+        store.write(key, {
+          ...entry,
+          originals: [...(entry.originals ?? []), replacing.event.id],
+        });
+      }
+      await outbox.retire(replacing.event.id);
+      if (!this.eligible(agent)) throw new Error("This agent was deleted");
+    }
     const id = outbox.send(
       {
         kind: INSTRUCTIONS_KIND,
@@ -913,14 +1001,10 @@ export class InstructionSync {
       },
       () => this.alive && this.eligible(agent),
     );
-    const key = this.key(agent);
-    const entry = this.ports.store.entry(key) ?? {
-      head: { unknown: true } as const,
-      migration: { state: "never" } as const,
-    };
+    const entry = store.entry(key) ?? blank;
     // The kept local draft lives on as the submitted text once it is saved.
     const { draft, ...rest } = entry;
-    this.ports.store.write(key, {
+    store.write(key, {
       ...(draft === text ? rest : entry),
       submitted: { id, text },
     });
@@ -937,7 +1021,7 @@ export class InstructionSync {
 
   /** §2.5 Recovery for this owner and community: inside the window the same
    * signed bytes are re-sent; after it the native writer reads by exact id and
-   * never re-sends. A save a scan returned is retired. */
+   * never re-sends. A save the relay holds is received before it is retired. */
   async recover(token?: Token) {
     const outbox = this.ports.outbox;
     if (!outbox) return;
@@ -953,13 +1037,17 @@ export class InstructionSync {
       else if (item.delivery !== "unknown") continue;
       else if (!expired(item, this.ports.now()))
         outbox.retry(item.event.id, () => this.alive && this.eligible(agent));
-      else if (await this.held(item.event.id))
+      else {
+        const found = await this.find(item.event.id);
+        if (!found || (token && !this.current(token))) continue;
+        await this.receive([found], false);
         await outbox.retire(item.event.id);
+      }
     }
   }
 
   /** After the window: an exact-id read, never a re-send. */
-  private async held(id: string) {
+  private async find(id: string) {
     const [found] = await this.ports.read(
       [
         {
@@ -972,16 +1060,20 @@ export class InstructionSync {
       ],
       this.ports.signal,
     );
-    return found?.id === id;
+    return found?.id === id ? found : undefined;
   }
 
   /** §2.7 Delete Agent, steps 1–5. Throws on any failure; the caller's cleanup
-   * loop retries from step 1. */
+   * loop retries from step 1. Fencing first makes every install, migration
+   * step and save still in flight for this agent discard its result. */
   async deleteAgent(agent: string) {
     const { outbox, owner, community, store, signal } = this.ports;
     this.fenced.add(agent);
     const key = this.key(agent);
     const entry = store.entry(key);
+    // Replaced originals may still land: durable cleanup before anything else.
+    for (const id of entry?.originals ?? [])
+      store.addCleanup(owner, community, id);
     if (entry?.migration.state === "staged")
       store.write(key, { ...entry, migration: { state: "never" } });
     if (!outbox) throw new Error("This community can't delete instructions");
@@ -1062,8 +1154,8 @@ export class InstructionSync {
   }
 
   /** §3: publish staged local text, one agent at a time per community, then
-   * confirm that exact event before the caller strips plugin config. */
-  /** `configured` reads the plugin's value now: one edited since staging
+   * confirm that exact event before the caller strips plugin config.
+   * `configured` reads the plugin's value now: one edited since staging
    * becomes a draft and is never stripped (§3). */
   migrate(
     agent: string,
@@ -1081,15 +1173,28 @@ export class InstructionSync {
     strip: () => Promise<void>,
     configured?: () => string | undefined,
   ) {
-    const { store, outbox } = this.ports;
+    const { store, outbox, owner, community } = this.ports;
     const key = this.key(agent);
     const entry = store.entry(key);
     if (entry?.migration.state !== "staged" || !this.eligible(agent)) return;
-    const { sourceRevision } = entry.migration;
+    const staged = entry.migration;
+    const { sourceRevision } = staged;
+    // The migration's own text never changes under it: a local edit made
+    // meanwhile is kept as the draft, never overwritten by this snapshot.
+    const settle = (migration: Migration) =>
+      this.update(agent, (latest) => {
+        const edited =
+          latest.migration.state === "staged" &&
+          latest.migration.text !== staged.text
+            ? { draft: latest.migration.text }
+            : {};
+        return { ...latest, migration, ...edited };
+      });
     const stripUnlessEdited = async () => {
+      if (!this.alive || !this.eligible(agent) || !store.entry(key)) return;
       const now = configured?.();
       if (now === undefined || hash(now) === sourceRevision) return strip();
-      store.write(key, { ...(store.entry(key) ?? entry), draft: now });
+      this.update(agent, (latest) => ({ ...latest, draft: now }));
     };
     if (store.hadVersion(key)) {
       const head = entry.head;
@@ -1098,34 +1203,53 @@ export class InstructionSync {
       const same =
         current &&
         "text" in current &&
-        current.text.trim() === entry.migration.text.trim();
+        current.text.trim() === staged.text.trim();
       store.write(key, {
         ...entry,
         migration: { state: "never" },
-        ...(same ? {} : { draft: entry.migration.text }),
+        ...(same ? {} : { draft: staged.text }),
       });
       if (same) await stripUnlessEdited();
       return;
     }
-    let eventId = entry.migration.eventId;
+    let eventId = staged.eventId;
     if (!eventId) {
       const head = entry.head;
       eventId = await this.save(
         agent,
-        entry.migration.text,
+        staged.text,
         head && "event" in head ? head.event.id : undefined,
       );
-      store.write(key, {
-        ...entry,
-        migration: { ...entry.migration, eventId },
-      });
-      if (outbox) await accepted(outbox, eventId, this.ports.signal);
+      if (!settle({ ...staged, eventId })) return;
+      if (outbox)
+        try {
+          await accepted(outbox, eventId, this.ports.signal);
+        } catch (error) {
+          const pending = this.pendingSave(agent);
+          if (
+            pending?.event.id === eventId &&
+            refusesKind(saveState(pending, this.ports.now()))
+          ) {
+            // §3: history is unavailable here; the local editor stays, and a
+            // later migration publishes again once the relay accepts it.
+            store.markRefusesHistory(owner, community);
+            await outbox.retire(eventId);
+            this.update(agent, (latest) => {
+              const { submitted: _, ...rest } = latest;
+              const { eventId: _sent, ...unsent } = staged;
+              return latest.migration.state === "staged"
+                ? { ...rest, migration: unsent }
+                : rest;
+            });
+          }
+          throw error;
+        }
     }
     const [confirmed] = await this.ports.read(
       [
         {
           kinds: [INSTRUCTIONS_KIND],
-          authors: [this.ports.owner],
+          authors: [owner],
           ids: [eventId],
           limit: 1,
           consistency: "strong",
@@ -1135,11 +1259,7 @@ export class InstructionSync {
     );
     if (confirmed?.id !== eventId) throw new Error("Migration not confirmed");
     // A Delete Agent or a closed binding during the read wins over it.
-    if (!this.alive || !this.eligible(agent)) return;
-    store.remember(confirmed.id, { text: entry.migration.text });
-    const latest = store.entry(key);
-    if (latest)
-      store.write(key, { ...latest, migration: { state: "done", eventId } });
+    if (!settle({ state: "done", eventId })) return;
     // Installed like any received version, so a newer head or a deletion
     // that arrived meanwhile still wins.
     await this.receive([confirmed]);

@@ -3,6 +3,7 @@ import type { LiveSnapshot } from "../relay/live";
 import type { Outbox, OutgoingEvent, Settlement } from "../relay/outbox";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import {
+  localOnly,
   CLEANUP_KEY,
   ConflictError,
   InstructionStore,
@@ -596,6 +597,190 @@ describe("instructions sync", () => {
     release();
     await flush();
     expect(h.resolve()).toMatchObject({ versionId: newer.id });
+  });
+
+  describe("every writer is fenced", () => {
+    const key = subjectKey(OWNER, COMMUNITY, AGENT);
+    const live = async (h: ReturnType<typeof harness>) => {
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      h.route("live");
+      await flush();
+    };
+    /** Holds native decode of one version until released. */
+    const holdDecode = (h: ReturnType<typeof harness>, held: string) => {
+      let release = () => {};
+      const gate = new Promise<void>((r) => (release = r));
+      const decode = h.decode.getMockImplementation();
+      h.decode.mockImplementation(async (subject, events) => {
+        if (events.some((e) => e.id === held)) await gate;
+        return decode?.(subject, events) ?? [];
+      });
+      return () => release();
+    };
+    /** Holds every kind 5 read until each returned release is called. */
+    const holdDeletions = (h: ReturnType<typeof harness>) => {
+      const gates: (() => void)[] = [];
+      const read = h.relay.read.bind(h.relay);
+      h.relay.read = async (filters) => {
+        if (filters[0]?.kinds?.includes(5))
+          await new Promise<void>((r) => gates.push(r));
+        return read(filters);
+      };
+      return gates;
+    };
+
+    it("a subject read keeps only what it returned, dropping a retained version that vanished", async () => {
+      const h = harness();
+      const [v1, v2, v3] = [1, 2, 3].map((n) => version(`v${n}`, T0 + n));
+      h.relay.events.push(v1 as RelayEvent, v2 as RelayEvent, v3 as RelayEvent);
+      await live(h);
+      expect(h.resolve()).toMatchObject({ versionId: v3?.id });
+      // V2 disappears with no deletion this device can see; V3 is deleted live.
+      h.relay.events.splice(h.relay.events.indexOf(v2 as RelayEvent), 1);
+      const gone = deletion(v3?.id ?? "");
+      h.relay.events.push(gone);
+      h.push(gone);
+      await flush();
+      expect(h.resolve()).toMatchObject({ versionId: v1?.id });
+      expect(h.sync.history(AGENT).map((e) => e.id)).toEqual([v1?.id]);
+    });
+
+    it("a live install held in decode never overwrites a newer head the same scan installed meanwhile", async () => {
+      const h = harness();
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      let open = () => {};
+      h.relay.hold(new Promise<void>((r) => (open = r)));
+      h.route("live");
+      await flush();
+      // During the scan: V1 arrives live and is held in decode; the scan
+      // then returns the newer V2 and installs it.
+      const v1 = version("v1", T0 + 1);
+      const v2 = version("v2", T0 + 2);
+      const release = holdDecode(h, v1.id);
+      h.relay.events.push(v1, v2);
+      h.push(v1);
+      await flush();
+      h.relay.hold(undefined);
+      open();
+      await flush();
+      expect(h.resolve()).toMatchObject({ versionId: v2.id });
+      release();
+      await flush();
+      expect(h.resolve()).toMatchObject({ versionId: v2.id });
+    });
+
+    it("a retired scan held in its deletion read neither keeps its versions in, nor clears admission for, the next scan", async () => {
+      const h = harness();
+      const old = version("old", T0 + 1);
+      h.relay.events.push(old);
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      const gates = holdDeletions(h);
+      h.route("live");
+      await flush();
+      // The first scan returned OLD and waits; OLD then vanishes, NEW arrives.
+      h.relay.events.splice(h.relay.events.indexOf(old), 1);
+      const fresh = version("new", T0 + 2);
+      h.relay.events.push(fresh);
+      h.route("pending");
+      h.route("live");
+      await flush();
+      expect(gates).toHaveLength(2);
+      gates[0]?.();
+      await flush();
+      expect(h.admits(fresh.id), "the next scan's admission").toBe(true);
+      gates[1]?.();
+      await flush();
+      expect(h.sync.history(AGENT).map((e) => e.id)).toEqual([fresh.id]);
+      expect(h.resolve()).toMatchObject({ versionId: fresh.id });
+    });
+
+    it("Delete Agent discards a live install already held in decode", async () => {
+      const h = harness();
+      await live(h);
+      const v1 = version("v1", T0 + 1);
+      const release = holdDecode(h, v1.id);
+      h.relay.events.push(v1);
+      h.push(v1);
+      await flush();
+      await h.sync.deleteAgent(AGENT);
+      expect(h.store.entry(key)).toBeUndefined();
+      release();
+      await flush();
+      expect(h.store.entry(key)).toBeUndefined();
+    });
+
+    it("Delete Agent while migration installs its confirmation leaves nothing to strip", async () => {
+      const h = harness();
+      await live(h);
+      // Resuming after a crash between publish and strip: the event is stored.
+      const event = version("plugin", T0 + 1);
+      h.relay.events.push(event);
+      h.store.write(key, {
+        head: { unknown: true },
+        migration: {
+          state: "staged",
+          text: "plugin",
+          sourceRevision: "r1",
+          eventId: event.id,
+        },
+      });
+      const release = holdDecode(h, event.id);
+      const strip = vi.fn(async () => {});
+      const run = h.sync.migrate(AGENT, strip);
+      await vi.waitFor(() => expect(h.decode).toHaveBeenCalled());
+      await h.sync.deleteAgent(AGENT);
+      release();
+      await run;
+      expect(strip).not.toHaveBeenCalled();
+      expect(h.store.entry(key)).toBeUndefined();
+    });
+
+    it("a local edit made while migration publishes stays a draft, not overwritten by its snapshot", async () => {
+      const h = harness();
+      await live(h);
+      h.store.write(key, {
+        head: { unknown: true },
+        migration: { state: "staged", text: "A", sourceRevision: "r1" },
+      });
+      h.box.answer = "hold";
+      const run = h.sync.migrate(AGENT, async () => {});
+      await vi.waitFor(() => expect(h.box.sends).toHaveLength(1));
+      const entry = h.store.entry(key);
+      if (entry?.migration.state !== "staged") throw new Error("not staged");
+      h.store.write(key, {
+        ...entry,
+        migration: { ...entry.migration, text: "B" },
+      });
+      h.box.answer = "accept";
+      h.box.deliver(h.box.sends[0] as RelayEvent);
+      await run;
+      expect(h.store.entry(key)).toMatchObject({
+        migration: { state: "done" },
+        draft: "B",
+      });
+      expect(h.resolve()).toMatchObject({ text: "A" });
+    });
+
+    it("a relay that refuses kind 44300 keeps the local editor; an auth refusal does not", async () => {
+      for (const [answer, local] of [
+        ["blocked: unknown event kind", true],
+        ["restricted: not a member", false],
+      ] as const) {
+        const h = harness();
+        await live(h);
+        h.store.write(key, {
+          head: { unknown: true },
+          migration: { state: "staged", text: "A", sourceRevision: "r1" },
+        });
+        h.box.answer = answer;
+        await expect(h.sync.migrate(AGENT, async () => {})).rejects.toThrow();
+        expect(h.store.scanned(OWNER, COMMUNITY)).toBeDefined();
+        expect(localOnly(h.store, OWNER, COMMUNITY, AGENT), answer).toBe(local);
+      }
+    });
   });
 
   describe("T11 save recovery", () => {

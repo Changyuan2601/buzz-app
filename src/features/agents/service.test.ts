@@ -23,6 +23,7 @@ import { memoryStorage } from "./test-fakes";
 import {
   INSTRUCTIONS_STORE_KEY,
   InstructionStore,
+  RESEND_WINDOW_SECONDS,
   recoveryKey,
   subjectKey,
 } from "./instructions";
@@ -3360,6 +3361,18 @@ async function withInstructions(
   return { ...harness, outbox, stored, publish, version, capture, sign };
 }
 
+/** Moves the clock past the resend window of the pending save's signed event,
+ * measured from that event's own `created_at`, not from when the test began. */
+function pastWindow(h: Awaited<ReturnType<typeof withInstructions>>) {
+  const pending = h.outbox
+    .snapshot()
+    .find((item) => item.event.kind === INSTRUCTIONS_KIND && item.signed);
+  if (!pending?.signed) throw new Error("no signed save pending");
+  vi.spyOn(Date, "now").mockReturnValue(
+    (pending.signed.created_at + RESEND_WINDOW_SECONDS + 1) * 1000,
+  );
+}
+
 /** Rebinds the community so it starts its instructions sync on the patched session. */
 async function rebind(h: Awaited<ReturnType<typeof withInstructions>>) {
   h.connect(false);
@@ -3422,8 +3435,7 @@ it("a refused save keeps its text and only an explicit save replaces it past the
 
 it("an unconfirmed save waits out the resend window before Save again, keeping its text", async () => {
   const h = await withInstructions();
-  const start = Date.now();
-  const v1 = h.version("one", Math.floor(start / 1000) - 10);
+  const v1 = h.version("one", Math.floor(Date.now() / 1000) - 10);
   await rebind(h);
   h.publish.outcome = "drop";
   await h.service.saveInstructions(bot, "two", v1.id);
@@ -3438,7 +3450,7 @@ it("an unconfirmed save waits out the resend window before Save again, keeping i
   );
   // Inside the window only the same signed bytes may be re-sent.
   await expect(h.service.saveInstructions(bot, "two", v1.id)).rejects.toThrow();
-  vi.spyOn(Date, "now").mockReturnValue(start + 901_000);
+  pastWindow(h);
   expect(h.service.instructions(bot)).toMatchObject({
     save: { state: "uncertain", expired: true },
     submitted: "two",
@@ -3452,13 +3464,12 @@ it("an unconfirmed save waits out the resend window before Save again, keeping i
 
 it("Save again after a save that did reach the relay meets the conflict check", async () => {
   const h = await withInstructions();
-  const start = Date.now();
-  const v1 = h.version("one", Math.floor(start / 1000) - 10);
+  const v1 = h.version("one", Math.floor(Date.now() / 1000) - 10);
   await rebind(h);
   h.publish.outcome = "lose";
   await h.service.saveInstructions(bot, "two", v1.id);
   await h.sign();
-  vi.spyOn(Date, "now").mockReturnValue(start + 901_000);
+  pastWindow(h);
   await vi.waitFor(
     () =>
       expect(h.service.instructions(bot)?.save).toMatchObject({
@@ -3470,6 +3481,116 @@ it("Save again after a save that did reach the relay meets the conflict check", 
     "Changed on another device",
   );
   expect(h.service.instructions(bot)?.submitted).toBe("two");
+});
+
+/** Drops the first save past the window, then Save again stores "three". */
+async function replacedOriginal(storage = memoryStorage()) {
+  const h = await withInstructions(storage);
+  const v1 = h.version("one", Math.floor(Date.now() / 1000) - 10);
+  await rebind(h);
+  h.publish.outcome = "drop";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  await vi.waitFor(
+    () => expect(h.service.instructions(bot)?.save?.state).toBe("uncertain"),
+    SLOW,
+  );
+  const original = h.outbox
+    .snapshot()
+    .find((item) => item.event.kind === INSTRUCTIONS_KIND)?.signed;
+  if (!original) throw new Error("no signed original");
+  pastWindow(h);
+  h.publish.outcome = "accept";
+  await h.service.saveInstructions(bot, "three", v1.id);
+  await h.sign();
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("three"), SLOW);
+  return { h, storage, original: original as RelayEvent };
+}
+const botKey = subjectKey(viewer, "https://relay.example.test", bot);
+
+it("Save again keeps the replaced uncertain original durably, and a late arrival settles it with nothing re-sent", async () => {
+  const { h, storage, original } = await replacedOriginal();
+  // Durable across a restart, outside the outbox's resend slot.
+  expect(new InstructionStore(storage).entry(botKey)?.originals).toEqual([
+    original.id,
+  ]);
+  expect(h.outbox.snapshot().some((i) => i.event.id === original.id)).toBe(
+    false,
+  );
+  h.stored.push(original);
+  h.connect(false);
+  h.connect(true);
+  await vi.waitFor(
+    () =>
+      expect(
+        new InstructionStore(storage).entry(botKey)?.originals,
+      ).toBeUndefined(),
+    SLOW,
+  );
+  expect(h.capture()?.text).toBe("three");
+  expect(
+    h.stored.filter((e) => e.id === original.id),
+    "the original is never re-sent",
+  ).toHaveLength(1);
+});
+
+it("Delete Agent after Save again moves the replaced original onto the cleanup list", async () => {
+  const { h, storage, original } = await replacedOriginal();
+  const removing = h.service.remove(bot);
+  let done = false;
+  void removing.finally(() => (done = true));
+  while (!done) {
+    await settle();
+    await h.sign().catch(() => {});
+  }
+  await removing;
+  expect(
+    new InstructionStore(storage).cleanupIds(
+      viewer,
+      "https://relay.example.test",
+    ),
+  ).toContain(original.id);
+});
+
+it("an after-window exact-id read that finds a save the scan missed installs it before retiring", async () => {
+  const h = await withInstructions();
+  const v1 = h.version("one", Math.floor(Date.now() / 1000) - 10);
+  await rebind(h);
+  h.publish.outcome = "lose";
+  await h.service.saveInstructions(bot, "two", v1.id);
+  await h.sign();
+  const saved = h.outbox
+    .snapshot()
+    .find((item) => item.event.kind === INSTRUCTIONS_KIND)?.event.id;
+  // The full scan's version pages miss it; it is there by the exact-id read.
+  const read = h.session.read;
+  let scanned = false;
+  Object.assign(h.session, {
+    read: vi.fn(async (filters: ReadFilter[], options: unknown) => {
+      const rows = await read(filters, options as never);
+      const [f] = filters;
+      if (f?.kinds?.includes(5)) scanned = true;
+      if (scanned || !f?.kinds?.includes(INSTRUCTIONS_KIND) || f.ids)
+        return rows;
+      return rows.filter((e) => e.id !== saved);
+    }),
+  });
+  // What the head is at the moment the outbox entry goes.
+  let atRetire: string | undefined;
+  h.outbox.subscribe(() => {
+    if (
+      atRetire === undefined &&
+      !h.outbox.snapshot().some((i) => i.event.id === saved)
+    )
+      atRetire = h.capture()?.text ?? "";
+  });
+  pastWindow(h);
+  h.connect(false);
+  h.connect(true);
+  await vi.waitFor(() => expect(atRetire).toBeDefined(), SLOW);
+  expect(atRetire).toBe("two");
+  expect(h.service.instructions(bot)?.submitted).toBeUndefined();
+  expect(h.service.instructions(bot)?.save?.state).not.toBe("saving");
 });
 
 it("text staged at create, with no plugin config to strip, publishes as the first version", async () => {
