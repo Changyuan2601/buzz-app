@@ -81,6 +81,12 @@ export function createServices() {
     undefined,
     localActivity,
   );
+  if (identity)
+    ctx.effect(() =>
+      identity.subscribe(() => {
+        if (identity.snapshot().status === "missing") agents.signedOut();
+      }),
+    );
   ctx.effect(() =>
     localAgents.bind({
       snapshot: agents.local,

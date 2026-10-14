@@ -2345,6 +2345,11 @@ export class AgentsService extends Service implements Agents {
     }
   }
 
+  /** The app started with no signed-in owner: no owner's instructions stay. */
+  signedOut() {
+    this.instructionStore.keepOwner();
+  }
+
   /** Connects the selected community, where agents are made, and each one
    * the viewer has an agent in, deleted ones included so their cleanup can
    * finish; lets go of the rest. */

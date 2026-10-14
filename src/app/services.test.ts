@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
+import { InstructionStore, subjectKey } from "../features/agents/instructions";
 import { createServices, type AppServices } from "./services";
 
 const plugin = vi.hoisted(() => ({
@@ -439,4 +440,29 @@ it("keeps pinned macOS desktop development on the broker identity", async () => 
       .mocked(invoke)
       .mock.calls.some(([command]) => command.startsWith("identity_")),
   ).toBe(false);
+});
+
+it("a native start with nobody signed in drops every owner's instruction entries but keeps had-version and cleanup keys", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  vi.mocked(isTauri).mockReturnValue(true);
+  const gone = subjectKey(viewer, "https://relay.example.test", "c".repeat(64));
+  const before = new InstructionStore(localStorage);
+  before.stage(gone, "old text", "r1");
+  before.markHadVersion(gone);
+  before.completeScan(viewer, "https://relay.example.test", 1);
+  expect(before.scanned(viewer, "https://relay.example.test")).toBe(1);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return null;
+    if (command === "deep_link_take") return [];
+    if (command === "deep_link_watch") return null;
+    throw new Error("Fixture native capability unavailable");
+  });
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.identity?.snapshot()).toMatchObject({ status: "missing" });
+  const after = new InstructionStore(localStorage);
+  expect(after.entry(gone)).toBeUndefined();
+  expect(after.hadVersion(gone)).toBe(true);
+  expect(after.scanned(viewer, "https://relay.example.test")).toBeUndefined();
 });
