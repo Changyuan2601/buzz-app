@@ -3321,35 +3321,35 @@ it("catches a kind 9 watch up on what it missed, oldest first in batches, and no
     await settle();
     // Missed while the socket was down.
     vi.setSystemTime((start + 200) * 1000);
-    for (let i = 0; i < 20; i++)
+    for (let i = 0; i < 70; i++)
       first.history.push(posted(`m${i}`, start + 100 + i));
     first.recover();
     await vi.waitFor(() => expect(first.run).toHaveBeenCalledTimes(2));
     await settle();
     // The whole window is read first, then heard strictly oldest first, a
-    // batch of 16 to a turn.
+    // batch of 64 to a turn.
     expect(turns(first.run)).toEqual([
-      "catch-up watch/chat 16",
-      "catch-up watch/chat 4",
+      "catch-up watch/chat 64",
+      "catch-up watch/chat 6",
     ]);
     expect(heard(first.run)).toEqual(
-      Array.from({ length: 20 }, (_, i) => `m${i}`),
+      Array.from({ length: 70 }, (_, i) => `m${i}`),
     );
-    // Pages newest first, down to an empty one that finishes the window.
-    expect(catchUpReads(first.session)).toEqual([
-      {
-        kinds: [9],
-        "#h": [channel],
-        since: start + 1,
-        until: start + 200,
-        limit: 16,
-      },
-      expect.objectContaining({
-        until: start + 104,
-        before_id: expect.any(String),
-      }),
-      expect.objectContaining({ until: start + 100 }),
-    ]);
+    // Pages of 16 newest first, down to an empty one that ends the window.
+    const reads = catchUpReads(first.session);
+    expect(reads).toHaveLength(6);
+    expect(reads[0]).toEqual({
+      kinds: [9],
+      "#h": [channel],
+      since: start + 1,
+      until: start + 200,
+      limit: 16,
+    });
+    expect(reads[1]).toMatchObject({
+      until: start + 154,
+      before_id: expect.any(String),
+    });
+    expect(reads[5]).toMatchObject({ until: start + 100 });
     first.connect(false);
     // Started again a minute later, it reads only what came after.
     vi.setSystemTime((start + 260) * 1000);
@@ -3365,6 +3365,42 @@ it("catches a kind 9 watch up on what it missed, oldest first in batches, and no
       since: start + 201,
       until: start + 260,
     });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("bounds a catch-up turn by its messages' size, and sends a larger one alone", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const { service, run, history, recover } = await setup({
+      identities: [echo],
+    });
+    const now = nowSeconds();
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await settle();
+    vi.setSystemTime((now + 200) * 1000);
+    history.push(posted("x".repeat(100_000), now + 100));
+    for (let i = 0; i < 3; i++)
+      history.push(posted(`${i}`.repeat(30_000), now + 101 + i));
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    await settle();
+    // 64 Ki characters a turn: two of 30,000 fit, a third does not.
+    expect(turns(run)).toEqual([
+      "catch-up watch/chat 1",
+      "catch-up watch/chat 2",
+      "catch-up watch/chat 1",
+    ]);
+    expect(heard(run).map((content) => content[0])).toEqual([
+      "x",
+      "0",
+      "1",
+      "2",
+    ]);
   } finally {
     vi.useRealTimers();
   }
@@ -3395,7 +3431,7 @@ it("takes the next page's cursor from the relay's events, not a local one older 
       return [...events, { ...posted("unsent", now + 50) }];
     });
     recover();
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await settle();
     expect(heard(run)).toEqual(Array.from({ length: 20 }, (_, i) => `m${i}`));
   } finally {
@@ -3625,7 +3661,8 @@ it("waits for a confirmed roster before catching up, saving no progress past wha
     confirm("saved", [viewer, bot]);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(heard(run)).toEqual(missed);
-    expect(run).toHaveBeenCalledTimes(19);
+    // 64 to a turn.
+    expect(run).toHaveBeenCalledTimes(5);
     expect(catchUpReads(session)).toHaveLength(reads);
   } finally {
     vi.useRealTimers();

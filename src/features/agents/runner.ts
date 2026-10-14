@@ -91,9 +91,12 @@ const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 /** How long catch-up waits for room in a full queue before it looks again. */
 const CATCH_UP_WAIT_MS = 1_000;
-/** Missed events one catch-up turn reads at most, and their most bytes. */
-const CATCH_UP_BATCH = 16;
-const CATCH_UP_BATCH_BYTES = 256 * 1024;
+/** Missed events one catch-up turn holds at most, and their most JSON
+ * characters. The size is the bound that matters: 64 Ki characters is about
+ * 16k–32k tokens of chat, well inside a model's context with the system
+ * prompt. A lone larger event still goes; its turn shortens its text. */
+const CATCH_UP_BATCH = 64;
+const CATCH_UP_BATCH_CHARS = 64 * 1024;
 /** Live events each watch keeps while it catches up, as Janet stages them. */
 const WAITING_LIMIT = 512;
 const WAITING_BYTES = 4 * 1024 * 1024;
@@ -898,7 +901,7 @@ export class AgentRunners {
       const cap = (count: number, limit: number) =>
         taken ? count : Math.min(count, limit);
       if (
-        (taken && bytes + size > CATCH_UP_BATCH_BYTES) ||
+        (taken && bytes + size > CATCH_UP_BATCH_CHARS) ||
         !this.fits(
           runner,
           cap(nextMentions.length, QUEUE_LIMIT),
