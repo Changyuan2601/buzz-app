@@ -461,29 +461,26 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await page
       .getByRole("button", { name: "Switch to Secondary", exact: true })
       .click();
-    await expect(
-      page.getByText(/secondary alpha message/).first(),
-    ).toBeVisible();
-    await expectCueHidden(page, "below");
-    await openChannelDetails(page);
-    await page.getByText("Diagnostics", { exact: true }).press("Enter");
-    await page
-      .getByRole("button", { name: "Mark unread on this device", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: "Close Channel settings tab", exact: true })
-      .click();
+    // The app abandons a preferences read after 10 seconds. Keep only the
+    // checks that need the held read between the switch and its release.
     await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
     const panel = page.getByRole("complementary", { name: "Channel sidebar" });
     await expect(panel).toHaveAttribute("aria-busy", "true");
     // A new session reveals its roster after the bounded startup wait even if
-    // preferences are still blocked. Scrolling the empty loading view is a no-op.
+    // preferences are still blocked.
     await expect(row(page, "alpha")).toBeVisible();
     await expect(
       page.getByText("Updating sidebar details…", { exact: true }),
     ).toHaveCount(0);
+    await expectCueHidden(page, "below");
+    // Opening the channel can move the list to its row, so scroll after it.
+    await expect(
+      page.getByText(/secondary alpha message/).first(),
+    ).toBeVisible();
     await scroll(page, 1800);
-    await expect(cue(page, "above")).toBeVisible();
+    await expect
+      .poll(() => list(page).evaluate((element) => element.scrollTop))
+      .toBe(1800);
     // Completing delayed preferences must not replace the user's newer viewport.
     const refreshed = page.waitForResponse(
       (response) =>
@@ -496,6 +493,15 @@ test("session changes discard the previous sidebar targets and manual unread sti
     expect(await list(page).evaluate((element) => element.scrollTop)).toBe(
       1800,
     );
+    await openChannelDetails(page);
+    await page.getByText("Diagnostics", { exact: true }).press("Enter");
+    await page
+      .getByRole("button", { name: "Mark unread on this device", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
+      .click();
+    await expect(cue(page, "above")).toBeVisible();
     await cue(page, "above").click();
     await expect.poll(() => inView(page, "alpha")).toBe(true);
     await expect(
