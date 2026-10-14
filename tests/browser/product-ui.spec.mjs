@@ -1,26 +1,7 @@
 import { npubEncode } from "nostr-tools/nip19";
-import { test, expect } from "@playwright/test";
-import { createServer } from "./vite-server.mjs";
-import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
+import { test, expect } from "./source-fixture.mjs";
 
-let server;
-let url;
-test.beforeAll(async () => {
-  server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
-  url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/product-ui.html`;
-});
-test.afterAll(async () => {
-  await server?.close();
-});
+const url = "/tests/fixtures/product-ui.html";
 
 // Browser-only: actual text/control geometry, focus and source selection.
 test("production composer catalogue preserves source and controls at responsive widths", async ({

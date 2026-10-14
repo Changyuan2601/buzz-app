@@ -1,26 +1,13 @@
-import { test, expect } from "@playwright/test";
-import { createServer } from "./vite-server.mjs";
-import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
+import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
 // CSS starting styles, direction, modality and reduced motion need real engines.
 test("terminal drawer shares panel motion without delaying close or losing the session", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envDir: false,
-    plugins: [react()],
-    server: { host: "127.0.0.1", port: 0 },
-  });
   const errors = watchPageErrors(page);
   try {
-    await server.listen();
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html?motion`,
-    );
+    await page.goto("/tests/fixtures/terminal-panel.html?motion");
     // Hold entry at its DOM insertion boundary, independent of renderer speed.
     await page.evaluate(() => {
       new MutationObserver(() => {
@@ -116,6 +103,5 @@ test("terminal drawer shares panel motion without delaying close or losing the s
       })
       .catch(() => {});
     await page.close();
-    await server.close();
   }
 });

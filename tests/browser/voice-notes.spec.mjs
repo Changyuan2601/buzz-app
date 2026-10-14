@@ -1,23 +1,5 @@
 import { watchPageErrors } from "./page-errors.mjs";
-import { test, expect } from "@playwright/test";
-import { createServer } from "./vite-server.mjs";
-import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
-let server, origin;
-test.beforeAll(async () => {
-  server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envDir: false,
-    plugins: [react()],
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
-  origin = server.resolvedUrls.local[0];
-});
-test.afterAll(async () => {
-  await server?.close();
-});
+import { test, expect } from "./source-fixture.mjs";
 test.afterEach(async ({ page }) => {
   // Media routes read fixture blobs from the page; finish them before it closes.
   await page.unrouteAll({ behavior: "wait" });
@@ -37,7 +19,7 @@ test.beforeEach(async ({ page }) => {
       body: Buffer.from(bytes),
     });
   });
-  await page.goto(`${origin}tests/fixtures/voice-notes.html`);
+  await page.goto(`/tests/fixtures/voice-notes.html`);
   await page.evaluate(() => {
     const mic = {
       mode: "allow",
