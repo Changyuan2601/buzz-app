@@ -20,7 +20,12 @@ import {
   teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
-import { INSTRUCTIONS_STORE_KEY, recoveryKey } from "./instructions";
+import {
+  INSTRUCTIONS_STORE_KEY,
+  InstructionStore,
+  recoveryKey,
+  subjectKey,
+} from "./instructions";
 import { INSTRUCTIONS_KIND } from "./instructions-envelope";
 import {
   createOutbox,
@@ -556,7 +561,6 @@ it("imports a shared agent as a new identity with its name and picture, adopting
   expect(agent).toMatchObject({
     name: "Baymax",
     picture: "https://example.test/baymax.png",
-    config: { reply: "Open drafts only." },
   });
   // Without instructions it starts from the type's defaults.
   const plain = await service.port({
@@ -568,6 +572,47 @@ it("imports a shared agent as a new identity with its name and picture, adopting
   await expect(
     service.port({ source: "shared", type: "example/echo", name: "  " }),
   ).rejects.toThrow("Name the agent");
+});
+
+it("a shared import keeps its text in the intent, so Retry after a crash carries it, and an empty value stays empty", async () => {
+  const storage = memoryStorage();
+  const identities: AgentIdentity[] = [];
+  const first = await setup({ storage, identities });
+  const create = first.native.create.getMockImplementation();
+  first.native.create.mockImplementationOnce(async (...args) => {
+    await create?.(...args);
+    throw new Error("crashed");
+  });
+  await expect(
+    first.service.port({
+      source: "shared",
+      type: "example/echo",
+      name: "Baymax",
+      instructions: "Open drafts only.",
+    }),
+  ).rejects.toThrow("crashed");
+  const pubkey = identities[0]?.pubkey ?? "";
+  expect(stagedText(storage, pubkey)).toBeUndefined();
+  const { service } = await setup({ storage, identities });
+  await service.finishImport(pubkey);
+  expect(stagedText(storage, pubkey)).toBe("Open drafts only.");
+
+  // The fake gives every create the same key, so each case starts afresh.
+  const quiet = await setup();
+  const empty = await quiet.service.port({
+    source: "shared",
+    type: "example/echo",
+    name: "Quiet",
+    instructions: "",
+  });
+  expect(stagedText(quiet.storage, empty.pubkey)).toBe("");
+  const plain = await setup();
+  const none = await plain.service.port({
+    source: "shared",
+    type: "example/echo",
+    name: "Plain",
+  });
+  expect(stagedText(plain.storage, none.pubkey)).toBeUndefined();
 });
 
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
@@ -3206,7 +3251,10 @@ it("T25 a provisional row whose intent is missing or mismatched offers Delete on
 
 /** Binds `bot`'s community to a real outbox and an in-memory relay holding
  * kind 44300 versions, with the signer and publish under the test's control. */
-async function withInstructions() {
+// Real outbox timers under a loaded CI runner need more than the 1 s default.
+const SLOW = { timeout: 5_000 } as const;
+
+async function withInstructions(storage = memoryStorage()) {
   const identities: AgentIdentity[] = [
     {
       pubkey: bot,
@@ -3217,7 +3265,7 @@ async function withInstructions() {
       deleted: false,
     },
   ];
-  const harness = await setup({ identities });
+  const harness = await setup({ storage, identities });
   const stored: RelayEvent[] = [];
   const signing: (() => void)[] = [];
   const publish = {
@@ -3302,7 +3350,7 @@ async function withInstructions() {
   });
   const capture = () => harness.service.find(bot)?.liveInstructions?.capture();
   const sign = async () => {
-    await vi.waitFor(() => expect(signing.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(signing.length).toBeGreaterThan(0), SLOW);
     for (const release of signing.splice(0)) release();
     await settle();
   };
@@ -3313,7 +3361,7 @@ async function withInstructions() {
 async function rebind(h: Awaited<ReturnType<typeof withInstructions>>) {
   h.connect(false);
   h.connect(true);
-  await vi.waitFor(() => expect(h.capture()?.source).toBe("version"));
+  await vi.waitFor(() => expect(h.capture()?.source).toBe("version"), SLOW);
 }
 
 it("a local save restarts sessions only once the relay confirms it, and onto that version", async () => {
@@ -3327,7 +3375,7 @@ it("a local save restarts sessions only once the relay confirms it, and onto tha
   // A turn between enqueue and confirmation: still V1 under the same generation.
   expect(h.capture()).toEqual(before);
   await h.sign();
-  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"));
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"), SLOW);
   const after = h.capture();
   expect(after?.versionId).not.toBe(v1.id);
   expect(after?.localRestart).toBeGreaterThan(before?.localRestart ?? 0);
@@ -3342,8 +3390,9 @@ it("a refused save keeps its text and only an explicit save replaces it past the
   h.publish.outcome = "refuse";
   await h.service.saveInstructions(bot, "two", v1.id);
   await h.sign();
-  await vi.waitFor(() =>
-    expect(h.service.instructions(bot)?.save?.state).toBe("rejected"),
+  await vi.waitFor(
+    () => expect(h.service.instructions(bot)?.save?.state).toBe("rejected"),
+    SLOW,
   );
   expect(h.service.instructions(bot)?.submitted).toBe("two");
   expect(h.capture()).toMatchObject({ text: "one", localRestart: restart });
@@ -3360,7 +3409,7 @@ it("a refused save keeps its text and only an explicit save replaces it past the
   h.publish.outcome = "accept";
   await h.service.saveInstructions(bot, "two", v1.id);
   await h.sign();
-  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"));
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"), SLOW);
   // Stored, kept as Delete Agent's proof until its echo retires it.
   expect(h.service.instructions(bot)).toMatchObject({
     save: { state: "stored" },
@@ -3376,11 +3425,13 @@ it("an unconfirmed save waits out the resend window before Save again, keeping i
   h.publish.outcome = "drop";
   await h.service.saveInstructions(bot, "two", v1.id);
   await h.sign();
-  await vi.waitFor(() =>
-    expect(h.service.instructions(bot)?.save).toMatchObject({
-      state: "uncertain",
-      expired: false,
-    }),
+  await vi.waitFor(
+    () =>
+      expect(h.service.instructions(bot)?.save).toMatchObject({
+        state: "uncertain",
+        expired: false,
+      }),
+    SLOW,
   );
   // Inside the window only the same signed bytes may be re-sent.
   await expect(h.service.saveInstructions(bot, "two", v1.id)).rejects.toThrow();
@@ -3392,7 +3443,7 @@ it("an unconfirmed save waits out the resend window before Save again, keeping i
   h.publish.outcome = "accept";
   await h.service.saveInstructions(bot, "two", v1.id);
   await h.sign();
-  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"));
+  await vi.waitFor(() => expect(h.capture()?.text).toBe("two"), SLOW);
   expect(h.stored.filter((e) => e.kind === INSTRUCTIONS_KIND)).toHaveLength(2);
 });
 
@@ -3405,11 +3456,37 @@ it("Save again after a save that did reach the relay meets the conflict check", 
   await h.service.saveInstructions(bot, "two", v1.id);
   await h.sign();
   vi.spyOn(Date, "now").mockReturnValue(start + 901_000);
-  await vi.waitFor(() =>
-    expect(h.service.instructions(bot)?.save).toMatchObject({ expired: true }),
+  await vi.waitFor(
+    () =>
+      expect(h.service.instructions(bot)?.save).toMatchObject({
+        expired: true,
+      }),
+    SLOW,
   );
   await expect(h.service.saveInstructions(bot, "two", v1.id)).rejects.toThrow(
     "Changed on another device",
   );
   expect(h.service.instructions(bot)?.submitted).toBe("two");
+});
+
+it("text staged at create, with no plugin config to strip, publishes as the first version", async () => {
+  const storage = memoryStorage();
+  new InstructionStore(storage).stage(
+    subjectKey(viewer, "https://relay.example.test", bot),
+    "Open drafts only.",
+    "intent",
+  );
+  const h = await withInstructions(storage);
+  h.connect(false);
+  h.connect(true);
+  await h.sign();
+  await vi.waitFor(
+    () =>
+      expect(h.capture()).toMatchObject({
+        source: "version",
+        text: "Open drafts only.",
+      }),
+    SLOW,
+  );
+  expect(h.stored.filter((e) => e.kind === INSTRUCTIONS_KIND)).toHaveLength(1);
 });

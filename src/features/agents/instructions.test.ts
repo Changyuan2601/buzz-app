@@ -624,6 +624,66 @@ describe("instructions sync", () => {
       expect(strip).toHaveBeenCalledOnce();
     });
 
+    /** Holds only the exact-id read that confirms a migration. */
+    const holdConfirm = (h: ReturnType<typeof harness>) => {
+      let release = () => {};
+      const gate = new Promise<void>((r) => (release = r));
+      const read = h.relay.read.bind(h.relay);
+      h.relay.read = async (filters) => {
+        if (filters[0]?.ids) await gate;
+        return read(filters);
+      };
+      return () => release();
+    };
+
+    it("a confirmation read held across Delete Agent never recreates the entry", async () => {
+      const h = harness();
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      h.route("live");
+      await flush();
+      staged(h, "plugin text");
+      const release = holdConfirm(h);
+      const strip = vi.fn(async () => {});
+      const sent = h.sync.migrate(AGENT, strip);
+      await vi.waitFor(() => expect(h.box.sends).toHaveLength(1));
+      await flush();
+      h.sync.identities(ready([], [AGENT]));
+      h.store.forget(subjectKey(OWNER, COMMUNITY, AGENT));
+      release();
+      await sent;
+      expect(strip).not.toHaveBeenCalled();
+      expect(
+        h.store.entry(subjectKey(OWNER, COMMUNITY, AGENT)),
+      ).toBeUndefined();
+      expect(h.store.hadVersion(subjectKey(OWNER, COMMUNITY, AGENT))).toBe(
+        false,
+      );
+    });
+
+    it("a held migration confirmation never replaces a newer remote head", async () => {
+      const h = harness();
+      h.sync.start();
+      h.sync.identities(ready([AGENT]));
+      h.route("live");
+      await flush();
+      staged(h, "plugin text");
+      const release = holdConfirm(h);
+      const run = h.sync.migrate(AGENT, async () => {});
+      await vi.waitFor(() => expect(h.box.sends).toHaveLength(1));
+      const newer = version("from another device", T0 + 100);
+      h.relay.events.push(newer);
+      h.push(newer);
+      release();
+      await run;
+      await flush();
+      expect(h.resolve()).toEqual({
+        source: "version",
+        text: "from another device",
+        versionId: newer.id,
+      });
+    });
+
     it("T13 a refused publish keeps the staged text launchable", async () => {
       const h = harness();
       h.sync.start();

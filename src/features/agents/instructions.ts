@@ -685,7 +685,6 @@ export class InstructionSync {
       s.counter === counter ? counter : s.counter,
       token,
     );
-    if (s.counter === counter || !s.pendingDeletion) s.pendingDeletion = false;
     if (s.versions.size > 0) this.ports.store.markHadVersion(this.key(agent));
   }
 
@@ -1056,15 +1055,15 @@ export class InstructionSync {
       this.ports.signal,
     );
     if (confirmed?.id !== eventId) throw new Error("Migration not confirmed");
-    this.subject(agent).versions.set(confirmed.id, confirmed);
+    // A Delete Agent or a closed binding during the read wins over it.
+    if (!this.alive || !this.eligible(agent)) return;
     store.remember(confirmed.id, { text: entry.migration.text });
-    store.markHadVersion(key);
-    store.write(key, {
-      ...(store.entry(key) ?? entry),
-      head: { event: confirmed },
-      migration: { state: "done", eventId },
-    });
-    await this.settleSaved(eventId);
+    const latest = store.entry(key);
+    if (latest)
+      store.write(key, { ...latest, migration: { state: "done", eventId } });
+    // Installed like any received version, so a newer head or a deletion
+    // that arrived meanwhile still wins.
+    await this.receive([confirmed]);
     await stripUnlessEdited();
   }
 }

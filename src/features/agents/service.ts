@@ -1222,9 +1222,10 @@ export class AgentsService extends Service implements Agents {
       { mode: "create" },
       async (native, destination, owner, intentId) => ({
         agent: await native.create(destination, owner, type, name, intentId),
-        ...(instructions?.trim() ? { carry: { instructions } } : {}),
       }),
-      { picture },
+      // In the intent before the native call, so Retry after a crash still
+      // carries the shared text (§3).
+      { picture, ...(instructions === undefined ? {} : { instructions }) },
     );
   }
 
@@ -1311,8 +1312,9 @@ export class AgentsService extends Service implements Agents {
       console.warn(`Agent ${identity.name} settings were not saved`, error);
     }
     // Staged before the confirm, so a confirmed agent always launches with it.
-    const text = (made.instructions ?? carry?.instructions)?.trim();
-    if (text)
+    // Carried as given: "" is an explicit empty value, distinct from none.
+    const text = made.instructions ?? carry?.instructions;
+    if (text !== undefined)
       this.instructionStore.stage(
         subjectKey(
           identity.owner,
@@ -2209,26 +2211,29 @@ export class AgentsService extends Service implements Agents {
     for (const identity of this.identities) {
       if (identity.deleted || this.bindingOf(identity) !== binding) continue;
       const kind = kinds.get(identity.type);
+      const key = subjectKey(
+        binding.viewer,
+        relayOrigin(binding.origin),
+        identity.pubkey,
+      );
       const text = kind?.legacyInstructions?.(this.recordOf(identity).config);
       const strip = kind?.withoutInstructions;
-      if (text === undefined || !strip) continue;
-      this.instructionStore.stage(
-        subjectKey(
-          binding.viewer,
-          relayOrigin(binding.origin),
-          identity.pubkey,
-        ),
-        text,
-        hash(text),
-      );
+      const legacy = text !== undefined && strip;
+      if (legacy) this.instructionStore.stage(key, text, hash(text));
+      // Text staged at create or import has no plugin config to strip.
+      else if (this.instructionStore.entry(key)?.migration.state !== "staged")
+        continue;
       void sync
         .migrate(
           identity.pubkey,
           async () => {
+            if (!legacy) return;
             const record = this.recordOf(identity);
             this.write({ ...record, config: strip(record.config) });
           },
-          () => kind.legacyInstructions?.(this.recordOf(identity).config),
+          legacy
+            ? () => kind.legacyInstructions?.(this.recordOf(identity).config)
+            : undefined,
         )
         .catch((error: unknown) =>
           console.warn(`Agent ${identity.name} instructions not moved`, error),
