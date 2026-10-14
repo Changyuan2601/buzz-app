@@ -113,9 +113,9 @@ describe("page mark precedence", () => {
       { label: "Inbox", icon: BellIcon },
     ],
     [
-      "bundled channels stays Messages and ignores a declared icon",
+      "bundled channels stays Buzz and ignores a declared icon",
       page("buzz.channels/channels", "Channels", owl),
-      { label: "Messages", icon: ChatsCircleIcon },
+      { label: "Buzz", icon: ChatsCircleIcon },
     ],
     [
       "an external page with local id channels keeps its own title and image",

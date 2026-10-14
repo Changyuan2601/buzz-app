@@ -281,7 +281,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   ).not.toBe("none");
   near((await box(mainPanel)).x - sidebar.x - sidebar.width, 4);
   const sidebarHandle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
   });
   const gripTarget = await box(sidebarHandle);
   near(gripTarget.width, 16);
@@ -496,9 +496,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   await page.setViewportSize({ width: 800, height: 600 });
   await link(page, app, "https://github.com/block/buzz/pull/7");
 

@@ -82,12 +82,15 @@ export function createChannelKit({
     if (pending && after) await pending;
     if (pending) return pending;
     const generation = epoch;
-    update({
-      ...state,
-      status: "loading",
-      error: undefined,
-      transient: undefined,
-    });
+    // A background refresh keeps confirmed entries usable: Me placement and
+    // groups must not flicker to "loading" around every save.
+    if (state.status !== "ready")
+      update({
+        ...state,
+        status: "loading",
+        error: undefined,
+        transient: undefined,
+      });
     pending = (async () => {
       try {
         const events = await fresh([

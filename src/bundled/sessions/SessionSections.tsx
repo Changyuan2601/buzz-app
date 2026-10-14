@@ -1,6 +1,7 @@
 import { SessionShare } from "./SessionShare";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { RenameSession } from "../../features/sessions/RenameSession";
+import { NewProject } from "../../features/sessions/NewProject";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
 import {
@@ -35,10 +36,12 @@ import {
   DotsThreeIcon,
   FolderSimpleIcon,
   PlusIcon,
+  FolderPlusIcon,
   PencilSimpleIcon,
   CopyIcon,
   GearIcon,
 } from "../../shared/design-system/icons";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { SessionListItem } from "./SessionsWorkspace";
 import styles from "./SessionsWorkspace.module.css";
 import channelStyles from "../channels/Channels.module.css";
@@ -53,7 +56,10 @@ export function SessionSections({
   personal = false,
   onShared,
   visit,
+  header,
 }: {
+  /** Shown above the new-item actions, such as the sidebar's brand mark. */
+  header?: ReactNode;
   personal?: boolean;
   onShared?: (id: string) => void;
   visit?: AbortSignal;
@@ -118,7 +124,7 @@ export function SessionSections({
   const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
   const [renaming, setRenaming] = useState<SessionListItem>();
   const [deleting, setDeleting] = useState<string>();
-  const [deleteError, setDeleteError] = useState("");
+  const [sectionError, setSectionError] = useState("");
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -129,6 +135,7 @@ export function SessionSections({
     setRowFocus(undefined);
   }, [rowFocus]);
   const [creatingFor, setCreatingFor] = useState<SessionListItem>();
+  const [creatingProject, setCreatingProject] = useState(false);
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
     name: string;
@@ -174,18 +181,36 @@ export function SessionSections({
     ) ?? [];
   return (
     <>
-      {onNew && (
-        <div className={`${styles.section} ${styles.sectionHeader}`}>
-          <button
-            type="button"
-            className={`${styles.sectionHeading} ${styles.newSessionHeading}`}
-            onClick={() => onNew(undefined)}
-          >
-            <span className={styles.sectionIcon} aria-hidden="true">
-              <PlusIcon size={15} strokeWidth={2.5} />
-            </span>
-            <span>{personal ? "New chat" : "New session"}</span>
-          </button>
+      {(header || onNew) && (
+        <div className={channelStyles.sidebarTop}>
+          {header}
+          {onNew && (
+            <div className={channelStyles.destinations}>
+              <NavigationItem
+                variant="row"
+                label={personal ? "New chat" : "New session"}
+                icon={
+                  <span className="shell-page-icon">
+                    <PlusIcon size={16} strokeWidth={2.5} />
+                  </span>
+                }
+                onClick={() => onNew(undefined)}
+              />
+              {personal && (
+                <NavigationItem
+                  variant="row"
+                  label="New project"
+                  disabled={!preferences.sectionCreationWritable}
+                  icon={
+                    <span className="shell-page-icon">
+                      <FolderPlusIcon size={16} strokeWidth={2} />
+                    </span>
+                  }
+                  onClick={() => setCreatingProject(true)}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
       {(snapshot.status === "idle" || snapshot.status === "loading") && (
@@ -201,13 +226,10 @@ export function SessionSections({
           </Button>
         </div>
       )}
-      {deleteError && (
+      {sectionError && (
         <p role="alert" className={styles.listMessage}>
-          {deleteError}
+          {sectionError}
         </p>
-      )}
-      {personal && groups.length > 0 && (
-        <p className={styles.collectionHeading}>Projects</p>
       )}
       {sections
         .filter((section) => !personal || section.id || section.rows.length)
@@ -236,11 +258,11 @@ export function SessionSections({
                     disabled={!preferences.sectionRemovalWritable || !!deleting}
                     onClick={() => {
                       setDeleting(section.id);
-                      setDeleteError("");
+                      setSectionError("");
                       void preferences
                         .removeSection(section.id)
                         .catch((error: unknown) => {
-                          setDeleteError(
+                          setSectionError(
                             error instanceof Error
                               ? error.message
                               : "Section could not be deleted. Try again.",
@@ -260,26 +282,13 @@ export function SessionSections({
                 aria-expanded={!collapsed.includes(section.id)}
                 onClick={(event) => setAnimate(event.detail > 0)}
               >
-                {section.id && (
-                  <span className={styles.sectionIcon} aria-hidden="true">
-                    <FolderSimpleIcon
-                      className={styles.folderGlyph}
-                      size={15}
-                    />
-                    <span className={styles.chevronGlyph}>
-                      <CaretDownIcon size={15} strokeWidth={2.5} />
-                    </span>
-                  </span>
-                )}
-                <span>{section.name}</span>
-                {!section.id && (
-                  <span
-                    className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
-                    aria-hidden="true"
-                  >
-                    <CaretDownIcon size={15} strokeWidth={2.5} />
-                  </span>
-                )}
+                <span className={styles.sectionName}>{section.name}</span>
+                <span
+                  className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                  aria-hidden="true"
+                >
+                  <CaretDownIcon size={15} strokeWidth={2.5} />
+                </span>
               </Collapsible.Trigger>
               <div className={styles.sectionActions}>
                 {onNew && section.id && (
@@ -415,13 +424,29 @@ export function SessionSections({
                   {renderSession(item)}
                 </SessionActionsMenu>
               ))}
-              {!section.rows.length && section.id && (
-                <p className={styles.listMessage}>
-                  {personal
-                    ? "No chats in this project."
-                    : "No sessions in this section."}
-                </p>
-              )}
+              {!section.rows.length &&
+                section.id &&
+                (onNew ? (
+                  // An empty project offers its way out instead of an empty state.
+                  <div className={styles.organizedRow}>
+                    <NavigationItem
+                      variant="row"
+                      label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      icon={
+                        <span className="shell-page-icon">
+                          <PlusIcon size={16} strokeWidth={2.5} />
+                        </span>
+                      }
+                      onClick={() => onNew(section.id)}
+                    />
+                  </div>
+                ) : (
+                  <p className={styles.listMessage}>
+                    {personal
+                      ? "No chats in this project."
+                      : "No sessions in this section."}
+                  </p>
+                ))}
             </Collapsible.Panel>
           </Collapsible.Root>
         ))}
@@ -509,6 +534,14 @@ export function SessionSections({
           id={renaming.id}
           name={renaming.title}
           close={() => setRenaming(undefined)}
+        />
+      )}
+      {creatingProject && (
+        <NewProject
+          session={session}
+          create={(section) => preferences.createSection(section)}
+          close={() => setCreatingProject(false)}
+          onCreated={(id) => toggle(id, true)}
         />
       )}
       {creatingFor && (

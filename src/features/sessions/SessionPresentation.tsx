@@ -32,7 +32,7 @@ export function NewSessionView({
       <SessionHeading channel={{ name: personal ? "New chat" : "New session" }}>
         {actions}
       </SessionHeading>
-      <div className={styles.start}>
+      <div className={styles.start} data-personal={personal || undefined}>
         <div
           className={`${styles.startContent} ${personal ? styles.personalStart : ""}`}
         >

@@ -393,3 +393,36 @@ test("Share promotes the same conversation and opens its preserved history in Me
     sidebar.getByRole("button", { name: "Beta", exact: true }),
   ).toBeVisible();
 });
+
+// Real shell layout and route remounts prove Me consumes the shared sidebar owner.
+test("Me and Messages share one resizable sidebar width", async ({
+  page,
+  app,
+}) => {
+  const width = (name) =>
+    page
+      .getByRole("complementary", { name, exact: true })
+      .evaluate(
+        (element) =>
+          element
+            .closest(".shell-sidebar, .shell-sidebar-default")
+            .getBoundingClientRect().width,
+      );
+  const handle = page.getByRole("separator", {
+    name: "Resize sidebar",
+    exact: true,
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  await expect.poll(() => width("Me sidebar")).toBe(260);
+  await handle.press("End");
+  await expect.poll(() => width("Me sidebar")).toBe(520);
+  await openPage(page, "Messages");
+  await expect.poll(() => width("Channel sidebar")).toBe(520);
+  await handle.press("Home");
+  await expect.poll(() => width("Channel sidebar")).toBe(220);
+  await openPage(page, "Me");
+  await expect.poll(() => width("Me sidebar")).toBe(220);
+  await page.reload();
+  await expect.poll(() => width("Me sidebar")).toBe(220);
+});

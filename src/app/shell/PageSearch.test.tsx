@@ -59,7 +59,7 @@ it("keeps typing focus while arrows select results and Enter opens the selection
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
   const input = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  const messages = within(dialog).getByRole("option", { name: "Messages" });
+  const messages = within(dialog).getByRole("option", { name: "Buzz" });
   expect(
     within(dialog).queryByRole("option", { name: "Home" }),
   ).not.toBeInTheDocument();
@@ -168,7 +168,7 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
   const input = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-  const messages = within(dialog).getByRole("option", { name: "Messages" });
+  const messages = within(dialog).getByRole("option", { name: "Buzz" });
   const settings = within(dialog).getByRole("option", { name: "Settings" });
   const apple = isApplePlatform(navigator.platform);
   expect(messages).toHaveAttribute(
@@ -390,7 +390,7 @@ it("ranks pages by match when no community is connected", async () => {
     render(
       <PageSearch
         pages={[
-          page("buzz.channels/channels", "Messages"),
+          page("test/processes", "Processes"),
           page("test/sessions", "Sessions"),
         ]}
         onSelect={select}
@@ -399,12 +399,12 @@ it("ranks pages by match when no community is connected", async () => {
     );
     await user.click(screen.getByRole("button", { name: "Search Buzz" }));
     const input = await screen.findByRole("combobox", { name: "Search Buzz" });
-    // "ses" starts Sessions, appears inside Messages, and only fuzzily
+    // "ses" starts Sessions, appears inside Processes, and only fuzzily
     // matches Settings.
     await user.type(input, "ses");
     expect(
       screen.getAllByRole("option").map((option) => option.textContent),
-    ).toEqual(["Sessions", "Messages", "Settings"]);
+    ).toEqual(["Sessions", "Processes", "Settings"]);
     await user.keyboard("{Enter}");
     expect(select).toHaveBeenCalledExactlyOnceWith("test/sessions");
   } finally {

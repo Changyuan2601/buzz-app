@@ -1,7 +1,8 @@
 import { templateAgentChoices } from "../agents/choices";
-import type { KitEntry } from "../channel-templates/model";
+import type { KitEntry, Lineup, Template } from "../channel-templates/model";
 import {
   CANVAS_BYTES,
+  parseKitRecord,
   parseLineup,
   resolveLineup,
 } from "../channel-templates/model";
@@ -143,6 +144,27 @@ export async function sectionTemplateId(sectionId: string, personal = false) {
     new TextEncoder().encode(sectionId),
   );
   return `${personal ? "me" : "session"}-section-${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+/** The defaults record new chats/sessions in a section copy; validated for publication. */
+export function sectionTemplate(
+  id: string,
+  sectionName: string,
+  personal: boolean,
+  lineup: Lineup,
+): Template {
+  const template: Template = {
+    ...lineup,
+    type: "template",
+    id,
+    name: `${sectionName.slice(0, 100)} ${personal ? "chats" : "sessions"}`,
+    description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
+  };
+  // Validate the complete encrypted recipe budget before publication.
+  parseKitRecord(
+    { version: 1, community: "", deleted: false, value: template },
+    "",
+  );
+  return template;
 }
 export function templateEntry(entries: readonly KitEntry[], id: string) {
   return entries.find(

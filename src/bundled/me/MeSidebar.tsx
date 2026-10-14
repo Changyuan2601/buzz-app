@@ -5,7 +5,11 @@ import { useWorkingAgents } from "../channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../channels/WorkingAgentsBadge";
 import channelStyles from "../channels/Channels.module.css";
 import { sessionLinkTarget } from "../sessions/SessionsPage";
-import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
+import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
+import {
+  SidebarBrand,
+  SidebarFrame,
+} from "../../features/channel-navigation/SidebarFrame";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -19,7 +23,6 @@ import { useMePlacement } from "../../features/sessions/personal";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SessionSections } from "../sessions/SessionSections";
-import { readChannelSidebarWidth } from "../channels/useSidebarView";
 import { UnreadBadge } from "../channels/UnreadBadge";
 import { meSelection, meTarget } from "./routes";
 import styles from "../sessions/SessionsWorkspace.module.css";
@@ -28,9 +31,8 @@ type Props = { relay: RelayData; navigator: Navigation; target: OpenTarget };
 export function MeSidebar({ relay, navigator, target }: Props) {
   const connection = useRelayConnection(relay);
   const scope = connection.scope ?? "disconnected";
-  const width = readChannelSidebarWidth(scope);
   return (
-    <div className="shell-sidebar-default" style={{ width }}>
+    <ResizableSidebar scope={scope}>
       <SidebarFrame label="Me sidebar">
         {connection.status === "ready" ? (
           <PersonalHistory
@@ -44,7 +46,7 @@ export function MeSidebar({ relay, navigator, target }: Props) {
           <p role="status">Connect to a community to see your conversations.</p>
         )}
       </SidebarFrame>
-    </div>
+    </ResizableSidebar>
   );
 }
 
@@ -109,6 +111,7 @@ function PersonalHistory({
       aria-label="Me conversations"
     >
       <SessionSections
+        header={<SidebarBrand mark="berd" />}
         personal
         visit={navigator.snapshot().attempt.signal}
         session={session}

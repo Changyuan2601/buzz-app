@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
-import type { KitEntry, Lineup, Template } from "../channel-templates/model";
-import {
-  emptyLineup,
-  parseKitRecord,
-  parseLineup,
-} from "../channel-templates/model";
+import type { KitEntry, Lineup } from "../channel-templates/model";
+import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -17,6 +13,7 @@ import {
   readWorkspace,
   sectionTemplateId,
   sectionDefault,
+  sectionTemplate,
   workspaceCanvas,
   type Workspace,
 } from "./workspace";
@@ -153,20 +150,13 @@ export function WorkspaceSettings({
           "Your draft couldn’t be saved on this device. No changes were sent.",
         );
       if (target.kind === "section") {
-        const template: Template = {
-          ...lineup,
-          canvas,
-          type: "template",
-          id: recipeId,
-          name: `${target.name.slice(0, 100)} ${personal ? "chats" : "sessions"}`,
-          description: `Starting workspace and Canvas for new ${personal ? "chats in this project" : "sessions in this section"}.`,
-        };
-        // Validate the complete encrypted recipe budget before publication.
-        parseKitRecord(
-          { version: 1, community: "", deleted: false, value: template },
-          "",
+        await session.channelKit.save(
+          sectionTemplate(recipeId, target.name, personal, {
+            ...lineup,
+            canvas,
+          }),
+          base,
         );
-        await session.channelKit.save(template, base);
       } else await session.canvas.save(target.id, canvas, base);
       writeView(scope, key, null);
       if (alive.current) close();
@@ -247,8 +237,8 @@ export function WorkspaceSettings({
             )}
             {raw !== undefined ? (
               <Field
-                label="Full Canvas"
-                description="This Canvas has custom workspace instructions. Edit it directly to preserve them."
+                label="Instructions"
+                description="These instructions have custom workspace setup. Edit them directly to keep it."
               >
                 <Textarea
                   rows={12}

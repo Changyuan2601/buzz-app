@@ -17,48 +17,60 @@ afterEach(() => {
 });
 function Form() {
   const [value, setValue] = useState<Workspace>({
-    folders: ["/original"],
-    worktree: { location: "/worktrees", baseBranch: "main" },
+    folders: ["~/original"],
+    worktree: { location: "~/worktrees", baseBranch: "main" },
     canvas: "Keep this",
   });
   return <WorkspaceFields value={value} onChange={setValue} />;
 }
-it("fills the source path from the native picker, preserves other fields, and leaves cancellation unchanged", async () => {
+it("adds a picked folder, preserves other fields, ignores cancellation and duplicates", async () => {
   vi.mocked(invoke)
-    .mockResolvedValueOnce("/chosen/repository")
-    .mockResolvedValueOnce(null);
+    .mockResolvedValueOnce("~/chosen")
+    .mockResolvedValueOnce(null)
+    .mockResolvedValueOnce("~/chosen");
   render(<Form />);
   const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "Browse source repository" }),
-  );
-  expect(invoke).toHaveBeenCalledWith("workspace_pick_folder");
-  expect(
-    screen.getByRole("textbox", { name: "Source repository" }),
-  ).toHaveValue("/chosen/repository");
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  const add = screen.getByRole("button", { name: "Add folder…" });
+  await user.click(add);
+  expect(invoke).toHaveBeenCalledWith("workspace_pick_folder", {
+    title: "Add a folder",
+  });
+  expect(screen.getByRole("button", { name: "Remove chosen" })).toBeVisible();
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Keep this",
   );
-  await user.click(
-    screen.getByRole("button", { name: "Browse source repository" }),
-  );
-  expect(
-    screen.getByRole("textbox", { name: "Source repository" }),
-  ).toHaveValue("/chosen/repository");
+  expect(add).toHaveFocus();
+  await user.click(add);
+  expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
+  await user.click(add);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Already added.");
+  expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
 });
-it("keeps the typed path and allows retry when the picker fails", async () => {
+it("removing a folder moves focus to the next remove button, then to Add", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce("~/second");
+  render(<Form />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add folder…" }));
+  await user.click(screen.getByRole("button", { name: "Remove original" }));
+  expect(screen.getByRole("button", { name: "Remove second" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Remove second" }));
+  expect(screen.getByRole("button", { name: "Add folder…" })).toHaveFocus();
+});
+it("opens the worktree picker at the current location and keeps it when the picker fails", async () => {
   vi.mocked(invoke).mockRejectedValueOnce(new Error("Picker unavailable"));
   render(<Form />);
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Browse source repository" }));
+  const location = screen.getByRole("button", {
+    name: "Worktree location: ~/worktrees",
+  });
+  await userEvent.setup().click(location);
+  expect(invoke).toHaveBeenCalledWith("workspace_pick_folder", {
+    title: "Choose a worktree location",
+    start: "~/worktrees",
+  });
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Picker unavailable",
   );
   expect(
-    screen.getByRole("textbox", { name: "Source repository" }),
-  ).toHaveValue("/original");
-  expect(
-    screen.getByRole("button", { name: "Browse source repository" }),
+    screen.getByRole("button", { name: "Worktree location: ~/worktrees" }),
   ).toBeEnabled();
 });

@@ -25,7 +25,7 @@ test("Settings keeps the channel sidebar width across navigation and reload", as
     exact: true,
   });
   const handle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
     exact: true,
   });
   for (const [key, width] of [
@@ -51,9 +51,7 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
   app,
 }) => {
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   await page.setViewportSize({ width: 600, height: 950 });
   await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
@@ -140,9 +138,7 @@ test("sidebar width survives route remounts when saving it fails", async ({
       return setItem.call(this, key, value);
     };
   });
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   const channels = page.getByRole("complementary", {
     name: "Channel sidebar",
     exact: true,

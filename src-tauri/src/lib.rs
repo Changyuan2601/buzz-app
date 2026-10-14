@@ -247,19 +247,44 @@ async fn prepare_import(
 #[tauri::command]
 async fn workspace_pick_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    title: Option<String>,
+    start: Option<String>,
 ) -> Result<Option<String>, String> {
+    // Open at the current choice, or its nearest existing parent ("~" is home).
+    let home = app.path().home_dir().ok();
+    let start = start.and_then(|path| {
+        let path = match (path.strip_prefix('~'), &home) {
+            (Some(rest), Some(home)) => home.join(rest.trim_start_matches('/')),
+            _ => std::path::PathBuf::from(path),
+        };
+        path.ancestors()
+            .find(|dir| dir.is_dir())
+            .map(|dir| dir.to_path_buf())
+    });
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
+        let dialog = app
+            .dialog()
             .file()
-            .set_title("Choose a source repository")
-            .blocking_pick_folder()
-            .map(|folder| {
-                folder
-                    .into_path()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .map_err(|error| error.to_string())
-            })
-            .transpose()
+            .set_title(title.as_deref().unwrap_or("Choose a folder"));
+        match start {
+            Some(dir) => dialog.set_directory(dir),
+            None => dialog,
+        }
+        .blocking_pick_folder()
+        .map(|folder| {
+            folder
+                .into_path()
+                // Paths under home read as "~/…", like the default location.
+                .map(
+                    |path| match home.as_deref().map(|home| path.strip_prefix(home)) {
+                        Some(Ok(rest)) if rest.as_os_str().is_empty() => "~".to_owned(),
+                        Some(Ok(rest)) => format!("~/{}", rest.to_string_lossy()),
+                        _ => path.to_string_lossy().into_owned(),
+                    },
+                )
+                .map_err(|error| error.to_string())
+        })
+        .transpose()
     })
     .await
     .map_err(|error| error.to_string())?

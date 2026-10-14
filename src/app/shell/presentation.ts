@@ -15,7 +15,7 @@ import type { RegisteredPage } from "../../features/pages/service";
 // Add page identities here; unknown plugins inherit a consistent layout default.
 export const shellPresentation = {
   settings: { label: "Settings", icon: GearIcon, tone: "lavender" },
-  channels: { label: "Messages", icon: ChatsCircleIcon, tone: "lime" },
+  channels: { label: "Buzz", icon: ChatsCircleIcon, tone: "lime" },
 } as const;
 
 // Navigation order is host policy, never plugin activation timing. Match full

@@ -47,6 +47,11 @@ export type SidebarSectionRemovalMutator = (
   sectionId: string,
   signal: AbortSignal,
 ) => Promise<SidebarGroups>;
+/** Adds an empty section; only Me groups support this today. */
+export type SidebarSectionCreationMutator = (
+  section: Readonly<{ id: string; name: string }>,
+  signal: AbortSignal,
+) => Promise<SidebarGroups>;
 export type SidebarStarMutator = (
   intent: Readonly<{ channelId: string; starred: boolean }>,
   signal: AbortSignal,

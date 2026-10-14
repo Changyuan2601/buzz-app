@@ -151,6 +151,8 @@ import TablerFlagIcon from "@tabler/icons-react/dist/esm/icons/IconFlag.mjs";
 export const FlagIcon = defineIcon("tabler", TablerFlagIcon);
 import TablerFolderOpenIcon from "@tabler/icons-react/dist/esm/icons/IconFolderOpen.mjs";
 export const FolderOpenIcon = defineIcon("tabler", TablerFolderOpenIcon);
+import TablerFolderPlusIcon from "@tabler/icons-react/dist/esm/icons/IconFolderPlus.mjs";
+export const FolderPlusIcon = defineIcon("tabler", TablerFolderPlusIcon);
 import TablerFolderSimpleIcon from "@tabler/icons-react/dist/esm/icons/IconFolder.mjs";
 export const FolderSimpleIcon = defineIcon("tabler", TablerFolderSimpleIcon);
 import TablerGearIcon from "@tabler/icons-react/dist/esm/icons/IconSettings.mjs";

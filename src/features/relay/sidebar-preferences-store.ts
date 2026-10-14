@@ -4,7 +4,9 @@ import { projectSidebarPreferences } from "./sidebar-preferences";
 import type {
   SidebarAssignmentMutator,
   SidebarAssignmentIntent,
+  SidebarGroups,
   SidebarSectionRemovalMutator,
+  SidebarSectionCreationMutator,
   SidebarStarMutator,
   SidebarMuteMutator,
   SidebarPreferences,
@@ -50,6 +52,7 @@ export function createSidebarPreferencesStore(
   removeSection?: SidebarSectionRemovalMutator,
   /** Me groups have no Star coordinate; do not write Messages stars on moves. */
   groupsOnly = false,
+  createSection?: SidebarSectionCreationMutator,
 ) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -451,6 +454,29 @@ export function createSidebarPreferencesStore(
       });
     })
     .catch(() => {});
+  /** One queued groups-only write whose confirmed result replaces sections. */
+  const writeGroups = (
+    failure: string,
+    run: (signal: AbortSignal) => Promise<SidebarGroups>,
+  ) => {
+    const writeGeneration = generation;
+    const signal = writeLifetime.signal;
+    const next = writeQueue
+      .catch(() => {})
+      .then(async () => {
+        signal.throwIfAborted();
+        if (closed || generation !== writeGeneration) throw new Error(failure);
+        const groups = await run(signal);
+        signal.throwIfAborted();
+        if (closed || generation !== writeGeneration || !confirmed)
+          throw new Error(failure);
+        mutation++;
+        confirmed = { ...confirmed, ...groups };
+        project();
+      });
+    writeQueue = next.catch(() => {});
+    return next;
+  };
   return {
     ready,
     queries: Object.freeze({
@@ -464,24 +490,19 @@ export function createSidebarPreferencesStore(
         if (!groupsOnly) return removeSectionMutation(sectionId, callerSignal);
         if (!writable() || snapshot.cached || !removeSection)
           return Promise.reject(new Error("Section deletion is unavailable"));
-        const writeGeneration = generation;
-        const signal = writeLifetime.signal;
-        const run = writeQueue
-          .catch(() => {})
-          .then(async () => {
-            signal.throwIfAborted();
-            if (closed || generation !== writeGeneration)
-              throw new Error("Section deletion is unavailable");
-            const groups = await removeSection(sectionId, signal);
-            signal.throwIfAborted();
-            if (closed || generation !== writeGeneration || !confirmed)
-              throw new Error("Section deletion is unavailable");
-            mutation++;
-            confirmed = { ...confirmed, ...groups };
-            project();
-          });
-        writeQueue = run.catch(() => {});
-        return run;
+        return writeGroups("Section deletion is unavailable", (signal) =>
+          removeSection(sectionId, signal),
+        );
+      },
+      get sectionCreationWritable() {
+        return writable() && !snapshot.cached && !!createSection;
+      },
+      createSection(section: Readonly<{ id: string; name: string }>) {
+        if (!writable() || snapshot.cached || !createSection)
+          return Promise.reject(new Error("Projects are unavailable"));
+        return writeGroups("Projects are unavailable", (signal) =>
+          createSection(section, signal),
+        );
       },
       dismissSortError(group: string) {
         failedSorts.delete(group);

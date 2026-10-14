@@ -15,7 +15,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const navigator = ctx.navigation;
   ctx.pages.register({
     id: "me",
-    title: "Me",
+    title: "Berd",
     primary: true,
     placement: "topbar",
     layout: "workspace",

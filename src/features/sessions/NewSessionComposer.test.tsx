@@ -697,7 +697,7 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     await screen.findByRole("menuitem", { name: "Session settings…" }),
   );
   await user.type(
-    await screen.findByRole("textbox", { name: "Canvas" }),
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
     "Keep the change small",
   );
   await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1009,7 +1009,7 @@ it("opens and saves local draft settings in a fresh Me-only group", async () => 
       await user.click(
         await screen.findByRole("menuitem", { name: "Chat settings…" }),
       );
-      return screen.findByRole("textbox", { name: "Canvas" });
+      return screen.findByRole("textbox", { name: /^Instructions/ });
     };
     await user.type(await open(), "Keep this Me draft");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1130,7 +1130,7 @@ it.each(
       await user.click(
         await screen.findByRole("menuitem", { name: "Chat settings…" }),
       );
-      return screen.findByRole("textbox", { name: "Canvas" });
+      return screen.findByRole("textbox", { name: /^Instructions/ });
     };
     if (saved) {
       const canvas = await openSettings();

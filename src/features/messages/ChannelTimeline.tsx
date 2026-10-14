@@ -192,7 +192,15 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
-  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  // Me chats read as a conversation, not a channel roster.
+  const visibleRows = useMemo(
+    () =>
+      chatPresentation
+        ? window.rows.filter((row) => !row.membership)
+        : window.rows,
+    [window.rows, chatPresentation],
+  );
+  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
@@ -806,7 +814,12 @@ function Timeline({
       <div
         ref={edge}
         className={styles.edge}
-        data-history-space={reserveHistorySpace || undefined}
+        data-history-space={
+          (!chatPresentation && reserveHistorySpace) ||
+          !!window.error ||
+          window.loadingOlder ||
+          undefined
+        }
       >
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (

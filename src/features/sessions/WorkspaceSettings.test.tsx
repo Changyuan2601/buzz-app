@@ -52,21 +52,20 @@ it("edits a session's workspace and Canvas with its exact loaded revision", asyn
       close={close}
     />,
   );
-  const folders = await screen.findByRole("textbox", {
-    name: "Project folders",
+  // Without a native picker, folders are added by path.
+  expect(
+    await screen.findByRole("button", { name: "Remove repo" }),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: /^Folders/ }), {
+    target: { value: "/other" },
   });
-  expect(folders).toHaveValue("/repo");
-  fireEvent.change(folders, { target: { value: "/other\n/repo" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
   fireEvent.click(
     screen.getByRole("switch", { name: "Work in a new worktree" }),
   );
-  expect(screen.queryByRole("textbox", { name: "Project folders" })).toBeNull();
-  expect(
-    screen.getByRole("textbox", { name: "Source repository 1" }),
-  ).toHaveValue("/other");
-  expect(
-    screen.getByRole("textbox", { name: "Source repository 2" }),
-  ).toHaveValue("/repo");
+  // One folder list serves both modes.
+  expect(screen.getByRole("button", { name: "Remove repo" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove other" })).toBeVisible();
   fireEvent.change(screen.getByRole("textbox", { name: "Base branch" }), {
     target: { value: "develop" },
   });
@@ -99,22 +98,25 @@ it("retains a conflicted draft and never silently reloads over it", async () => 
     />
   );
   const mounted = render(view());
-  fireEvent.change(await screen.findByRole("textbox", { name: "Canvas" }), {
-    target: { value: "My draft" },
-  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    {
+      target: { value: "My draft" },
+    },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Canvas changed elsewhere",
   );
   expect(close).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Canvas" })).toHaveValue(
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "My draft",
   );
   mounted.unmount();
   render(view());
-  expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
-    "My draft",
-  );
+  expect(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+  ).toHaveValue("My draft");
 });
 
 it("saves section defaults as an existing relay template without writing section placement", async () => {
@@ -135,11 +137,11 @@ it("saves section defaults as an existing relay template without writing section
       close={close}
     />,
   );
-  fireEvent.change(
-    await screen.findByRole("textbox", { name: "Project folders" }),
-    { target: { value: "~/Development/project" } },
-  );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  fireEvent.change(await screen.findByRole("textbox", { name: /^Folders/ }), {
+    target: { value: "~/Development/project" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Work carefully" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
@@ -198,9 +200,12 @@ it("recreates deleted section defaults using the tombstone revision", async () =
     />
   );
   const first = render(view());
-  fireEvent.change(await screen.findByRole("textbox", { name: "Canvas" }), {
-    target: { value: "Old instructions" },
-  });
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    {
+      target: { value: "Old instructions" },
+    },
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   first.unmount();
@@ -210,10 +215,10 @@ it("recreates deleted section defaults using the tombstone revision", async () =
   await kit.capability.save(saved.record.value, saved.eventId, true);
   expect(kit.capability.snapshot().entries[0]?.record.deleted).toBe(true);
   render(view());
-  expect(await screen.findByRole("textbox", { name: "Canvas" })).toHaveValue(
-    "",
-  );
-  fireEvent.change(screen.getByRole("textbox", { name: "Canvas" }), {
+  expect(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+  ).toHaveValue("");
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "New instructions" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));

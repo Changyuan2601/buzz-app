@@ -3,7 +3,6 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
-import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -13,7 +12,6 @@ import { SidebarRightIcon } from "../../shared/design-system/icons";
 import { channelIcon } from "../../features/channels/channel-icon";
 import channelStyles from "../channels/Channels.module.css";
 import { SessionShare } from "./SessionShare";
-import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
@@ -403,7 +401,6 @@ function SessionWork({
           onDrop={rejectUnhandledFileDrop}
         >
           <SessionHeading channel={channel} parentName={parentName}>
-            <ChannelMembersButton session={session} channelId={channel.id} />
             {drawer.launchers}
             <SessionShare
               session={session}
@@ -455,21 +452,17 @@ function SessionWork({
                 </MenuItem>
               </MenuPopup>
             </MenuRoot>
-            {!showingPanel && (
-              <span className={panelStyles.paneToggle}>
-                <IconButton
-                  ref={splitTrigger}
-                  data-tab-pane-toggle=""
-                  size="toolbar"
-                  aria-label="Toggle tab pane"
-                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
-                  aria-expanded={!!showingPanel}
-                  icon={<SidebarRightIcon size="1rem" />}
-                  disabled={!hasLocalPanel}
-                  focusableWhenDisabled
-                  onClick={() => tabState.setPaneOpen(!showingPanel)}
-                />
-              </span>
+            {hasLocalPanel && !showingPanel && (
+              <IconButton
+                ref={splitTrigger}
+                data-tab-pane-toggle=""
+                size="toolbar"
+                aria-label="Toggle tab pane"
+                title="Open tab pane"
+                aria-expanded={false}
+                icon={<SidebarRightIcon size="1rem" />}
+                onClick={() => tabState.setPaneOpen(true)}
+              />
             )}
           </SessionHeading>
           {renameOpen && (

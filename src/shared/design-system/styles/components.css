@@ -1600,7 +1600,7 @@
     min-width: 0;
   }
   .buzz-preference-row-label {
-    @apply text-label-sm;
+    @apply text-body-sm;
     color: var(--text-standard);
   }
   label.buzz-preference-row-label {

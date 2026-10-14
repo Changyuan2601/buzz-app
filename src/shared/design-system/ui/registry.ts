@@ -261,7 +261,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "field",
     name: "Field",
-    purpose: "Label, description and error for a form control.",
+    purpose:
+      "Label, description and error for a form control; `optional` marks fields a form doesn't require.",
     behavior: "Base UI owns form and keyboard semantics.",
     variants: ["default", "disabled", "invalid"],
     status: "proposed",
@@ -352,10 +353,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "settings-group",
     name: "SettingsGroup",
     purpose:
-      "A subtle bordered container for related settings rows or form fields.",
+      "A subtle bordered container for related settings rows or form fields, or a stack of individually bordered cards.",
     behavior:
       "Presentation only; children retain their labels, state, and interactions.",
-    variants: ["rows", "form"],
+    variants: ["rows", "form", "cards"],
     status: "proposed",
     collection: "components",
     owner: "Buzz Settings",

@@ -66,7 +66,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   });
   const dock = page.locator("[data-panel-dock]");
   const resize = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
   });
 
   await launch.click();
