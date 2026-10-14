@@ -14,6 +14,8 @@ import {
   resolveInstructions,
   saveState,
   subjectKey,
+  HAD_VERSION_KEY,
+  INSTRUCTIONS_STORE_KEY,
 } from "./instructions";
 import { INSTRUCTIONS_KIND } from "./instructions-envelope";
 
@@ -575,6 +577,24 @@ describe("instructions sync", () => {
         h.sync.save(AGENT, "mine", undefined),
       ).rejects.toBeInstanceOf(ConflictError);
     });
+  });
+
+  it("a failed store write changes nothing a retry would skip", () => {
+    const storage = memory();
+    const store = new InstructionStore(storage);
+    const key = subjectKey(OWNER, COMMUNITY, AGENT);
+    storage.fail = INSTRUCTIONS_STORE_KEY;
+    expect(() => store.stage(key, "text", "intent")).toThrow("quota");
+    expect(store.entry(key)).toBeUndefined();
+    storage.fail = HAD_VERSION_KEY;
+    expect(() => store.markHadVersion(key)).toThrow("quota");
+    expect(store.hadVersion(key)).toBe(false);
+    storage.fail = undefined;
+    store.stage(key, "text", "intent");
+    store.markHadVersion(key);
+    const reloaded = new InstructionStore(storage);
+    expect(reloaded.entry(key)?.migration).toMatchObject({ text: "text" });
+    expect(reloaded.hadVersion(key)).toBe(true);
   });
 
   describe("migration", () => {

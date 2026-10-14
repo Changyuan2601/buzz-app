@@ -3490,3 +3490,40 @@ it("text staged at create, with no plugin config to strip, publishes as the firs
   );
   expect(h.stored.filter((e) => e.kind === INSTRUCTIONS_KIND)).toHaveLength(1);
 });
+
+it("a failed staging write leaves nothing staged in memory, so Retry stages it before the confirm", async () => {
+  const storage = memoryStorage();
+  const setItem = storage.setItem.bind(storage);
+  let failStage = true;
+  storage.setItem = (key, value) => {
+    if (
+      failStage &&
+      key === INSTRUCTIONS_STORE_KEY &&
+      value.includes('"staged"')
+    )
+      throw new Error("quota");
+    setItem(key, value);
+  };
+  const identities: AgentIdentity[] = [];
+  const first = await setup({ storage, identities });
+  await expect(
+    first.service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    }),
+  ).rejects.toThrow("quota");
+  expect(first.native.confirm).not.toHaveBeenCalled();
+  expect(stagedText(storage, sibling)).toBeUndefined();
+  failStage = false;
+  const second = await setup({ storage, identities });
+  await second.service.finishImport(sibling);
+  expect(second.native.confirm).toHaveBeenCalledOnce();
+  // A crash right after the native confirm: the text is already durable.
+  expect(stagedText(storage, sibling)).toBe("Triage.");
+  const { service } = await setup({ storage, identities });
+  expect(service.find(sibling)?.liveInstructions?.capture()).toMatchObject({
+    source: "local",
+    text: "Triage.",
+  });
+});
