@@ -1668,6 +1668,26 @@ it("reopening waits for the prior visit's queued unread and reconciles its sideb
   expect(h.snapshot().manual).toBe("none");
 });
 
+it("leaving a channel during its catch-up save withdraws the read without a sync error", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([bottom]);
+  const lease = h.session.unread.reading("room");
+  const { started, release } = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  await started; // The visit ends while its storage update is held.
+  try {
+    lease.dispose();
+  } finally {
+    release();
+  }
+  await expect(pending).rejects.toThrow("Reading observation expired");
+  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.session.unread.sync().error).toBeUndefined();
+  expect(h.session.unread.sync().status).not.toBe("error");
+});
+
 it("without a signer, own descendants do not require read frontiers to clear a forced peer subtree", async () => {
   const peer = message(keypair(), "room", "peer", 11);
   const h = setup({}, false, (journal) => ({
