@@ -259,6 +259,7 @@ function harness({
     (b: { events: readonly RelayEvent[] }) => void
   >();
   const controller = new AbortController();
+  let admit: (id: string) => boolean = () => false;
   const decode = vi.fn(
     async (_subject: string, events: readonly RelayEvent[]) =>
       events.map((e) =>
@@ -286,7 +287,10 @@ function harness({
       batchListeners.add(listener);
       return () => void batchListeners.delete(listener);
     },
-    admitDeletions: () => () => {},
+    admitDeletions(predicate) {
+      admit = predicate;
+      return () => {};
+    },
     now: clock,
   });
   const route = (status: "pending" | "live" | "error") => {
@@ -319,6 +323,7 @@ function harness({
     push,
     resolve,
     controller,
+    admits: (id: string) => admit(id),
     advance(seconds: number) {
       now += seconds;
     },
@@ -442,6 +447,130 @@ describe("instructions sync", () => {
     h.route("live");
     await flush();
     expect(h.resolve()).toEqual({ source: "legacy", text: "legacy" });
+  });
+
+  it("a complete scan drops a version it no longer returns, even with no deletion seen", async () => {
+    const h = harness();
+    const v1 = version("v1", T0);
+    const v2 = version("v2", T0 + 1);
+    h.relay.events.push(v1, v2);
+    h.sync.start();
+    h.sync.identities(ready([AGENT]));
+    h.route("live");
+    await flush();
+    expect(h.resolve()).toMatchObject({ versionId: v2.id });
+    // Gone from the relay without this device seeing its deletion.
+    h.relay.events.splice(h.relay.events.indexOf(v2), 1);
+    h.route("pending");
+    h.route("live");
+    await flush();
+    expect(h.resolve()).toMatchObject({ versionId: v1.id });
+    expect(h.sync.history(AGENT).map((e) => e.id)).toEqual([v1.id]);
+  });
+
+  it("a live version that arrives during a scan survives the scan that missed it", async () => {
+    const h = harness();
+    h.sync.start();
+    h.sync.identities(ready([AGENT]));
+    let release = () => {};
+    h.relay.hold(new Promise<void>((r) => (release = r)));
+    h.route("live");
+    await flush();
+    const live = version("live", T0 + 5);
+    h.push(live);
+    await flush();
+    h.relay.hold(undefined);
+    release();
+    await flush();
+    expect(h.resolve()).toMatchObject({ versionId: live.id });
+  });
+
+  it("a cached head launches from local decode with the relay down", async () => {
+    const storage = memory();
+    const first = harness({ storage });
+    const v1 = version("cached", T0);
+    first.relay.events.push(v1);
+    first.sync.start();
+    first.sync.identities(ready([AGENT]));
+    first.route("live");
+    await flush();
+    first.controller.abort();
+    const relay = fakeRelay();
+    relay.fail(true);
+    const h = harness({ storage, relay });
+    h.sync.start();
+    h.sync.identities(ready([AGENT]));
+    await flush();
+    expect(h.resolve()).toEqual({
+      source: "version",
+      text: "cached",
+      versionId: v1.id,
+    });
+    expect(relay.reads).toHaveLength(0);
+  });
+
+  it("a cached head that fails verification blocks instead of launching", async () => {
+    const storage = memory();
+    const first = harness({ storage });
+    first.relay.events.push(version("cached", T0));
+    first.sync.start();
+    first.sync.identities(ready([AGENT]));
+    first.route("live");
+    await flush();
+    first.controller.abort();
+    const h = harness({ storage });
+    h.decode.mockImplementation(async () => []);
+    h.sync.start();
+    await flush();
+    expect(h.store.entry(subjectKey(OWNER, COMMUNITY, AGENT))?.head).toEqual({
+      unknown: true,
+    });
+    expect(h.resolve()).toHaveProperty("blocked");
+  });
+
+  it("a scan is complete only after each subject's head is installed", async () => {
+    const h = harness();
+    const v1 = version("v1", T0);
+    h.relay.events.push(v1);
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const decode = h.decode.getMockImplementation();
+    h.decode.mockImplementation(async (subject, events) => {
+      await held;
+      return decode?.(subject, events) ?? [];
+    });
+    h.sync.start();
+    h.sync.identities(ready([AGENT]));
+    h.route("live");
+    await flush();
+    // Never the legacy fallback while the returned version is decoding.
+    expect(h.resolve()).toHaveProperty("blocked");
+    expect(h.store.scanned(OWNER, COMMUNITY)).toBeUndefined();
+    release();
+    await flush();
+    expect(h.resolve()).toMatchObject({ versionId: v1.id });
+    expect(h.store.scanned(OWNER, COMMUNITY)).toBeDefined();
+  });
+
+  it("a deletion of a version the running scan returned is admitted before it merges", async () => {
+    const h = harness();
+    const v1 = version("v1", T0);
+    h.relay.events.push(v1);
+    let release = () => {};
+    const read = h.relay.read.bind(h.relay);
+    h.relay.read = async (filters) => {
+      if (filters[0]?.kinds?.includes(5))
+        await new Promise<void>((r) => (release = r));
+      return read(filters);
+    };
+    h.sync.start();
+    h.sync.identities(ready([AGENT]));
+    h.route("live");
+    await flush();
+    expect(h.admits(v1.id)).toBe(true);
+    expect(h.admits("f".repeat(64))).toBe(false);
+    release();
+    await flush();
   });
 
   it("T8 an older re-read finishing after a newer live head does not overwrite it", async () => {

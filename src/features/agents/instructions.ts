@@ -498,6 +498,12 @@ export class InstructionSync {
   private subjects = new Map<string, Subject>();
   private token: Token | undefined;
   private tokens = 0;
+  /** Version ids the running scan returned, admitted for deletions before
+   * they are merged into subjects. */
+  private scanning = new Set<string>();
+  /** Version ids learned live or by a subject read since the scan began; a
+   * completed scan keeps them even if it did not return them. */
+  private since = new Set<string>();
   private inventory: Inventory = {
     state: "loading",
     known: new Set(),
@@ -532,9 +538,7 @@ export class InstructionSync {
   start() {
     const { live, subscribeLive, admitDeletions } = this.ports;
     this.stops.push(
-      admitDeletions((id) =>
-        [...this.subjects.values()].some((s) => s.versions.has(id)),
-      ),
+      admitDeletions((id) => this.admits(id)),
       live.subscribe(() => this.observe()),
       subscribeLive(({ events }) => void this.receive(events)),
       ...(this.ports.outbox
@@ -544,11 +548,52 @@ export class InstructionSync {
     this.ports.signal.addEventListener("abort", () => this.stop(), {
       once: true,
     });
+    void this.hydrate();
     this.observe();
   }
   stop() {
     this.token = undefined;
     for (const stop of this.stops.splice(0)) stop();
+  }
+
+  /** A deletion may target any version this device knows: in a subject, in
+   * the running scan, or a cached head. */
+  private admits(id: string) {
+    if (this.scanning.has(id)) return true;
+    if ([...this.subjects.values()].some((s) => s.versions.has(id)))
+      return true;
+    const { store, owner, community } = this.ports;
+    return store.agents(owner, community).some((agent) => {
+      const head = store.entry(this.key(agent))?.head;
+      return !!head && "event" in head && head.event.id === id;
+    });
+  }
+
+  /** §2.1: cached heads go back through native decode at start, so launch
+   * works from the cache while the relay is down. A head that fails
+   * verification drops to unknown; a decode that throws changes nothing. */
+  private async hydrate() {
+    const { store, owner, community, codec } = this.ports;
+    for (const agent of store.agents(owner, community)) {
+      const key = this.key(agent);
+      const head = store.entry(key)?.head;
+      if (!head || !("event" in head) || store.decodedText(head.event.id))
+        continue;
+      const { event } = head;
+      const rows = await codec.decode(agent, [event]).catch(() => undefined);
+      if (!this.alive) return;
+      const latest = store.entry(key);
+      if (!rows || !latest || !("event" in latest.head)) continue;
+      if (latest.head.event.id !== event.id) continue;
+      const [row] = rows;
+      if (row?.id === event.id)
+        store.remember(
+          event.id,
+          "text" in row ? { text: row.text } : { invalid: row.invalid },
+        );
+      else store.write(key, { ...latest, head: { unknown: true } });
+    }
+    store.touch();
   }
 
   /** §2.3: a fresh token on each entry of the route into `live`; any exit
@@ -631,16 +676,26 @@ export class InstructionSync {
   /** §2.3 full scan: versions then deletions, each to an empty page. Only a
    * complete scan under the current token writes. */
   private async scan(token: Token) {
+    this.since = new Set();
     const versions = await this.page(this.versionsFilter(), token);
     const scanned = new Map<string, RelayEvent[]>();
     for (const event of versions) {
       const agent = instructionsSubject(event.tags);
       if (!agent || event.pubkey !== this.ports.owner) continue;
       scanned.set(agent, [...(scanned.get(agent) ?? []), event]);
+      this.scanning.add(event.id);
     }
-    {
+    try {
       const deletions = await this.page(this.deletionsFilter(), token);
       if (!this.current(token)) return;
+      // Authoritative: what the scan didn't return, and nothing re-established
+      // since it began, is gone (§2.3 full-scan reconciliation).
+      for (const s of this.subjects.values())
+        for (const id of s.versions.keys())
+          if (!this.scanning.has(id) && !this.since.has(id)) {
+            s.versions.delete(id);
+            s.counter++;
+          }
       for (const [agent, events] of scanned) {
         if (!this.eligible(agent)) continue;
         const s = this.subject(agent);
@@ -648,11 +703,6 @@ export class InstructionSync {
       }
       for (const deletion of deletions) this.applyDeletion(deletion, false);
       const scanId = token.n;
-      this.ports.store.completeScan(
-        this.ports.owner,
-        this.ports.community,
-        scanId,
-      );
       for (const agent of new Set([
         ...scanned.keys(),
         ...this.subjects.keys(),
@@ -662,6 +712,16 @@ export class InstructionSync {
         const s = this.subject(agent);
         await this.install(agent, s.counter, token, scanId);
       }
+      // Complete only once every subject's result is installed, so a fresh
+      // subject never resolves through the fallback while its decode is held.
+      if (!this.current(token)) return;
+      this.ports.store.completeScan(
+        this.ports.owner,
+        this.ports.community,
+        scanId,
+      );
+    } finally {
+      this.scanning.clear();
     }
     await this.recover(token);
     await this.sweepCleanup();
@@ -676,8 +736,10 @@ export class InstructionSync {
     const deletions = await this.page(this.deletionsFilter(), token);
     if (!this.current(token) || !this.eligible(agent)) return;
     for (const event of versions)
-      if (instructionsSubject(event.tags) === agent)
+      if (instructionsSubject(event.tags) === agent) {
         s.versions.set(event.id, event);
+        this.since.add(event.id);
+      }
     for (const deletion of deletions) this.applyDeletion(deletion, false);
     // A deletion or live write that arrived meanwhile is reconciled first.
     await this.install(
@@ -772,6 +834,7 @@ export class InstructionSync {
         const s = this.subject(agent);
         if (s.versions.has(event.id)) continue;
         s.versions.set(event.id, event);
+        this.since.add(event.id);
         s.counter++;
         this.ports.store.markHadVersion(this.key(agent));
         const token = this.token;
