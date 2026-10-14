@@ -87,7 +87,6 @@ pub struct PairingSession {
     created_at: Instant,
     /// Maximum session lifetime.
     timeout: Duration,
-    desktop_code: Option<Zeroizing<String>>,
 }
 
 /// A single encrypted event together with its source authorization.
@@ -143,7 +142,6 @@ impl PairingSession {
             processed_ids: HashSet::new(),
             created_at: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
-            desktop_code: None,
         };
 
         (session, qr)
@@ -419,7 +417,6 @@ impl PairingSession {
             processed_ids: HashSet::new(),
             created_at: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
-            desktop_code: None,
         };
 
         // Build and return the offer event.
@@ -564,7 +561,6 @@ impl PairingSession {
             });
         }
         self.policy.abort();
-        self.desktop_code = None;
         if self.peer_pubkey.is_none() {
             return Ok(None);
         }

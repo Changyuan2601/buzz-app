@@ -227,7 +227,7 @@ fn oversized_rejection_cannot_bypass_the_guess_budget() {
         .expect("maximum-size submission");
     assert!(source.handle_target_code(&event).is_err());
     assert_eq!(source.state(), SessionState::Aborted);
-    assert!(source.desktop_code.is_none());
+    assert!(source.start_desktop_code().is_err());
     assert!(source
         .handle_target_code(&submission(&target, &code, 6))
         .is_err());

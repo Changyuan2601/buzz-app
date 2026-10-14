@@ -33,10 +33,10 @@ pub fn key_eq(a: &Key, b: &Key) -> (equal: bool)
     equal
 }
 
-/// An immutable authorization witness; only Protocol can construct one.
 #[derive(Debug, Clone, Copy)]
 pub struct AuthorizationView { pub session: Key, pub peer: Key, pub approval: Approval, pub guesses: u8, pub code_witness: Option<(u32, u32, u8)> }
 
+/// An immutable authorization witness; only Protocol can construct one.
 #[derive(Clone, Copy)]
 pub struct Authorization {
     session: Key,
@@ -56,8 +56,6 @@ impl Authorization {
                 && self.code_witness@.is_some() && self.code_witness@.unwrap().0 == self.code_witness@.unwrap().1
                 && self.code_witness@.unwrap().2 == self.guesses)
     }
-    pub fn session(&self) -> (key: Key) ensures key@ == self.view().session@ { self.session }
-    pub fn peer(&self) -> (key: Key) ensures key@ == self.view().peer@ { self.peer }
 }
 
 pub struct ProtocolView { pub role: Role, pub state: SessionState, pub session: Key, pub peer: Option<Key>, pub code_mode: bool, pub issued: bool, pub code: u32, pub guesses: u8, pub approval: Approval, pub code_witness: Option<(u32, u32, u8)> }
@@ -294,8 +292,6 @@ impl Protocol {
         self.state = if success { SessionState::Completed } else { SessionState::Aborted };
         true
     }
-    /// Revocation is committed before best-effort notification. Terminal states
-    /// are absorbing, including when the notification adapter fails.
     /// Only the received source-side success path creates this witness.
     pub fn acknowledge(&mut self, peer: Key) -> (ack: Option<Completion>)
         ensures protocol_step(old(self).view(), final(self).view()),
@@ -310,6 +306,8 @@ impl Protocol {
         if !matches!(self.role, Role::Source) || !self.complete(peer, true) { return None; }
         Some(Completion { session: self.session, peer })
     }
+    /// Revocation is committed before best-effort notification. Terminal states
+    /// are absorbing, including when the notification adapter fails.
     pub fn abort(&mut self) -> (changed: bool)
         ensures protocol_step(old(self).view(), final(self).view()),
             old(self).invariant() ==> final(self).invariant(),
@@ -402,14 +400,15 @@ impl Release {
     pub fn frame(&self) -> (bytes: Vec<u8>) ensures bytes@ == self.view().bytes { self.bytes.clone() }
 }
 
-/// All admission/revocation operations run under the native registry's mutex.
-/// Clock adapter supplies `live` at this operation's linearization point.
+/// Validated incoming source-side success, bound to its session and locked peer.
 pub struct Completion { session: Key, peer: Key }
 pub struct CompletionView { pub session: Seq<u8>, pub peer: Seq<u8> }
 impl Completion {
     pub closed spec fn view(&self) -> CompletionView { CompletionView { session: self.session@, peer: self.peer@ } }
 }
 
+/// All admission/revocation operations run under the native registry's mutex.
+/// Clock adapter supplies `live` at this operation's linearization point.
 pub struct Native {
     generation: u64,
     closed: bool,

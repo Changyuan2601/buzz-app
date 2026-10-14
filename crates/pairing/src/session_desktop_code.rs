@@ -20,7 +20,6 @@ impl PairingSession {
                 return Err(error);
             }
         };
-        self.desktop_code = Some(code.clone());
         Ok((code.to_string(), challenge))
     }
 
@@ -47,13 +46,11 @@ impl PairingSession {
             .ok_or(PairingError::SasMismatch)?;
         self.record_event(event);
         if correct {
-            self.desktop_code = None;
             return self.source_proof().map(|proof| (proof, true));
         }
         let remaining_attempts = 5u8.saturating_sub(self.policy.guesses());
         // Exhaustion is terminal even if serializing the rejection fails.
         if remaining_attempts == 0 {
-            self.desktop_code = None;
             self.policy.abort();
         }
         let rejection = self.build_event(&PairingMessage::CodeRejected {
