@@ -2760,3 +2760,100 @@ it("lets message plugins open targets through the row's link handler", async () 
     cleanup();
   }
 });
+
+it("keeps coordination attribution accessible while suppressing repeated author artwork", () => {
+  const props = {
+    row: {
+      ...row,
+      audience: "agents" as const,
+      content: "Still working on this",
+    },
+    profile: { name: "Working agent" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const view = renderDom(<MessageRow {...props} stackPrevious={false} />);
+  const authorArtwork = () =>
+    view.container.querySelector(
+      '[data-audience="agents"] [title="Working agent"]',
+    );
+  expect(authorArtwork()).not.toBeNull();
+  view.rerender(<MessageRow {...props} stackPrevious />);
+  expect(authorArtwork()).toBeNull();
+  const disclosure = screen.getByRole("button", {
+    name: "Working agent: Still working on this",
+  });
+  fireEvent.click(disclosure);
+  expect(authorArtwork()).not.toBeNull();
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  view.rerender(<MessageRow {...props} stackPrevious day />);
+  expect(authorArtwork()).not.toBeNull();
+});
+
+it("keeps reply activity dots when the root summary also contains a failed agent", () => {
+  const workingAgent = "a".repeat(64);
+  const failedAgent = "b".repeat(64);
+  const subscribe = () => () => {};
+  const channels = { channels: [], status: "ready" };
+  const profiles = new Map();
+  const library = { identities: [{ pubkey: workingAgent, name: "Brain" }] };
+  const typing = [
+    { channelId: row.channelId, threadRootId: row.id, pubkey: workingAgent },
+  ];
+  const catalog = { entries: [] };
+  const session = {
+    channels: { list: () => channels, subscribeList: subscribe },
+    messages: {},
+    emoji: { snapshot: () => catalog, subscribe },
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    typing: { snapshot: () => typing, subscribe },
+  } as unknown as RelaySession;
+  const noEntries: never[] = [];
+  const empty = { snapshot: () => noEntries, subscribe };
+  const entries = [
+    {
+      id: "failed-summary",
+      key: "test:failed-summary",
+      pluginId: "test",
+      revision: "1",
+      title: "Failed activity",
+      placement: "message" as const,
+      decoratesMessageSummary: true,
+      component: ({
+        renderMessageSummary,
+      }: import("../conversation/contracts").ComposerAccessoryProps) =>
+        renderMessageSummary?.({
+          participants: [failedAgent],
+          content: <span>1 failed</span>,
+          label: "Pinky failed",
+          ref: null,
+        }) ?? null,
+    },
+  ];
+  const view = renderMessage({
+    session,
+    scope: "test",
+    onOpenThread: () => {},
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => entries, subscribe },
+    },
+  });
+  try {
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies. Brain working. Pinky failed",
+    });
+    expect(summary).toHaveTextContent("1 failed");
+    expect(
+      summary.querySelector('[data-thread-working] [data-state="working"]'),
+    ).not.toBeNull();
+  } finally {
+    view.unmount();
+  }
+});

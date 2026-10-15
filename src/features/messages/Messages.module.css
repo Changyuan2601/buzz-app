@@ -162,8 +162,8 @@
 /* Keep both speakers inside the opposing avatar column, including narrow panes. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: min(
-    80%,
-    42rem,
+    85%,
+    46rem,
     calc(100% - 2 * var(--message-side-space) - var(--space-4))
   );
 }
@@ -898,16 +898,18 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin-top: var(--space-2);
 }
 .fileAttachment {
+  text-align: start;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(24rem, 100%);
+  width: 21rem;
+  max-width: 100%;
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-control);
-  color: var(--text);
+  border-radius: var(--radius-container);
+  background: var(--surface-inset);
+  color: var(--text-standard);
   text-decoration: none;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -938,6 +940,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   margin-top: 0;
 }
 .fileAttachmentBody {
+  flex: 1;
   min-width: 0;
   max-width: 100%;
   display: grid;
@@ -1870,15 +1873,16 @@ html[data-keyboard-input] .quickReactionGlyph {
     prefers-reduced-motion: no-preference
   ) {
   html:not([data-keyboard-navigation]) .messageActions[popover]:popover-open {
-    animation: message-actions-in var(--duration-state) var(--easing-enter);
+    animation: message-actions-in calc(var(--duration-state) / 2)
+      var(--easing-enter);
   }
 }
 @keyframes message-actions-in {
   from {
     opacity: 0;
-    transform: translateY(var(--space-1)) scale(0.96);
-    filter: blur(1px);
-    gap: 0;
+    transform: translateY(var(--space-half)) scale(0.98);
+    filter: blur(0.5px);
+    gap: calc(var(--space-half) / 2);
   }
   to {
     opacity: 1;
@@ -1957,9 +1961,9 @@ html[data-keyboard-input] .quickReactionGlyph {
   white-space: nowrap;
   color: var(--text-subtle);
 }
-/* Keep message prose compact, relative to the rendered message type size. */
+/* The bubble owns the reading measure; prose fills its padded content box. */
 .messageBubble > :is(.text, .plainText) {
-  max-width: min(56ch, 100%);
+  max-width: 100%;
 }
 .message[data-layout="continuation"] .text {
   margin-top: 0;
@@ -2596,7 +2600,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   box-sizing: border-box;
   width: fit-content;
   font-size: var(--text-body-sm);
-  max-width: min(100%, calc(56ch + 2 * var(--space-4)));
+  max-width: min(100%, calc(60ch + 2 * var(--space-4)));
   min-width: 0;
   margin-top: var(--space-1);
   padding: var(--space-2) var(--space-4);
@@ -2604,11 +2608,6 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: var(--surface-message);
   color: var(--text-standard);
   overflow-wrap: anywhere;
-}
-/* Constrain the painted bubble itself; balancing only text leaves empty fill. */
-.messageBubble[data-short-prose]:has(> .text > p:only-child),
-.messageBubble[data-short-prose]:has(> .plainText) {
-  max-width: min(100%, calc(40ch + 2 * var(--space-4)));
 }
 /* Reuse the toolbar state so the target stays marked during pointer travel. */
 @media (hover: hover) and (pointer: fine) {
@@ -3095,4 +3094,24 @@ html[data-keyboard-navigation]
   color: var(--text-subtle);
   padding-inline: var(--space-2);
   white-space: nowrap;
+}
+
+/* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */
+.messageBubble[data-diff-only],
+.messageBubble:has(> .text > table:only-child) {
+  padding: 0;
+  background: transparent;
+  color: var(--text-standard);
+  --message-link: var(--text-link);
+}
+.messageBubble[data-diff-only]::after,
+.messageBubble:has(> .text > table:only-child)::after {
+  display: none;
+}
+.workflowAttribution {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
 }

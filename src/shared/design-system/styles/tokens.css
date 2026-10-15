@@ -804,6 +804,9 @@
   /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);
+  /* Fixed PDF artwork colors, paired in both themes. */
+  --file-pdf-surface: #ffffff;
+  --file-pdf-ink: #d32f2f;
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);

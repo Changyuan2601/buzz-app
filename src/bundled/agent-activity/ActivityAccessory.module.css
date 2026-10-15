@@ -31,6 +31,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.preview > :first-child {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 /* Errors explain what to do; keep their reason readable instead of clipped. */
 .preview[data-error] > * {
   overflow: visible;
@@ -40,4 +44,30 @@
 }
 .detail {
   color: var(--text-subtle);
+}
+
+.summaryActivity {
+  padding: var(--space-half) var(--space-1);
+  padding-inline-end: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--affordance-subtle);
+  color: var(--text-subtle);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.summaryGroups {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.failure {
+  background: var(--affordance-danger);
+  color: var(--text-danger);
+}
+.preview[data-error] {
+  color: var(--text-danger);
 }

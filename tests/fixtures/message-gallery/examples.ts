@@ -109,7 +109,7 @@ export const groups: Group[] = [
       single(
         "code-diff",
         "Code diff preview",
-        "The production diff card retains readable text inside an outgoing bubble.",
+        "The production diff card owns its surface without an outer message bubble.",
         patch,
         {
           diff: {

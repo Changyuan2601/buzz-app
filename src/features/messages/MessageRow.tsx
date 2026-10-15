@@ -52,7 +52,10 @@ import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  MessageSummaryActivity,
+} from "../conversation/contracts";
 import {
   ContributionBoundary,
   contributionKey,
@@ -626,6 +629,87 @@ function MessageRowContent({
       )}
     </>
   );
+  const renderMessageSummary = (activity?: MessageSummaryActivity) => {
+    const remainingThreadAgents = threadAgents.filter(
+      (agent) => !activity?.participants.includes(agent.pubkey),
+    );
+    return (
+      ((row.replyCount > 0 ||
+        (!row.threadRootId && threadAgents.length > 0) ||
+        activity) &&
+        onOpenThread && (
+          <Button
+            ref={activity?.ref}
+            variant="ghost"
+            size="sm"
+            data-thread-summary=""
+            data-reply-connector={row.replyCount > 0 || undefined}
+            data-first-participant-shape={
+              agentPubkeys?.has(row.participants[0] ?? "")
+                ? "squircle"
+                : "circle"
+            }
+            type="button"
+            aria-label={
+              row.replyCount > 0
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
+                : `View thread: ${activity?.label ?? threadWorkingLabel}`
+            }
+            onClick={(event) => {
+              event.currentTarget.focus();
+              onOpenThread(row.id, row.threadRootId ?? row.id);
+            }}
+          >
+            <ReplySummary
+              count={row.replyCount}
+              participants={row.participants}
+              profiles={participantProfiles}
+              agentPubkeys={agentPubkeys}
+              resolveName={resolveName}
+              media={media}
+              unreadLabel={unreadLabel}
+              workingParticipants={[
+                ...threadAgents.map((agent) => agent.pubkey),
+                ...(activity?.participants ?? []),
+              ]}
+              activity={
+                <>
+                  {remainingThreadAgents.length > 0 ? (
+                    <span
+                      className={`${styles.threadWorking} buzz-arrive`}
+                      data-thread-working=""
+                      aria-hidden="true"
+                    >
+                      {remainingThreadAgents.slice(0, 2).map((agent) => {
+                        const name = resolveName(agent.pubkey, agent.name);
+                        return (
+                          <Avatar
+                            key={agent.pubkey}
+                            src={avatarMedia(agent.avatar, media)}
+                            alt=""
+                            fallback={name}
+                            size="compact"
+                            shape="squircle"
+                          />
+                        );
+                      })}
+                      {remainingThreadAgents.length > 2 && (
+                        <span>+{remainingThreadAgents.length - 2}</span>
+                      )}
+                      <TypingDots
+                        state={threadWaiting ? "waiting" : "working"}
+                      />
+                    </span>
+                  ) : null}
+                  {activity?.content}
+                </>
+              }
+            />
+          </Button>
+        )) ||
+      null
+    );
+  };
   const message = (
     <div data-message-id={renderMessage ? undefined : row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
@@ -712,12 +796,7 @@ function MessageRowContent({
                   className={shownRow ? undefined : styles.messageBubble}
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
-                  data-short-prose={
-                    (!emojiOnly &&
-                      row.content.length <= 240 &&
-                      !row.content.includes("\n")) ||
-                    undefined
-                  }
+                  data-diff-only={!!row.diff || undefined}
                   data-own={
                     (!shownRow && !!viewer && row.authorId === viewer) ||
                     undefined
@@ -939,6 +1018,9 @@ function MessageRowContent({
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
               registry={extensions.accessories}
+              renderMessageSummary={
+                onOpenThread ? renderMessageSummary : undefined
+              }
               session={session}
               scope={scope}
               channelId={row.channelId}
@@ -959,71 +1041,8 @@ function MessageRowContent({
               open={onOpenLink}
             />
           )}
-          {(row.replyCount > 0 ||
-            (!row.threadRootId && threadAgents.length > 0)) &&
-            onOpenThread && (
-              <Button
-                variant="ghost"
-                size="sm"
-                data-thread-summary=""
-                data-reply-connector={row.replyCount > 0 || undefined}
-                data-first-participant-shape={
-                  agentPubkeys?.has(row.participants[0] ?? "")
-                    ? "squircle"
-                    : "circle"
-                }
-                type="button"
-                aria-label={
-                  row.replyCount > 0
-                    ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`
-                    : `View thread: ${threadWorkingLabel}`
-                }
-                onClick={(event) => {
-                  event.currentTarget.focus();
-                  onOpenThread(row.id, row.threadRootId ?? row.id);
-                }}
-              >
-                {row.replyCount > 0 && (
-                  <ReplySummary
-                    count={row.replyCount}
-                    participants={row.participants}
-                    profiles={participantProfiles}
-                    agentPubkeys={agentPubkeys}
-                    resolveName={resolveName}
-                    media={media}
-                    unreadLabel={unreadLabel}
-                  />
-                )}
-                {threadAgents.length > 0 && (
-                  <span
-                    className={`${styles.threadWorking} buzz-arrive`}
-                    data-thread-working=""
-                    aria-hidden="true"
-                  >
-                    {threadAgents.slice(0, 2).map((agent) => {
-                      const name = resolveName(agent.pubkey, agent.name);
-                      return (
-                        <Avatar
-                          key={agent.pubkey}
-                          src={avatarMedia(agent.avatar, media)}
-                          alt=""
-                          fallback={name}
-                          size="compact"
-                          shape="squircle"
-                        />
-                      );
-                    })}
-                    {threadAgents.length > 2 && (
-                      <span>+{threadAgents.length - 2}</span>
-                    )}
-                    <TypingDots state={threadWaiting ? "waiting" : "working"} />
-                  </span>
-                )}
-                {threadAgents.length > 0 && row.replyCount === 0 && (
-                  <span>View thread</span>
-                )}
-              </Button>
-            )}
+          {!(active && session && scope && extensions?.accessories) &&
+            renderMessageSummary()}
         </div>
       </div>
     </div>
@@ -1159,7 +1178,11 @@ function AgentsMessageRow(props: MessageRowProps) {
               className={styles.audienceLine}
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
-              {avatar(author)}
+              {props.stackPrevious && !props.day && !open ? (
+                <span className={styles.audienceAvatar} aria-hidden="true" />
+              ) : (
+                avatar(author)
+              )}
               {to.length > 0 && (
                 <>
                   <ArrowRightIcon

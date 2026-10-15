@@ -8,7 +8,7 @@ use block2::RcBlock;
 use objc2::{rc::Retained, runtime::AnyObject};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem, WINDOW_SUBMENU_ID},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID},
     AppHandle, Manager, Runtime,
 };
 
@@ -24,7 +24,11 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     // Tauri's default has Close Window in both File and Window. Preserve all
     // other native items (especially editing/services), replacing both routes.
     // Predefined items expose their label, but not their native action type.
-    let close_label = PredefinedMenuItem::close_window(app, None)?.text()?;
+    let native_close = PredefinedMenuItem::close_window(app, None)?;
+    // Read the reference label after mounting it, just like the default items.
+    // On macOS muda strips mnemonic markers from mounted native menu titles.
+    let _reference_menu = Submenu::with_items(app, "", true, &[&native_close])?;
+    let close_label = native_close.text()?;
     let mut replaced = 0;
     for item in menu.items()? {
         if let Some(submenu) = item.as_submenu() {

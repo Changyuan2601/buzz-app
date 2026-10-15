@@ -5,6 +5,7 @@ import type {
 import { AttachmentView } from "../conversation/AttachmentView";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useRef, useState } from "react";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   AnimatePresence,
@@ -16,11 +17,7 @@ import { useMediaCorners } from "./use-media-corners";
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { ComposerAttachmentViewer } from "./ComposerAttachmentViewer";
 import { useDraftAttachmentSource } from "./use-draft-attachment-source";
-import {
-  ArrowsClockwiseIcon,
-  FileTextIcon,
-  XIcon,
-} from "../../shared/design-system/icons";
+import { ArrowsClockwiseIcon, XIcon } from "../../shared/design-system/icons";
 import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
@@ -250,7 +247,7 @@ function AttachmentItem({
           aria-label={`Preview ${item.file.name}`}
           onClick={(event) => preview(event.currentTarget)}
         >
-          <FileTextIcon size={24} />
+          <FileTypeIcon name={item.file.name} mime={item.file.type} />
         </button>
       )}
       <div className={styles.details}>

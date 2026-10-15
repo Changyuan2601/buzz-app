@@ -136,6 +136,9 @@ test("message activity opens a grouped preview and the agent's profile without l
   ).toHaveCount(0);
   await expect(
     row.getByRole("region", { name: "Agent activity on this message" }),
+  ).toHaveCount(0);
+  await expect(
+    row.locator("[data-thread-summary] [data-thread-working]"),
   ).toHaveCount(1);
   await expect(bubble.locator(".buzz-avatar")).toHaveCount(2);
   await expect(bubble.locator(".buzz-avatar-status-dot")).toHaveCount(0);
@@ -182,9 +185,8 @@ test("message activity opens a grouped preview and the agent's profile without l
   await expect(typing).toContainText(getPublicKey(human).slice(0, 10));
   await expect(typing).not.toContainText("Agent 1");
   const threadIndicator = row.locator("[data-thread-working]");
-  // The message bubble already represents these exact requests; don't duplicate
-  // them in the summary. Other-reply activity has its own regression journey.
-  await expect(threadIndicator).toHaveCount(0);
+  // The shared summary represents these requests once, alongside participants.
+  await expect(threadIndicator).toHaveCount(1);
   await reply.fill("Keep this draft while inspecting activity");
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
@@ -203,7 +205,8 @@ test("message activity opens a grouped preview and the agent's profile without l
       await expect(bubble).toHaveAttribute("data-size", "xs");
       await expect(region).toHaveCSS("margin-top", "8px");
       const buttonBox = await bubble.boundingBox();
-      expect(buttonBox.height).toBe(29);
+      // 16px mini avatar + 4px badge inset + 8px xs button inset.
+      expect(buttonBox.height).toBe(28);
       expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(width);
       await bubble.focus();
       await page.keyboard.press("Enter");
@@ -353,7 +356,7 @@ test("message activity opens a grouped preview and the agent's profile without l
   const resumedAt = await page.evaluate(() => Math.floor(Date.now() / 1000));
   publish(keys[0], 20002, "", typingTags, resumedAt);
   publish(keys[1], 20002, "", typingTags, resumedAt);
-  await expect(threadIndicator).toHaveCount(0);
+  await expect(threadIndicator).toHaveCount(1);
   // The tab title may be the loaded message preview, not literally "Thread".
   await page
     .locator(
@@ -375,7 +378,7 @@ test("message activity opens a grouped preview and the agent's profile without l
       await expect(summary.locator("[data-avatar-shape][title]")).toHaveCount(
         3,
       );
-      await expect(threadIndicator).toHaveCount(0);
+      await expect(threadIndicator).toHaveCount(1);
       const avatarSizes = await row
         .locator(".buzz-avatar")
         .evaluateAll((avatars) =>
@@ -388,20 +391,32 @@ test("message activity opens a grouped preview and the agent's profile without l
             .map((avatar) => ({
               width: avatar.getBoundingClientRect().width,
               height: avatar.getBoundingClientRect().height,
+              mini: !!avatar.closest('[data-avatar-stack][data-size="mini"]'),
             })),
         );
-      // Three reply participants and two activity avatars; no duplicate working group.
-      expect(avatarSizes).toHaveLength(5);
+      // Participants and working agents share one deduplicated summary.
+      expect(avatarSizes).toHaveLength(3);
       for (const size of avatarSizes) {
-        expect(size.width).toBe(21);
-        expect(size.height).toBe(21);
+        expect(size.width).toBe(size.mini ? 16 : 21);
+        expect(size.height).toBe(size.mini ? 16 : 21);
       }
       const box = await summary.boundingBox();
       expect(box.x + box.width).toBeLessThanOrEqual(width);
       expect(
-        await summary.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
+        await summary.evaluate((element) => {
+          // The thread connector intentionally extends outside the button.
+          // Check the actual label contents and the connector's viewport bounds.
+          const label = element.querySelector(".buzz-button-label");
+          const box = element.getBoundingClientRect();
+          const connector = getComputedStyle(element, "::before");
+          const extension = parseFloat(connector.width) || 0;
+          return (
+            !!label &&
+            label.scrollWidth <= label.clientWidth &&
+            box.left - extension >= 0 &&
+            box.right + extension <= innerWidth
+          );
+        }),
       ).toBe(true);
       await page.screenshot({
         path: testInfo.outputPath(
@@ -415,7 +430,7 @@ test("message activity opens a grouped preview and the agent's profile without l
   telemetryTime = await page.evaluate(() => new Date().toISOString());
   send(0, "turn_completed", 4);
   await expect(bubble.locator(".buzz-avatar")).toHaveCount(1);
-  await expect(threadIndicator).toHaveCount(0);
+  await expect(threadIndicator).toHaveCount(1);
   send(1, "turn_completed", 4);
   await expect(region).toHaveCount(0);
   await expect(threadIndicator).toHaveCount(0);
@@ -548,11 +563,16 @@ for (const own of [true, false]) {
         row,
         thread.locator(`[data-message-id="${root.id}"]`),
       ]) {
-        const activity = target.getByRole("region", {
-          name: "Agent activity on this message",
-          exact: true,
-        });
-        const chip = activity.getByRole("button").first();
+        const chip =
+          target === row
+            ? target.locator("[data-thread-summary]")
+            : target
+                .getByRole("region", {
+                  name: "Agent activity on this message",
+                  exact: true,
+                })
+                .getByRole("button")
+                .first();
         await expect(chip).toBeVisible();
         await expect
           .poll(async () => {
@@ -562,14 +582,59 @@ for (const own of [true, false]) {
               .boundingBox();
             const chipBox = await chip.boundingBox();
             if (!bubbleBox || !chipBox) return Infinity;
+            const inset =
+              target === row
+                ? await chip.evaluate(
+                    (element) =>
+                      parseFloat(getComputedStyle(element).marginInlineStart) +
+                      parseFloat(getComputedStyle(element).marginInlineEnd),
+                  )
+                : 0;
             return Math.abs(
               own
-                ? bubbleBox.x + bubbleBox.width - (chipBox.x + chipBox.width)
-                : bubbleBox.x - chipBox.x,
+                ? bubbleBox.x +
+                    bubbleBox.width -
+                    (chipBox.x + chipBox.width + inset)
+                : bubbleBox.x + inset - chipBox.x,
             );
           })
           .toBeLessThan(1);
       }
+      app.threadSummary(root.id, [getPublicKey(key)], 6);
+      const summary = row.locator("[data-thread-summary]");
+      await expect(summary).toContainText("6 replies");
+      await expect(summary.locator("[data-avatar-shape][title]")).toHaveCount(
+        1,
+      );
+      await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
+      await page
+        .locator(
+          '[data-panel-workspace] :is([data-tab-value="thread"], [data-tab-value^="thread:"])[aria-selected="true"]',
+        )
+        .locator("..")
+        .getByRole("button", { name: /^Close .+ tab$/ })
+        .click();
+      await summary.click();
+      await expect(
+        thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      ).toBeVisible();
+      app.observer(
+        {
+          kind: "turn_completed",
+          seq: 2,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: "alignment",
+          turnId: "working",
+          payload: {},
+        },
+        key,
+      );
+      await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+      await expect(summary).toContainText("6 replies");
+      await expect(summary.locator("[data-avatar-shape][title]")).toHaveCount(
+        1,
+      );
     });
   });
 }

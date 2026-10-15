@@ -3,6 +3,7 @@
   align-items: center;
   flex-shrink: 0;
   white-space: nowrap;
+  isolation: isolate;
   padding-inline-end: var(--space-1);
 }
 .item {
@@ -20,6 +21,8 @@
   background: var(--surface-panel);
 }
 .count {
+  position: relative;
+  z-index: 4;
   margin-inline-start: var(--space-2);
   color: var(--text-subtle);
 }
@@ -41,4 +44,27 @@
   border-radius: var(--radius-pill);
   background: var(--affordance-selected);
   box-shadow: inset 0 0 0 1.5px var(--surface-panel);
+}
+
+.root[data-size="mini"] .item {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.miniInitial {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transform: scale(0.75);
+}
+
+.item:nth-child(1) {
+  z-index: 1;
+}
+.item:nth-child(2) {
+  z-index: 2;
+}
+.item:nth-child(3) {
+  z-index: 3;
 }

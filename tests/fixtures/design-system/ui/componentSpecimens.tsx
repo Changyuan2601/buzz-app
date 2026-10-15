@@ -239,6 +239,9 @@ function TypingDotsSpecimen() {
             <TypingDots state="waiting" /> Received · waiting to start
           </span>
         </Specimen>
+        <Specimen prop='size="small"'>
+          <TypingDots size="small" />
+        </Specimen>
         <Specimen prop='state="working" (default)'>
           <span className="flex items-center gap-2 text-body">
             <TypingDots /> Working
@@ -287,6 +290,15 @@ function AvatarStackSpecimen() {
         aria-label="Alex, Brain, Casey, and Helper"
       >
         <AvatarStack items={items} />
+      </Button>
+      <Button
+        size="xs"
+        variant="subtle"
+        shape="control"
+        aria-label="Small agent activity"
+      >
+        <AvatarStack items={items.slice(1, 2)} size="mini" />
+        <TypingDots size="small" />
       </Button>
       <Button
         variant="ghost"

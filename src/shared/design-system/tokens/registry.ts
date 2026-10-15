@@ -461,6 +461,31 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: "file-artwork",
+    name: "File artwork",
+    description: "Fixed document-format artwork colors in both themes.",
+    roles: [
+      {
+        token: "file-pdf-surface",
+        variable: "--file-pdf-surface",
+        pointsAt: "#ffffff",
+        use: "White PDF icon tile, paired with file-pdf-ink.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+      {
+        token: "file-pdf-ink",
+        variable: "--file-pdf-ink",
+        pointsAt: "#d32f2f",
+        use: "Red PDF glyph on file-pdf-surface.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+    ],
+  },
+  {
     id: "semantic-status",
     name: "Status",
     description:
