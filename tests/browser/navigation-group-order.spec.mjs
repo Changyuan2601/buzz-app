@@ -98,8 +98,10 @@ test("dragging a group header moves the whole group, keeps its state, and persis
     .toEqual(["group:work", "group:missing", "group:laptop"]);
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
 
-  // Collapsed last group upward to first.
+  // Collapsed last group upward to first. dnd-kit drops on the target it last
+  // rendered, so release only after the pointer's target is shown.
   await pull(page, "laptop", "work");
+  await expect(work).toHaveAttribute("data-drop-edge", "before");
   await page.mouse.up();
   await expect
     .poll(() => groups(page))
