@@ -93,6 +93,7 @@ it("runs sign-in, shows its output, and checks again after", async () => {
   await run;
   expect(setup.snapshot()).toMatchObject({
     running: undefined,
+    loginResult: "succeeded",
     output: "Opening browser…\n",
     status: { state: "ready", version: "2.1.200" },
   });
@@ -101,6 +102,23 @@ it("runs sign-in, shows its output, and checks again after", async () => {
     "--version",
     "auth status --json",
   ]);
+});
+
+it("keeps a failed sign-in distinct from previously cached account readiness", async () => {
+  const { spawn } = scripted({
+    "claude auth login": { code: 1 },
+    "claude --version": { stdout: "2.1.200\n" },
+    "claude auth status --json": { stdout: '{"loggedIn":true}' },
+  });
+  const setup = new ClaudeSetup(spawn);
+  await setup.check();
+  await setup.run("login");
+  expect(setup.snapshot()).toMatchObject({
+    running: undefined,
+    loginResult: "failed",
+    status: { state: "ready" },
+    output: "\nSign-in ended (1).",
+  });
 });
 
 it("stops a step cancelled before its process was returned", async () => {

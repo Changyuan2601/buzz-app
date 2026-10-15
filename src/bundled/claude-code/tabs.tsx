@@ -453,6 +453,15 @@ export function createTabs({
       .map((candidate) => candidate.trim())
       .filter(Boolean)
       .at(-1);
+    const output = (
+      <div
+        role="log"
+        aria-label="Setup output"
+        className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-body-sm text-subtle"
+      >
+        {state.output}
+      </div>
+    );
     return (
       <div className="grid gap-6">
         {state.notice && (
@@ -467,6 +476,16 @@ export function createTabs({
               className="m-0 text-body-sm text-primary"
             >
               <strong>{line}</strong>
+            </p>
+          )}
+          {ready && state.loginResult === "succeeded" && (
+            <p role="status" className="m-0 text-body-sm text-primary">
+              Signed in to Claude. Choose Done to return to your agent.
+            </p>
+          )}
+          {!state.running && state.loginResult === "failed" && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              Sign-in did not complete. Review the output below, then try again.
             </p>
           )}
           {state.running ? (
@@ -496,6 +515,11 @@ export function createTabs({
               >
                 {action.label}
               </Button>
+              {ready && (
+                <Button variant="prominent" onClick={onClose}>
+                  Done
+                </Button>
+              )}
             </div>
           ) : null}
           {state.running === "login" && (
@@ -523,15 +547,17 @@ export function createTabs({
               same sign-in and settings.
             </p>
           )}
-          {state.output && state.running !== "install" && (
-            <div
-              role="log"
-              aria-label="Setup output"
-              className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-body-sm text-subtle"
-            >
-              {state.output}
-            </div>
-          )}
+          {state.output &&
+            state.running !== "install" &&
+            (ready && state.loginResult === "succeeded" ? (
+              <Accordion
+                items={[
+                  { value: "details", title: "Setup details", content: output },
+                ]}
+              />
+            ) : (
+              output
+            ))}
           {state.running === "login" && (
             <form
               className="grid gap-2"

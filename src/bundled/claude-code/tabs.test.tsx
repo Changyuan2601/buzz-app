@@ -600,7 +600,8 @@ it.each([0, 1])(
     const { type, spawn } = installed();
     const Setup = providerSetup(type);
     const user = userEvent.setup();
-    render(<Setup onClose={vi.fn()} />);
+    const onClose = vi.fn();
+    render(<Setup onClose={onClose} />);
     await screen.findByRole("combobox", { name: "Default model" });
     let finish!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
@@ -643,12 +644,26 @@ it.each([0, 1])(
       });
       await screen.findByRole("combobox", { name: "Default model" });
       expect(type.provider?.snapshot()).not.toHaveProperty("blocking");
+      if (exitCode === 0) {
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "Signed in to Claude",
+        );
+        expect(screen.queryByRole("log")).toBeNull();
+        await user.click(screen.getByRole("button", { name: "Setup details" }));
+      } else {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Sign-in did not complete",
+        );
+        expect(screen.queryByText(/Signed in to Claude/)).toBeNull();
+      }
       expect(screen.getByRole("log")).toHaveTextContent(
         exitCode === 0 ? "Login successful" : "Sign-in ended (1).",
       );
       expect(
         screen.getByRole("button", { name: "Sign in again" }),
       ).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "Done" }));
+      expect(onClose).toHaveBeenCalledOnce();
     } finally {
       finish(null);
     }

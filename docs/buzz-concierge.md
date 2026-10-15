@@ -24,6 +24,10 @@ dialog. **Sign in again** remains available when cached credentials report ready
 and the review card keeps **Manage Claude** after creation for recovery. Sign-in
 output remains visible after the process ends, including failures. Creation waits
 while provider setup is running; successful creation is not proof of inference.
+After the login process succeeds and Claude reports a signed-in account, the
+dialog confirms sign-in and offers **Done**. Successful output is available under
+**Setup details**; failed or cancelled login stays visible even if an older stored
+account still reports ready.
 Shared Compute creates a tool-free Chat agent. Other local harnesses retain
 their existing tool/account behavior and configuration ownership.
 

@@ -210,6 +210,8 @@ export type SetupState = Readonly<{
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
   output: string;
+  /** The last local login process's outcome; account readiness is checked separately. */
+  loginResult: "succeeded" | "failed" | undefined;
   /** Why the latest release is not the one in use, after it failed its test. */
   notice: string | undefined;
 }>;
@@ -225,6 +227,7 @@ export class ClaudeSetup {
     checking: false,
     running: undefined,
     output: "",
+    loginResult: undefined,
     notice: undefined,
   };
   private readonly listeners = new Set<() => void>();
@@ -418,11 +421,17 @@ export class ClaudeSetup {
   ) {
     this.cancelled = false;
     if (asked) this.refused.clear();
-    this.set({ running: step, ...(asked ? { output: "" } : {}) });
+    this.set({
+      running: step,
+      ...(asked ? { output: "" } : {}),
+      ...(step === "login" ? { loginResult: undefined } : {}),
+    });
     try {
       if (step === "install") await this.install(spawn);
       else await this.step(spawn, "claude", ["auth", "login"], "Sign-in");
+      if (step === "login") this.set({ loginResult: "succeeded" });
     } catch (error) {
+      if (step === "login") this.set({ loginResult: "failed" });
       this.log(`\n${message(error)}`);
     } finally {
       this.process = undefined;
