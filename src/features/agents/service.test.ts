@@ -3792,6 +3792,61 @@ it("gives a missed event to more of one Interest's watches than its lane holds, 
   }
 }, 10_000);
 
+it("does not give a missed event again after a restart to watches that had it before the rest", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const caught: string[] = [];
+    const first = await setup({
+      storage,
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        if (trigger.type === "catch-up") caught.push(trigger.slug);
+        // The first finishes; the second holds its lane.
+        if (caught.length > 1) await new Promise(() => {});
+        return { ok: true };
+      },
+    });
+    vi.setSystemTime(start * 1000);
+    const slugs = Array.from({ length: 10 }, (_, i) => `watch/chat${i}`);
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        ...Object.fromEntries(slugs.map((slug) => [slug, chat["watch/chat"]])),
+      },
+    });
+    await settle();
+    vi.setSystemTime((start + 60) * 1000);
+    const missed = posted("missed", start + 30);
+    first.history.push(missed);
+    first.recover();
+    await vi.waitFor(() => expect(caught).toHaveLength(2));
+    // Closed while the event has gone to only some of its watches.
+    first.connect(false);
+    vi.setSystemTime((start + 90) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [missed],
+    });
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalled());
+    await settle();
+    await settle();
+    // The first eight had it, the one that finished included; the queued
+    // ones are lost on quit, as any queued wake is.
+    expect(caught[0]).toBe("watch/chat0");
+    expect(turns(second.run).sort()).toEqual([
+      "catch-up watch/chat8 1",
+      "catch-up watch/chat9 1",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("waits for a confirmed roster before catching up, saving no progress past what it has not heard", async () => {
   vi.useFakeTimers({ now: 1_000_000_000 });
   try {

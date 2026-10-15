@@ -169,6 +169,16 @@ const laneOf = (trigger: Trigger): Lane =>
   trigger.type === "mention" ? "mention" : "watch";
 const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
+/** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
+ * watch; others have none. */
+const streamOf = (pubkey: string, { watch, slug, event }: WatchTrigger) =>
+  watch.kinds.length === 1 && watch.kinds[0] === 9
+    ? streamKey(
+        pubkey,
+        slug,
+        watch.channels === "all" ? undefined : channelOf(event),
+      )
+    : undefined;
 /** Classifier calls a trigger's job makes before it queues. */
 const classifications = (trigger: Trigger) =>
   trigger.type === "watch" && trigger.watch.classifier
@@ -700,21 +710,25 @@ export class AgentRunners {
     if (event.kind !== 9) return;
     const channel = channelOf(event);
     let changed = false;
-    for (const stream of streamsOf(agent)) {
-      if (stream.channel !== undefined && stream.channel !== channel) continue;
-      const checkpoint = this.checkpoints[stream.key];
-      if (!checkpoint || !undelivered(checkpoint, event)) continue;
-      const heard = [
-        ...(checkpoint.heard ?? []),
-        { created_at: event.created_at, id: event.id },
-      ];
-      this.checkpoints = {
-        ...this.checkpoints,
-        [stream.key]: { ...checkpoint, heard: heard.slice(-HEARD_LIMIT) },
-      };
-      changed = true;
-    }
+    for (const stream of streamsOf(agent))
+      if (stream.channel === undefined || stream.channel === channel)
+        changed = this.heardIn(stream.key, event) || changed;
     if (changed) this.saveCheckpoints();
+  }
+  /** Adds `event` to what the stream heard past its checkpoint, unless it is
+   * not past it; returns whether it did. */
+  private heardIn(key: string, event: RelayEvent) {
+    const checkpoint = this.checkpoints[key];
+    if (!checkpoint || !undelivered(checkpoint, event)) return false;
+    const heard = [
+      ...(checkpoint.heard ?? []),
+      { created_at: event.created_at, id: event.id },
+    ];
+    this.checkpoints = {
+      ...this.checkpoints,
+      [key]: { ...checkpoint, heard: heard.slice(-HEARD_LIMIT) },
+    };
+    return true;
   }
   /** Sets a stream's checkpoint, keeping what it heard live past it. */
   private setCheckpoint(key: string, checkpoint: Checkpoint) {
@@ -1014,6 +1028,14 @@ export class AgentRunners {
     if (!watches.size) return;
     if (!this.hasSeen(runner, event.id, channel))
       this.markSeen(runner, event.id, channel);
+    // Saved for each watch's stream too, so a restart before the rest have it
+    // does not give it to these again.
+    let changed = false;
+    for (const [trigger] of watches.values()) {
+      const stream = streamOf(runner.pubkey, trigger as WatchTrigger);
+      if (stream) changed = this.heardIn(stream, event) || changed;
+    }
+    if (changed) this.saveCheckpoints();
     const done = runner.fanning?.id === event.id ? runner.fanning.done : [];
     runner.fanning = {
       id: event.id,
@@ -1058,17 +1080,10 @@ export class AgentRunners {
    * stream's checkpoint, so a watch added or widened since wakes for nothing
    * older; one with none has replay only, from when the app listened. */
   private missed(runner: Runner, trigger: WatchTrigger, listened: boolean) {
-    const { watch, slug, event } = trigger;
-    if (watch.kinds.length !== 1 || watch.kinds[0] !== 9) return listened;
-    const checkpoint =
-      this.checkpoints[
-        streamKey(
-          runner.pubkey,
-          slug,
-          watch.channels === "all" ? undefined : channelOf(event),
-        )
-      ];
-    return !!checkpoint && undelivered(checkpoint, event);
+    const stream = streamOf(runner.pubkey, trigger);
+    if (!stream) return listened;
+    const checkpoint = this.checkpoints[stream];
+    return !!checkpoint && undelivered(checkpoint, trigger.event);
   }
   /** Saves the checkpoints of watches that still exist. Unsaved, catch-up
    * starts from the last saved one again, which `seen` dedupes until a
