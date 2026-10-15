@@ -70,6 +70,8 @@ export function withPreset(current: Config, id: string): Config {
   };
 }
 
+/** The forms the native host accepts for a process directory. */
+const ABSOLUTE = /^(\/|~$|~\/)/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Names reserved for the agent's identity; the host strips inherited ones but
  * lets a caller set them, so a harness must never get them from settings. */
@@ -85,6 +87,10 @@ export function problems(value: Config): string[] {
     found.push("The command can't start with `-`.");
   else if (command.includes("=")) found.push("The command can't contain `=`.");
   if (!workspace.trim()) found.push("Choose a workspace.");
+  else if (!ABSOLUTE.test(workspace))
+    found.push("The workspace must be an absolute path or start with `~/`.");
+  if (args.some((arg) => arg === "" || arg.includes("\n")))
+    found.push("Arguments can't be empty or span lines.");
   const fields = [command, workspace, ...args, ...Object.entries(env).flat()];
   if (fields.some((field) => field.includes("\0")))
     found.push("Settings can't contain NUL characters.");
