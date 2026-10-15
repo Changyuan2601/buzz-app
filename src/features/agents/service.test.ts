@@ -3143,6 +3143,40 @@ it("holds a watched event until the relay confirms its channel's saved roster", 
   expect(woke(run)).toEqual(["kept", "dropped"]);
 });
 
+it("delivers a held replay of more events than the agent takes at once when its roster is confirmed", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, emit, confirm } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, { attentionEnabled: true, attention: everything });
+    const now = Math.floor(Date.now() / 1000);
+    const ids = Array.from({ length: 80 }, (_, index) => `h${index}x`);
+    const replay = () =>
+      emit({
+        replay: true,
+        events: ids.map((id) =>
+          event(id, { created_at: now + 1, tags: [["h", "saved"]] }),
+        ),
+      });
+    replay();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run).not.toHaveBeenCalled();
+    // More than the queue takes at once: the rest wait for room.
+    confirm("saved", [viewer, bot]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run.mock.calls.length).toBeGreaterThan(0);
+    expect(run.mock.calls.length).toBeLessThan(80);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    replay();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(woke(run).sort()).toEqual(
+      ids.map((id) => id.replace(/0+$/, "")).sort(),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("drops a held event when the confirmed roster no longer has the agent", async () => {
   const { service, run, emit, confirm } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

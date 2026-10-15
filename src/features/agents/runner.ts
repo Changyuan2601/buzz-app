@@ -516,16 +516,18 @@ export class AgentRunners {
     }
   }
   /** Matches the held events of a community's agents again, as its rosters
-   * change: one now confirmed wakes the watches it matches, or none. */
+   * change: one now confirmed wakes the watches it matches, or none. They go
+   * back through the backlog, ahead of what came after them: a confirmed
+   * roster can release more than the agent has room for at once, and each is
+   * already seen, so one dropped here would never come again. */
   releaseHeld(heard: (agent: Agent) => boolean) {
     for (const runner of this.runners.values()) {
       if (!runner.held.size) continue;
       const agent = this.host.ready(runner.pubkey);
       if (!agent || !heard(agent)) continue;
-      for (const [id, { event, channelId }] of [...runner.held]) {
-        runner.held.delete(id);
-        this.deliver(runner, agent, event, channelId);
-      }
+      runner.backlog.unshift(...runner.held.values());
+      runner.held.clear();
+      this.admit(runner);
     }
   }
   private deliver(
