@@ -2,8 +2,8 @@
 export const SESSION_CHANNEL_DESCRIPTION = "Buzz session (buzz.sessions/v1)";
 /** Marks a personal chat: its owner plus their agents, answered as one
  * channel-scoped conversation at top level. Remote agents read it from
- * channel metadata because Me placement is private to the owner. Sharing to
- * Messages replaces the description, which clears it. */
+ * channel metadata because Me placement is private to the owner. Explicit conversion to
+ * a channel replaces the description, which clears it. */
 const PERSONAL_LINE = "personal";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

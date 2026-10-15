@@ -30,6 +30,8 @@ import {
   parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { useSessionConversions } from "../../features/sessions/conversion";
+import { ConvertSession } from "../../features/sessions/ConvertSession";
 import { SessionShare } from "../sessions/SessionShare";
 import {
   SessionColumn,
@@ -513,13 +515,18 @@ function ChannelWorkspace({
   const committedVisit = useRef<{
     currentId: string | undefined;
     queries: RelaySession;
+    channelType: string | undefined;
   }>(undefined);
   const continuingVisit =
     committedVisit.current?.currentId === currentId &&
     committedVisit.current?.queries === queries;
   useLayoutEffect(() => {
-    committedVisit.current = { currentId, queries };
-  }, [currentId, queries]);
+    committedVisit.current = {
+      currentId,
+      queries,
+      channelType: current?.channelType,
+    };
+  }, [currentId, queries, current?.channelType]);
   const tabState = useChannelTabState(queries, currentId);
   const { settings, setSettings, retireMenuEntries } = tabState;
   useEffect(() => {
@@ -532,7 +539,22 @@ function ChannelWorkspace({
     };
   }, [currentId, composingMessage, draftParent]);
 
+  const conversions = useSessionConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const [conversion, setConversion] = useState<{
+    channelId: string;
+    navigation: PageNavigation | undefined;
+    trigger: HTMLElement | null;
+  }>();
+  // Type changes are the result, not a new visit. Actual navigation retires the form.
+  useEffect(() => {
+    setConversion((previous) =>
+      previous &&
+      (previous.channelId !== currentId || previous.navigation !== navigation)
+        ? undefined
+        : previous,
+    );
+  }, [currentId, navigation]);
   const [settingsFocus, requestSettingsFocus] = useState(0);
   const showingSettings =
     tabState.paneOpen &&
@@ -1259,6 +1281,13 @@ function ChannelWorkspace({
           channelId={current.id}
           channelName={current.name}
           autoFocus={
+            // Conversion remounts the body, but isn't a new conversation opening.
+            // Let its dialog restore focus instead of the replacement composer.
+            !(
+              continuingVisit &&
+              committedVisit.current?.channelType === "session" &&
+              current.channelType !== "session"
+            ) &&
             // The bound request arrives after the composer's first render.
             (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
               "preserve" &&
@@ -1396,6 +1425,13 @@ function ChannelWorkspace({
                     session={queries}
                     channel={current}
                     signal={navigation?.signal}
+                    onConvert={(trigger) =>
+                      setConversion({
+                        channelId: current.id,
+                        navigation,
+                        trigger,
+                      })
+                    }
                   />
                 </SessionHeading>
               ) : null}
@@ -1438,6 +1474,16 @@ function ChannelWorkspace({
                           session={queries}
                           origin={navigation?.signal}
                           trigger={settingsTrigger}
+                          finishConversion={
+                            current && conversions.has(current.id)
+                              ? () =>
+                                  setConversion({
+                                    channelId: current.id,
+                                    navigation,
+                                    trigger: settingsTrigger.current,
+                                  })
+                              : undefined
+                          }
                           openDetails={() => {
                             drawer.close();
                             requestSettingsFocus((value) => value + 1);
@@ -1543,6 +1589,23 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
+      {conversion &&
+        conversion.channelId === currentId &&
+        conversion.navigation === navigation && (
+          <ConvertSession
+            session={queries}
+            id={conversion.channelId}
+            signal={conversion.navigation?.signal}
+            close={() => setConversion(undefined)}
+            finalFocus={() =>
+              conversion.navigation?.signal.aborted
+                ? false
+                : conversion.trigger?.isConnected
+                  ? conversion.trigger
+                  : (settingsTrigger.current ?? false)
+            }
+          />
+        )}
       {showingMediaReview && (
         <MediaReviewViewer
           extensions={extensions}

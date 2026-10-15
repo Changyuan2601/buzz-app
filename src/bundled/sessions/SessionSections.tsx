@@ -1,4 +1,16 @@
-import { SessionShare } from "./SessionShare";
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
+import { SessionShare, SessionAccessIndicator } from "./SessionShare";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
@@ -58,14 +70,14 @@ export function SessionSections({
   renderSession,
   onNew,
   personal = false,
-  onShared,
+  onConverted,
   visit,
   header,
 }: {
   /** Shown above the new-item actions, such as the sidebar's brand mark. */
   header?: ReactNode;
   personal?: boolean;
-  onShared?: (id: string) => void;
+  onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
   scope: string;
@@ -73,6 +85,12 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  useSessionConversions(session);
+  useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
+  const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
     error: boolean;
@@ -123,10 +141,12 @@ export function SessionSections({
   const sharingChannel = channels.channels.find(
     (channel) => channel.id === sharing?.id,
   );
-  const currentVisit = useRef(visit);
-  currentVisit.current = visit;
   const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
   const [renaming, setRenaming] = useState<SessionListItem>();
+  const [converting, setConverting] = useState<{
+    id: string;
+    visit: AbortSignal | undefined;
+  }>();
   const [deleting, setDeleting] = useState<string>();
   const [deleteError, setDeleteError] = useState("");
   const [animate, setAnimate] = useState(false);
@@ -320,6 +340,17 @@ export function SessionSections({
                     key={item.id}
                     id={item.id}
                     title={item.title}
+                    indicator={
+                      personal ? (
+                        <SessionAccessIndicator
+                          session={session}
+                          channel={channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          )}
+                          onClick={() => setSharing({ id: item.id, visit })}
+                        />
+                      ) : undefined
+                    }
                     className={styles.organizedRow}
                     content={
                       <>
@@ -330,6 +361,23 @@ export function SessionSections({
                             Share…
                           </MenuItem>
                         )}
+                        {personal &&
+                          canConvertSession(
+                            session,
+                            channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            ),
+                          ) && (
+                            <MenuItem
+                              disabled={shareAttempts.has(item.id)}
+                              onClick={() => {
+                                if (!sessionShareAttempt(session, item.id))
+                                  setConverting({ id: item.id, visit });
+                              }}
+                            >
+                              {conversionLabel(session, item.id)}
+                            </MenuItem>
+                          )}
                         <MenuItem
                           disabled={
                             !session.channelDetails?.available ||
@@ -467,27 +515,36 @@ export function SessionSections({
             </DropSection>
           ))}
       </ChannelSidebarDnd>
+      {converting && (
+        <ConvertSession
+          key={converting.id}
+          session={session}
+          id={converting.id}
+          signal={converting.visit}
+          onConverted={() => onConverted?.(converting.id)}
+          close={() => setConverting(undefined)}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${converting.id}"] button`,
+            ) ?? false
+          }
+        />
+      )}
       {sharing && sharingChannel && (
         <SessionShare
           key={sharing.id}
           session={session}
           channel={sharingChannel}
+          signal={sharing.visit}
+          onConverted={() => onConverted?.(sharing.id)}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
               `[data-session-menu-id="${sharing.id}"] button`,
             ) ?? false
           }
-          direct
           initialOpen
           renderTrigger={() => null}
           onClose={() => setSharing(undefined)}
-          onShared={() => {
-            const id = sharing.id;
-            const sameVisit =
-              sharing.visit === currentVisit.current && !sharing.visit?.aborted;
-            setSharing(undefined);
-            if (sameVisit) onShared?.(id);
-          }}
         />
       )}
       {sessionSettings && (
@@ -666,6 +723,7 @@ function SessionActionsMenu({
   className,
   children,
   content,
+  indicator,
   enabled = true,
   trailing,
 }: {
@@ -674,6 +732,7 @@ function SessionActionsMenu({
   className: string | undefined;
   children: ReactNode;
   content: ReactNode;
+  indicator?: ReactNode;
   enabled?: boolean;
   /** Follows the overflow action, preserving header action keyboard order. */
   trailing?: ReactNode;
@@ -714,6 +773,7 @@ function SessionActionsMenu({
         }}
       >
         {children}
+        {indicator}
         <MenuRoot>
           <MenuTrigger
             render={(props) => (

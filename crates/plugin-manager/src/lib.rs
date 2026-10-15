@@ -73,6 +73,9 @@ pub struct HostProcess {
     /// Fixed leading arguments; the caller's arguments follow them.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Run the copy the app ships in its `bin` resources, never one on PATH.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bundled: bool,
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -1384,6 +1387,11 @@ mod tests {
             parsed.host.as_ref().unwrap().processes[0].args,
             Vec::<String>::new()
         );
+        assert!(!parsed.host.as_ref().unwrap().processes[0].bundled);
+        let mut bundled = processes.clone();
+        bundled["host"]["processes"][0]["bundled"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(bundled).unwrap();
+        assert!(parsed.host.as_ref().unwrap().processes[0].bundled);
         for (field, value) in [
             ("program", serde_json::json!("/bin/sh")),
             ("program", serde_json::json!("")),

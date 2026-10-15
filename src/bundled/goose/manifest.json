@@ -4,7 +4,7 @@
   "apiVersion": 1,
   "host": {
     "processes": [
-      { "id": "goose", "program": "goose-acp" },
+      { "id": "goose", "program": "goose-acp", "bundled": true },
       { "id": "read", "program": "base64", "args": ["-i"] },
       { "id": "workspace", "program": "pwd" }
     ],

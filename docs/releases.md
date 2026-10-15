@@ -160,12 +160,17 @@ publish a preview `latest.json` until its archive and signature are available
 at stable HTTPS URLs. Verify old-build → new-build installation promptly after
 the first eligible auto-promotion, before wider preview distribution.
 
-The manifest records hashes before signing. Packaged macOS apps accept changed
-hashes only after verifying their enclosing app's resource seal and Block Developer
-ID signature. The app retains the signed files' hashes in memory and checks them
-before each launch. Development builds and other platforms still require the
-manifest hashes to match. The release workflow verifies the signed seal,
-notarization, and manifest identity before publishing.
+## Bundled goose-acp
+
+Every package ships `goose-acp` in its `bin` resources, so Goose agents need no
+install. `scripts/build-goose-acp.mjs` builds it from the goose commit pinned in
+`runtime/goose-acp.json`, with only the features the Goose plugin uses, in the
+small `lean` profile (about 15 MB on macOS). `tauri build` runs the script
+through `beforeBuildCommand`; `just desktop` runs it with `--dev`, Cargo's faster
+dev profile. It skips the build when the staged binary already matches the pin.
+To move to a newer goose, change `revision` in the pin. The app's own signature
+covers the binary; nothing else checks it at launch. Each release job checks that
+its package contains it.
 
 ## Windows and Linux installers and candidate-only runs
 
