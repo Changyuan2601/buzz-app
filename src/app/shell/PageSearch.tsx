@@ -32,6 +32,7 @@ import {
   type SearchDestination,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
+import { meAgentTarget } from "../../bundled/me/routes";
 import { usageScope } from "../../features/search/usage";
 
 export type SearchServices = Pick<
@@ -358,6 +359,19 @@ function CommunitySearch({
           channelId,
           ...(messageId ? { messageId } : {}),
         });
+      }}
+      openAgentSession={(pubkey) => {
+        const current = services.communities.snapshot();
+        const relay = services.communities.relay.snapshot();
+        if (
+          current.viewer !== scope.viewer ||
+          current.selected !== client.selected ||
+          relay.session !== connection.session ||
+          !relay.scope
+        )
+          return;
+        close();
+        void services.navigation.open(meAgentTarget(relay.scope, pubkey));
       }}
     />
   );

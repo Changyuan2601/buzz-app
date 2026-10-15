@@ -39,8 +39,11 @@ export function NewSessionComposer({
   standalone = false,
   focusRequest = 0,
   resumeDraftKey,
+  agent,
 }: {
   personal?: boolean;
+  /** Start with this agent chosen, as when search opens a new session with it. */
+  agent?: string | undefined;
   resumeDraftKey?: string | undefined;
   standalone?: boolean;
   focusRequest?: number | AbortSignal;
@@ -63,6 +66,7 @@ export function NewSessionComposer({
   const [selectedAgent, setSelectedAgent] = useState(() => {
     const receipt = readPending(scope, draftKey);
     if (receipt?.invitationId) return receipt.agent ?? "";
+    if (agent && personal && /^[0-9a-f]{64}$/.test(agent)) return agent;
     const saved = readView<unknown>(
       scope,
       `${draftKey}:new-agent`,

@@ -1829,3 +1829,26 @@ it.each([
     expect(h.messages.send).toHaveBeenCalledOnce();
   },
 );
+
+it("starts with the agent its route names, over the saved choice", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const agent = "a".repeat(64);
+  writeView("route-agent", "me:new-agent", "b".repeat(64));
+  writeView("route-agent", "me:new-draft", "Hello");
+  render(
+    <NewSessionComposer
+      personal
+      agent={agent}
+      session={f.session}
+      scope="route-agent"
+      onStarted={started}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  const [id] = started.mock.calls[0] ?? [];
+  expect(f.workSessions.invite).toHaveBeenCalledWith(id, agent);
+  expect(f.messages.send).toHaveBeenCalledWith(id, "Hello", [agent]);
+});

@@ -2900,3 +2900,91 @@ it.each([true, false])(
     }
   },
 );
+
+it.each([true, false])(
+  "sends the viewer's agents to a new session, not their DMs (Solo=%s)",
+  async (solo) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      mine = keypair(),
+      theirs = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const dm = (id: string, member: string) => [
+      metadata(relay, id, "opaque", 1700000000, [
+        ["t", "dm"],
+        ["private", ""],
+      ]),
+      roster(relay, id, [viewer.pubkey, member]),
+    ];
+    const discovery = [
+      ...dm("mine-dm", mine.pubkey),
+      ...dm("theirs-dm", theirs.pubkey),
+      profile(mine, { name: "Scout", is_agent: true }),
+      profile(theirs, { name: "Scooter", is_agent: true }),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.search !== undefined)) return [];
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    const source = owner.session.agentChoices;
+    const choices = {
+      ...source.snapshot(),
+      identities: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+      selectable: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+    };
+    const session = {
+      ...owner.session,
+      agentChoices: {
+        ...source,
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    } as typeof owner.session;
+    const openAgentSession = vi.fn();
+    const openConversation = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query="sco"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+          {...(solo ? { openAgentSession } : {})}
+        />,
+      );
+      const direct = within(
+        await screen.findByRole("group", { name: "Direct messages" }),
+      );
+      expect(
+        await direct.findByRole("option", { name: /Scooter/ }),
+      ).toBeVisible();
+      if (!solo) {
+        expect(
+          await direct.findByRole("option", { name: /Scout/ }),
+        ).toBeVisible();
+        expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
+        return;
+      }
+      expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+      const agents = within(screen.getByRole("group", { name: "Agents" }));
+      const choice = agents.getByRole("option", { name: /Scout/ });
+      expect(choice).toHaveTextContent("New session");
+      expect(agents.queryByRole("option", { name: /Scooter/ })).toBeNull();
+      fireEvent.click(choice);
+      expect(openAgentSession).toHaveBeenCalledExactlyOnceWith(mine.pubkey);
+      expect(openConversation).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);

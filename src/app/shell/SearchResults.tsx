@@ -65,6 +65,7 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  openAgentSession,
   usageScope,
 }: {
   session: RelaySession;
@@ -73,6 +74,9 @@ export function SearchResults({
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
+  /** Open a new Solo session with one of the viewer's agents. Without it, a
+   * search for an agent finds only its direct messages. */
+  openAgentSession?: ((pubkey: string) => void) | undefined;
   /** View-state partition whose visits and search choices rank results. */
   usageScope?: string | undefined;
 } & SearchInputProps) {
@@ -432,6 +436,19 @@ export function SearchResults({
         .catch(() => {});
   }, [session, profileKey]);
   const needle = parsed.text.toLowerCase().replace(/^#/, "");
+  // The viewer's own agents open a new session, not a direct message: the
+  // same agents the new-session composer accepts.
+  const agentSearch = !!openAgentSession && !scopedChannelId && !!needle;
+  const ownAgents = useAgentChoices(session, agentSearch, agentSearch);
+  const sessionAgents = agentSearch ? ownAgents.selectable : [];
+  const sessionAgentKeys = new Set(sessionAgents.map(({ pubkey }) => pubkey));
+  const matchingAgents = sessionAgents.filter(
+    (agent) => matchRank(agent.name, needle) !== undefined,
+  );
+  const agentDirectMessage = (channel: ChannelSummary) =>
+    channel.channelType === "dm" &&
+    channel.participants?.length === 1 &&
+    sessionAgentKeys.has(channel.participants[0] ?? "");
   // Read once per opening, so usage recorded while it is open cannot reorder it.
   const usage = useMemo(
     () => (usageScope ? readSearchUsage(usageScope) : noSearchUsage),
@@ -454,6 +471,7 @@ export function SearchResults({
         .map(({ id }) => `channel:${id}`),
       ...publicChannels.channels.map(({ id }) => `channel:${id}`),
       ...pages.map(({ key }) => key),
+      ...matchingAgents.map(({ pubkey }) => `agent:${pubkey}`),
     ]),
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
@@ -483,7 +501,12 @@ export function SearchResults({
     ),
     channelRank,
   );
-  const matchingChannels = matchingAll.slice(0, 8);
+  const matchingChannels = matchingAll
+    .filter((channel) => !agentDirectMessage(channel))
+    .slice(0, 8);
+  const agentRank = (agent: (typeof sessionAgents)[number]) =>
+    rankOf(agent.name, `agent:${agent.pubkey}`);
+  const agentResults = byMatch(matchingAgents, agentRank).slice(0, 8);
   const joinedAll = matchingAll.filter(
     (channel) => channel.channelType !== "dm",
   );
@@ -520,6 +543,27 @@ export function SearchResults({
               : "Conversation",
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
+    };
+  };
+  const agentDestination = (
+    agent: (typeof sessionAgents)[number],
+  ): SearchDestination => {
+    const matches = matchName(agent.name, needle)?.positions;
+    const key = `agent:${agent.pubkey}`;
+    return {
+      key,
+      label: agent.name,
+      ...(matches ? { matches } : {}),
+      detail: "New session",
+      icon: ChatCircleIcon,
+      avatar: {
+        src: avatarMedia(
+          profiles.get(agent.pubkey)?.picture ?? agent.avatar,
+          session.media,
+        ),
+        shape: "squircle",
+      },
+      run: choose(key, () => openAgentSession?.(agent.pubkey)),
     };
   };
   const recent: SearchDestination[] = channels
@@ -661,6 +705,11 @@ export function SearchResults({
                     ),
                   },
                   {
+                    label: "Agents",
+                    destinations: agentResults.map(agentDestination),
+                    best: Math.min(...agentResults.map(agentRank)),
+                  },
+                  {
                     label: "Pages",
                     // PageSearch already ranked these by text and underlined
                     // them; here usage and earlier choices adjust the order.
@@ -686,6 +735,7 @@ export function SearchResults({
                   empty:
                     matchingChannels.length ||
                     channelResults.length ||
+                    agentResults.length ||
                     pages.length
                       ? undefined
                       : messageEmpty,
