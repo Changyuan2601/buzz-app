@@ -140,14 +140,19 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
+/** The open conversation's Archive/Restore, published for the Inbox shortcut. */
+export type ArchiveShortcut = { current?: (() => void) | undefined };
+
 export function InboxPage({
   relay,
   navigator,
   extensions,
+  archive,
 }: {
   relay: RelayData;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const { viewer, scope } = connection;
@@ -166,6 +171,7 @@ export function InboxPage({
             }}
             navigator={navigator}
             extensions={extensions}
+            archive={archive}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -200,11 +206,13 @@ export function InboxView({
   scope,
   navigator,
   extensions,
+  archive: archiveShortcut,
 }: {
   session: RelaySession;
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const split = usePanelSplit(undefined, 316, {
     defaultWidth: 420,
@@ -455,6 +463,18 @@ export function InboxView({
   const archiveView = useRef({ show, visible, selected });
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected };
+  });
+  // The header's Archive/Restore, so the shortcut follows the same rules.
+  useLayoutEffect(() => {
+    if (!archiveShortcut || !selected) return;
+    const current = () => {
+      if (!pending) archive(selected, !archived(selected));
+    };
+    archiveShortcut.current = current;
+    return () => {
+      if (archiveShortcut.current === current)
+        archiveShortcut.current = undefined;
+    };
   });
   const profileKey = [
     ...new Set([

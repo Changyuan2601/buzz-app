@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { InboxPage } from "./InboxPage";
+import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { archiveKey, readArchives } from "./archive";
 import { viewRevision } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -399,6 +399,42 @@ it.each(["Threads", "Mentions"])(
     await waitFor(() => expect(rows()).toHaveLength(2));
   },
 );
+
+it("archives and restores the open conversation from the Archive shortcut", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  expect(h.archive.current).toBeUndefined();
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Archive conversation" }),
+    ).toBeEnabled(),
+  );
+  act(() => h.archive.current?.());
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(1),
+  );
+  // Like the header button, archiving the open conversation advances.
+  expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
+  await chooseFilter("Archived", "Show");
+  fireEvent.click(list().getByRole("button", { name: /^Open / }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Restore conversation" }),
+    ).toBeEnabled(),
+  );
+  act(() => h.archive.current?.());
+  await waitFor(() =>
+    expect(list().queryAllByRole("button", { name: /^Open / })).toHaveLength(0),
+  );
+});
 
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
   const h = fixture();
@@ -1565,6 +1601,7 @@ function fixture(
     clearCache: owner.clearCache,
   };
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+  const archive: ArchiveShortcut = {};
   return {
     owner,
     session: observedSession,
@@ -1717,12 +1754,14 @@ function fixture(
     mention,
     reply,
     open,
+    archive,
     journal: () => journal,
     view: (
       <StrictMode>
         <InboxPage
           relay={relay}
           navigator={{ open } as unknown as Navigation}
+          archive={archive}
         />
       </StrictMode>
     ),
