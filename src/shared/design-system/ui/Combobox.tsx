@@ -98,15 +98,21 @@ function Popup({
   children,
   empty,
   className = "",
+  collisionBoundary,
 }: {
   children: ReactNode;
   empty: ReactNode;
   className?: string | undefined;
+  /** Constrain nested choices to their containing surface; Base UI owns sizing. */
+  collisionBoundary?: ComponentProps<
+    typeof BaseCombobox.Positioner
+  >["collisionBoundary"];
 }) {
   return (
     <BaseCombobox.Portal>
       <BaseCombobox.Positioner
         sideOffset={4}
+        collisionBoundary={collisionBoundary}
         className="buzz-select-positioner"
       >
         <BaseCombobox.Popup

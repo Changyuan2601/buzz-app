@@ -1,3 +1,15 @@
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "../channels/useConversationTabs";
@@ -391,12 +403,15 @@ function SessionWork({
   navigator?: Navigation | undefined;
   chooseLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
+  useSessionConversions(session);
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const shareAttempts = useSessionShareAttempts(session);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const menuTrigger = useRef<HTMLButtonElement>(null);
   const [selectedAgent, setSelectedAgent] = useState(() =>
     readSelectedAssistant(scope, channel.id),
   );
@@ -406,6 +421,7 @@ function SessionWork({
   };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
+  const personalChat = inMe && channel.channelType === "session";
   const list = useChannelList(session.channels);
   const { channels } = useChannelLabels(
     list.channels,
@@ -521,23 +537,14 @@ function SessionWork({
             <SessionShare
               session={session}
               channel={channel}
-              direct
               signal={navigation?.signal}
-              onShared={() => {
-                if (navigation?.signal.aborted) return;
-                const target = sessionLinkTarget(
-                  `buzz://channel/${channel.id}`,
-                  scope,
-                  session.viewer,
-                );
-                if (target) void navigator?.open(target);
-              }}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
             <MenuRoot>
               <MenuTrigger
                 render={
                   <IconButton
-                    ref={menuTrigger}
+                    ref={actionsTrigger}
                     size="toolbar"
                     aria-label="Session actions"
                     title="Session actions"
@@ -546,6 +553,17 @@ function SessionWork({
                 }
               />
               <MenuPopup aria-label="Session actions" align="end">
+                {canConvertSession(session, channel) && (
+                  <MenuItem
+                    disabled={shareAttempts.has(channel.id)}
+                    onClick={() => {
+                      if (!sessionShareAttempt(session, channel.id))
+                        setConvertOpen(true);
+                    }}
+                  >
+                    {conversionLabel(session, channel.id)}
+                  </MenuItem>
+                )}
                 <MenuItem
                   disabled={
                     !!channel.readOnly || !session.channelDetails?.available
@@ -573,7 +591,10 @@ function SessionWork({
                     disabled={false}
                     separator
                     choose={(action) =>
-                      chooseLifecycle(action, menuTrigger.current ?? undefined)
+                      chooseLifecycle(
+                        action,
+                        actionsTrigger.current ?? undefined,
+                      )
                     }
                   />
                 )}
@@ -592,6 +613,17 @@ function SessionWork({
               />
             )}
           </SessionHeading>
+          {convertOpen && (
+            <ConvertSession
+              key={channel.id}
+              session={session}
+              id={channel.id}
+              signal={navigation?.signal}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
+              close={() => setConvertOpen(false)}
+              finalFocus={actionsTrigger}
+            />
+          )}
           {renameOpen && (
             <RenameSession
               key={channel.id}
@@ -655,7 +687,7 @@ function SessionWork({
                 </p>
               ) : (
                 <ChannelTimeline
-                  chatPresentation={inMe}
+                  chatPresentation={personalChat}
                   historyControl="scroll"
                   extensions={extensions}
                   queries={session}
@@ -670,13 +702,16 @@ function SessionWork({
               )}
             </div>
             <MessageComposer
-              chatPresentation={inMe}
-              sessionConversation
+              chatPresentation={personalChat}
+              sessionConversation={channel.channelType === "session"}
               activityClickOpensPanel
-              personalConversation={placement.status !== "ready" || inMe}
-              selectedAgent={inMe ? selectedAgent : undefined}
+              personalConversation={
+                channel.channelType === "session" &&
+                (placement.status !== "ready" || inMe)
+              }
+              selectedAgent={personalChat ? selectedAgent : undefined}
               trailingTool={
-                inMe ? (
+                personalChat ? (
                   <>
                     <SessionAgentControl
                       session={session}
@@ -684,18 +719,14 @@ function SessionWork({
                       value={selectedAgent}
                       onChange={selectAgent}
                       disabled={
-                        !!channel.archived ||
-                        placement.status !== "ready" ||
-                        !inMe
+                        !!channel.archived || placement.status !== "ready"
                       }
                     />
                     <SessionProjectControl
                       session={session}
                       channelId={channel.id}
                       disabled={
-                        !!channel.archived ||
-                        placement.status !== "ready" ||
-                        !inMe
+                        !!channel.archived || placement.status !== "ready"
                       }
                     />
                   </>
@@ -707,7 +738,11 @@ function SessionWork({
               scope={scope}
               channelId={channel.id}
               channelName={channel.name}
-              label="Message your agents"
+              label={
+                channel.channelType === "session"
+                  ? "Message your agents"
+                  : undefined
+              }
               disabled={
                 !!channel.archived ||
                 window.status !== "ready" ||

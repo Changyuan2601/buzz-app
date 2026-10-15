@@ -123,18 +123,11 @@ function PersonalHistory({
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
+        onConverted={openMessage}
         sessions={conversations.map((item) => ({
           id: item.id,
           title: item.name,
         }))}
-        onShared={(id) => {
-          const destination = sessionLinkTarget(
-            `buzz://channel/${id}`,
-            scope,
-            session.viewer,
-          );
-          if (destination) void navigator.open(destination);
-        }}
         onNew={(sectionId) =>
           void navigator.open(meTarget(scope, "new", sectionId))
         }

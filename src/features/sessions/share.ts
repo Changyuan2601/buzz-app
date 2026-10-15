@@ -1,10 +1,35 @@
-import type { ChannelDetailsDraft } from "../relay/channel-details-protocol";
-import { addChannelMember, canShareSession } from "../channel-members/members";
+import {
+  sameLabels,
+  type ChannelDetailsDraft,
+} from "../relay/channel-details-protocol";
+import {
+  addChannelMember,
+  canAddMembers,
+  canShareSession,
+} from "../channel-members/members";
 import { archiveHides } from "../relay/identity-archives";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { MemberAdditionIntent } from "../channel-members/members";
+
+/** Sharing changes access, never presentation or Me placement. */
+export function canShareConversation(
+  session: RelaySession,
+  channel?: ChannelSummary,
+) {
+  return (
+    canShareSession(session, channel) ||
+    !!(
+      channel &&
+      !channel.cached &&
+      !channel.readOnly &&
+      !channel.archived &&
+      channel.members?.includes(session.viewer ?? "") &&
+      canAddMembers(session, channel)
+    )
+  );
+}
 
 export const sessionLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
@@ -57,8 +82,9 @@ export async function grantSessionAccess(
   }
 }
 
-/** Capture one relay-confirmed destination roster, not the session or a cached
- * chooser list. A retry uses the frozen keys and never expands to late joins. */
+/** Capture validated destination keys, including oversized rosters. The share
+ * attempt freezes them before its combined 100-recipient admission check, so a
+ * retry cannot adopt a smaller or changed audience without explicit Start over. */
 export async function destinationShareAudience(
   session: RelaySession,
   destinationId: string,
@@ -88,10 +114,6 @@ export async function destinationShareAudience(
   const keys = [
     ...new Set(destination.members.filter((key) => key !== session.viewer)),
   ];
-  if (keys.length > 100)
-    throw new Error(
-      "This channel has more than 100 recipients. Choose selected people instead.",
-    );
   if (keys.some((key) => !/^[0-9a-f]{64}$/.test(key)))
     throw new Error("Destination membership contains an invalid identity.");
   if (keys.some((key) => archiveHides(session.archives, key, session.viewer)))
@@ -121,7 +143,7 @@ export async function publishSessionLink(
     !channel.archived &&
     !!channel.members?.includes(session.viewer) &&
     (sessionChannel
-      ? canShareSession(session, channel)
+      ? canShareConversation(session, channel)
       : channel.channelType === "stream" || channel.channelType === "forum");
   if (!eligible(source, true) || !eligible(destination, false))
     throw new Error(
@@ -279,29 +301,31 @@ export async function applySharedChannelDetails(
     value.name === draft.name &&
     value.description === draft.description &&
     value.visibility === draft.visibility &&
-    value.ttlSeconds === draft.ttlSeconds;
+    value.ttlSeconds === draft.ttlSeconds &&
+    (draft.labels === undefined ||
+      sameLabels(value.labels ?? [], draft.labels));
   const pending = details.snapshot(id);
   if (pending) {
     if (!matches(pending.draft) || pending.status !== "unconfirmed")
       throw new Error(
-        "Finish the existing channel details change before sharing.",
+        "Finish the existing channel details change before continuing.",
       );
     await details.check(id, signal);
   }
   const base = await details.load(id, signal);
   if (!base.canEdit)
-    throw new Error(
-      "You no longer have permission to share this conversation.",
-    );
+    throw new Error("You no longer have permission to edit this conversation.");
   if (!matches(base)) {
     if (
       base.name !== expected.name ||
       base.description !== expected.description ||
       base.visibility !== expected.visibility ||
-      base.ttlSeconds !== expected.ttlSeconds
+      base.ttlSeconds !== expected.ttlSeconds ||
+      (draft.labels !== undefined &&
+        !sameLabels(base.labels ?? [], expected.labels ?? []))
     )
       throw new Error(
-        "Channel settings changed after sharing. Check them in Multiplayer before continuing.",
+        "Channel settings changed. Reload details before continuing.",
       );
     await details.save(base, draft, signal);
   }

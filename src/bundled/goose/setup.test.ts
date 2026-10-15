@@ -182,7 +182,7 @@ describe("GooseSetup", () => {
     });
   });
 
-  it("says when goose-acp is not installed", async () => {
+  it("says when the bundled goose-acp is missing", async () => {
     const spawn: Spawn = async (id, options) => {
       if (id === "goose")
         throw new Error(
@@ -191,12 +191,10 @@ describe("GooseSetup", () => {
       return fakeSpawn().spawn(id, options);
     };
     const goose = new GooseSetup(spawn);
-    await expect(goose.providers()).rejects.toThrow(
-      "goose-acp is not installed",
-    );
+    await expect(goose.providers()).rejects.toThrow("goose-acp is missing");
     expect(await goose.test({ provider: "", model: "" })).toMatchObject({
       ok: false,
-      message: expect.stringContaining("goose-acp is not installed"),
+      message: expect.stringContaining("goose-acp is missing"),
     });
   });
 });

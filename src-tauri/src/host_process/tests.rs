@@ -277,3 +277,31 @@ async fn assert_dead(pid: i32) {
     }
     assert!(dead(), "descendant survived");
 }
+
+#[test]
+fn a_bundled_program_runs_from_the_app_bin_never_path() {
+    // A goose-acp on PATH, which a bundled declaration must not pick.
+    let path = tempfile::tempdir().unwrap();
+    std::fs::write(path.path().join("goose-acp"), "").unwrap();
+    let process = |bundled: bool| -> HostProcess {
+        serde_json::from_value(serde_json::json!({
+            "id": "goose",
+            "program": "goose-acp",
+            "bundled": bundled,
+        }))
+        .unwrap()
+    };
+    let path = path.path().as_os_str();
+    assert_eq!(
+        program_path(
+            &process(true),
+            || Some(PathBuf::from("/app/resources")),
+            path
+        )
+        .unwrap(),
+        PathBuf::from("/app/resources/bin/goose-acp")
+    );
+    assert!(program_path(&process(true), || None, path).is_err());
+    // Only a bundled program asks for the resources.
+    assert!(program_path(&process(false), || unreachable!(), path).is_ok());
+}

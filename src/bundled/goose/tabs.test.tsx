@@ -274,7 +274,7 @@ it("shows what the provider said when the test fails", async () => {
   );
 });
 
-it("says when goose-acp is not installed, and tries again", async () => {
+it("says when the bundled goose-acp is missing, and tries again", async () => {
   let installed = false;
   created({
     spawn: (fake) =>
@@ -286,7 +286,7 @@ it("says when goose-acp is not installed, and tries again", async () => {
   });
   const dialog = await openChoices();
   expect(
-    await within(dialog).findByText(/goose-acp is not installed/),
+    await within(dialog).findByText(/goose-acp is missing/),
   ).toBeInTheDocument();
   installed = true;
   await userEvent
@@ -294,7 +294,7 @@ it("says when goose-acp is not installed, and tries again", async () => {
     .click(within(dialog).getByRole("button", { name: "Try again" }));
   await waitFor(() =>
     expect(
-      within(dialog).queryByText(/goose-acp is not installed/),
+      within(dialog).queryByText(/goose-acp is missing/),
     ).not.toBeInTheDocument(),
   );
 });

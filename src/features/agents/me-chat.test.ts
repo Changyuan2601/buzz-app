@@ -27,12 +27,15 @@ function community({
     }),
     has: (id: string) => state === "ready" && personal.includes(id),
   };
+  let channelType = "session";
+  let cached = false;
   const session = {
     mePlacement: placement,
     channels: {
       list: () => ({
         channels: [
-          { id: "chat", channelType: "stream" },
+          { id: "chat", channelType, cached },
+          { id: "converted", channelType: "stream" },
           { id: "dm", channelType: "dm" },
         ],
       }),
@@ -48,6 +51,10 @@ function community({
   return {
     relay: () => relay,
     placement,
+    type: (value: string, stale = false) => {
+      channelType = value;
+      cached = stale;
+    },
     change(next: Record<string, unknown>) {
       snapshot = { ...snapshot, ...next };
     },
@@ -93,5 +100,29 @@ it("fails when the community changes while the placement is read", async () => {
   });
   await expect(meChat(fixture.relay, owner, "chat", signal)).rejects.toThrow(
     "The community changed",
+  );
+});
+
+it("ordinary channel behavior overrides the agent owner's retained Me filing", async () => {
+  const { relay, placement } = community({
+    personal: ["converted"],
+    status: "error",
+  });
+  await expect(meChat(relay, owner, "converted", signal)).resolves.toBe(false);
+  expect(placement.refresh).not.toHaveBeenCalled();
+});
+
+it("rechecks ordinary type after a pending placement read", async () => {
+  const f = community({ status: "loading" });
+  f.placement.refresh.mockImplementationOnce(async () => {
+    f.type("stream");
+  });
+  await expect(meChat(f.relay, owner, "chat", signal)).resolves.toBe(false);
+});
+it("does not let cached ordinary type substitute for unreadable placement evidence", async () => {
+  const f = community({ status: "error" });
+  f.type("stream", true);
+  await expect(meChat(f.relay, owner, "chat", signal)).rejects.toThrow(
+    "Recipe read failed",
   );
 });

@@ -457,8 +457,6 @@ it.each(["accepted", "unknown"] as const)(
     };
     const resumed = beginSessionShare(session, sessionId, {
       destination: channelId,
-      audience: "selected",
-      channelPeople: [],
       sessionPeople: [t.human.pubkey],
     });
     resumed.grants.set(t.human.pubkey, { id: event.id });

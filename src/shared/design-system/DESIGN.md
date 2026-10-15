@@ -202,6 +202,9 @@ of unrelated buttons. Use `MenuNote` for non-action explanatory text and `tone="
 for a destructive menu action. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
+For choices that must stay within a modal, pass its element to
+`Combobox.Popup collisionBoundary` when the picker opens. Base UI positions it
+and the shared popup scrolls within the resulting available height; keep the portal.
 Use their supported `padding`/alignment props; do not add another padded card inside
 the popup or cancel its styles. Keep long lists scrollable and all actions reachable.
 

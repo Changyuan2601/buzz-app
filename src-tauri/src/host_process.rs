@@ -5,8 +5,10 @@
 //! app exits. It runs with the user's own access: there is no sandbox.
 use crate::host_command::{effective_path, resolve_program};
 use crate::{with_manager, PluginManager};
+use buzzodz_plugins::HostProcess;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::path::PathBuf;
@@ -14,6 +16,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::ipc::Channel;
+use tauri::Manager as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::oneshot;
@@ -266,7 +269,8 @@ enum Stream {
 /// environment, less any Buzz identity: an agent's key never leaves the app.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn plugin_host_process_spawn(
+pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     manager: tauri::State<'_, PluginManager>,
     processes: tauri::State<'_, HostProcesses>,
     id: String,
@@ -292,7 +296,8 @@ pub(crate) async fn plugin_host_process_spawn(
         return Err("Invalid process arguments".into());
     }
     let path = effective_path();
-    let mut command = Command::new(resolve_program(&declared.program, &path));
+    let program = program_path(&declared, || app.path().resource_dir().ok(), &path)?;
+    let mut command = Command::new(program);
     command
         .args(&declared.args)
         .args(&args)
@@ -407,6 +412,21 @@ fn take_text(pending: &mut Vec<u8>) -> String {
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.
+/// Where a declared program runs from. A bundled one is in the app's `bin`
+/// resources, which `tauri dev` also copies beside the debug executable, and is
+/// never looked up on `path`. Windows adds `.exe` to a path itself.
+fn program_path(
+    declared: &HostProcess,
+    resources: impl FnOnce() -> Option<PathBuf>,
+    path: &OsStr,
+) -> Result<PathBuf, String> {
+    if !declared.bundled {
+        return Ok(resolve_program(&declared.program, path));
+    }
+    let resources = resources().ok_or_else(|| format!("Could not start {}", declared.program))?;
+    Ok(resources.join("bin").join(&declared.program))
+}
+
 fn expand_home(directory: &str) -> Result<PathBuf, String> {
     let path = if directory == "~" {
         home()?

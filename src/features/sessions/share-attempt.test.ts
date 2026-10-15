@@ -10,24 +10,20 @@ it("retains exact submitted intent across view remounts, never rebinding to anot
   const session = {} as RelaySession;
   const original = {
     destination: "channel-a",
-    audience: "selected" as const,
-    channelPeople: ["person-a"],
     sessionPeople: ["person-b"],
   };
   const attempt = beginSessionShare(session, "work", original);
   attempt.messageId = "operation";
-  attempt.created = "created-channel";
+  attempt.audienceKeys = ["person-b", "person-c"];
   expect(
     beginSessionShare(session, "work", {
       destination: "channel-b",
-      audience: "everyone",
-      channelPeople: [],
       sessionPeople: [],
     }),
   ).toBe(attempt);
   expect(sessionShareAttempt(session, "work")).toMatchObject({
     intent: original,
-    created: "created-channel",
+    audienceKeys: ["person-b", "person-c"],
     messageId: "operation",
   });
   finishSessionShare(session, "work");

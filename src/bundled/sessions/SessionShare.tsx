@@ -1,80 +1,146 @@
 import {
+  useCallback,
   useEffect,
-  useId,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Popover } from "@base-ui/react/popover";
+import { Combobox as BaseCombobox } from "@base-ui/react/combobox";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { archiveHides } from "../../features/relay/identity-archives";
-import { useMePlacement } from "../../features/sessions/personal";
-import { canShareSession } from "../../features/channel-members/members";
 import {
   beginSessionShare,
   finishSessionShare,
   sessionShareAttempt,
+  useSessionShareAttempts,
   type ShareAttempt,
 } from "../../features/sessions/share-attempt";
-import { searchMembers } from "../../features/channel-members/search";
 import {
-  canonicalDetailsName,
-  detailsDraftErrors,
-  type ChannelDetails,
-  type ChannelDetailsDraft,
-} from "../../features/relay/channel-details-protocol";
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import { subscribeView, viewRevision } from "../../shared/view-state";
+import {
+  readShareHistory,
+  saveShareHistory,
+  shareHistoryKey,
+  type ShareHistory,
+} from "../../features/sessions/share-history";
+import { searchMembers } from "../../features/channel-members/search";
 import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
+import { useIdentityNames } from "../../features/identity-names/react";
 import {
-  applySharedChannelDetails,
+  canShareConversation,
   destinationShareAudience,
   grantSessionAccess,
   publishSessionLink,
   sessionLink,
 } from "../../features/sessions/share";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Select } from "../../shared/design-system/ui/Select";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
-import { Switch } from "../../shared/design-system/ui/Switch";
-import { ChannelPrivacyConfirmation } from "../channels/ChannelPrivacyConfirmation";
-import { ChannelDurationField } from "../channels/ChannelDurationField";
-import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
-import { sessionMetadata } from "../../features/sessions/metadata";
-import { ChannelTextField } from "../channels/ChannelTextField";
-import { UsersIcon } from "../../shared/design-system/icons";
+import { Combobox } from "../../shared/design-system/ui/Combobox";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
+import {
+  HashIcon,
+  ShareIcon,
+  UsersIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import styles from "./SessionShare.module.css";
 
 type Person = { pubkey: string; name: string; isAgent?: true };
-/** A share attempt keeps exact selected keys through partial failure. Access and
- * delivery still belong to the existing member, channel-creation and outbox owners. */
+type Choice = { id: string; name: string; kind: "person" | "channel" };
+
+/** Unknown classification is not evidence of a private conversation. Only a
+ * verified current roster plus a known non-agent profile supplies Shared. */
+export function SessionAccessIndicator({
+  session,
+  channel,
+  onClick,
+}: {
+  session: RelaySession;
+  channel: ChannelSummary | undefined;
+  onClick(): void;
+}) {
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+  );
+  const agents = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+  );
+  const roles = useSyncExternalStore(
+    session.memberAdministration.subscribe,
+    () =>
+      channel ? session.memberAdministration.snapshot(channel.id) : undefined,
+  );
+  const human =
+    !channel?.cached &&
+    channel?.members?.some((key) => {
+      const profile = profiles.get(key);
+      return (
+        key !== session.viewer &&
+        roles?.authority.roles[key] !== "bot" &&
+        profile &&
+        !profile.isAgent &&
+        !profile.nameIsFallback &&
+        !agents.identities.some((agent) => agent.pubkey === key)
+      );
+    });
+  if (!human) return null;
+  return (
+    <IconButton
+      aria-label="Shared · Manage access"
+      title="Shared · Manage access"
+      icon={<UsersIcon size={16} />}
+      onClick={onClick}
+    />
+  );
+}
+
+/** One access modal in Me and Messages. Submitted work belongs to the relay
+ * session; this view does not own persistence, grant retries or link delivery. */
 export function SessionShare({
   session,
   channel,
-  direct = false,
-  onShared,
   signal,
   renderTrigger,
   initialOpen = false,
   onClose,
   finalFocus,
+  onConvert,
+  onConverted,
 }: {
   session: RelaySession;
   channel: ChannelSummary;
-  direct?: boolean;
   initialOpen?: boolean;
+  onConverted?: (() => void) | undefined;
+  /** A host whose header changes type owns conversion outside that header. */
+  onConvert?: (trigger: HTMLElement | null) => void;
   onClose?: () => void;
   finalFocus?: () => HTMLElement | false;
   renderTrigger?: (open: () => void, disabled: boolean) => ReactNode;
-  onShared?: () => void;
   signal?: AbortSignal | undefined;
 }) {
+  useSessionConversions(session);
+  useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -86,138 +152,191 @@ export function SessionShare({
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
-    session.channels.list,
   );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
-    session.profiles.snapshot,
     session.profiles.snapshot,
   );
   const agents = useSyncExternalStore(
     session.agentChoices.subscribe,
     session.agentChoices.snapshot,
-    session.agentChoices.snapshot,
-  );
-  const pendingCreation = useSyncExternalStore(
-    session.channelCreation.subscribe,
-    session.channelCreation.snapshot,
-    session.channelCreation.snapshot,
-  );
-  const pendingDetails = useSyncExternalStore(
-    session.channelDetails.subscribe,
-    () => session.channelDetails.snapshot(channel.id),
   );
   const [open, setOpen] = useState(initialOpen);
-  const [base, setBase] = useState<ChannelDetails>();
-  const [detailsDraft, setDetailsDraft] = useState<ChannelDetailsDraft>();
-  const [detailsLoading, setDetailsLoading] = useState(false);
-  const [detailsReload, setDetailsReload] = useState(0);
-  const [confirmPublic, setConfirmPublic] = useState(false);
-  const [destination, setDestination] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newPrivate, setNewPrivate] = useState(false);
-  const [audience, setAudience] = useState<"selected" | "everyone">(
-    direct ? "selected" : "everyone",
-  );
+  const [converting, setConverting] = useState(false);
+  const trigger = useRef<HTMLElement | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
-  const [channelPeople, setChannelPeople] = useState<Person[]>([]);
-  const [query, setQuery] = useState("");
-  const [searchTarget, setSearchTarget] = useState<"channel" | "session">(
-    "session",
+  const [destination, setDestination] = useState("");
+  const [expandedChannel, setExpandedChannel] = useState("");
+  const [expandedShares, setExpandedShares] = useState<string[]>([]);
+  const [historyError, setHistoryError] = useState("");
+  const historyRevision = useSyncExternalStore(
+    useCallback(
+      (notify) => subscribeView(session.scope, notify),
+      [session.scope],
+    ),
+    () => viewRevision(session.scope, shareHistoryKey(channel.id)),
   );
+  let history: ShareHistory = { version: 1, channels: [], people: [] };
+  let historyReadError = "";
+  try {
+    history = readShareHistory(historyRevision);
+  } catch (reason) {
+    historyReadError =
+      reason instanceof Error
+        ? reason.message
+        : "Sharing history is unavailable on this device.";
+  }
+  const [destinationRoster, setDestinationRoster] = useState<{
+    id: string;
+    status: "loading" | "ready" | "error";
+  }>();
+  const [destinationReload, setDestinationReload] = useState(0);
+  const [query, setQuery] = useState("");
   const [results, setResults] = useState<Person[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const [resultsOpen, setResultsOpen] = useState(false);
-  const [showSelected, setShowSelected] = useState(false);
-  const [activeKey, setActiveKey] = useState("");
-  const searchInput = useRef<HTMLElement>(null);
-  const searchAnchor = useRef<HTMLDivElement>(null);
-  const popup = useRef<HTMLDivElement>(null);
-  const dialogContainer = useRef<HTMLDivElement>(null);
-  const listId = useId();
+  const [reload, setReload] = useState(0);
+  const [rosterState, setRosterState] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [rosterError, setRosterError] = useState("");
+  const [rosterReload, setRosterReload] = useState(0);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"share" | "retry">();
+  const busy = pendingAction !== undefined;
   const [copyStatus, setCopyStatus] = useState("");
-  const [attempt, setAttempt] = useState(0);
   const [frozen, setFrozen] = useState<ShareAttempt | undefined>(() =>
     sessionShareAttempt(session, channel.id),
   );
-  // A mounted page may remain while another entry point resumes this session's attempt.
-  const saved = frozen ?? sessionShareAttempt(session, channel.id);
-  const directShare = saved ? saved.intent.destination === channel.id : direct;
-  const placement = useMePlacement(session);
+  const attempts = useSessionShareAttempts(session);
+  const saved = frozen ?? attempts.get(channel.id);
   const source = list.channels.find((item) => item.id === channel.id);
-  const eligible = directShare
-    ? !!(
-        source &&
-        !source.readOnly &&
-        !source.cached &&
-        !source.archived &&
-        ["session", "stream"].includes(source.channelType ?? "") &&
-        source.members?.includes(session.viewer ?? "") &&
-        session.channelDetails.available &&
-        session.mePlacement.available &&
-        placement.status === "ready"
-      )
-    : canShareSession(session, source);
+  const eligible = canShareConversation(session, source);
+  const chosenId = saved ? saved.intent.destination : destination;
+  const liveChosen = list.channels.find(
+    (item) => item.id === chosenId && item.id !== channel.id,
+  );
+  const submittedAudience = saved?.audienceKeys !== undefined;
+  const chosen = submittedAudience
+    ? (saved.channelSnapshot ?? liveChosen ?? { id: chosenId, name: chosenId })
+    : liveChosen;
+  const destinationMembers = submittedAudience
+    ? (saved.channelSnapshot?.members ?? saved.audienceKeys)
+    : liveChosen &&
+        destinationRoster?.id === liveChosen.id &&
+        destinationRoster.status === "ready" &&
+        !liveChosen.cached &&
+        liveChosen.members
+      ? [...new Set(liveChosen.members)]
+      : undefined;
+  const shownKeys =
+    saved?.intent.sessionPeople ?? people.map((person) => person.pubkey);
+  const input = useRef<HTMLInputElement>(null);
+  const [pickerBoundary, setPickerBoundary] = useState<Element | undefined>();
   useEffect(() => {
-    void detailsReload;
-    if (!open || !directShare) return;
+    void rosterReload;
+    if (!open) return;
     const controller = new AbortController();
-    setDetailsLoading(true);
-    setBase(undefined);
-    void session.channelDetails
-      .load(channel.id, controller.signal)
-      .then((next) => {
+    const cancelled = () => controller.abort();
+    signal?.addEventListener("abort", cancelled, { once: true });
+    if (signal?.aborted) controller.abort();
+    setRosterState("loading");
+    setRosterError("");
+    void (
+      session.channels.refreshRoster
+        ? session.channels.refreshRoster(channel.id, {
+            consistency: "strong",
+            signal: controller.signal,
+          })
+        : Promise.reject(
+            new Error("Current access is unavailable on this connection."),
+          )
+    )
+      .then((fresh) => {
         if (controller.signal.aborted) return;
-        setBase(next);
-        setDetailsDraft(
-          (old) =>
-            old ?? {
-              name: next.name,
-              description: sessionMetadata(next.description)
-                ? ""
-                : next.description,
-              visibility: next.visibility,
-              ttlSeconds: next.ttlSeconds,
-            },
-        );
+        const current = session.channels
+          .list()
+          .channels.find((item) => item.id === channel.id);
+        if (!fresh || current?.cached || !current?.members)
+          throw new Error("Current access could not be confirmed.");
+        setRosterState("ready");
       })
       .catch((reason: unknown) => {
-        if (!controller.signal.aborted)
-          setError(reason instanceof Error ? reason.message : String(reason));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setDetailsLoading(false);
+        if (!controller.signal.aborted) {
+          setRosterState("error");
+          setRosterError(
+            reason instanceof Error
+              ? reason.message
+              : "Current access could not be confirmed.",
+          );
+        }
       });
-    return () => controller.abort();
-  }, [open, directShare, session, channel.id, detailsReload]);
-  const sharedDetails = saved?.intent.details ?? detailsDraft;
-  const normalizedDetails = sharedDetails && {
-    ...sharedDetails,
-    name: canonicalDetailsName(sharedDetails.name),
-  };
-  const detailsErrors = normalizedDetails
-    ? detailsDraftErrors(normalizedDetails)
-    : undefined;
-  const detailsInvalid =
-    directShare &&
-    (!base?.canEdit ||
-      detailsLoading ||
-      !normalizedDetails ||
-      Object.values(detailsErrors ?? {}).some(Boolean));
-  const destinations = list.channels.filter(
-    (item) =>
-      !item.readOnly &&
-      !item.cached &&
-      !item.archived &&
-      (item.channelType === "stream" || item.channelType === "forum") &&
-      item.members?.includes(session.viewer ?? ""),
-  );
+    return () => {
+      controller.abort();
+      signal?.removeEventListener("abort", cancelled);
+    };
+  }, [open, session, channel.id, rosterReload, signal]);
+  const chosenChannelId = chosen?.id;
   useEffect(() => {
-    void attempt;
+    void destinationReload;
+    if (!open || !chosenChannelId || submittedAudience) return;
+    const controller = new AbortController();
+    const active = AbortSignal.any([
+      controller.signal,
+      ...(signal ? [signal] : []),
+    ]);
+    setDestinationRoster({ id: chosenChannelId, status: "loading" });
+    void (async () => {
+      try {
+        const fresh = await session.channels.refreshRoster?.(chosenChannelId, {
+          consistency: "strong",
+          signal: active,
+        });
+        const current = session.channels
+          .list()
+          .channels.find((item) => item.id === chosenChannelId);
+        if (!fresh || current?.cached || !current?.members)
+          throw new Error("Current participants are unavailable.");
+        if (!active.aborted)
+          setDestinationRoster({ id: chosenChannelId, status: "ready" });
+      } catch {
+        if (!active.aborted)
+          setDestinationRoster({ id: chosenChannelId, status: "error" });
+      }
+    })();
+    return () => controller.abort();
+  }, [
+    open,
+    chosenChannelId,
+    submittedAudience,
+    session,
+    signal,
+    destinationReload,
+  ]);
+  const memberKeys =
+    open && rosterState === "ready" && !source?.cached
+      ? source?.members?.join(":")
+      : "";
+  useEffect(() => {
+    if (!memberKeys) return;
+    void session.profiles
+      .ensure(memberKeys.split(":"), "foreground")
+      .catch(() => {});
+    // Reuse the existing verified role reader; unknown owner/agent classification
+    // stays unlabeled rather than being represented as private.
+    void session.memberAdministration.refresh(channel.id).catch(() => {});
+  }, [session, channel.id, memberKeys]);
+  const destinationProfileKeys =
+    open && expandedChannel === chosen?.id ? destinationMembers?.join(":") : "";
+  useEffect(() => {
+    if (destinationProfileKeys)
+      void session.profiles
+        .ensure(destinationProfileKeys.split(":"), "foreground")
+        .catch(() => {});
+  }, [session, destinationProfileKeys]);
+  useEffect(() => {
+    void reload;
     const text = query.trim();
     if (!open || !text) {
       setResults([]);
@@ -251,26 +370,117 @@ export function SessionShare({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, open, attempt]);
+  }, [session, query, open, reload]);
+  const knownAgent = (key: string) =>
+    !!(
+      agents.identities.some((item) => item.pubkey === key) ||
+      profiles.get(key)?.isAgent ||
+      results.find((person) => person.pubkey === key)?.isAgent
+    );
+  const resolveName = useIdentityNames(session.names);
+  const displayFacts = [...results, ...people];
+  const displayKeys = [
+    ...new Set([
+      ...(source?.members ?? []),
+      ...(destinationMembers ?? []),
+      ...shownKeys,
+      ...results.map((person) => person.pubkey),
+    ]),
+  ];
+  const labels = new Map(
+    displayKeys.map((key) => [
+      key,
+      resolveName(
+        key,
+        profiles.get(key)?.name ??
+          people.find((person) => person.pubkey === key)?.name ??
+          results.find((person) => person.pubkey === key)?.name ??
+          formatPublicKey(key) ??
+          "Member",
+        displayKeys,
+        displayFacts,
+      ).trim(),
+    ]),
+  );
+  // A naming policy is optional. Transient search results must still be distinct
+  // before granting history access; unique names never need a key subtitle.
+  const groups = new Map<string, string[]>();
+  for (const [key, label] of labels)
+    groups.set(label, [...(groups.get(label) ?? []), key]);
+  for (const keys of groups.values()) {
+    if (keys.length < 2) continue;
+    const qualifiers = publicKeyLabels(keys);
+    for (const key of keys)
+      labels.set(key, `${labels.get(key)} · ${qualifiers.get(key)}`);
+  }
+  const names = (key: string) => labels.get(key) ?? "Member";
+  const ungrouped =
+    source?.members?.filter(
+      (key) =>
+        key !== session.viewer &&
+        !shownKeys.includes(key) &&
+        !history.channels.some(
+          (item) =>
+            item.members.includes(key) &&
+            (item.id !== chosen?.id || destinationMembers?.includes(key)),
+        ),
+    ) ?? [];
+  const otherAccess = ungrouped.filter(
+    (key) => !history.people.includes(key) && !knownAgent(key),
+  );
+  const candidates: Choice[] = results
+    .filter(
+      (person) =>
+        !knownAgent(person.pubkey) &&
+        !archiveHides(session.archives, person.pubkey, session.viewer) &&
+        !source?.members?.includes(person.pubkey) &&
+        !shownKeys.includes(person.pubkey),
+    )
+    .map((person) => ({
+      id: person.pubkey,
+      name: person.name,
+      kind: "person",
+    }));
+  const channels: Choice[] = destination
+    ? []
+    : list.channels
+        .filter(
+          (item) =>
+            item.id !== channel.id &&
+            !item.readOnly &&
+            !item.cached &&
+            !item.archived &&
+            ["stream", "forum"].includes(item.channelType ?? "") &&
+            item.members?.includes(session.viewer ?? "") &&
+            item.name
+              .toLowerCase()
+              .includes(query.trim().toLowerCase().replace(/^#/, "")),
+        )
+        .map((item) => ({ id: item.id, name: item.name, kind: "channel" }));
+  const choices = [...channels, ...candidates];
   const reset = () => {
-    setOpen(false);
-    setDestination("");
-    setDetailsDraft(undefined);
-    setBase(undefined);
-    setConfirmPublic(false);
-    setNewName("");
-    setNewPrivate(false);
-    setAudience(direct ? "selected" : "everyone");
     setPeople([]);
-    setChannelPeople([]);
+    setDestination("");
+    setExpandedChannel("");
+    setExpandedShares([]);
+    setHistoryError("");
     setQuery("");
-    setSearchTarget("session");
-    setResultsOpen(false);
-    setShowSelected(false);
-    setActiveKey("");
     setError("");
     setProgress("");
+    setCopyStatus("");
     setFrozen(sessionShareAttempt(session, channel.id));
+  };
+  const close = () => {
+    setOpen(false);
+    reset();
+    onClose?.();
+  };
+  const openShare = () => {
+    trigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setOpen(true);
   };
   const startOver = () => {
     if (!visible() || busy || !saved) return;
@@ -284,15 +494,10 @@ export function SessionShare({
       );
       return;
     }
-    // Forget only this settled intent. Durable operations and existing access
-    // remain with their owners; starting over is not cancellation or revocation.
     finishSessionShare(session, channel.id);
     reset();
-    if (directShare) setDetailsReload((value) => value + 1);
-    setOpen(true);
   };
   const copy = async () => {
-    setCopyStatus("");
     try {
       await navigator.clipboard.writeText(sessionLink(channel.id));
       setCopyStatus("Link copied");
@@ -300,314 +505,146 @@ export function SessionShare({
       setCopyStatus("Couldn’t copy the link.");
     }
   };
-  const newChannel = (saved?.intent.destination ?? destination) === "new";
-  const chosenAudience = saved?.intent.audience ?? audience;
-  const chosen = destinations.find(
-    (item) =>
-      item.id === (saved?.created ?? saved?.intent.destination ?? destination),
-  );
-  const shown = [
-    ...new Map(
-      [...people, ...channelPeople, ...results].map((person) => [
-        person.pubkey,
-        person,
-      ]),
-    ).values(),
-  ];
-  const selectedPeople = searchTarget === "channel" ? channelPeople : people;
-  const candidates = results.filter(
-    (person) =>
-      !agents.identities.some((item) => item.pubkey === person.pubkey) &&
-      !profiles.get(person.pubkey)?.isAgent &&
-      !person.isAgent &&
-      !selectedPeople.some((item) => item.pubkey === person.pubkey),
-  );
-  const available = candidates.filter(
-    (person) =>
-      !archiveHides(session.archives, person.pubkey, session.viewer) &&
-      !(searchTarget === "channel" ? chosen : source)?.members?.includes(
-        person.pubkey,
-      ),
-  );
-  const active = available.find((person) => person.pubkey === activeKey);
-  const popupVisible = resultsOpen && (!!query.trim() || showSelected);
-  const keys = publicKeyLabels(shown.map((person) => person.pubkey));
-  const names = (key: string) =>
-    session.names.resolve(
-      key,
-      profiles.get(key)?.name ??
-        shown.find((person) => person.pubkey === key)?.name ??
-        formatPublicKey(key) ??
-        "Member",
-    );
-  const knownAgent = (key: string) =>
-    !!(
-      agents.identities.some((item) => item.pubkey === key) ||
-      profiles.get(key)?.isAgent ||
-      shown.find((person) => person.pubkey === key)?.isAgent
-    );
-  const choosePerson = (person: Person) => {
-    if (
-      busy ||
-      saved ||
-      knownAgent(person.pubkey) ||
-      archiveHides(session.archives, person.pubkey, session.viewer)
+  const choose = (choice: Choice | null) => {
+    if (!choice || busy || saved || !eligible) return;
+    if (choice.kind === "channel") {
+      if (!destination) setDestination(choice.id);
+    } else if (
+      !knownAgent(choice.id) &&
+      !archiveHides(session.archives, choice.id, session.viewer) &&
+      !source?.members?.includes(choice.id) &&
+      !people.some((person) => person.pubkey === choice.id)
     )
-      return;
-    const already = (
-      searchTarget === "channel" ? chosen : source
-    )?.members?.includes(person.pubkey);
-    if (already || selectedPeople.some((item) => item.pubkey === person.pubkey))
-      return;
-    if (searchTarget === "channel")
-      setChannelPeople([...channelPeople, person]);
-    else setPeople([...people, person]);
-    setActiveKey("");
+      setPeople([...people, { pubkey: choice.id, name: choice.name }]);
     setQuery("");
-    setShowSelected(false);
-    setResultsOpen(false);
-    searchInput.current?.focus();
+    input.current?.focus();
   };
-  const searchControl = (target: "channel" | "session", label: string) => (
-    <div
-      className={styles.searchAnchor}
-      ref={(node) => {
-        if (node && searchTarget === target) searchAnchor.current = node;
-      }}
-    >
-      <SearchField
-        inputRef={(node) => {
-          if (node && searchTarget === target) searchInput.current = node;
-        }}
-        label={label}
-        placeholder="Search by name or public key…"
-        value={searchTarget === target ? query : ""}
-        disabled={busy || !!saved}
-        role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={popupVisible && searchTarget === target}
-        aria-controls={
-          popupVisible && searchTarget === target ? listId : undefined
-        }
-        aria-activedescendant={
-          active && popupVisible ? `${listId}-${active.pubkey}` : undefined
-        }
-        onFocus={() => {
-          if (searchTarget !== target) {
-            setSearchTarget(target);
-            setQuery("");
-            setShowSelected(false);
-            setActiveKey("");
-          }
-          setResultsOpen(true);
-        }}
-        onValueChange={(value) => {
-          setSearchTarget(target);
-          setShowSelected(false);
-          setActiveKey("");
-          setQuery(value);
-          setResultsOpen(true);
-        }}
-        onKeyDown={(event) => {
-          if (
-            event.nativeEvent.isComposing ||
-            event.nativeEvent.keyCode === 229 ||
-            event.altKey ||
-            event.ctrlKey ||
-            event.metaKey
-          )
-            return;
-          if (event.key === "Escape" && popupVisible) {
-            event.preventDefault();
-            event.stopPropagation();
-            setResultsOpen(false);
-          } else if (
-            (event.key === "ArrowDown" || event.key === "ArrowUp") &&
-            available.length
-          ) {
-            event.preventDefault();
-            setResultsOpen(true);
-            const index = available.findIndex(
-              (person) => person.pubkey === activeKey,
-            );
-            const next =
-              index < 0
-                ? event.key === "ArrowDown"
-                  ? 0
-                  : available.length - 1
-                : Math.max(
-                    0,
-                    Math.min(
-                      available.length - 1,
-                      index + (event.key === "ArrowDown" ? 1 : -1),
-                    ),
-                  );
-            setActiveKey(available[next]?.pubkey ?? "");
-            const row = document.getElementById(
-              `${listId}-${available[next]?.pubkey}`,
-            );
-            row?.scrollIntoView({ block: "nearest" });
-          } else if (event.key === "Enter" && popupVisible) {
-            event.preventDefault();
-            if (active) choosePerson(active);
-          }
-        }}
-      />
-    </div>
-  );
   const submit = async () => {
-    if (
-      !visible() ||
-      !eligible ||
-      busy ||
-      detailsInvalid ||
-      (!directShare && !newChannel && !chosen)
-    )
+    if (!visible() || busy) return;
+    if (!saved && !destination && !people.length) {
+      close();
       return;
-    if (
-      newChannel &&
-      !saved &&
-      pendingCreation &&
-      (pendingCreation.name !== canonicalDetailsName(newName) ||
-        pendingCreation.visibility !== (newPrivate ? "private" : "open"))
-    ) {
+    }
+    if (!eligible) {
       setError(
-        "Finish the pending channel creation with its saved details before starting another.",
+        "Session access changed. Close and reopen to check current access before retrying.",
       );
       return;
     }
-    if (
-      !saved &&
-      (people.length > 100 ||
-        channelPeople.length > 100 ||
-        [...people, ...channelPeople].some((person) =>
-          knownAgent(person.pubkey),
-        ))
-    ) {
-      setError(
-        "Choose at most 100 people in each group; add agents separately.",
-      );
-      return;
-    }
-    // A blocked dialog may outlive another view's successful completion.
-    // Never reinterpret its frozen Retry as a new share (or as a replacement).
     if (saved && sessionShareAttempt(session, channel.id) !== saved) {
       setError(
         "This share finished or changed. Close and reopen to start a new share.",
       );
       return;
     }
+    if (!saved && people.some((person) => knownAgent(person.pubkey))) {
+      setError("Add agents from their own session controls instead.");
+      return;
+    }
     const exact = beginSessionShare(session, channel.id, {
-      destination: directShare ? channel.id : newChannel ? "new" : destination,
-      audience: directShare ? "selected" : audience,
-      ...(newChannel
-        ? {
-            name: canonicalDetailsName(newName),
-            visibility: newPrivate ? ("private" as const) : ("open" as const),
-          }
-        : {}),
-      channelPeople: newChannel
-        ? channelPeople.map((person) => person.pubkey)
-        : [],
+      destination: destination || channel.id,
       sessionPeople: people.map((person) => person.pubkey),
-      ...(directShare && normalizedDetails && base
-        ? { details: normalizedDetails, detailsBase: base }
-        : {}),
     });
     setFrozen(exact);
     if (exact.running) {
       setError("This share is already in progress in another view.");
       return;
     }
-    setBusy(true);
+    exact.running = true;
+    setPendingAction(saved ? "retry" : "share");
     setError("");
     const controller = new AbortController();
-    const confirmed: string[] = [];
-    // Submitted work belongs to the session, not to this page visit.
+    const remember = () => {
+      const confirmed = (key: string) => !!exact.grants.get(key)?.confirmed;
+      const direct = exact.intent.sessionPeople.filter(confirmed);
+      const snapshot = exact.channelSnapshot;
+      const recipients =
+        snapshot?.members.filter(
+          (key) => key !== session.viewer && confirmed(key),
+        ) ?? [];
+      if (!direct.length && !recipients.length) return true;
+      try {
+        saveShareHistory(
+          session.scope,
+          channel.id,
+          direct,
+          snapshot && recipients.length && session.viewer
+            ? { ...snapshot, members: [session.viewer, ...recipients] }
+            : undefined,
+        );
+        if (visible()) setHistoryError("");
+        return true;
+      } catch (reason) {
+        if (visible())
+          setHistoryError(
+            reason instanceof Error
+              ? reason.message
+              : "Sharing history couldn’t be saved on this device. Access is unchanged.",
+          );
+        return false;
+      }
+    };
     const progress = (text: string) => {
       if (visible()) setProgress(text);
     };
-    exact.running = true;
     try {
-      if (
-        exact.intent.sessionPeople.length > 100 ||
-        exact.intent.channelPeople.length > 100
-      )
-        throw new Error("Choose at most 100 people in each group.");
-      if (
-        [...exact.intent.sessionPeople, ...exact.intent.channelPeople].some(
-          knownAgent,
-        )
-      )
-        throw new Error(
-          "Add agents from their own channel or session controls instead.",
-        );
-      let target = exact.intent.destination;
-      if (target === "new") {
-        if (!exact.intent.name || !exact.intent.visibility)
-          throw new Error("Enter a channel name.");
-        progress("Creating channel…");
-        target =
-          exact.created ??
-          (await session.channelCreation.create({
-            name: exact.intent.name,
-            visibility: exact.intent.visibility,
-          }));
-        exact.created = target;
-        for (const key of exact.intent.channelPeople) {
-          if (
-            session.agentChoices
-              .snapshot()
-              .identities.some((item) => item.pubkey === key) ||
-            session.profiles.snapshot().get(key)?.isAgent
-          )
-            throw new Error("Add agents separately.");
-          progress(`Adding ${names(key)} to the new channel…`);
-          await session.memberAdditions.add(target, key);
-        }
-      }
-      if (exact.intent.audience === "everyone" && !exact.audienceKeys) {
-        progress("Checking channel members…");
-        exact.audienceKeys = await destinationShareAudience(
+      const target = exact.intent.destination;
+      if (exact.intent.sessionPeople.some(knownAgent))
+        throw new Error("Add agents from their own session controls instead.");
+      if (target !== channel.id && !exact.audienceKeys) {
+        progress("Checking current channel members…");
+        const audience = await destinationShareAudience(
           session,
           target,
           controller.signal,
         );
+        const selected = session.channels
+          .list()
+          .channels.find((item) => item.id === target);
+        if (selected && session.viewer)
+          exact.channelSnapshot = {
+            id: target,
+            name: selected.name,
+            members: [session.viewer, ...audience],
+          };
+        exact.audienceKeys = [
+          ...new Set([...exact.intent.sessionPeople, ...audience]),
+        ];
       }
+      const keys = exact.audienceKeys ?? exact.intent.sessionPeople;
+      if (target !== channel.id && !keys.length && !exact.messageId)
+        throw new Error(
+          "This channel has no other current members to share with.",
+        );
+      if (keys.length > 100 || new Set(keys).size !== keys.length)
+        throw new Error("Choose at most 100 distinct recipients.");
       progress("Confirming session access…");
+      // A confirmed grant is never replayed, even if its recipient later leaves.
+      const directKeys = exact.intent.sessionPeople;
       await grantSessionAccess(
         session,
         channel.id,
-        exact.intent.audience === "everyone"
-          ? (exact.audienceKeys ?? [])
-          : directShare
-            ? exact.intent.sessionPeople.filter(
-                (key) => !exact.grants.get(key)?.confirmed,
-              )
-            : exact.intent.sessionPeople,
+        directKeys.filter((key) => !exact.grants.get(key)?.confirmed),
         exact.grants,
         controller.signal,
-        (key) => confirmed.push(key),
-        exact.intent.audience === "everyone",
-        !directShare || source?.channelType === "session",
+        () => {},
+        false,
+        source?.channelType === "session",
       );
-      if (target === channel.id) {
-        if (!exact.intent.details || !exact.intent.detailsBase)
-          throw new Error("Reload channel details before sharing.");
-        progress("Saving channel settings…");
-        await applySharedChannelDetails(
-          session,
-          channel.id,
-          exact.intent.details,
-          exact.intent.detailsBase,
-          controller.signal,
-        );
-        exact.detailsApplied = true;
-        progress("Moving to Multiplayer…");
-        await session.mePlacement.set(channel.id, false, {
-          signal: controller.signal,
-        });
-      }
+      await grantSessionAccess(
+        session,
+        channel.id,
+        keys.filter(
+          (key) =>
+            !directKeys.includes(key) && !exact.grants.get(key)?.confirmed,
+        ),
+        exact.grants,
+        controller.signal,
+        () => {},
+        true,
+        source?.channelType === "session",
+      );
+      const historySaved = remember();
       if (target !== channel.id) {
         progress("Posting session link…");
         await publishSessionLink(
@@ -623,521 +660,426 @@ export function SessionShare({
       }
       finishSessionShare(session, channel.id);
       if (visible()) {
-        reset();
-        onShared?.();
+        if (historySaved) close();
+        else {
+          // Completed access/link work must not be retried for a display-save failure.
+          setFrozen(undefined);
+          setPeople([]);
+          setDestination("");
+          setExpandedChannel("");
+          setProgress("");
+        }
       }
     } catch (reason) {
+      remember();
       if (!visible()) return;
-      const message =
-        reason instanceof Error
-          ? reason.message
-          : "Couldn’t share this session.";
-      progress("");
+      const count = [...exact.grants.values()].filter(
+        (intent) => intent.confirmed,
+      ).length;
+      setProgress("");
       setError(
-        `${message}${exact.detailsApplied ? " Channel settings were saved; retry to finish moving to Multiplayer." : ""}${directShare && !session.mePlacement.has(channel.id) && session.mePlacement.snapshot().status === "ready" ? " Conversation is in Multiplayer; access already granted is not revoked." : ""}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
+        `${reason instanceof Error ? reason.message : "Couldn’t share this session."}${count ? ` Access confirmed for ${count} recipient${count === 1 ? "" : "s"}; it is not revoked.` : ""}${exact.messageId ? " Link posting is not confirmed; retry keeps the same message." : ""}`,
       );
     } finally {
       delete exact.running;
-      if (visible()) setBusy(false);
+      if (visible()) setPendingAction(undefined);
     }
   };
-  const popupResults = (
-    <Popover.Portal container={dialogContainer}>
-      <Popover.Positioner
-        anchor={searchAnchor}
-        side="bottom"
-        align="start"
-        sideOffset={4}
-        collisionPadding={8}
-        collisionAvoidance={{
-          side: "shift",
-          align: "shift",
-          fallbackAxisSide: "none",
-        }}
-        className="buzz-popover-positioner"
-      >
-        <Popover.Popup
-          ref={popup}
-          role="presentation"
-          initialFocus={false}
-          finalFocus={false}
-          data-buzz-ui=""
-          data-padding="list"
-          className={`buzz-popover-popup text-body ${styles.results}`}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              setResultsOpen(false);
-              searchInput.current?.focus();
-            }
-          }}
-        >
-          <div
-            id={listId}
-            role="listbox"
-            aria-label="People"
-            className={styles.people}
-          >
-            {showSelected && !query.trim() ? (
-              selectedPeople.map((person) => (
-                <button
-                  key={person.pubkey}
-                  type="button"
-                  className={styles.person}
-                  aria-label={`Remove ${names(person.pubkey)}`}
-                  onClick={() => {
-                    if (searchTarget === "channel")
-                      setChannelPeople(
-                        channelPeople.filter(
-                          (item) => item.pubkey !== person.pubkey,
-                        ),
-                      );
-                    else
-                      setPeople(
-                        people.filter((item) => item.pubkey !== person.pubkey),
-                      );
-                    searchInput.current?.focus();
-                  }}
-                >
-                  <span>{names(person.pubkey)} · Remove</span>
-                  <small className="text-body-sm text-subtle">
-                    {keys.get(person.pubkey)}
-                  </small>
-                </button>
-              ))
-            ) : searching ? (
-              <p role="status" className="text-body-sm text-subtle">
-                Searching…
-              </p>
-            ) : searchError ? (
-              <p role="alert" className="text-body-sm">
-                {searchError}{" "}
-                <Button
-                  size="xs"
-                  onClick={() => setAttempt((value) => value + 1)}
-                >
-                  Retry
-                </Button>
-              </p>
-            ) : candidates.length ? (
-              candidates.map((person) => {
-                const already = (
-                  searchTarget === "channel" ? chosen : source
-                )?.members?.includes(person.pubkey);
-                const archived = archiveHides(
-                  session.archives,
-                  person.pubkey,
-                  session.viewer,
-                );
-                return (
-                  <button
-                    key={person.pubkey}
-                    id={`${listId}-${person.pubkey}`}
-                    type="button"
-                    role="option"
-                    aria-selected={activeKey === person.pubkey}
-                    aria-disabled={!!saved || busy || !!already || archived}
-                    disabled={!!saved || busy || !!already || archived}
-                    className={styles.person}
-                    onMouseEnter={() => {
-                      if (!already && !archived) setActiveKey(person.pubkey);
-                    }}
-                    onClick={() => choosePerson(person)}
-                  >
-                    <span>{names(person.pubkey)}</span>
-                    <small className="text-body-sm text-subtle">
-                      {keys.get(person.pubkey)}
-                      {already ? " · Already has access" : ""}
-                      {archived ? " · Archived" : ""}
-                    </small>
-                  </button>
-                );
-              })
-            ) : (
-              <p className="text-body-sm text-subtle">No people found.</p>
-            )}
-          </div>
-        </Popover.Popup>
-      </Popover.Positioner>
-    </Popover.Portal>
+  const identity = (key: string) => (
+    <Avatar
+      size="small"
+      shape={knownAgent(key) ? "squircle" : "circle"}
+      alt=""
+      fallback={names(key)}
+      src={avatarMedia(profiles.get(key)?.picture, session.media)}
+    />
+  );
+  const row = (key: string, selected: boolean) => (
+    <div key={key} className={styles.row}>
+      {identity(key)}
+      <span className={styles.name}>
+        <span>{names(key)}</span>
+      </span>
+      {selected && (
+        <IconButton
+          aria-label={`Remove ${names(key)}`}
+          disabled={busy || !!saved}
+          icon={<XIcon size={16} />}
+          onClick={() =>
+            setPeople(people.filter((person) => person.pubkey !== key))
+          }
+        />
+      )}
+    </div>
   );
   return (
     <>
       {renderTrigger ? (
-        renderTrigger(() => {
-          setCopyStatus("");
-          setFrozen(sessionShareAttempt(session, channel.id));
-          setOpen(true);
-        }, !eligible)
+        renderTrigger(openShare, !eligible)
       ) : (
-        <Button
-          variant="ghost"
-          size="sm"
+        <IconButton
+          aria-label="Share"
+          title="Share"
           disabled={!eligible}
-          onClick={() => {
-            setCopyStatus("");
-            setFrozen(sessionShareAttempt(session, channel.id));
-            setOpen(true);
-          }}
-        >
-          Share
-        </Button>
+          icon={<ShareIcon size={16} />}
+          onClick={openShare}
+        />
+      )}
+      {!renderTrigger && source && (
+        <SessionAccessIndicator
+          session={session}
+          channel={source}
+          onClick={openShare}
+        />
       )}
       <Dialog
-        finalFocus={finalFocus}
         open={open}
         onOpenChange={(next) => {
-          if (!next && !busy) {
-            reset();
-            onClose?.();
-          }
+          if (!next && !busy) close();
         }}
-        onEscape={() => {
-          if (!popupVisible) return false;
-          setResultsOpen(false);
-          return true;
-        }}
-        title={directShare ? "Share conversation" : "Share session"}
+        title="Share session"
+        height="stable"
+        description="People with access can read the full history and participate in new messages."
         preventClose={busy}
-        headerGap="compact"
+        finalFocus={finalFocus}
+        initialFocus={busy || saved || !eligible ? true : input}
         leadingActions={
-          <Button variant="ghost" disabled={busy} onClick={() => void copy()}>
-            {copyStatus || "Copy link"}
-          </Button>
+          canConvertSession(session, source) && (
+            <Button
+              disabled={busy || !!saved || !!signal?.aborted}
+              onClick={() => {
+                if (
+                  !visible() ||
+                  busy ||
+                  saved ||
+                  sessionShareAttempt(session, channel.id)
+                )
+                  return;
+                setOpen(false);
+                if (onConvert) {
+                  reset();
+                  onConvert(trigger.current);
+                } else setConverting(true);
+              }}
+            >
+              {conversionLabel(session, channel.id)}
+            </Button>
+          )
         }
         actions={
           <>
-            {saved && (
+            <Tooltip content="Copying a link does not grant access.">
+              <Button onClick={() => void copy()}>
+                <span aria-live="polite">
+                  {copyStatus === "Link copied" ? "Link copied" : "Copy link"}
+                </span>
+              </Button>
+            </Tooltip>
+            {/* A new receipt is not recovery UI. Keep the existing action set on submit. */}
+            {saved && pendingAction !== "share" && (
               <Button disabled={busy} onClick={startOver}>
                 Start over
               </Button>
             )}
             <Button
               variant="prominent"
-              disabled={
-                busy ||
-                !eligible ||
-                (!directShare && !newChannel && !chosen) ||
-                detailsInvalid ||
-                (newChannel &&
-                  !saved &&
-                  (!canonicalDetailsName(newName) ||
-                    !session.channelCreation.available))
+              title={
+                destination && !saved
+                  ? "Sharing grants access and posts a link in the selected channel."
+                  : undefined
               }
-              onClick={() => {
-                if (
-                  directShare &&
-                  normalizedDetails?.visibility === "public" &&
-                  !saved &&
-                  !confirmPublic
-                )
-                  setConfirmPublic(true);
-                else void submit();
-              }}
+              loading={busy}
+              disabled={
+                !eligible && (!!saved || !!destination || !!people.length)
+              }
+              onClick={() => void submit()}
             >
-              {confirmPublic
-                ? "Make public and share"
-                : busy
-                  ? "Sharing…"
-                  : saved
-                    ? "Retry share"
-                    : "Share"}
+              {busy
+                ? pendingAction === "retry"
+                  ? "Retry share"
+                  : "Share"
+                : saved
+                  ? "Retry share"
+                  : destination || people.length
+                    ? "Share"
+                    : "Done"}
             </Button>
           </>
         }
       >
         <div className={styles.form}>
-          {directShare && (
-            <p>
-              Move this conversation to Multiplayer with its full history,
-              Canvas and existing agents. No new conversation is created. Later
-              agent conversations use threads in Multiplayer; the private
-              provider session from Solo does not transfer.
-            </p>
-          )}
-          {directShare &&
-            (sharedDetails ? (
-              <>
-                <ChannelTextField
-                  field="name"
-                  value={sharedDetails.name}
-                  error={detailsErrors?.name}
-                  disabled={busy || !!saved || detailsLoading}
-                  onChange={(name) =>
-                    setDetailsDraft({ ...sharedDetails, name })
-                  }
-                />
-                <ChannelDurationField
-                  temporary={sharedDetails.ttlSeconds !== undefined}
-                  ttlSeconds={
-                    sharedDetails.ttlSeconds ??
-                    DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS
-                  }
-                  error={detailsErrors?.lifetime}
-                  disabled={busy || !!saved || detailsLoading}
-                  onChange={(ttlSeconds) =>
-                    setDetailsDraft({ ...sharedDetails, ttlSeconds })
-                  }
-                />
-                {sharedDetails.ttlSeconds !== undefined && (
-                  <p className="text-body-sm text-subtle">
-                    This conversation is automatically archived when its
-                    duration ends. Its history is not deleted.
-                  </p>
-                )}
-                <Switch
-                  label="Private"
-                  checked={sharedDetails.visibility === "private"}
-                  disabled={busy || !!saved || detailsLoading}
-                  onCheckedChange={(checked) => {
-                    setDetailsDraft({
-                      ...sharedDetails,
-                      visibility: checked ? "private" : "public",
-                    });
-                    setConfirmPublic(false);
-                  }}
-                />
-                <p className="text-body-sm text-subtle">
-                  {sharedDetails.visibility === "private"
-                    ? "Only channel members can read its history and participate. Add people below (optional)."
-                    : "Everyone in this community will be able to view this channel’s full history."}
-                </p>
-                {confirmPublic && (
-                  <ChannelPrivacyConfirmation
-                    visibility="public"
-                    hidePreference
-                    checked={false}
-                    onCheckedChange={() => {}}
-                  />
-                )}
-              </>
-            ) : (
-              <p role="status">
-                {detailsLoading
-                  ? "Loading channel settings…"
-                  : "Channel settings could not be loaded."}
-              </p>
-            ))}
-          {directShare && !detailsLoading && !base && (
-            <Button
-              onClick={() => {
-                setError("");
-                setDetailsReload((value) => value + 1);
-              }}
-            >
-              Reload channel settings
-            </Button>
-          )}
-          {directShare && pendingDetails?.status === "unconfirmed" && (
-            <Button
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                setError("");
-                try {
-                  await session.channelDetails.check(channel.id);
-                  if (visible()) setDetailsReload((value) => value + 1);
-                } catch (reason) {
-                  if (visible())
-                    setError(
-                      reason instanceof Error ? reason.message : String(reason),
-                    );
-                } finally {
-                  if (visible()) setBusy(false);
-                }
-              }}
-            >
-              Check channel settings status
-            </Button>
-          )}
-          {directShare && base && !base.canEdit && (
-            <p role="alert">
-              Only a channel owner or admin can change these settings and share
-              to Multiplayer.
-            </p>
-          )}
-          {!directShare && (
-            <Select
-              label="Share to"
-              placeholder="Choose a channel"
-              variant="field"
-              value={saved?.intent.destination ?? destination}
-              disabled={busy || !!saved}
-              groups={[
-                {
-                  label: "Channels",
-                  options: destinations.map((item) => ({
-                    value: item.id,
-                    label: item.name,
-                  })),
-                },
-                {
-                  label: "",
-                  options: [{ value: "new", label: "Create new channel…" }],
-                },
-              ]}
-              onValueChange={(value) => {
-                setDestination(value);
-                setError("");
-              }}
+          <Combobox.Root
+            items={choices}
+            filteredItems={choices}
+            value={null}
+            inputValue={query}
+            onInputValueChange={(next, details) => {
+              // This action picker owns selection/reset; dismissal must keep the query.
+              if (details.reason === "input-change") setQuery(next);
+            }}
+            itemToStringLabel={(choice: Choice) => choice.name}
+            onValueChange={choose}
+            onOpenChange={(next) => {
+              if (next)
+                setPickerBoundary(
+                  input.current?.closest('[role="dialog"]') ?? undefined,
+                );
+            }}
+            autoHighlight
+          >
+            <Combobox.Control
+              ref={input}
+              label="People or channel"
+              triggerLabel="Browse people and channels"
+              placeholder="Search people or channels…"
+              disabled={busy || !!saved || !eligible}
+              loading={searching}
             />
-          )}
-          {newChannel && (
-            <div className={styles.newChannel}>
-              <ChannelTextField
-                field="name"
-                creation
-                value={saved?.intent.name ?? newName}
-                onChange={setNewName}
-                disabled={busy || !!saved}
-              />
-              <Switch
-                label="Private channel"
-                checked={
-                  saved ? saved.intent.visibility === "private" : newPrivate
-                }
-                disabled={busy || !!saved}
-                onCheckedChange={setNewPrivate}
-              />
-              <span className="text-label-sm">Add to new channel</span>
-              {saved && (
-                <p className="text-body-sm text-subtle">
-                  {saved.intent.channelPeople.length} chosen for this channel
-                </p>
-              )}
-              {searchControl("channel", "Find people to add to new channel")}
+            <Combobox.Popup
+              collisionBoundary={pickerBoundary}
+              empty={
+                searching
+                  ? "Searching people…"
+                  : "No matching people or channels."
+              }
+            >
+              <Combobox.List>
+                <BaseCombobox.Group items={channels}>
+                  {!!channels.length && (
+                    <BaseCombobox.GroupLabel className="buzz-select-group-label text-caption text-subtle">
+                      Channels
+                    </BaseCombobox.GroupLabel>
+                  )}
+                  {channels.map((choice) => (
+                    <Combobox.Item key={choice.id} value={choice}>
+                      <span className={styles.choice}>
+                        <HashIcon size={20} />
+                        {choice.name}
+                      </span>
+                    </Combobox.Item>
+                  ))}
+                </BaseCombobox.Group>
+                <BaseCombobox.Group items={candidates}>
+                  {!!candidates.length && (
+                    <BaseCombobox.GroupLabel className="buzz-select-group-label text-caption text-subtle">
+                      People
+                    </BaseCombobox.GroupLabel>
+                  )}
+                  {candidates.map((choice) => (
+                    <Combobox.Item key={choice.id} value={choice}>
+                      <span className={styles.choice}>
+                        {identity(choice.id)}
+                        {names(choice.id)}
+                      </span>
+                    </Combobox.Item>
+                  ))}
+                </BaseCombobox.Group>
+              </Combobox.List>
+            </Combobox.Popup>
+          </Combobox.Root>
+          {searchError && (
+            <div role="alert">
+              {searchError}
+              <Button onClick={() => setReload((value) => value + 1)}>
+                Retry search
+              </Button>
             </div>
           )}
-          {!directShare && (
-            <Field label="Who has session access">
-              <RadioGroup
-                value={saved?.intent.audience ?? audience}
-                disabled={busy || !!saved}
-                onValueChange={setAudience}
-              >
-                <Radio value="everyone" label="Everyone in this channel" />
-                <Radio value="selected" label="Selected people" />
-              </RadioGroup>
-            </Field>
-          )}
-          <div className={styles.audienceRow}>
-            {chosenAudience === "everyone" ? (
-              <p className={`${styles.selection} text-body-sm text-subtle`}>
-                <UsersIcon size={16} aria-hidden="true" />
-                Current channel members
-              </p>
+          <section aria-label="People or channel">
+            {!!shownKeys.length && (
+              <section aria-label="Selected people">
+                {shownKeys.map((key) => row(key, true))}
+              </section>
+            )}
+            {chosen && (
+              <section aria-label="Selected channel" className={styles.row}>
+                <div className={styles.name}>
+                  <Accordion
+                    key={chosen.id}
+                    variant="form"
+                    onValueChange={(value) =>
+                      setExpandedChannel(value.length ? chosen.id : "")
+                    }
+                    items={[
+                      {
+                        value: "channel-participants",
+                        title: (
+                          <span className={styles.choice}>
+                            <HashIcon size={24} />
+                            <span className={styles.name}>
+                              <span>#{chosen.name}</span>
+                              <span className="text-body-sm text-subtle">
+                                {destinationMembers
+                                  ? `${destinationMembers.length} member${destinationMembers.length === 1 ? "" : "s"}${submittedAudience ? " · Submitted audience" : ""}`
+                                  : destinationRoster?.id !== chosen.id ||
+                                      destinationRoster.status === "loading"
+                                    ? "Loading participants…"
+                                    : "Participants unavailable"}
+                              </span>
+                            </span>
+                          </span>
+                        ),
+                        content: destinationMembers ? (
+                          destinationMembers.map((key) => row(key, false))
+                        ) : (
+                          <div>
+                            <p role="status">
+                              {destinationRoster?.id !== chosen.id ||
+                              destinationRoster.status === "loading"
+                                ? "Loading participants…"
+                                : "Current participants are unavailable."}
+                            </p>
+                            {destinationRoster?.id === chosen.id &&
+                              destinationRoster.status === "error" && (
+                                <Button
+                                  onClick={() =>
+                                    setDestinationReload((value) => value + 1)
+                                  }
+                                >
+                                  Retry participants
+                                </Button>
+                              )}
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
+                </div>
+                <IconButton
+                  aria-label={`Remove #${chosen.name}`}
+                  disabled={busy || !!saved}
+                  icon={<XIcon size={16} />}
+                  onClick={() => {
+                    setDestination("");
+                    setExpandedChannel("");
+                  }}
+                />
+              </section>
+            )}
+            {rosterState === "error" ? (
+              <div role="alert">
+                {rosterError}
+                <Button onClick={() => setRosterReload((value) => value + 1)}>
+                  Retry access
+                </Button>
+              </div>
+            ) : rosterState === "loading" ||
+              source?.cached ||
+              !source?.members ? (
+              <p role="status">Loading current access…</p>
             ) : (
               <>
-                {searchControl(
-                  "session",
-                  newChannel ? "Find people for session access" : "Find people",
-                )}
-                {!newChannel && people.length > 0 && (
-                  <button
-                    type="button"
-                    className={`${styles.count} text-body-sm text-subtle`}
-                    onClick={() => {
-                      setSearchTarget("session");
-                      setQuery("");
-                      setShowSelected(true);
-                      setResultsOpen(true);
-                      searchInput.current?.focus();
-                    }}
-                  >
-                    {people.length} selected
-                  </button>
-                )}
+                <Accordion
+                  variant="form"
+                  value={expandedShares}
+                  onValueChange={setExpandedShares}
+                  items={[
+                    ...history.channels.flatMap((item) => {
+                      const members = item.members.filter((key) =>
+                        source.members?.includes(key),
+                      );
+                      if (
+                        item.id === chosen?.id ||
+                        !members.some((key) => key !== session.viewer)
+                      )
+                        return [];
+                      return [
+                        {
+                          value: item.id,
+                          title: (
+                            <span className={styles.choice}>
+                              <HashIcon size={24} />
+                              <span className={styles.name}>
+                                <span>
+                                  #
+                                  {list.channels.find(
+                                    (current) => current.id === item.id,
+                                  )?.name ?? item.name}
+                                </span>
+                                <span className="text-body-sm text-subtle">
+                                  {members.length} member
+                                  {members.length === 1 ? "" : "s"}
+                                </span>
+                              </span>
+                            </span>
+                          ),
+                          content: members.map((key) => row(key, false)),
+                        },
+                      ];
+                    }),
+                    ...(otherAccess.length
+                      ? [
+                          {
+                            value: "other-access",
+                            title: (
+                              <span className={styles.name}>
+                                <span>Other access</span>
+                                <span className="text-body-sm text-subtle">
+                                  {otherAccess.length} member
+                                  {otherAccess.length === 1 ? "" : "s"}
+                                </span>
+                              </span>
+                            ),
+                            content: otherAccess.map((key) => row(key, false)),
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+                <section aria-label="Individual access">
+                  {source.members
+                    .filter(
+                      (key) =>
+                        key !== session.viewer &&
+                        !shownKeys.includes(key) &&
+                        (history.people.includes(key) ||
+                          (ungrouped.includes(key) && knownAgent(key))),
+                    )
+                    .map((key) => row(key, false))}
+                </section>
               </>
             )}
-          </div>
-          {newChannel && channelPeople.length > 0 && (
-            <button
-              type="button"
-              className={`${styles.selection} text-body-sm text-subtle`}
-              onClick={() => {
-                setSearchTarget("channel");
-                setQuery("");
-                setShowSelected(true);
-                setResultsOpen(true);
-                searchInput.current?.focus();
-              }}
-            >
-              <UsersIcon size={16} aria-hidden="true" />
-              {channelPeople.length} for the new channel · Edit
-            </button>
-          )}
-          {newChannel && chosenAudience === "selected" && people.length > 0 && (
-            <button
-              type="button"
-              className={`${styles.selection} text-body-sm text-subtle`}
-              onClick={() => {
-                setSearchTarget("session");
-                setQuery("");
-                setShowSelected(true);
-                setResultsOpen(true);
-                searchInput.current?.focus();
-              }}
-            >
-              <UsersIcon size={16} aria-hidden="true" />
-              {people.length} for session access · Edit
-            </button>
-          )}
-          {saved && !error && !busy && (
-            <p role="status" className="text-body-sm text-subtle">
-              Retry to{" "}
-              {saved.created
-                ? (destinations.find((item) => item.id === saved.created)
-                    ?.name ?? "the created channel")
-                : saved.intent.destination === "new"
-                  ? (saved.intent.name ?? "new channel")
-                  : (destinations.find(
-                      (item) => item.id === saved.intent.destination,
-                    )?.name ?? "the chosen channel")}
-              {saved.intent.audience === "everyone"
-                ? ", with the saved channel audience."
-                : `, with ${saved.intent.sessionPeople.length} selected for session access.`}
-              {saved.intent.destination === "new" &&
-              saved.intent.channelPeople.length > 0
-                ? ` ${saved.intent.channelPeople.length} chosen for the new channel.`
-                : ""}
+          </section>
+          {(historyError || historyReadError) && (
+            <p role="alert" className="text-body-sm text-subtle">
+              {historyError || historyReadError}
             </p>
           )}
-          {saved && (
-            <p className="text-body-sm text-subtle">
-              {directShare
-                ? "Starting over clears these choices, not settings or access already saved."
-                : "Starting over clears these choices, not work already submitted. Existing access, created channels, Multiplayer placement and queued operations are kept. A new share may post another link."}
+          {copyStatus && copyStatus !== "Link copied" && (
+            <p role="alert" className="text-body-sm text-subtle">
+              {copyStatus}
             </p>
           )}
-          {pendingCreation && !saved && !error && (
-            <p role="status">
-              A channel creation is awaiting confirmation. Retry its saved
-              details before creating another channel.
+          {!eligible ? (
+            <p role="alert">
+              Session access changed. Close and reopen to check current access
+              before retrying.
             </p>
-          )}
-          {error ? (
-            <p role="alert" className="text-body-sm">
-              {error}
-            </p>
+          ) : error ? (
+            <p role="alert">{error}</p>
           ) : progress ? (
             <p role="status" className="text-body-sm text-subtle">
               {progress}
             </p>
           ) : null}
-          {!eligible && !error && (
-            <p role="alert">Session access changed. Refresh and try again.</p>
-          )}
         </div>
-        <div ref={dialogContainer} />
-        <Popover.Root
-          open={open && popupVisible && !busy && !saved}
-          onOpenChange={(next) => setResultsOpen(next)}
-          modal={false}
-        >
-          {popupResults}
-        </Popover.Root>
       </Dialog>
+      {converting && (
+        <ConvertSession
+          session={session}
+          id={channel.id}
+          signal={signal}
+          onConverted={onConverted}
+          close={() => {
+            setConverting(false);
+            close();
+          }}
+          finalFocus={
+            finalFocus ??
+            (() => (trigger.current?.isConnected ? trigger.current : false))
+          }
+        />
+      )}
     </>
   );
 }

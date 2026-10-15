@@ -111,7 +111,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   page,
   app,
 }) => {
-  // Install before app timers exist so pausing also controls pending hover work.
+  // Install before app timers exist so hover cleanup never mixes real/fake IDs.
   await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Me");
@@ -155,9 +155,8 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // Let the installed clock run through navigation, then pause ahead of its
-  // own current time. No native timers are left outside the controlled clock.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  // Read the running page clock instead of assuming the host clock matches it.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);
@@ -227,7 +226,6 @@ test("Me hides the empty pane launcher until content opens it", async ({
 // Owner-authored inventory supplies choices; signed membership remains authority.
 test.describe("personal recipients", () => {
   test.use({
-    sessionChannels: [id],
     meAgentNames: ["Owned Honey", "Owned Brain"],
     meOutsideAgentNames: ["Outside Agent"],
   });
@@ -317,13 +315,13 @@ test.describe("personal recipients", () => {
       ]);
       // A mention is one-off in Me: the assistant picker carries follow-ups.
       await expect(composer).toHaveText("");
-      // A draft from the ordinary Messages reader may retain a channel member
+      // A draft from the Messages reader may retain a channel member
       // who isn't in the owner's inventory. Me must reject that explicit recipient.
       await composer.fill("");
       await openPage(page, "Messages");
       await page.locator('[data-channel-id="gamma"]').click();
       // Me-owned conversations are intentionally absent from the Messages
-      // sidebar. A real conversation link still opens their ordinary reader.
+      // sidebar. A real conversation link still opens their Messages reader.
       const link = app.append(
         "primary",
         "gamma",
@@ -335,7 +333,11 @@ test.describe("personal recipients", () => {
         .locator(`[data-message-id="${link.id}"]`)
         .getByRole("link", { name: "Open Beta", exact: true })
         .click();
-      await workspace
+      const linkedSession = page.getByRole("tabpanel", {
+        name: "Beta",
+        exact: true,
+      });
+      await linkedSession
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       await page
@@ -345,8 +347,8 @@ test.describe("personal recipients", () => {
           exact: true,
         })
         .click();
-      const ordinaryComposer = page.getByRole("textbox", {
-        name: "Message #Beta",
+      const ordinaryComposer = linkedSession.getByRole("textbox", {
+        name: "Message this session",
         exact: true,
       });
       await ordinaryComposer.press("End");

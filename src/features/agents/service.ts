@@ -793,6 +793,7 @@ export class AgentsService extends Service implements Agents {
       agent: (pubkey) => this.agent(pubkey),
       find: (pubkey) => this.find(pubkey),
       member: (agent, event) => this.member(agent, event),
+      dm: (agent, event) => this.dm(agent, event),
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
       record: (pubkey) => {
@@ -2224,18 +2225,32 @@ export class AgentsService extends Service implements Agents {
   private notify() {
     for (const listener of this.listeners) listener();
   }
+  /** The event's channel as the agent's community knows it, if at all. */
+  private channelOf(agent: Agent, event: RelayEvent) {
+    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.bindingOf(agent)?.session.channels;
+    if (!channel || !channels) return undefined;
+    return (
+      channels.list().channels.find((item) => item.id === channel) ??
+      channels.get?.(channel)
+    );
+  }
   /** Whether the agent is in the event's channel, by its relay-signed roster.
    * The stream is the owner's, so a watch, even of "all", sees only what the
    * agent itself could read; an event with no channel, or whose roster is
    * unknown, wakes no watch. */
   private member(agent: Agent, event: RelayEvent) {
-    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.bindingOf(agent)?.session.channels;
-    if (!channel || !channels) return false;
-    const summary =
-      channels.list().channels.find((item) => item.id === channel) ??
-      channels.get?.(channel);
-    return !!summary?.members?.includes(agent.pubkey);
+    return !!this.channelOf(agent, event)?.members?.includes(agent.pubkey);
+  }
+  /** Whether the event's channel is a DM of exactly the agent and one other,
+   * by the same roster. A group DM, or one whose roster is unknown, is not. */
+  private dm(agent: Agent, event: RelayEvent) {
+    const summary = this.channelOf(agent, event);
+    return (
+      summary?.channelType === "dm" &&
+      summary.members?.length === 2 &&
+      summary.members.includes(agent.pubkey)
+    );
   }
 }
 
