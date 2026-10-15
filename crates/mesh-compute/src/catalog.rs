@@ -42,6 +42,77 @@ pub struct Catalog {
     pub vram_display: String,
     pub recommended: Option<String>,
     pub entries: Vec<Entry>,
+    pub hosting: Option<Hosting>,
+}
+
+/// Conservative first-run choices. This is a planning budget, not an OS memory limit.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hosting {
+    pub memory_display: String,
+    pub max_vram_gb: u64,
+    pub model: Option<String>,
+}
+
+fn hosting_survey() -> hardware::HardwareSurvey {
+    let survey = hardware::survey();
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let survey = {
+        let mut survey = survey;
+        // mesh-llm 0.78.1 omits physical RAM on macOS. Metal's working-set
+        // budget cannot substitute for it when calculating the 25% share.
+        if survey.is_soc && survey.system_ram_bytes.is_none() {
+            survey.system_ram_bytes = std::process::Command::new("/usr/sbin/sysctl")
+                .args(["-n", "hw.memsize"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .filter(|bytes| *bytes > 0);
+        }
+        survey
+    };
+    survey
+}
+
+fn hosting(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> Hosting {
+    // Metal's usable working set is not physical memory. Unified-memory machines
+    // use reported system RAM; discrete GPUs use device VRAM, never RAM offload.
+    let bytes = if survey.is_soc {
+        survey.system_ram_bytes.unwrap_or(0)
+    } else {
+        survey.gpus.iter().map(|gpu| gpu.vram_bytes).sum()
+    };
+    let max_vram_gb =
+        (bytes / 4 / 1_000_000_000).min(vram::rated_capacity_gb(bytes).unwrap_or(0) / 4);
+    let mut choices: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| {
+            let label = entry.size.as_deref()?;
+            // Catalog descriptions such as "30 layers" are not byte sizes.
+            if !label.to_ascii_uppercase().ends_with("GB")
+                && !label.to_ascii_uppercase().ends_with("MB")
+            {
+                return None;
+            }
+            let size = models::catalog::parse_size_gb(label);
+            // Reserve another quarter of the model budget for context/runtime overhead.
+            // Missing metadata is not fit evidence; 8 GB machines remain consumers.
+            (bytes >= 16_000_000_000
+                && size.is_finite()
+                && size > 0.0
+                && size <= max_vram_gb as f64 * 0.75
+                && entry.model.to_ascii_lowercase().contains("gemma"))
+            .then_some((entry, size))
+        })
+        .collect();
+    choices.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.model.cmp(&b.0.model)));
+    Hosting {
+        memory_display: vram::format_rated_capacity(bytes),
+        max_vram_gb,
+        model: choices.first().map(|(entry, _)| entry.model.clone()),
+    }
 }
 
 /// One exact, downloadable model choice from the SDK's catalog.
@@ -63,13 +134,24 @@ pub fn catalog() -> anyhow::Result<Catalog> {
     if let Err(error) = models::remote_catalog::ensure_catalog() {
         eprintln!("Mesh catalog metadata unavailable: {error}");
     }
-    let survey = hardware::survey();
-    Ok(build(
-        survey.gpu_name,
+    let survey = hosting_survey();
+    let mut result = build(
+        survey.gpu_name.clone(),
         survey.vram_bytes,
         models::remote_catalog::loaded_models().unwrap_or_default(),
         installed_matcher(models::scan_installed_models()),
-    ))
+    );
+    let hosting = hosting(&survey, &result.entries);
+    // Auto's hosting choice is the recommendation the picker shows first.
+    if let Some(model) = &hosting.model {
+        result.recommended = Some(model.clone());
+        if let Some(index) = result.entries.iter().position(|e| &e.model == model) {
+            let entry = result.entries.remove(index);
+            result.entries.insert(0, entry);
+        }
+    }
+    result.hosting = Some(hosting);
+    Ok(result)
 }
 
 /// Answers "is this reference already downloaded?" for the whole catalog from one
@@ -125,8 +207,39 @@ fn fit_rank(fit: &str) -> u8 {
 }
 /// Device recommendation uses Buzz's hardware ladder, not remote catalog availability.
 /// This performs only a local hardware survey; serving owns artifact acquisition.
-pub fn recommended_model() -> String {
-    recommendation_for_memory(hardware::survey().vram_bytes).to_owned()
+pub fn recommended_model() -> AutoChoice {
+    let survey = hosting_survey();
+    // Locally cached catalog only; the seeded Gemma sizes keep this offline-safe.
+    let entries = build(
+        None,
+        survey.vram_bytes,
+        models::remote_catalog::loaded_models().unwrap_or_default(),
+        |_| false,
+    )
+    .entries;
+    auto_choice(&survey, &entries)
+}
+
+/// Auto's model and serving budget. `max_vram_gb` is None when the hosting
+/// policy finds no fitting Gemma and the legacy ladder is the fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoChoice {
+    pub model: String,
+    pub max_vram_gb: Option<u64>,
+}
+
+fn auto_choice(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> AutoChoice {
+    let hosting = hosting(survey, entries);
+    match hosting.model {
+        Some(model) => AutoChoice {
+            model,
+            max_vram_gb: Some(hosting.max_vram_gb),
+        },
+        None => AutoChoice {
+            model: recommendation_for_memory(survey.vram_bytes).to_owned(),
+            max_vram_gb: None,
+        },
+    }
 }
 
 fn recommendation_for_memory(bytes: u64) -> &'static str {
@@ -190,6 +303,30 @@ fn build(
             });
         }
     }
+    // Exact Q4 artifacts verified against their Hugging Face file listings.
+    // Keep first-run 16/32 GB choices available when layer metadata omits them.
+    for (reference, name, size) in [
+        ("unsloth/gemma-3-4b-it-GGUF:Q4_K_M", "Gemma 3 4B", "2.49GB"),
+        (CURATED_SMALL, "Gemma 4 E4B", "4.98GB"),
+    ] {
+        if let Some(entry) = entries.iter_mut().find(|entry| entry.model == reference) {
+            if entry.size.is_none() {
+                entry.size = Some(size.into());
+                entry.name = name.into();
+                entry.fit = fit(Some(size), bytes as f64 / 1e9);
+            }
+        } else {
+            entries.push(Entry {
+                model: reference.into(),
+                name: name.into(),
+                size: Some(size.into()),
+                description: None,
+                installed: installed(reference),
+                curated: false,
+                fit: fit(Some(size), bytes as f64 / 1e9),
+            });
+        }
+    }
     let recommended = Some(recommendation.to_owned());
     entries.sort_by(|a, b| {
         (Some(&b.model) == recommended.as_ref())
@@ -203,12 +340,115 @@ fn build(
         vram_display: vram::format_rated_capacity(bytes),
         recommended,
         entries,
+        hosting: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn macos_hosting_survey_reports_physical_memory() {
+        // Exercise the OS boundary: synthetic surveys hid the SDK's missing RAM field.
+        let survey = hosting_survey();
+        assert!(survey.is_soc);
+        assert!(survey.system_ram_bytes.is_some_and(|bytes| bytes > 0));
+        let result = hosting(&survey, &[]);
+        assert_ne!(result.memory_display, "unknown");
+        assert!(result.max_vram_gb > 0);
+    }
+
+    #[test]
+    fn first_run_uses_physical_memory_and_excludes_unknown_or_oversized_models() {
+        let mut catalog = build(
+            None,
+            0,
+            vec![
+                model("fixture/gemma-small", "Small", "2GB"),
+                model("fixture/gemma-medium", "Medium", "5GB"),
+                model("fixture/gemma-large", "Large", "8GB"),
+                model("fixture/gemma-largest", "Largest", "11GB"),
+                model("fixture/gemma-unknown", "Unknown", "unknown"),
+            ],
+            |_| false,
+        );
+        catalog
+            .entries
+            .retain(|entry| entry.model.starts_with("fixture/"));
+        for (memory, budget, expected) in [
+            (8, 2, None),
+            (16, 4, Some("Small")),
+            (32, 8, Some("Medium")),
+            (48, 12, Some("Large")),
+            (64, 16, Some("Largest")),
+            (128, 32, Some("Largest")),
+        ] {
+            let survey = hardware::HardwareSurvey {
+                is_soc: true,
+                system_ram_bytes: Some(memory * 1024 * 1024 * 1024),
+                vram_bytes: 6 * 1024 * 1024 * 1024,
+                ..Default::default()
+            };
+            let result = hosting(&survey, &catalog.entries);
+            assert_eq!(result.max_vram_gb, budget);
+            assert_eq!(
+                catalog
+                    .entries
+                    .iter()
+                    .find(|entry| Some(&entry.model) == result.model.as_ref())
+                    .map(|entry| entry.name.as_str()),
+                expected
+            );
+        }
+        assert!(
+            hosting(&hardware::HardwareSurvey::default(), &catalog.entries)
+                .model
+                .is_none()
+        );
+        let discrete = hardware::HardwareSurvey {
+            system_ram_bytes: Some(128 * 1024 * 1024 * 1024),
+            gpus: vec![hardware::GpuFacts {
+                vram_bytes: 8 * 1024 * 1024 * 1024,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(hosting(&discrete, &catalog.entries).model.is_none());
+    }
+    #[test]
+    fn auto_uses_the_hosting_policy_and_falls_back_to_the_legacy_ladder() {
+        let catalog = build(None, 0, vec![], |_| false);
+        let unified = |gb: u64| hardware::HardwareSurvey {
+            is_soc: true,
+            system_ram_bytes: Some(gb * 1024 * 1024 * 1024),
+            vram_bytes: gb * 1024 * 1024 * 1024 * 3 / 4,
+            ..Default::default()
+        };
+        // Seeded Gemma sizes alone choose the model, with the quarter budget as the cap.
+        assert_eq!(
+            auto_choice(&unified(16), &catalog.entries),
+            AutoChoice {
+                model: "unsloth/gemma-3-4b-it-GGUF:Q4_K_M".into(),
+                max_vram_gb: Some(4),
+            }
+        );
+        assert_eq!(
+            auto_choice(&unified(32), &catalog.entries),
+            AutoChoice {
+                model: CURATED_SMALL.into(),
+                max_vram_gb: Some(8),
+            }
+        );
+        // Below the hosting floor, Auto keeps the previous uncapped ladder.
+        assert_eq!(
+            auto_choice(&unified(8), &catalog.entries),
+            AutoChoice {
+                model: CURATED_SMALL.into(),
+                max_vram_gb: None,
+            }
+        );
+    }
     #[test]
     fn quantization_matches_do_not_confuse_dynamic_and_standard_files() {
         assert!(exact_quant("model-Q4_K_M.gguf", "Q4_K_M"));
@@ -280,7 +520,7 @@ mod tests {
             let catalog = build(None, bytes, models.clone(), |m| m == CURATED_SMALL);
             assert_eq!(catalog.recommended.as_deref(), Some(recommended));
             assert_eq!(catalog.entries[0].model, recommended);
-            assert_eq!(catalog.entries.len(), 3);
+            assert_eq!(catalog.entries.len(), 4);
             assert!(
                 catalog
                     .entries

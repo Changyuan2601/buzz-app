@@ -104,7 +104,8 @@ pub async fn mesh_compute_share(
                 .map_err(|_| "Mesh settings unavailable")?
                 .hint()
                 .is_none();
-        // The UI currently has no memory override; a future limit must inform Auto's ladder.
+        // Auto follows the hosting ladder and its quarter-memory budget; an explicit
+        // limit from the caller still wins.
         let recommended = if (automatic && model.is_some() && !resetting) || needs_reset_model {
             Some(
                 tokio::task::spawn_blocking(buzz_mesh_compute::catalog::recommended_model)
@@ -118,7 +119,10 @@ pub async fn mesh_compute_share(
             None
         } else {
             model
-                .map(|model| Share::new(recommended.clone().unwrap_or(model), max_vram_gb))
+                .map(|model| match recommended.clone() {
+                    Some(auto) => Share::new(auto.model, max_vram_gb.or(auto.max_vram_gb)),
+                    None => Share::new(model, max_vram_gb),
+                })
                 .transpose()?
         };
         if resetting {
@@ -132,7 +136,10 @@ pub async fn mesh_compute_share(
                         viewer.clone(),
                         community.clone(),
                         &Share {
-                            model: recommended.clone().unwrap_or_default(),
+                            model: recommended
+                                .as_ref()
+                                .map(|auto| auto.model.clone())
+                                .unwrap_or_default(),
                             max_vram_gb: None,
                         },
                     )

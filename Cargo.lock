@@ -3393,8 +3393,8 @@ dependencies = [
 
 [[package]]
 name = "goose-agent"
-version = "0.1.0-alpha.11"
-source = "git+https://github.com/aaif-goose/goose?rev=69de89c50cc01d4e0187d6645bf3618729873f74#69de89c50cc01d4e0187d6645bf3618729873f74"
+version = "0.1.0-alpha.12"
+source = "git+https://github.com/aaif-goose/goose?tag=gdk-v0.1.0-alpha.12#4811ae25f736fdf0ede847449c060e96645426b5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3411,8 +3411,8 @@ dependencies = [
 
 [[package]]
 name = "goose-context-management"
-version = "0.1.0-alpha.11"
-source = "git+https://github.com/aaif-goose/goose?rev=69de89c50cc01d4e0187d6645bf3618729873f74#69de89c50cc01d4e0187d6645bf3618729873f74"
+version = "0.1.0-alpha.12"
+source = "git+https://github.com/aaif-goose/goose?tag=gdk-v0.1.0-alpha.12#4811ae25f736fdf0ede847449c060e96645426b5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3427,8 +3427,8 @@ dependencies = [
 
 [[package]]
 name = "goose-provider-types"
-version = "0.1.0-alpha.11"
-source = "git+https://github.com/aaif-goose/goose?rev=69de89c50cc01d4e0187d6645bf3618729873f74#69de89c50cc01d4e0187d6645bf3618729873f74"
+version = "0.1.0-alpha.12"
+source = "git+https://github.com/aaif-goose/goose?tag=gdk-v0.1.0-alpha.12#4811ae25f736fdf0ede847449c060e96645426b5"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3456,8 +3456,8 @@ dependencies = [
 
 [[package]]
 name = "goose-providers"
-version = "0.1.0-alpha.11"
-source = "git+https://github.com/aaif-goose/goose?rev=69de89c50cc01d4e0187d6645bf3618729873f74#69de89c50cc01d4e0187d6645bf3618729873f74"
+version = "0.1.0-alpha.12"
+source = "git+https://github.com/aaif-goose/goose?tag=gdk-v0.1.0-alpha.12#4811ae25f736fdf0ede847449c060e96645426b5"
 dependencies = [
  "anyhow",
  "async-stream",

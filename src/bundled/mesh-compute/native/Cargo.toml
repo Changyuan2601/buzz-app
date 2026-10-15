@@ -8,10 +8,10 @@ publish = false
 anyhow = "1"
 async-trait = "0.1"
 futures = "0.3"
-goose-agent = { git = "https://github.com/aaif-goose/goose", rev = "69de89c50cc01d4e0187d6645bf3618729873f74", default-features = false }
-goose-context-management = { git = "https://github.com/aaif-goose/goose", rev = "69de89c50cc01d4e0187d6645bf3618729873f74", default-features = false }
-goose-provider-types = { git = "https://github.com/aaif-goose/goose", rev = "69de89c50cc01d4e0187d6645bf3618729873f74", default-features = false }
-goose-providers = { git = "https://github.com/aaif-goose/goose", rev = "69de89c50cc01d4e0187d6645bf3618729873f74", default-features = false, features = ["rustls-tls"] }
+goose-agent = { git = "https://github.com/aaif-goose/goose", tag = "gdk-v0.1.0-alpha.12", default-features = false }
+goose-context-management = { git = "https://github.com/aaif-goose/goose", tag = "gdk-v0.1.0-alpha.12", default-features = false }
+goose-provider-types = { git = "https://github.com/aaif-goose/goose", tag = "gdk-v0.1.0-alpha.12", default-features = false }
+goose-providers = { git = "https://github.com/aaif-goose/goose", tag = "gdk-v0.1.0-alpha.12", default-features = false, features = ["rustls-tls"] }
 rmcp = { version = "3.4.1", default-features = false, features = ["schemars"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
