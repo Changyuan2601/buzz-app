@@ -601,6 +601,51 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
 }
 
 #[test]
+fn maps_is_available_in_existing_native_profiles_and_preserves_its_toggle() {
+    let (root, manager, _source) = fixture();
+    manager.change("disable", "buzz.github").unwrap();
+    let reopened = Manager::open(Some(root.path().to_path_buf()), "test", false).unwrap();
+    let catalog = reopened.catalog().unwrap();
+    let maps = catalog
+        .plugins
+        .iter()
+        .find(|plugin| plugin.manifest.id == "buzz.maps")
+        .expect("Maps must be registered in the desktop catalog");
+    assert!(maps.enabled);
+    assert!(
+        !catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "buzz.github")
+            .unwrap()
+            .enabled
+    );
+    reopened.change("disable", "buzz.maps").unwrap();
+    let reopened = Manager::open(Some(root.path().to_path_buf()), "test", false).unwrap();
+    assert!(
+        !reopened
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "buzz.maps")
+            .unwrap()
+            .enabled
+    );
+    reopened.change("enable", "buzz.maps").unwrap();
+    assert!(
+        reopened
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "buzz.maps")
+            .unwrap()
+            .enabled
+    );
+}
+
+#[test]
 fn feedback_is_in_native_catalog() {
     let (root, manager, _source) = fixture();
     assert!(bundled_manifests().iter().any(|m| m.id == "buzz.feedback"));

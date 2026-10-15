@@ -183,6 +183,10 @@ function recoveryFor(session: RelaySession) {
   return recovery;
 }
 
+export type MessageSendInput = {
+  content: string;
+  recipients: readonly MentionRecipient[];
+};
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
@@ -197,6 +201,13 @@ export type MessageComposerProps = {
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
+  /** Task pages may attach context; all recipients still pass normal admission. */
+  prepareSend?: (input: MessageSendInput) => MessageSendInput & {
+    /** Recheck task lifetime after membership confirmation or background uploads. */
+    beforePublish?(): void;
+    /** Page-owned tracking also survives a background send after this composer closes. */
+    onPublished?(id: string): void;
+  };
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
@@ -278,6 +289,7 @@ function Composer({
   label: customLabel,
   placeholder,
   onSend,
+  prepareSend,
   onDraftSaved,
   editMessages,
   onOpenLink,
@@ -1047,13 +1059,23 @@ function Composer({
         submission.submit(captured);
         return;
       }
-      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
+      const prepared: MessageSendInput & {
+        beforePublish?(): void;
+        onPublished?(id: string): void;
+      } = prepareSend?.({
+        content: composerMarkdown(captured),
+        recipients: captured.recipients,
+      }) ?? {
+        content: composerMarkdown(captured),
+        recipients: captured.recipients,
+      };
+      if (prepared.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
         );
       if (
         personalConversation &&
-        captured.recipients.some(
+        prepared.recipients.some(
           (person) =>
             !session.agentChoices
               .snapshot()
@@ -1069,7 +1091,7 @@ function Composer({
       }
       requireCompletedSessionStart();
       let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
+      let recipients = prepared.recipients.map((item) => item.pubkey);
       if (sessionConversation || personalConversation) {
         admission.current = true;
         setAdmitting(true);
@@ -1079,7 +1101,7 @@ function Composer({
           .list()
           .channels.find((item) => item.id === channelId);
         if (channel?.members && allowsOutsideMentions(channel)) {
-          const missing = captured.recipients.filter(
+          const missing = prepared.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );
           if (missing.length && channel?.channelType === "dm") {
@@ -1119,8 +1141,8 @@ function Composer({
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
+          ? mediaTimeReply(mediaTimeSeconds, prepared.content)
+          : prepared.content;
       const agents = knownAgentPubkeys(
         session.profiles.snapshot(),
         session.agentChoices.snapshot(),
@@ -1138,7 +1160,8 @@ function Composer({
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
         requireCompletedSessionStart();
-        return threadRootId
+        prepared.beforePublish?.();
+        const published = threadRootId
           ? session.messages.reply(
               channelId,
               threadRootId,
@@ -1158,6 +1181,8 @@ function Composer({
                 references,
               )
             : session.messages.send(channelId, content, recipients, uploaded);
+        prepared.onPublished?.(published);
+        return published;
       };
       let id: string | undefined;
       if (capturedAttachments.length) {

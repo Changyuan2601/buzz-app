@@ -1,3 +1,4 @@
+import { ChannelMapsButton } from "../maps/ChannelMapsButton";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import type { AgentControl } from "../../features/agents/control";
@@ -95,6 +96,7 @@ export function ChannelsPage({
   companion,
   navigation,
   navigator,
+  renderMap,
 }: {
   agentControl?: AgentControl | undefined;
   providers: TemplateProviders;
@@ -102,6 +104,13 @@ export function ChannelsPage({
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
+  renderMap?:
+    | ((
+        session: RelaySession,
+        channelId: string,
+        close: () => void,
+      ) => ReactNode)
+    | undefined;
   panels: Panels;
   pages: PagesReader;
   companion?: ReactNode;
@@ -154,6 +163,10 @@ export function ChannelsPage({
           viewer={session.viewer}
           panels={panels}
           sessionsEnabled={sessionsEnabled}
+          mapsEnabled={registeredPages.some(
+            (page) => page.pluginId === "buzz.maps" && page.id === "maps",
+          )}
+          renderMap={renderMap}
           companion={companion}
         />
       )}
@@ -162,6 +175,8 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
+  mapsEnabled,
+  renderMap,
   agentControl,
   providers,
   extensions,
@@ -188,7 +203,16 @@ function ChannelWorkspace({
   relay: RelayData;
   panels: Panels;
   sessionsEnabled: boolean;
+  mapsEnabled: boolean;
+  renderMap?:
+    | ((
+        session: RelaySession,
+        channelId: string,
+        close: () => void,
+      ) => ReactNode)
+    | undefined;
 }) {
+  const [mapChannelId, setMapChannelId] = useState<string>();
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
@@ -1340,6 +1364,13 @@ function ChannelWorkspace({
                           icon={<UsersIcon size="1rem" aria-hidden="true" />}
                         />
                       )}
+                      {mapsEnabled && renderMap && current && (
+                        <ChannelMapsButton
+                          channel={current}
+                          session={queries}
+                          toggle={() => setMapChannelId(current.id)}
+                        />
+                      )}
                       {drawer.launchers}
                       <ChannelHeaderMenu
                         key={`channel-actions:${currentId ?? "empty"}`}
@@ -1665,6 +1696,14 @@ function ChannelWorkspace({
       </PanelDock>
     </div>
   );
+  if (
+    mapsEnabled &&
+    !cached &&
+    renderMap &&
+    current &&
+    mapChannelId === current.id
+  )
+    return renderMap(queries, current.id, () => setMapChannelId(undefined));
   return (
     <MessageManagement session={queries} channelId={currentId}>
       {workspace}

@@ -3,6 +3,7 @@ import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
+import { MapChannel } from "../maps";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
 import { FolderSimpleIcon } from "../../shared/design-system/icons";
 export const inject = [
@@ -61,6 +62,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
         panels={panels}
         pages={pages}
         companion={companion}
+        renderMap={(session, channelId, close) => (
+          <MapChannel
+            ctx={ctx}
+            session={session}
+            channelId={channelId}
+            closeMap={close}
+            active={() =>
+              relay.snapshot().status === "ready" &&
+              relay.snapshot().session === session &&
+              pages
+                .snapshot()
+                .some(
+                  (page) => page.pluginId === "buzz.maps" && page.id === "maps",
+                )
+            }
+          />
+        )}
       />
     ),
   });

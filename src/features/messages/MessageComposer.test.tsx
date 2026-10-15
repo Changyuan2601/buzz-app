@@ -44,7 +44,11 @@ import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
-import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import {
+  MessageComposer,
+  type MessageComposerProps,
+  type MessageSendInput,
+} from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
@@ -958,6 +962,7 @@ async function mountUploadComposer(
     threadRootId?: string;
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
+    prepareSend?: MessageComposerProps["prepareSend"];
     emojiRead?: () => Promise<RelayEvent[]>;
     editable?: boolean;
     media?: (url: string) => string | undefined;
@@ -1044,6 +1049,7 @@ async function mountUploadComposer(
       scope={scope}
       channelId="channel"
       channelName="General"
+      {...(options.prepareSend ? { prepareSend: options.prepareSend } : {})}
       {...(options.extensions ? { extensions: options.extensions } : {})}
       {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
       {...(options.replyParentId
@@ -2042,6 +2048,50 @@ it("retries publish-unknown attachment sends with the same signed event and no r
   expect(h.publish.mock.calls[1]?.[0]).toEqual(firstEvent);
   expect(h.sign).toHaveBeenCalledTimes(1);
   expect(h.uploadCalls).toHaveLength(1);
+});
+
+it("attaches task context through the shared composer while preserving selected mentions", async () => {
+  const prepareSend = vi.fn((input: MessageSendInput) => ({
+    ...input,
+    content: `${input.content}\nMap context`,
+  }));
+  const h = mount({ prepareSend });
+  h.fill("Show Paris ");
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  const input = prepareSend.mock.calls[0]?.[0];
+  expect(input?.content).toContain("@Honey");
+  expect(input?.recipients.map((person) => person.pubkey)).toEqual([
+    first.pubkey,
+  ]);
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    `${input?.content}\nMap context`,
+    [first.pubkey],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("preserves the normal draft when task publication is no longer allowed", async () => {
+  const h = mount({
+    prepareSend: (input) => ({
+      ...input,
+      beforePublish() {
+        throw new Error("Map access was removed.");
+      },
+    }),
+  });
+  h.fill("Keep this question");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Map access was removed.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("Keep this question");
 });
 
 it("sends channel messages and thread replies through real form and keyboard events", async () => {
@@ -6101,3 +6151,26 @@ it.each(["agent", "team"])(
     );
   },
 );
+
+it("keeps page-owned publication tracking after the composer closes during an upload", async () => {
+  const onPublished = vi.fn();
+  const h = await mountUploadComposer({
+    prepareSend: (input) => ({ ...input, onPublished }),
+  });
+  attachByPaste(h.input(), attachmentFile("map.txt"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  try {
+    await act(async () =>
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor("map.txt")),
+    );
+    await waitFor(() => expect(onPublished).toHaveBeenCalledOnce());
+    expect(onPublished).toHaveBeenCalledWith(
+      h.owner.session.outbox?.snapshot()[0]?.event.id ??
+        h.publish.mock.calls[0]?.[0].id,
+    );
+  } finally {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("map.txt"));
+  }
+});

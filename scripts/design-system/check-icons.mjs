@@ -42,6 +42,7 @@ const nonIconDependencies = new Set([
   "emoji-mart",
   "flexlayout-react",
   "jsdom",
+  "mapbox-gl", // Map rendering, not an icon catalog.
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
   "mdast-util-gfm-strikethrough",

@@ -155,6 +155,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ..HostGrants::default()
     });
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/maps/manifest.json"))
+            .expect("maps manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/mesh-compute/manifest.json"
         ))
@@ -235,6 +237,7 @@ fn enabled_by_default(id: &str) -> bool {
     matches!(
         id,
         "buzz.channels"
+            | "buzz.maps"
             | "buzz.feedback"
             | "buzz.diffs"
             | "buzz.identity-naming"

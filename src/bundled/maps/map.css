@@ -1,0 +1,93 @@
+.buzz-map-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  gap: 6px;
+  max-width: calc(100% - 32px);
+  padding: 0;
+  border: 0;
+}
+.buzz-map-toolbar button,
+.buzz-map .mapboxgl-ctrl-group {
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(12px);
+  color: var(--text-primary);
+  border-radius: 8px;
+}
+.buzz-map-preview .mapboxgl-popup-content {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--elevation-surface);
+  max-width: 280px;
+  padding: 14px;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.buzz-map-preview .mapboxgl-popup-content p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+}
+.buzz-map-preview .mapboxgl-popup-tip {
+  display: none;
+}
+.buzz-map .mapboxgl-ctrl-group button {
+  width: 32px;
+  height: 32px;
+}
+[data-color-mode="dark"] .buzz-map .mapboxgl-ctrl-icon {
+  filter: invert(1);
+}
+.buzz-map .mapboxgl-ctrl-scale {
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+.buzz-map-detail-backdrop {
+  backdrop-filter: blur(5px);
+}
+.buzz-map-detail {
+  z-index: var(--layer-dialog);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--elevation-surface);
+}
+.buzz-map-detail-preview {
+  height: 180px;
+  width: 100%;
+}
+.buzz-map-detail-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.buzz-map-retailer-pill,
+.buzz-map-workspace
+  [contenteditable="false"][data-source*="buzz://channel/"][data-source*="?retailer="]
+  > span:last-child {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: text-bottom;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
+  color: var(--text-primary);
+  text-decoration: none;
+  line-height: 1.3;
+}
+.buzz-map-retailer-pill:hover {
+  background: var(--affordance-link-hover);
+}

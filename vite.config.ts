@@ -31,6 +31,19 @@ export default defineConfig(async ({ command, mode }) => {
       "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",
     );
   const plugins: PluginOption[] = [react()];
+  if (command === "serve" && env.BUZZ_MAP_DATA === "1") {
+    const mapViewer = env.BUZZ_MAP_VIEWER ?? env.BUZZ_DEV_VIEWER;
+    if (!defaultOrigin || !/^[0-9a-f]{64}$/.test(mapViewer ?? ""))
+      throw new Error(
+        "Local Maps data requires BUZZ_RELAY_URL and BUZZ_MAP_VIEWER.",
+      );
+    plugins.push(
+      (await import("./scripts/maps/plugin.mjs")).mapDataPlugin({
+        root: process.cwd(),
+        scope: `${defaultOrigin}:${mapViewer}`,
+      }),
+    );
+  }
   if (command === "serve")
     plugins.push(
       (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(
