@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
+import { activate, open, virtuaIdle } from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
@@ -73,9 +73,9 @@ test("Back restores each thread visit before the previous channel", async ({
     exact: true,
   });
 
-  await threadButton(roots[0]).click();
+  await activate(threadButton(roots[0]));
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
   const openThread = await panel
     .getByRole("region", { name: "Thread messages", exact: true })
@@ -101,7 +101,7 @@ test("Back restores each thread visit before the previous channel", async ({
     );
     return state;
   });
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   try {
     await expect
       .poll(() => feedback.evaluate((state) => !!state.cue))
@@ -891,10 +891,10 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   const main = page.locator("[data-main-workspace]");
   const reply = (host) =>
     host.getByRole("textbox", { name: "Reply to thread", exact: true });
-  await threadButton(roots[0]).click();
+  await activate(threadButton(roots[0]));
   await reply(side).fill("Destination draft");
   const destinationEditor = await reply(side).elementHandle();
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   await reply(side).fill("Keep original draft");
   const originalEditor = await reply(side).elementHandle();
   await side.locator('[role="tab"][aria-selected="true"]').focus();
