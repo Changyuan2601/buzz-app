@@ -1,6 +1,6 @@
 //! Mesh-owned GDK turns. Keys remain in AppAgentHost; Buzz tool callbacks carry no credentials.
 use super::{agent::community_origin, MeshHost};
-use buzz_mesh_agent_spike::{
+use buzz_mesh_agent::{
     callback::Callback, local_tools::LocalTools, AgentMessage, AgentModel, ToolCall,
     ToolDefinition, ToolError, ToolResult, Tools,
 };
@@ -226,14 +226,14 @@ pub async fn mesh_compute_agent_run<R: tauri::Runtime>(
         id: request.id.clone(),
         events: events.clone(),
     };
-    let provider = buzz_mesh_agent_spike::provider(endpoint.trim_end_matches("/v1").to_owned())
+    let provider = buzz_mesh_agent::provider(endpoint.trim_end_matches("/v1").to_owned())
         .map_err(|e| e.to_string())?;
     let mut messages = request.messages;
     let model = AgentModel::new(request.model);
     tokio::select! {
         biased;
         _ = selection_cancel.cancelled() => Err("Mesh selection retired".into()),
-        result = buzz_mesh_agent_spike::run_observed(provider.as_ref(), &model, &system, &mut messages, &tools, run.callback.cancel.clone(), 24, |message| {
+        result = buzz_mesh_agent::run_observed(provider.as_ref(), &model, &system, &mut messages, &tools, run.callback.cancel.clone(), 24, |message| {
             if events.send(Frame::Message { run: request.id.clone(), message: message.clone() }).is_err() { run.callback.cancel.cancel(); }
         }) => result.map_err(|e| e.to_string()),
     }
@@ -273,7 +273,7 @@ pub fn mesh_compute_agent_result<R: tauri::Runtime>(
     let run = find(&app, &id, &agent)?;
     current(&app, &run)?;
     run.callback
-        .resolve(call, buzz_mesh_agent_spike::bounded_tool_result(result))
+        .resolve(call, buzz_mesh_agent::bounded_tool_result(result))
         .map_err(|e| e.to_string())
 }
 

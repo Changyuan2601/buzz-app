@@ -1,6 +1,6 @@
-# Local inline GDK desktop trial
+# Mesh agent native runtime
 
-Local/unpushed experiment based on Buzz `cc2e6ad9` and Goose
+Plugin-owned runtime linked against Goose
 `69de89c50cc01d4e0187d6645bf3618729873f74`.
 
 The Mesh desktop Agent path now calls this plugin-owned Rust loop, not ACP or a
@@ -41,12 +41,12 @@ execution to 120 seconds, and Unix process-group/collector drop cleanup stops
 background descendants. Tool replies exceeding 32 KiB become a recoverable error;
 completed effects are never assumed rolled back or automatically replayed.
 
-Agent mode respects the existing Buzz-access switch. Chat is unchanged and has
+Agent mode always includes Buzz tools. Chat is unchanged and has
 no local tools. The full shared Buzz catalog is exposed with `buzz_` names: send,
 message edit, reactions, read, channels, members, users, DM, memory get/set,
 canvas and media reads. Final prose is still automatically posted independently of tool
 sends. Each turn receives Buzz conversation history; exact older messages can be
-read with the Buzz read tool when enabled. Follow-ups queue, not steer.
+read with the Buzz read tool. Follow-ups queue, not steer.
 
 Compaction calls upstream goose-context-management between completed tool rounds
 above 24 KiB serialized conversation, accepting a generated summary under 12 KiB.
@@ -71,7 +71,7 @@ partial tool results. Reload/quit discards those traces; no Goose session databa
 or complete cross-turn tool replay is introduced. Streaming is buffered per model
 response rather than token-rendered in the UI.
 
-## Validation scope
+## Historical trial validation scope
 
 Experimental crate: 96 passing tests, including real HTTP SSE provider, local
 shell file-change/skill execution, chunk equivalence, large-result bounds,
@@ -87,7 +87,7 @@ These are local fixtures, not packaged GUI/live Mesh/real-relay acceptance.
 Default-parallel native runs still hit short-deadline host-command failures;
 serial success does not resolve them. Native Clippy is blocked by a pre-existing
 needless borrow in `sharing.rs:328` (verified in base). Experimental crate Clippy
-passes. No installed app, existing Mesh node or pushed branch was changed.
+passes. Those historical trial checks did not change an installed app or existing Mesh node.
 
 ## Size evidence
 

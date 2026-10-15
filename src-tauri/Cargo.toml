@@ -11,14 +11,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-mesh = ["dep:buzz-mesh-agent-spike", "dep:async-trait", "dep:axum", "dep:buzz-mesh-compute", "buzz-mesh-compute/mesh"]
+mesh = ["dep:buzz-mesh-agent", "dep:async-trait", "dep:axum", "dep:buzz-mesh-compute", "buzz-mesh-compute/mesh"]
 
 [build-dependencies]
 url = "2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-buzz-mesh-agent-spike = { path = "../crates/mesh-agent-spike", optional = true }
+buzz-mesh-agent = { path = "../src/bundled/mesh-compute/native", optional = true }
 async-trait = { version = "0.1", optional = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
 buzz-mesh-compute = { path = "../crates/mesh-compute", optional = true }

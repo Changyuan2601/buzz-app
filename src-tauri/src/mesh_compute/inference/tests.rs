@@ -277,7 +277,7 @@ async fn interrupt_cancels_both_requests_queued_before_first_admission() {
 
 #[tokio::test]
 async fn gdk_loop_uses_the_real_leased_gateway_and_local_tools() {
-    use buzz_mesh_agent_spike::{local_tools::LocalTools, AgentMessage, AgentModel};
+    use buzz_mesh_agent::{local_tools::LocalTools, AgentMessage, AgentModel};
     let calls = Arc::new(AtomicUsize::new(0));
     let upstream = Router::new().route("/v1/chat/completions", post({
         let calls = calls.clone();
@@ -285,12 +285,12 @@ async fn gdk_loop_uses_the_real_leased_gateway_and_local_tools() {
             let round = calls.fetch_add(1, Ordering::SeqCst);
             async move {
                 assert_eq!(body["model"], "mesh");
-                assert!(body["tools"].as_array().unwrap().iter().any(|t| t["function"]["name"] == "write"));
+                assert!(body["tools"].as_array().unwrap().iter().any(|t| t["function"]["name"] == "shell"));
                 let delta = if round == 0 {
-                    serde_json::json!({"role":"assistant","tool_calls":[{"index":0,"id":"write-one","type":"function","function":{"name":"write","arguments":"{\"path\":\"proof.txt\",\"content\":\"gateway proof\"}"}}]})
+                    serde_json::json!({"role":"assistant","tool_calls":[{"index":0,"id":"shell-one","type":"function","function":{"name":"shell","arguments":serde_json::json!({"command":"printf 'gateway proof' > proof.txt; cat proof.txt"}).to_string()}}]})
                 } else {
                     assert_eq!(round, 1);
-                    assert!(body["messages"].as_array().unwrap().iter().any(|m| m["role"] == "tool"));
+                    assert!(body["messages"].as_array().unwrap().iter().any(|m| m["role"] == "tool" && m["content"].to_string().contains("gateway proof")));
                     serde_json::json!({"role":"assistant","content":"Wrote proof.txt"})
                 };
                 let chunk = serde_json::json!({"id":"fixture","object":"chat.completion.chunk","created":1,"model":"mesh","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
@@ -311,12 +311,12 @@ async fn gdk_loop_uses_the_real_leased_gateway_and_local_tools() {
     .await
     .unwrap();
     let provider =
-        buzz_mesh_agent_spike::provider(gateway.base_url(&id).trim_end_matches("/v1").to_owned())
+        buzz_mesh_agent::provider(gateway.base_url(&id).trim_end_matches("/v1").to_owned())
             .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let tools = LocalTools::new(dir.path().to_path_buf(), &[], CancellationToken::new()).unwrap();
     let mut history = vec![AgentMessage::user().with_text("Write proof.txt")];
-    let result = buzz_mesh_agent_spike::run(
+    let result = buzz_mesh_agent::run(
         provider.as_ref(),
         &AgentModel::new("mesh"),
         "fixture",

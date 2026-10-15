@@ -1,7 +1,7 @@
 //! Size probe and localhost-only manual driver. Sends are console callbacks, not Buzz publications.
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
-use buzz_mesh_agent_spike::{provider, run, Tools};
+use buzz_mesh_agent::{provider, run, Tools};
 use goose_provider_types::{conversation::message::Message, model::ModelConfig};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, ErrorData, Tool};
 use serde_json::json;

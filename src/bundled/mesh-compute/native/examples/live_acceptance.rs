@@ -1,7 +1,7 @@
 //! Manual real-model acceptance. External bridge uses shared Buzz handlers, not native custody.
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
-use buzz_mesh_agent_spike::{
+use buzz_mesh_agent::{
     local_tools::LocalTools, provider, run_observed, AgentMessage, AgentModel, ToolCall,
     ToolDefinition, ToolError, ToolResult, Tools,
 };

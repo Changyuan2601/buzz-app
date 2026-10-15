@@ -1,5 +1,5 @@
 [package]
-name = "buzz-mesh-agent-spike"
+name = "buzz-mesh-agent"
 version = "0.0.0"
 edition = "2021"
 publish = false

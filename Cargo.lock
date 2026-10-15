@@ -1013,7 +1013,7 @@ dependencies = [
  "block2",
  "buzz-agent-controller",
  "buzz-credential-store",
- "buzz-mesh-agent-spike",
+ "buzz-mesh-agent",
  "buzz-mesh-compute",
  "buzz-pairing",
  "buzzodz-plugins",
@@ -1085,7 +1085,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buzz-mesh-agent-spike"
+name = "buzz-mesh-agent"
 version = "0.0.0"
 dependencies = [
  "anyhow",
