@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -18,6 +19,7 @@ afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 function setup(current?: UserStatus) {
   const owner = createRelaySession(null);
@@ -244,3 +246,305 @@ it("renews the displayed preset when its original deadline passed while editing"
     }),
   );
 });
+
+it.each([
+  "none",
+  "text",
+  "duration",
+  "custom expiration",
+  "quick status",
+  "emoji",
+] as const)(
+  "refreshes the cached draft without overwriting %s edits",
+  async (edit) => {
+    const user = userEvent.setup();
+    const owner = createRelaySession(null);
+    owners.push(owner);
+    const viewer = "a".repeat(64);
+    const custom = new Date();
+    custom.setDate(custom.getDate() + 2);
+    custom.setHours(12, 0, 0, 0);
+    const cached: UserStatus | undefined =
+      edit === "quick status"
+        ? undefined
+        : {
+            userId: viewer,
+            text: "Cached",
+            emoji: "🏠",
+            updatedAt: 1,
+            ...(edit === "custom expiration"
+              ? { expiresAt: custom.getTime() / 1000 }
+              : {}),
+          };
+    let resolve!: (value: UserStatus) => void;
+    const current = vi.fn(
+      () =>
+        new Promise<UserStatus>((done) => {
+          resolve = done;
+        }),
+    );
+    const save = vi.fn(async () => {});
+    render(
+      <StatusEditor
+        session={{
+          ...owner.session,
+          statuses: { ...owner.session.statuses, current, save },
+        }}
+        viewer={viewer}
+        scope="https://status.test"
+        current={cached}
+        close={() => {}}
+        finalFocus={{ current: null }}
+      />,
+    );
+    const fresh: UserStatus = {
+      userId: viewer,
+      text: "Fresh",
+      emoji: "🚌",
+      updatedAt: Date.now() / 1000,
+    };
+    try {
+      expect(
+        screen.getByRole("dialog", { name: "Set a status" }),
+      ).toBeVisible();
+      expect(current).toHaveBeenCalledOnce();
+      if (edit === "text")
+        fireEvent.change(screen.getByLabelText("Status message"), {
+          target: { value: "My draft" },
+        });
+      if (edit === "duration") {
+        await user.click(screen.getByRole("button", { name: /^Duration:/ }));
+        await user.click(
+          await screen.findByRole("menuitemradio", { name: "8 hours" }),
+        );
+      }
+      if (edit === "custom expiration") {
+        await user.click(
+          screen.getByRole("button", { name: "Status expiration time" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitemradio", { name: "11:30 PM" }),
+        );
+      }
+      if (edit === "quick status")
+        await user.click(screen.getByRole("button", { name: "In a meeting" }));
+      if (edit === "emoji") {
+        for (const name of ["ResizeObserver", "IntersectionObserver"])
+          vi.stubGlobal(
+            name,
+            class {
+              observe() {}
+              unobserve() {}
+              disconnect() {}
+            },
+          );
+        vi.spyOn(
+          document.documentElement,
+          "clientWidth",
+          "get",
+        ).mockReturnValue(1024);
+        await user.click(
+          screen.getByRole("button", { name: "Choose a status emoji" }),
+        );
+        const choice = await waitFor(() => {
+          const button = document
+            .querySelector("em-emoji-picker")
+            ?.shadowRoot?.querySelector<HTMLButtonElement>(
+              'button[title="Grinning Face"]',
+            );
+          if (!button) throw new Error("Emoji choice has not rendered");
+          return button;
+        });
+        fireEvent.click(choice);
+      }
+      await act(async () => resolve(fresh));
+      expect(screen.getByLabelText("Status message")).toHaveValue(
+        edit === "none"
+          ? "Fresh"
+          : edit === "text"
+            ? "My draft"
+            : edit === "quick status"
+              ? "In a meeting"
+              : "Cached",
+      );
+      if (edit === "duration")
+        expect(
+          screen.getByRole("button", { name: "Duration: 8 hours" }),
+        ).toBeVisible();
+      if (edit === "custom expiration") {
+        expect(
+          screen.getByRole("button", { name: "Status expiration time" }),
+        ).toHaveTextContent("11:30 PM");
+        custom.setHours(23, 30, 0, 0);
+        await user.click(screen.getByRole("button", { name: "Save status" }));
+        expect(save).toHaveBeenCalledWith(
+          expect.objectContaining({ expiresAt: custom.getTime() / 1000 }),
+        );
+      }
+      if (edit === "emoji")
+        expect(
+          screen.getByRole("button", { name: "Choose a status emoji" }),
+        ).toHaveTextContent("😀");
+    } finally {
+      await act(async () => resolve(fresh));
+    }
+  },
+);
+
+it("delays refresh feedback, surfaces failure and retries an untouched draft", async () => {
+  const owner = createRelaySession(null);
+  owners.push(owner);
+  let reject!: (error: Error) => void;
+  let resolve!: (value: undefined) => void;
+  const current = vi.fn(
+    () =>
+      new Promise<undefined>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      }),
+  );
+  vi.useFakeTimers();
+  render(
+    <StatusEditor
+      session={{
+        ...owner.session,
+        statuses: { ...owner.session.statuses, current },
+      }}
+      viewer={"a".repeat(64)}
+      scope="https://status.test"
+      current={undefined}
+      close={() => {}}
+      finalFocus={{ current: null }}
+    />,
+  );
+  try {
+    expect(screen.getByRole("button", { name: "Save status" })).toBeDisabled();
+    await act(async () => vi.advanceTimersByTime(999));
+    expect(
+      screen.queryByText("Checking your current status…"),
+    ).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Checking your current status…",
+    );
+    await act(async () => reject(new Error("Offline")));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn’t check your latest status",
+    );
+    const retry = screen.getByRole("button", { name: "Retry" });
+    act(() => retry.focus());
+    fireEvent.click(retry);
+    expect(screen.getByLabelText("Status message")).toHaveFocus();
+    expect(current).toHaveBeenCalledTimes(2);
+    await act(async () => resolve(undefined));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Status message")).toHaveValue("");
+  } finally {
+    await act(async () => resolve(undefined));
+    vi.useRealTimers();
+  }
+});
+
+it("ignores a late refresh after a failed save and keeps the submitted draft", async () => {
+  const owner = createRelaySession(null);
+  owners.push(owner);
+  const cached: UserStatus = {
+    userId: "a".repeat(64),
+    text: "Cached",
+    emoji: "🏠",
+    updatedAt: 1,
+  };
+  let resolve!: (value: UserStatus) => void;
+  const current = () =>
+    new Promise<UserStatus>((done) => {
+      resolve = done;
+    });
+  const save = vi.fn(async () => {
+    throw new Error("Save failed");
+  });
+  render(
+    <StatusEditor
+      session={{
+        ...owner.session,
+        statuses: { ...owner.session.statuses, current, save },
+      }}
+      viewer={cached.userId}
+      scope="https://status.test"
+      current={cached}
+      close={() => {}}
+      finalFocus={{ current: null }}
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Save status" }));
+    await screen.findByText("Save failed");
+    await act(async () => resolve({ ...cached, text: "Late" }));
+    expect(screen.getByLabelText("Status message")).toHaveValue("Cached");
+    expect(screen.getByRole("button", { name: "Save status" })).toBeEnabled();
+  } finally {
+    await act(async () => resolve(cached));
+  }
+});
+
+it.each(["pending", "checking", "failed"] as const)(
+  "hides irrelevant refresh feedback after editing while %s",
+  async (phase) => {
+    const owner = createRelaySession(null);
+    owners.push(owner);
+    let reject!: (error: Error) => void;
+    const current = vi.fn(
+      () =>
+        new Promise<undefined>((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    vi.useFakeTimers();
+    render(
+      <StatusEditor
+        session={{
+          ...owner.session,
+          statuses: { ...owner.session.statuses, current },
+        }}
+        viewer={"a".repeat(64)}
+        scope="https://status.test"
+        current={undefined}
+        close={() => {}}
+        finalFocus={{ current: null }}
+      />,
+    );
+    try {
+      expect(current).toHaveBeenCalledOnce();
+      if (phase !== "pending") {
+        await act(async () => vi.advanceTimersByTime(1000));
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "Checking your current status…",
+        );
+      }
+      if (phase === "failed") {
+        await act(async () => reject(new Error("Offline")));
+        expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+      }
+      fireEvent.change(screen.getByLabelText("Status message"), {
+        target: { value: "My draft" },
+      });
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(1000));
+      await act(async () => reject(new Error("Offline")));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Status message")).toHaveValue("My draft");
+      expect(screen.getByRole("button", { name: "Save status" })).toBeEnabled();
+    } finally {
+      await act(async () => reject(new Error("Test finished")));
+      cleanup();
+      vi.useRealTimers();
+    }
+  },
+);

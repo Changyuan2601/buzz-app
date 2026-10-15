@@ -1058,7 +1058,7 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   await detail.locator("[data-video-preview]").hover();
   await expect(mediaOpener).toHaveCSS("pointer-events", "auto");
   await mediaOpener.click();
-  const media = page.getByRole("dialog", { name: "Video attachment" });
+  const media = page.getByRole("dialog", { name: "Video review" });
   await expect(media).toBeVisible();
   await media.getByRole("button", { name: "Close fullscreen viewer" }).focus();
   await page.keyboard.press("Escape");

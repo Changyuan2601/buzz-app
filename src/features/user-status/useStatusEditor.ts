@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import type { UserStatus } from "../relay/user-status";
 
@@ -8,48 +8,28 @@ export function useStatusEditor(
 ) {
   const [editor, setEditor] = useState<{
     session: RelaySession;
+    viewer: string;
     current: UserStatus | undefined;
   }>();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const generation = useRef(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: changing account or community invalidates pending editor work and drafts.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scope changes discard the editor, even when its snapshot is unchanged.
   useEffect(() => {
     setEditor(undefined);
-    setLoading(false);
-    setError("");
-    return () => {
-      generation.current++;
-    };
   }, [session, viewer]);
-  async function open() {
-    if (!session || !viewer || loading) return;
-    const request = ++generation.current;
-    setLoading(true);
-    setError("");
-    try {
-      const current = await session.statuses.current(viewer);
-      if (request === generation.current) {
-        setEditor({ session, current });
-        return true;
-      }
-    } catch {
-      if (request === generation.current)
-        setError("Couldn’t load your current status. Please try again.");
-    } finally {
-      if (request === generation.current) setLoading(false);
-    }
-  }
+  const close = () => setEditor(undefined);
   return {
-    editor: editor?.session === session ? editor : undefined,
-    loading,
-    error,
-    open,
-    cancelOpening() {
-      generation.current++;
-      setLoading(false);
-      setError("");
+    editor:
+      editor?.session === session && editor?.viewer === viewer
+        ? editor
+        : undefined,
+    open() {
+      if (!session || !viewer) return false;
+      setEditor({
+        session,
+        viewer,
+        current: session.statuses.snapshot().get(viewer),
+      });
+      return true;
     },
-    close: () => setEditor(undefined),
+    close,
   };
 }

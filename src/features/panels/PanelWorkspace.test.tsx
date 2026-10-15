@@ -306,12 +306,12 @@ test("Escape cancelling IME composition does not close the tab", () => {
 // Exercise the exact script evaluated by the native menu, not a second shortcut
 // implementation. Geometry is the only browser-only boundary stubbed in jsdom.
 const requestClose = () =>
-  new Function(
-    "window",
-    "document",
-    "Event",
-    `return eval(${JSON.stringify(closeRequest)})`,
-  )(window, document, Event) as "handled" | "unhandled";
+  new Function("window", "document", "Event", "script", "return eval(script)")(
+    window,
+    document,
+    Event,
+    closeRequest,
+  ) as "handled" | "unhandled";
 const visibleWorkspace = () =>
   vi
     .spyOn(HTMLElement.prototype, "getClientRects")
@@ -420,8 +420,9 @@ const switchTab = (tabEvent: "buzz:next-tab" | "buzz:previous-tab") =>
     "document",
     "Event",
     "tabEvent",
-    `return eval(${JSON.stringify(switchTabRequest)})`,
-  )(window, document, Event, tabEvent);
+    "script",
+    "return eval(script)",
+  )(window, document, Event, tabEvent, switchTabRequest);
 const selectedTab = () =>
   within(tabs()).getByRole("tab", { selected: true }).textContent;
 

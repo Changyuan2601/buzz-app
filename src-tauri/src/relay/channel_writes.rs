@@ -19,8 +19,19 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind == 9002 && common(event) && event.tags.len() == 2 {
-        return tag(event, 0, "h").is_some_and(uuid)
+    if event.kind == 9002
+        && common(event)
+        && (2..=3).contains(&event.tags.len())
+        && tag(event, 2, "about").is_none()
+    {
+        return (event.tags.len() == 2
+            || tag(event, 2, "ttl").is_some_and(|ttl| {
+                ttl.is_empty()
+                    || (!ttl.starts_with('0')
+                        && ttl.bytes().all(|b| b.is_ascii_digit())
+                        && ttl.parse::<i32>().is_ok_and(|n| n > 0))
+            }))
+            && tag(event, 0, "h").is_some_and(uuid)
             && tag(event, 1, "name").is_some_and(|name| {
                 !name.is_empty()
                     && name.chars().count() <= 120
@@ -195,6 +206,81 @@ pub(crate) async fn relay_channel_publish(
 mod tests {
     use super::*;
     #[test]
+    fn legacy_session_metadata_matches_shared_contract_at_sign_and_publish_boundaries() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../src/features/sessions/metadata-contract.json"
+        ))
+        .unwrap();
+        let host = IdentityHost::fixture();
+        for (group, accepted) in [("accepted", true), ("rejected", false)] {
+            for row in cases[group].as_array().unwrap() {
+                let name = row["name"].as_str().unwrap();
+                let about = row["about"].as_str().unwrap();
+                let event = EventTemplate {
+                    kind: 9002,
+                    created_at: 12,
+                    content: String::new(),
+                    tags: vec![
+                        vec!["h".into(), uuid::Uuid::nil().to_string()],
+                        vec!["name".into(), name.into()],
+                        vec!["about".into(), about.into()],
+                    ],
+                };
+                assert!(!valid("channel-details", &event), "{about}");
+                assert!(validate(
+                    "channel-details",
+                    &serde_json::to_value(&event).unwrap(),
+                    None
+                )
+                .is_err());
+                let signed = tauri::async_runtime::block_on(
+                    host.sign(template(&serde_json::to_value(&event).unwrap()).unwrap()),
+                )
+                .unwrap();
+                assert!(validate(
+                    "channel-details",
+                    &signed,
+                    Some(signed["pubkey"].as_str().unwrap())
+                )
+                .is_err());
+                if accepted {
+                    for tail in [
+                        vec!["visibility", "open"],
+                        vec!["t", "for-you"],
+                        vec!["t", ""],
+                    ] {
+                        let mut invalid = template(&serde_json::to_value(&event).unwrap()).unwrap();
+                        invalid
+                            .tags
+                            .push(tail.iter().map(|value| (*value).to_string()).collect());
+                        assert!(validate(
+                            "channel-details",
+                            &serde_json::to_value(&invalid).unwrap(),
+                            None
+                        )
+                        .is_err());
+                        let signed = tauri::async_runtime::block_on(host.sign(invalid)).unwrap();
+                        assert!(validate(
+                            "channel-details",
+                            &signed,
+                            Some(signed["pubkey"].as_str().unwrap())
+                        )
+                        .is_err());
+                    }
+                }
+                let mut create = event;
+                create.kind = 9007;
+                create
+                    .tags
+                    .insert(2, vec!["visibility".into(), "private".into()]);
+                create
+                    .tags
+                    .insert(3, vec!["channel_type".into(), "stream".into()]);
+                assert_eq!(creation(&create), accepted);
+            }
+        }
+    }
+    #[test]
     fn session_rename_only_admits_a_canonical_name() {
         let mut event = EventTemplate {
             kind: 9002,
@@ -212,6 +298,60 @@ mod tests {
         }
         event.tags[1] = vec!["visibility".into(), "open".into()];
         assert!(!valid("channel-details", &event));
+    }
+    #[test]
+    fn standalone_lifetime_edit_guards_signing_and_signed_publication() {
+        let host = IdentityHost::fixture();
+        for ttl in [None, Some(""), Some("1"), Some("600"), Some("2147483647")] {
+            let mut event = EventTemplate {
+                kind: 9002,
+                created_at: 12,
+                content: String::new(),
+                tags: vec![
+                    vec!["h".into(), uuid::Uuid::nil().to_string()],
+                    vec!["name".into(), "Work".into()],
+                ],
+            };
+            if let Some(value) = ttl {
+                event.tags.push(vec!["ttl".into(), value.into()]);
+            }
+            let parsed = validate(
+                "channel-details",
+                &serde_json::to_value(&event).unwrap(),
+                None,
+            )
+            .unwrap();
+            let signed = tauri::async_runtime::block_on(host.sign(parsed)).unwrap();
+            let viewer = signed["pubkey"].as_str().unwrap();
+            assert!(validate("channel-details", &signed, Some(viewer)).is_ok());
+            for extra in [
+                vec![vec!["ttl", "0"]],
+                vec![vec!["ttl", "01"]],
+                vec![vec!["ttl", "+1"]],
+                vec![vec!["ttl", "1\n"]],
+                vec![vec!["ttl", "2147483648"]],
+                vec![vec!["ttl", "1"], vec!["ttl", ""]],
+                vec![vec!["visibility", "open"]],
+            ] {
+                let mut invalid = template(&serde_json::to_value(&event).unwrap()).unwrap();
+                invalid.tags.truncate(2);
+                invalid.tags.extend(
+                    extra
+                        .iter()
+                        .map(|tag| tag.iter().map(|v| (*v).to_string()).collect::<Vec<_>>()),
+                );
+                assert!(validate(
+                    "channel-details",
+                    &serde_json::to_value(&invalid).unwrap(),
+                    None
+                )
+                .is_err());
+                let signed = tauri::async_runtime::block_on(host.sign(invalid)).unwrap();
+                assert!(validate("channel-details", &signed, Some(viewer)).is_err());
+            }
+            event.tags.swap(0, 1);
+            assert!(!valid("channel-details", &event));
+        }
     }
     #[test]
     fn purpose_bound_templates() {
@@ -394,9 +534,11 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
             return false;
         };
         if event.tags.get(4).is_some_and(|t| {
-            t.first().is_some_and(|s| s == "about") && session_metadata(&event.tags[4][1])
+            t.first().is_some_and(|s| s == "about")
+                && event.tags[4][1].starts_with("Buzz session (buzz.sessions/v1)\nparent:")
         }) || ttl.starts_with('0')
-            || !ttl.parse::<u32>().is_ok_and(|n| n <= 2_147_483_647)
+            || !ttl.bytes().all(|b| b.is_ascii_digit())
+            || !ttl.parse::<i32>().is_ok_and(|n| n > 0)
         {
             return false;
         }
@@ -619,6 +761,71 @@ mod boundary_tests {
         }
     }
 
+    #[test]
+    fn standalone_creation_lifetime_is_canonical_and_parent_linked_creation_is_denied() {
+        let host = IdentityHost::fixture();
+        let base = EventTemplate {
+            kind: 9007,
+            created_at: 12,
+            content: String::new(),
+            tags: vec![
+                vec!["h".into(), uuid::Uuid::nil().to_string()],
+                vec!["name".into(), "Work".into()],
+                vec!["visibility".into(), "private".into()],
+                vec!["channel_type".into(), "stream".into()],
+                vec!["about".into(), "Buzz session (buzz.sessions/v1)".into()],
+            ],
+        };
+        for ttl in ["1", "600", "2147483647"] {
+            let mut event = template(&serde_json::to_value(&base).unwrap()).unwrap();
+            event.tags.push(vec!["ttl".into(), ttl.into()]);
+            assert!(creation(&event));
+            let signed = tauri::async_runtime::block_on(
+                host.sign(template(&serde_json::to_value(&event).unwrap()).unwrap()),
+            )
+            .unwrap();
+            super::super::verify_signature(&signed).unwrap();
+            assert!(creation(&super::template(&signed).unwrap()));
+            event.tags[4][1] = format!(
+                "Buzz session (buzz.sessions/v1)\nparent:{}",
+                uuid::Uuid::nil()
+            );
+            assert!(!creation(&event));
+            event.tags.swap(4, 5);
+            assert!(!creation(&event));
+        }
+        for ttl in [
+            "",
+            "0",
+            "01",
+            "+1",
+            "-1",
+            " 1",
+            "1\n",
+            "1.5",
+            "1e3",
+            "2147483648",
+        ] {
+            let mut invalid = template(&serde_json::to_value(&base).unwrap()).unwrap();
+            invalid.tags.push(vec!["ttl".into(), ttl.into()]);
+            assert!(!creation(&invalid), "{ttl:?}");
+            let signed = tauri::async_runtime::block_on(host.sign(invalid)).unwrap();
+            assert!(!creation(&super::template(&signed).unwrap()));
+        }
+        for extra in [
+            vec![vec!["ttl", "1"], vec!["ttl", "2"]],
+            vec![vec!["ttl", "1", "extra"]],
+            vec![vec!["unknown", "1"]],
+        ] {
+            let mut invalid = template(&serde_json::to_value(&base).unwrap()).unwrap();
+            invalid.tags.extend(
+                extra
+                    .iter()
+                    .map(|tag| tag.iter().map(|v| (*v).to_string()).collect::<Vec<_>>()),
+            );
+            assert!(!creation(&invalid));
+        }
+    }
     #[test]
     fn creation_requires_the_exact_stream_command() {
         let mut event = EventTemplate {

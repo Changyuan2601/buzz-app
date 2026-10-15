@@ -19,6 +19,33 @@ test("a session chip opens the same authorized conversation in the channel side 
   page,
   app,
 }) => {
+  const title = "Make contrast meet accessibility standards ".repeat(2).trim();
+  await page.route("**/query", async (route) => {
+    const response = await route.fetch();
+    const events = await response.json();
+    await route.fulfill({
+      response,
+      json: events.map((event) => {
+        if (
+          event.kind !== 39000 ||
+          !event.tags.some(([key, value]) => key === "d" && value === "beta")
+        )
+          return event;
+        return app.signRelay({
+          kind: event.kind,
+          created_at: event.created_at,
+          content: event.content,
+          tags: event.tags.map((tag) =>
+            tag[0] === "name"
+              ? ["name", title]
+              : tag[0] === "about"
+                ? ["about", "Buzz session (buzz.sessions/v1)"]
+                : tag,
+          ),
+        });
+      }),
+    });
+  });
   await open(page, app);
   const destination = page.getByRole("article", {
     name: "Conversation",
@@ -35,12 +62,12 @@ test("a session chip opens the same authorized conversation in the channel side 
   await expect(chip.locator("svg")).toBeVisible();
   await chip.click();
   const panel = page.locator("[data-panel-workspace]");
-  await expect(panel.getByRole("tab", { name: "Beta" })).toHaveAttribute(
+  await expect(panel.getByRole("tab", { name: title })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   const conversation = panel.getByRole("region", {
-    name: "Conversation in Beta",
+    name: `Conversation in ${title}`,
   });
   await expect(
     conversation.getByRole("region", { name: "Channel message history" }),
@@ -87,7 +114,17 @@ test("a session chip opens the same authorized conversation in the channel side 
       });
     }
   }
-  await panel.getByRole("button", { name: "Close Beta tab" }).click();
+  await panel.getByRole("button", { name: `Close ${title} tab` }).click();
+  await page.setViewportSize({ width: 390, height: 850 });
+  await expect(chip).toBeVisible();
+  const linkBounds = await chip.evaluate((el) => ({
+    right: el.getBoundingClientRect().right,
+    viewport: innerWidth,
+  }));
+  expect(linkBounds.right).toBeLessThanOrEqual(linkBounds.viewport);
+  await page.screenshot({
+    path: test.info().outputPath("named-session-link-390.png"),
+  });
   await expect(
     destination.getByRole("textbox", { name: "Message #Alpha" }),
   ).toBeVisible();

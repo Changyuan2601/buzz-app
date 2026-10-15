@@ -388,7 +388,7 @@ it("steps the temporary duration, preserves it across Ongoing, and submits only 
   ).not.toBeInTheDocument();
   expect(
     screen.getByRole("radio", { name: "Temporary" }),
-  ).toHaveAccessibleDescription("Cleans up without activity.");
+  ).toHaveAccessibleDescription("Archives without activity.");
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Short lived");
   await user.click(screen.getByRole("radio", { name: "Temporary" }));
   await waitFor(() =>
@@ -548,9 +548,7 @@ it("confirms both privacy directions in the same modal and preserves the entire 
       );
       expect(
         screen.getByRole("radio", { name: "Temporary" }),
-      ).toHaveAccessibleDescription(
-        "Cleans up after 2 weeks without activity.",
-      );
+      ).toHaveAccessibleDescription("Archives after 2 weeks without activity.");
       expect(onOpenChange).not.toHaveBeenCalled();
     }
     await user.click(screen.getByRole("switch", { name: "Private" }));

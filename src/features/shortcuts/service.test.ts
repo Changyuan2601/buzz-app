@@ -110,6 +110,31 @@ it.each([true, false])(
   },
 );
 
+it.each([true, false])(
+  "matches Control beside Command only on Apple platforms (Apple=%s)",
+  (apple) => {
+    const b = browser(apple),
+      ctx = new Context();
+    ctx.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const service = new ShortcutsService(ctx, b.host),
+      run = vi.fn();
+    service.registerHost({
+      ...shortcut(run),
+      binding: { key: "a", mod: true, ctrl: true },
+    });
+    for (const init of [
+      { ctrlKey: true, metaKey: true },
+      { ctrlKey: !apple, metaKey: apple },
+      { ctrlKey: true, metaKey: false },
+    ])
+      b.key("a", init);
+    expect(run).toHaveBeenCalledTimes(apple ? 1 : 0);
+  },
+);
+
 it("real plugin activation, stable conflicts, host reservations, replacement and disposal", async () => {
   const b = browser(),
     root = new Context(),

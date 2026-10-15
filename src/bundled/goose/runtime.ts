@@ -31,7 +31,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
-import { AgentSessions } from "./sessions";
+import { AgentSessions, ServerPool } from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the goose config's. */
@@ -62,6 +62,12 @@ const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 const TITLE_LIMIT = 80;
+
+/** A watch's or timer's prompt, after a context naming the agent as a
+ * conversation's first prompt does, so its session is listed as the agent's. */
+export function standalonePrompt(agent: string, text: string) {
+  return `<context>\nScope: standalone\nAgent: ${agent}\n</context>\n\n${text}`;
+}
 
 /** A session's title in goose, as harness agents name theirs:
  * `Agent · #channel`, and the thread's root when each thread is a session. */
@@ -101,6 +107,8 @@ const env = ({ model, provider }: Config) => ({
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
+  /** The MCP servers every agent's sessions share. */
+  private readonly pool = new ServerPool();
   private readonly reading = new Map<string, Promise<readonly Memory[]>>();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
@@ -264,6 +272,7 @@ export class GooseRuntime {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
       title: sessionTitle(entry.name, place, key.split("/")[1]),
+      signal,
       activityScope: topLevel
         ? channel
         : (threadReference(event)?.rootId ?? event.id),
@@ -275,14 +284,9 @@ export class GooseRuntime {
     this.notify();
     void done
       .then((result) => {
-        if (!result.ok)
-          return this.report(
-            agent,
-            channel,
-            event,
-            result.error ?? "",
-            topLevel,
-          );
+        // Of the messages one turn answered, only one has its error or text.
+        if (result.error !== undefined)
+          return this.report(agent, channel, event, result.error, topLevel);
         // An answer goose wrote without `send` is posted for it, so the
         // thread is not left waiting.
         if (result.text)
@@ -297,6 +301,7 @@ export class GooseRuntime {
   async runOnce({
     delivery,
     key,
+    signal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
@@ -304,9 +309,16 @@ export class GooseRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     void this.memory(agent.pubkey, entry);
-    const done = entry.sessions.runOnce(key, prompt, {
-      title: sessionTitle(entry.name, key),
-    });
+    const done = entry.sessions.runOnce(
+      key,
+      async () => {
+        const text = await prompt();
+        return text === undefined
+          ? undefined
+          : standalonePrompt(agent.pubkey, text);
+      },
+      { signal, title: sessionTitle(entry.name, key) },
+    );
     this.notify();
     return done.finally(() => this.notify());
   }
@@ -478,6 +490,7 @@ export class GooseRuntime {
       spawn: (id, options) => this.spawn(id, options),
       tools,
       serve: (handler) => this.serve(handler),
+      pool: this.pool,
       onChange: () => this.notify(),
       processFingerprint: () =>
         JSON.stringify([

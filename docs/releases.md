@@ -84,15 +84,17 @@ that integration are ineligible even if their updater archive and signature
 exist, as are builds without Windows/Linux signatures. The promotion gate
 downloads every updater artifact and signature, verifies the
 Minisign archive and trusted-comment signatures against the client's pinned
-key. CLI 2.11.x signs the archive and trusted comment but does not embed an
-authenticated version. The gate accepts that format and verifies both
-signatures, but cannot bind the advertised feed version to those signed bytes.
+key. The release signer signs the archive and trusted comment without passing
+`--app-version`, so signatures do not embed an authenticated version. The gate
+accepts that format and verifies both signatures, but cannot bind the advertised
+feed version to those signed bytes.
 A feed-response attacker can replay an older authentic archive/signature under
 a higher advertised version. Preview distribution must accept that residual
-risk until a coordinated CLI/updater 2.12.x bump emits `version:` and enables
-`requireSignedVersion`, then require the same version at promotion. Do not enable
-the client flag alone: 2.11.x signatures would fail. A signature mismatch
-fails before the rolling manifest is replaced.
+risk until a separate signing migration passes `--app-version`, enables
+`requireSignedVersion`, and requires the same version at promotion. The CLI
+2.12.2/updater 2.13.3 dependency upgrade leaves this migration deferred. Do not
+enable the client flag alone: existing unbound signatures would fail. A signature
+mismatch fails before the rolling manifest is replaced.
 
 The job builds the Tauri manifest with each artifact's signature from that
 release and an immutable versioned asset URL: `darwin-aarch64`, `windows-x86_64`,

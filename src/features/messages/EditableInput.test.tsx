@@ -3106,3 +3106,132 @@ it("promotes only at a mention boundary, under the recipient cap and within maxL
   paste(long.input, "x", timelineHtml("y".repeat(16001)));
   expect(long.markdown()).toBe("");
 });
+
+it("preserves external linked labels, surrounding text and undo as one paste", () => {
+  const h = mount("Before replace after", { links: true });
+  act(() => h.input.setSelectionRange(7, 14));
+  paste(
+    h.input,
+    "Read the guide & notes",
+    '<p>Read <a href="https://example.com/guide"><b>the guide</b></a> &amp; <a href="https://example.com/notes">notes</a></p>',
+  );
+  expect(h.markdown()).toBe(
+    "Before Read [the guide](https://example.com/guide) & [notes](https://example.com/notes) after",
+  );
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe("Before replace after");
+});
+
+it("ignores unsafe external destinations and external identity metadata", () => {
+  const h = mount();
+  paste(
+    h.input,
+    "unsafe safe",
+    '<a href="javascript:alert(1)">unsafe</a> <a data-profile-target="fake" href="https://example.com/">safe</a><script>alert(1)</script>',
+  );
+  expect(h.markdown()).toBe("unsafe [safe](https://example.com/)");
+  expect(h.draft().recipients).toEqual([]);
+});
+
+it("falls back to plain text when external HTML has no supported link", () => {
+  const h = mount();
+  paste(h.input, "original text", '<a href="/relative">different text</a>');
+  expect(h.markdown()).toBe("original text");
+});
+
+it("keeps external linked text literal in code blocks and enforces the paste limit", () => {
+  const html = '<a href="https://example.com/">guide</a>';
+  const h = mount();
+  act(() => h.input.toggleFormat("code_block"));
+  paste(h.input, "guide", html);
+  expect(h.markdown()).toBe("```\nguide\n```");
+  const limited = mount("", { maxLength: 10 });
+  paste(limited.input, "guide", html);
+  expect(limited.markdown()).toBe("");
+});
+
+it.each(["ul", "ol", "blockquote", "pre"])(
+  "pastes external %s as linked text without importing block formatting",
+  (tag) => {
+    const h = mount();
+    const linked = '<a href="https://example.com/">guide</a>';
+    const inner =
+      tag === "ul" || tag === "ol"
+        ? `<li>${linked}</li><li>notes</li>`
+        : `${linked}<br>notes`;
+    paste(h.input, "guide\nnotes", `<${tag}>${inner}</${tag}>`);
+    expect(h.markdown()).toBe("[guide](https://example.com/)\nnotes");
+    expect(h.input.querySelector("ul, ol, blockquote, pre")).toBeNull();
+  },
+);
+
+it.each([
+  [
+    "Ship 🚀 guide",
+    'Ship <img data-stringify-type="emoji" alt="🚀"> <a href="https://example.com">guide</a>',
+  ],
+  [
+    "guide",
+    '<span hidden>hidden</span><a href="https://example.com">guide</a>',
+  ],
+  [
+    "guide",
+    '<noscript>hidden</noscript><a href="https://example.com">guide</a>',
+  ],
+])("keeps plain clipboard text authoritative: %s", (plain, html) => {
+  const h = mount();
+  paste(h.input, plain, html);
+  expect(h.markdown()).toBe(plain);
+});
+
+it("accepts matching normalized whitespace and HTML without a plain flavor", () => {
+  const h = mount();
+  paste(
+    h.input,
+    "Read   guide",
+    '<p>Read <a href="https://example.com">guide</a></p>',
+  );
+  expect(h.markdown()).toBe("Read [guide](https://example.com/)");
+  const htmlOnly = mount();
+  paste(htmlOnly.input, "", '<a href="https://example.com">guide</a>');
+  expect(htmlOnly.markdown()).toBe("[guide](https://example.com/) ");
+});
+
+it.each([
+  "https://e.com/?q=\\",
+  "https://e.com/?q=a\\*b",
+  "https://e.com/?q=&lt;",
+])("preserves the pasted destination %s through Markdown parsing", (href) => {
+  const h = mount();
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.textContent = "guide";
+  paste(h.input, "guide", anchor.outerHTML);
+  expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+    href,
+  ]);
+});
+
+it.each([
+  [
+    "Title\nDescription",
+    "\n  <div>Title</div>\n\n  <div>Description</div>\n",
+    "Title Description",
+  ],
+  ["safe\n\n# SECRET", "safe\n\n# SECRET", "safe # SECRET"],
+  ["first\nsecond", "first<br>second", "first second"],
+  ["first\nsecond", "<div>first</div><div>second</div>", "first second"],
+])(
+  "normalizes external link labels into one Markdown paragraph: %s",
+  (plain, inner, label) => {
+    for (const text of [plain, ""]) {
+      const h = mount();
+      paste(h.input, text, `<a href="https://example.com/">${inner}</a>`);
+      expect(h.markdown().trim()).toBe(`[${label}](https://example.com/)`);
+      expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+        "https://example.com/",
+      ]);
+      expect(h.input).toHaveTextContent(label);
+    }
+  },
+);

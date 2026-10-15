@@ -1,3 +1,4 @@
+import { checkDurationConsumer } from "./duration-layout.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -215,7 +216,7 @@ sessionSidebar(
 
 sessionSidebar(
   "Channels opens the shared creation dialog without nested session rows",
-  async ({ page, app }) => {
+  async ({ page, app }, testInfo) => {
     await page.goto(app.origin);
     await openPage(page, "Multiplayer");
     await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
@@ -290,6 +291,7 @@ sessionSidebar(
       dialog.getByRole("textbox", { name: "Description" }),
     ).toBeFocused();
     await dialog.getByRole("radio", { name: /Temporary/ }).click();
+    await checkDurationConsumer(page, dialog, "create-duration", testInfo);
     await expect(
       dialog.getByRole("radio", { name: /Temporary/ }),
     ).toBeChecked();

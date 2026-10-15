@@ -28,6 +28,7 @@ const variants = [
   "inverted",
   "destructive",
   "outline",
+  "attention",
   "link",
 ] as const;
 const sizes = ["sm", "md", "lg"] as const;
@@ -38,6 +39,8 @@ const descriptions = {
   inverted: "An action on an inverse surface.",
   destructive: "An action that removes or destroys something.",
   outline: "A supporting action with a visible boundary.",
+  attention:
+    "An overdue action with a light red dashed stroke and slow marching ants (proposed).",
   link: "An action that underlines on interaction.",
 };
 

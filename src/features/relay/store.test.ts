@@ -688,3 +688,50 @@ it("does not commit a roster read that lands after the list stopped being ready"
     test.store.dispose();
   }
 });
+
+it.each([false, true])(
+  "recognizes renamed sessions from the exact legacy marker (personal=%s)",
+  async (personal) => {
+    const { store, queries, next } = setup();
+    try {
+      queries.ensureList();
+      const event = (name: string, time: number) =>
+        signed(relay, {
+          kind: 39000,
+          created_at: time,
+          content: "",
+          tags: [
+            ["d", "work"],
+            ["name", name],
+            ["t", "stream"],
+            ["private"],
+            [
+              "about",
+              `Buzz session (buzz.sessions/v1)${personal ? "\npersonal" : ""}`,
+            ],
+          ],
+        });
+      next().respond([
+        roster(relay, "work", [viewer.pubkey]),
+        event("First prompt", 10),
+      ]);
+      await flush();
+      expect(queries.list().channels[0]).toMatchObject({
+        name: "First prompt",
+        channelType: "session",
+      });
+      queries.refreshList?.();
+      next().respond([
+        roster(relay, "work", [viewer.pubkey]),
+        event("Named", 20),
+      ]);
+      await flush();
+      expect(queries.list().channels[0]).toMatchObject({
+        name: "Named",
+        channelType: "session",
+      });
+    } finally {
+      store.dispose();
+    }
+  },
+);

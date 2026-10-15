@@ -59,7 +59,11 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import {
+  panelOpening,
+  type Panels,
+  type RegisteredPanel,
+} from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
@@ -69,12 +73,11 @@ import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
-import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
+  ConversationChannel,
+  ConversationComposer,
+} from "../../features/conversation/Conversation";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type {
   Attachment,
   ChannelSummary,
@@ -1063,9 +1066,9 @@ function ChannelWorkspace({
           return true;
         }
       }
-      const candidate = panels.resolve(url);
-      const context = linkContext.current;
-      if (context.channelId && candidate) {
+      const { channelId, routedThread } = linkContext.current;
+      const next = channelId && panelOpening(panels, channelId, url, rootId);
+      if (next) {
         setSettings(undefined);
         panelTrigger.current =
           returnFocus ??
@@ -1073,16 +1076,8 @@ function ChannelWorkspace({
             ? document.activeElement
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
-        if (!fromThread && context.routedThread) select(context.channelId);
-        open(
-          {
-            channelId: context.channelId,
-            ...(rootId && { rootId }),
-            panel: candidate,
-            target: url,
-          },
-          fromThread,
-        );
+        if (!fromThread && routedThread) select(channelId);
+        open(next, fromThread);
         return true;
       }
       return false;
@@ -1216,21 +1211,16 @@ function ChannelWorkspace({
           <ChannelBody
             onContentReady={setContentReadyChannel}
             viewer={viewer}
-            extensions={extensions}
             key={current.id}
-            queries={queries}
-            scope={scope}
-            channelId={current.id}
             cached={cached}
+            // The composer below mounts TypingIndicator for members of a live channel.
+            activityLane={!current.readOnly && !current.cached}
             navigation={
               flatSession || !requestedMessage || exact?.inTimeline
                 ? navigation
                 : undefined
             }
-            onOpenLink={openLink}
-            canOpenLink={canOpenLink}
             onOpenThread={flatSession ? undefined : openThread}
-            onOpenMediaReview={openMediaReview}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -1290,14 +1280,8 @@ function ChannelWorkspace({
         />
       )}
       {current && (!current.readOnly || current.cached) && (
-        <MessageComposer
-          sessionConversation={current.channelType === "session"}
-          extensions={extensions}
+        <ConversationComposer
           key={`composer:${current.id}`}
-          session={queries}
-          scope={scope}
-          channelId={current.id}
-          channelName={current.name}
           autoFocus={
             // Conversion remounts the body, but isn't a new conversation opening.
             // Let its dialog restore focus instead of the replacement composer.
@@ -1314,8 +1298,6 @@ function ChannelWorkspace({
             !requestedThread &&
             !routedThread
           }
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
           label={
             current.channelType === "session"
               ? "Message this session"
@@ -1572,22 +1554,6 @@ function ChannelWorkspace({
             }
           />
         )}
-      {showingMediaReview && (
-        <MediaReviewViewer
-          extensions={extensions}
-          attachment={showingMediaReview.attachment}
-          session={queries}
-          scope={scope}
-          channelId={showingMediaReview.channelId}
-          channelName={showingMediaReview.channelName}
-          messageId={showingMediaReview.messageId}
-          initialTime={showingMediaReview.initialTime}
-          hasComments={showingMediaReview.hasComments}
-          restoreFocus={mediaReviewTrigger}
-          onOpenLink={openLink}
-          close={() => setMediaReview(undefined)}
-        />
-      )}
       {secondary.drag.feedback}
       {secondary.hosts}
       <p role="status" className="sr-only">
@@ -1665,11 +1631,29 @@ function ChannelWorkspace({
     </div>
   );
   return (
-    <MessageManagement session={queries} channelId={currentId}>
-      <LinkThreadTabContext value={openLinkedThread}>
+    // The review reads thread-tab links like the workspace.
+    <LinkThreadTabContext value={openLinkedThread}>
+      <ConversationChannel
+        session={queries}
+        scope={scope}
+        extensions={extensions}
+        channel={current}
+        interactions={{
+          onOpenLink: openLink,
+          canOpenLink,
+          onOpenMediaReview: openMediaReview,
+        }}
+        mediaReview={
+          showingMediaReview && {
+            ...showingMediaReview,
+            restoreFocus: mediaReviewTrigger,
+            close: () => setMediaReview(undefined),
+          }
+        }
+      >
         {workspace}
-      </LinkThreadTabContext>
-    </MessageManagement>
+      </ConversationChannel>
+    </LinkThreadTabContext>
   );
 }
 

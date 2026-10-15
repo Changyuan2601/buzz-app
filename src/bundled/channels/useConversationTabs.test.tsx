@@ -473,6 +473,24 @@ it("a launcher's tab keeps its channel when another conversation opens its targe
   expect(h.entries().map((entry) => entry.target)).toEqual(["work:a"]);
 });
 
+it("a pushed panel keeps the thread its parent was opened from", () => {
+  const h = launcherHarness();
+  act(() => {
+    h.workspace().openConversationLink("alpha", "work:a", { rootId: "root" });
+  });
+  const item = h
+    .workspace()
+    .items.find((item) => item.id === "fixture:work:work:a");
+  if (!item) throw new Error("no Work tab");
+  const { context } = (item.content as { props: { context: PanelContext } })
+    .props;
+  act(() => expect(context.push?.("work:b")).toBe(true));
+  expect(h.entries().find((entry) => entry.target === "work:b")).toMatchObject({
+    channelId: "alpha",
+    rootId: "root",
+  });
+});
+
 it("a launcher whose target changes replaces its one tab in place", () => {
   const h = launcherHarness();
   h.toggle("work:a");

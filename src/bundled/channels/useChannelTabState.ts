@@ -1,19 +1,8 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type {
-  ChannelPanelContext,
-  RegisteredPanel,
-} from "../../features/panels/service";
+import type { PanelOpening } from "../../features/panels/service";
 
-export type PanelOpening = {
-  channelId: string;
-  /** Thread root of the message the opening link was in. */
-  rootId?: string;
-  panel: RegisteredPanel;
-  target: string;
-  channelContext?: ChannelPanelContext;
-};
 export type ConversationTab =
   | { id: string; kind: "conversation"; channelId: string }
   | {

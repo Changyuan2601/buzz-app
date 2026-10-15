@@ -5,6 +5,7 @@ import { openPage, settlePanelMotion } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
+  companionFixture: true,
   readState: true,
   sessionChannels: ["beta"],
   historyCounts: { alpha: 2, beta: 1 },
@@ -75,11 +76,12 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await expect
     .poll(async () => (await main.boundingBox()).width)
     .toBeCloseTo(fullWidth, 0);
-  // An account companion is separate from this channel's hidden tabs.
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "View your profile" }).click();
+  // A shell companion is independent of this channel's hidden tabs.
+  await page
+    .getByRole("button", { name: "Companion fixture", exact: true })
+    .click();
   const account = page.getByRole("complementary", {
-    name: "Profile",
+    name: "Companion fixture",
     exact: true,
   });
   await expect(account).toBeVisible();
@@ -88,7 +90,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await expect(composer).toHaveText("Beta draft");
   await expect(account).toBeVisible();
   await account
-    .getByRole("button", { name: "Close Profile panel", exact: true })
+    .getByRole("button", { name: "Close Companion fixture panel", exact: true })
     .click();
   await openPage(page, "Settings");
   await openPage(page, "Messages");

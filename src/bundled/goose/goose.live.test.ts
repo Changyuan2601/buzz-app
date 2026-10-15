@@ -6,7 +6,7 @@
 import { spawn as spawnChild } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -150,6 +150,22 @@ const serve: ServeMcp = async (handler) => {
   };
 };
 
+/** goose's session database and its WAL, where recent writes sit. */
+function sessionsDb(): Buffer[] {
+  const root = process.env.GOOSE_PATH_ROOT;
+  const folder = root
+    ? join(root, "data", "sessions")
+    : join(
+        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
+        "goose",
+        "sessions",
+      );
+  return ["sessions.db", "sessions.db-wal"]
+    .map((name) => join(folder, name))
+    .filter((path) => existsSync(path))
+    .map((path) => readFileSync(path));
+}
+
 type Call = {
   conversation: string | undefined;
   method: string;
@@ -230,9 +246,17 @@ describe.skipIf(!BIN)("goose-acp", () => {
       // refused.
       expect(hits.some((hit) => hit.status === 200)).toBe(true);
       expect(hits.filter((hit) => hit.status === 404)).toEqual([]);
-      // goose saves the token with the session; alone, it admits nothing.
       const server = session.server;
       if (!server) throw new Error("no Buzz MCP server");
+      // goose keeps the server's URL and token out of its sessions.db.
+      const files = sessionsDb();
+      expect(files.length).toBeGreaterThan(0);
+      for (const secret of [
+        server.url,
+        ...server.headers.map((h) => h.value.replace(/^Bearer /, "")),
+      ])
+        expect(files.some((file) => file.includes(secret))).toBe(false);
+      // Alone, the token admits nothing.
       const stolen = await fetch(server.url, {
         method: "POST",
         headers: {

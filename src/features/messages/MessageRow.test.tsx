@@ -271,7 +271,9 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
     const enabled = render(true);
     expect(enabled).toContain(`href="${url}"`);
     expect(enabled).toContain('data-link-kind="github"');
-    expect(enabled.replace(/<[^>]+>/g, "")).toContain(`Before ${label}. After`);
+    const container = document.createElement("div");
+    container.innerHTML = enabled;
+    expect(container.textContent).toContain(`Before ${label}. After`);
     expect(enabled).not.toContain("&lt;");
     expect(enabled).not.toContain("&gt;");
     expect(render(false)).not.toContain("data-link-kind");
@@ -2204,7 +2206,9 @@ it("renders built-in own bubbles and keeps only the last grouped avatar", () => 
     const { container, rerender } = renderDom(
       <MessageRow {...props} stackNext />,
     );
-    expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+    expect(
+      container.querySelector("[data-message-action-anchor][data-own]"),
+    ).toHaveTextContent("Root");
     expect(
       screen.queryByRole("button", { name: "View author profile" }),
     ).toBeNull();
@@ -2631,6 +2635,98 @@ it("lets message plugins open targets through the row's link handler", async () 
     expect(button).toBeEnabled();
     fireEvent.click(button);
     expect(open).toHaveBeenLastCalledWith("panel:action", { rootId: "root" });
+  } finally {
+    cleanup();
+  }
+});
+
+function styleSession(viewer: string) {
+  return {
+    viewer,
+    channels: {
+      list: () => ({ channels: [], status: "ready" }),
+      subscribeList: () => () => {},
+    },
+    messages: {},
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+  } as unknown as RelaySession;
+}
+const styleTargets = (container: HTMLElement) => {
+  const payload =
+    container.querySelector("[data-message-action-anchor]")?.parentElement ??
+    container.querySelector("[data-message-attachments]")?.parentElement;
+  if (!payload?.parentElement) throw new Error("Expected a message payload");
+  return {
+    message: container.querySelector("[data-layout]"),
+    content: payload.parentElement,
+    payload,
+  };
+};
+it.each([
+  { kind: "own text", viewer: row.authorId, attachments: [], own: true },
+  {
+    kind: "another author's text",
+    viewer: "viewer",
+    attachments: [],
+    own: false,
+  },
+  {
+    kind: "own attachment-only",
+    viewer: row.authorId,
+    attachments: [{ kind: "image" as const, url: "https://image.test/a.png" }],
+    own: false,
+  },
+])(
+  "marks $kind rows for own-message, bubble and attachment styling",
+  ({ viewer, attachments, own }) => {
+    const { container } = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: attachments.length ? "" : row.content,
+          attachments,
+        }}
+        session={styleSession(viewer)}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    try {
+      const { message, content, payload } = styleTargets(container);
+      const bubble = attachments.length === 0;
+      expect(message?.hasAttribute("data-own")).toBe(own);
+      expect(content.hasAttribute("data-bubble")).toBe(bubble);
+      expect(payload.hasAttribute("data-attachments")).toBe(!bubble);
+    } finally {
+      cleanup();
+    }
+  },
+);
+it("keeps own-message and bubble styling off a shown thread root", () => {
+  const { container } = renderDom(
+    <MessageRow
+      row={{ ...row, audience: "agents" }}
+      session={styleSession(row.authorId)}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    const { message, content } = styleTargets(container);
+    expect(message).not.toHaveAttribute("data-own");
+    expect(content).not.toHaveAttribute("data-bubble");
   } finally {
     cleanup();
   }

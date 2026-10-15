@@ -11,7 +11,10 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
+import { createAppearance } from "../../src/shared/theme/service";
 import "../../src/shared/styles/globals.css";
+
+const appearance = createAppearance();
 
 // Deliberately public test key, never an account credential.
 const profileKey = new Uint8Array(32).fill(7);
@@ -141,6 +144,7 @@ function Fixture() {
         <ProfileButton
           communities={communities}
           accountActions={accountActions}
+          appearance={appearance}
           settingsSelected={human}
           onSettings={() => setHuman(true)}
         />

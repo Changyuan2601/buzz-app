@@ -52,7 +52,7 @@ it("replacement edits keep only mentions outside the browser's target range", ()
   expect(edit(0, 6, "@Honey").recipients).toEqual([second]);
   expect(edit(7, 13, "@Honey").recipients).toEqual([first]);
   expect(
-    editMentionDraft(draft, draft.text.replace("'", "’")).recipients,
+    editMentionDraft(draft, draft.text.replaceAll("'", "’")).recipients,
   ).toEqual([]);
 });
 

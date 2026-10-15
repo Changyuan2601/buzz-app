@@ -2023,6 +2023,21 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ]}
 />`}
     >
+      <InlineHeader title="Active section" />
+      <Accordion
+        variant="section"
+        items={[
+          {
+            value: "done",
+            title: "Completed section",
+            content: (
+              <p className="text-body">
+                Content aligns with adjacent sections.
+              </p>
+            ),
+          },
+        ]}
+      />
       <Accordion
         items={[
           {

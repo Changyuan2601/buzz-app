@@ -237,7 +237,7 @@ async fn download(
     };
     drop((file, upstream));
     match copied {
-        Ok(length) if total.map_or(true, |total| total == length) => {
+        Ok(length) if total.is_none_or(|total| total == length) => {
             progress.send_replace(Progress::Done(length));
             tokio::select! {
                 () = stop.cancelled() => {}

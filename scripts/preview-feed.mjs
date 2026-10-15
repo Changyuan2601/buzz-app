@@ -108,8 +108,8 @@ function verifySignature({ key, keyId }, archivePath, signaturePath) {
     ),
     "Trusted comment signature invalid",
   );
-  // CLI 2.11.x signs the trusted comment but does not include a version field.
-  // Require version binding when the signer and client move to 2.12.x together.
+  // Releases omit --app-version, so their trusted comments have no version field.
+  // Version binding remains a separate signer/client/promotion migration.
 }
 
 // The Windows and Linux build jobs check their own installed binaries.

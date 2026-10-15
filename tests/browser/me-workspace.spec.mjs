@@ -183,7 +183,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   // Context actions must remain separate from the activity trigger.
   await alpha.press("Shift+F10");
   await expect(
-    page.getByRole("menuitem", { name: "Rename", exact: true }),
+    page.getByRole("menuitem", { name: "Session settings…", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);

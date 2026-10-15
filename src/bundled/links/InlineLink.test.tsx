@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LockIcon, TableIcon } from "../../shared/design-system/icons/index";
@@ -10,6 +11,12 @@ import {
   LinkContentContext,
   LinkChannelPrivateContext,
 } from "../../features/conversation/LinkLabelContext";
+
+function textOf(markup: string) {
+  const container = document.createElement("div");
+  container.innerHTML = markup;
+  return container.textContent;
+}
 
 it("claims recognised services and Buzz entities by default and unknown websites as a catch-all", () => {
   let renderer: LinkRenderer | undefined;
@@ -43,7 +50,7 @@ it.each([
 ])("renders semantic Buzz labels for %s", (href, kind, label) => {
   const html = renderToStaticMarkup(<InlineLink href={href} />);
   expect(html).toContain(`data-link-kind="${kind}"`);
-  expect(html.replace(/<[^>]+>/g, "")).toBe(label);
+  expect(textOf(html)).toBe(label);
   expect(html).toContain('href="buzz://');
 });
 
@@ -56,15 +63,19 @@ it("renders private channel links with the design-system lock icon", () => {
   expect(markup).toContain(
     renderToStaticMarkup(<LockIcon className={styles.icon} />),
   );
-  expect(markup.replace(/<[^>]+>/g, "")).toBe("private");
+  expect(textOf(markup)).toBe("private");
 });
 
 it.each([
   "javascript:alert(1)",
+  "JaVaScRiPt:alert(1)",
+  "java\tscript:alert(1)",
   "data:text/html,hello",
+  "//github.com/block/buzz",
   "buzz://unknown",
   "not a URL",
 ])("leaves unsupported destinations as plain text: %s", (href) => {
+  expect(linkKind(href)).toBeNull();
   expect(
     renderToStaticMarkup(<InlineLink href={href}>Reference</InlineLink>),
   ).toBe("Reference");
@@ -78,7 +89,7 @@ it("preserves the destination and readable full label", () => {
   expect(markup).toContain(`href="${href}"`);
   expect(markup).toContain('data-kind="github"');
   expect(markup).toContain('aria-hidden="true"');
-  expect(markup.replace(/<[^>]+>/g, "")).toBe(href);
+  expect(textOf(markup)).toBe(href);
 });
 
 it.each([
@@ -124,7 +135,7 @@ it.each([45, 46])(
   (length) => {
     const href = "https://figma.com/design/".padEnd(length, "a");
     const markup = renderToStaticMarkup(<InlineLink href={href} />);
-    const text = markup.replace(/<[^>]+>/g, "");
+    const text = textOf(markup);
     expect(markup).toContain(`href="${href}"`);
     expect(text).toBe(length <= 45 ? href : `${href.slice(0, 44)}…`);
   },
@@ -136,7 +147,7 @@ it("preserves authored labels on long URLs", () => {
   const markup = renderToStaticMarkup(
     <InlineLink href={href}>{label}</InlineLink>,
   );
-  expect(markup.replace(/<[^>]+>/g, "")).toBe(label);
+  expect(textOf(markup)).toBe(label);
   expect(markup).toContain(`href="${href}"`);
 });
 
@@ -151,7 +162,7 @@ it("truncates a Unicode URL when Markdown encodes its destination", () => {
       </LinkContentContext>
     </LinkLabelContext>,
   );
-  expect(markup.replace(/<[^>]+>/g, "")).toBe(`${label.slice(0, 44)}…`);
+  expect(textOf(markup)).toBe(`${label.slice(0, 44)}…`);
 });
 
 it.each(["figma.com", "teams.microsoft.com"])(
@@ -183,6 +194,6 @@ it.each([false, true])(
       renderToStaticMarkup(<TableIcon className={styles.icon} />),
     );
     expect(markup).toContain(`href="${href}"`);
-    expect(markup.replace(/<[^>]+>/g, "")).toBe("the tracker");
+    expect(textOf(markup)).toBe("the tracker");
   },
 );

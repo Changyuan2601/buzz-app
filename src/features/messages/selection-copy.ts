@@ -171,7 +171,7 @@ function link(
   if (format === "html")
     return `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
   if (format === "markdown")
-    return `[${label.replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${href.replace(/[()]/g, (character) => (character === "(" ? "%28" : "%29"))})`;
+    return `[${label.replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${href.replace(/\\|&(?=#?\w+;)/g, "\\$&").replace(/[()]/g, (character) => (character === "(" ? "%28" : "%29"))})`;
   return plain;
 }
 

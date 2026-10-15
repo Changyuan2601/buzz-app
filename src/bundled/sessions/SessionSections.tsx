@@ -11,8 +11,8 @@ import {
   canConvertSession,
 } from "../../features/sessions/ConvertSession";
 import { SessionShare, SessionAccessIndicator } from "./SessionShare";
+import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -53,7 +53,6 @@ import {
   DotsThreeIcon,
   FolderSimpleIcon,
   PlusIcon,
-  PencilSimpleIcon,
   CopyIcon,
   GearIcon,
 } from "../../shared/design-system/icons";
@@ -141,10 +140,14 @@ export function SessionSections({
   const sharingChannel = channels.channels.find(
     (channel) => channel.id === sharing?.id,
   );
-  const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
-  const [renaming, setRenaming] = useState<SessionListItem>();
   const [converting, setConverting] = useState<{
     id: string;
+    visit: AbortSignal | undefined;
+  }>();
+  const currentVisit = useRef(visit);
+  currentVisit.current = visit;
+  const [sessionSettings, setSessionSettings] = useState<{
+    item: SessionListItem;
     visit: AbortSignal | undefined;
   }>();
   const [deleting, setDeleting] = useState<string>();
@@ -378,20 +381,6 @@ export function SessionSections({
                               {conversionLabel(session, item.id)}
                             </MenuItem>
                           )}
-                        <MenuItem
-                          disabled={
-                            !session.channelDetails?.available ||
-                            !!channels.channels.find(
-                              (channel) => channel.id === item.id,
-                            )?.readOnly
-                          }
-                          onClick={() => setRenaming(item)}
-                        >
-                          <MenuIcon>
-                            <PencilSimpleIcon size={16} />
-                          </MenuIcon>
-                          Rename
-                        </MenuItem>
                         <MenuSubmenu>
                           <MenuSubmenuTrigger disabled={!preferences.writable}>
                             <MenuIcon>
@@ -461,22 +450,26 @@ export function SessionSections({
                           </MenuSubmenuPopup>
                         </MenuSubmenu>
 
-                        {personal && (
-                          <MenuItem
-                            disabled={
-                              !session.canvas.available ||
-                              !!channels.channels.find(
-                                (channel) => channel.id === item.id,
-                              )?.readOnly
-                            }
-                            onClick={() => setSessionSettings(item)}
-                          >
-                            <MenuIcon>
-                              <GearIcon size={16} />
-                            </MenuIcon>
-                            Chat settings…
-                          </MenuItem>
-                        )}
+                        <MenuItem
+                          disabled={
+                            (!session.canvas.available &&
+                              !canEditSessionLifetime(
+                                session,
+                                channels.channels.find(
+                                  (channel) => channel.id === item.id,
+                                ),
+                              )) ||
+                            !!channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            )?.readOnly
+                          }
+                          onClick={() => setSessionSettings({ item, visit })}
+                        >
+                          <MenuIcon>
+                            <GearIcon size={16} />
+                          </MenuIcon>
+                          Session settings…
+                        </MenuItem>
                       </>
                     }
                   >
@@ -549,12 +542,19 @@ export function SessionSections({
       )}
       {sessionSettings && (
         <WorkspaceSettings
+          key={sessionSettings.item.id}
+          signal={sessionSettings.visit}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${sessionSettings.item.id}"] button`,
+            ) ?? false
+          }
           session={session}
           scope={scope}
           target={{
             kind: "session",
-            id: sessionSettings.id,
-            name: sessionSettings.title,
+            id: sessionSettings.item.id,
+            name: sessionSettings.item.title,
           }}
           close={() => setSessionSettings(undefined)}
         />
@@ -599,15 +599,6 @@ export function SessionSections({
           scope={scope}
           target={{ kind: "section", ...settingsFor, personal }}
           close={() => setSettingsFor(undefined)}
-        />
-      )}
-      {renaming && (
-        <RenameSession
-          key={renaming.id}
-          session={session}
-          id={renaming.id}
-          name={renaming.title}
-          close={() => setRenaming(undefined)}
         />
       )}
       {creatingFor && (

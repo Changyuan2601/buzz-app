@@ -1,8 +1,11 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
   memo,
+  useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
@@ -20,7 +23,7 @@ import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
-import { UnreadBadge } from "./UnreadBadge";
+import { UnreadBadge, ordinaryUnread } from "./UnreadBadge";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
@@ -83,15 +86,42 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
     channel.id,
     working,
   );
+  const ordinary = useOrdinaryUnread(
+    session,
+    channel.id,
+    channel.channelType === "dm",
+  );
   return (
     <ChannelSidebarItemCore
       {...props}
       agents={agents}
       agentProfiles={agentProfiles}
       waiting={waiting}
+      ordinary={ordinary}
     />
   );
 });
+
+/** Only the boolean the row styles on; counts and thread activity stay in the badge. */
+function useOrdinaryUnread(
+  session: RelaySession,
+  channelId: string,
+  dm: boolean,
+) {
+  const target = useMemo(
+    () => ({ kind: "channel" as const, channelId }),
+    [channelId],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => session.unread.subscribe(target, listener),
+    [session, target],
+  );
+  const get = useCallback(
+    () => ordinaryUnread(session.unread.snapshot(target), dm),
+    [session, target, dm],
+  );
+  return useSyncExternalStore(subscribe, get, get);
+}
 
 function ChannelSidebarItemCore({
   channel,
@@ -122,10 +152,12 @@ function ChannelSidebarItemCore({
   agents,
   agentProfiles,
   waiting,
+  ordinary,
 }: ItemProps & {
   waiting: boolean;
   agents: readonly string[];
   agentProfiles: ReadonlyMap<string, Profile>;
+  ordinary: boolean;
 }) {
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
@@ -142,6 +174,8 @@ function ChannelSidebarItemCore({
   const row = (
     <ChannelSidebarRow
       channel={channel}
+      working={agents.length > 0}
+      ordinary={ordinary}
       dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" ? (

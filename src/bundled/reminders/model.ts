@@ -155,6 +155,11 @@ const timeOf = (date: Date) =>
 /** Slack-style due copy: relative when overdue, otherwise the day and time. */
 export function dueLabel(at: number, now: number) {
   if (at <= now) return `Overdue · ${relativeTimestamp(at, now)}`;
+  return dueDateLabel(at, now);
+}
+
+/** Original scheduled day and time, including dates that are already overdue. */
+export function dueDateLabel(at: number, now: number) {
   const due = new Date(at * 1000);
   const today = new Date(now * 1000);
   const days = Math.round(
@@ -167,15 +172,17 @@ export function dueLabel(at: number, now: number) {
       ? "Today"
       : days === 1
         ? "Tomorrow"
-        : days < 7
-          ? due.toLocaleDateString([], { weekday: "long" })
-          : due.toLocaleDateString([], {
-              month: "short",
-              day: "numeric",
-              ...(due.getFullYear() !== today.getFullYear()
-                ? { year: "numeric" }
-                : {}),
-            });
+        : days === -1
+          ? "Yesterday"
+          : days > 1 && days < 7
+            ? due.toLocaleDateString([], { weekday: "long" })
+            : due.toLocaleDateString([], {
+                month: "short",
+                day: "numeric",
+                ...(due.getFullYear() !== today.getFullYear()
+                  ? { year: "numeric" }
+                  : {}),
+              });
   return `${day} at ${timeOf(due)}`;
 }
 

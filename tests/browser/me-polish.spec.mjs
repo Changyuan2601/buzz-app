@@ -1,3 +1,4 @@
+import { checkDurationLayout } from "./duration-layout.mjs";
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey, verifyEvent } from "nostr-tools";
 import { openPage } from "./navigation.mjs";
@@ -1119,4 +1120,569 @@ test("Me and Messages share one resizable sidebar width", async ({
   await expect.poll(() => width("Solo sidebar")).toBe(220);
   await page.reload();
   await expect.poll(() => width("Solo sidebar")).toBe(220);
+});
+
+test("unified session naming and lifetime retain host focus and save only explicit changes", async ({
+  page,
+  app,
+}) => {
+  const readbacks = [];
+  await page.route("**/api/relay/**/query", async (route) => {
+    const response = await route.fetch();
+    const events = await response.json();
+    readbacks.push(
+      ...events.filter(
+        (event) =>
+          event.kind === 39000 &&
+          event.tags.some(([key, value]) => key === "d" && value === id),
+      ),
+    );
+    await route.fulfill({ response });
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const actions = page.getByRole("button", {
+    name: "Session settings",
+    exact: true,
+  });
+  await actions.click();
+  const settings = page.getByRole("dialog", {
+    name: "Session settings",
+    exact: true,
+  });
+  const canvas = settings.getByRole("textbox", { name: "Canvas", exact: true });
+  await expect(canvas).toBeVisible();
+  await canvas.fill("Keep this local draft");
+  const draftName = settings.getByRole("textbox", {
+    name: "Session name (optional)",
+    exact: true,
+  });
+  await draftName.fill("Make contrast meet accessibility standards");
+  const draftTemporary = settings.getByRole("radio", {
+    name: "Temporary",
+    exact: true,
+  });
+  await settings
+    .locator("label")
+    .filter({
+      has: page.getByRole("radio", { name: "Temporary", exact: true }),
+    })
+    .click();
+  await expect(draftTemporary).toBeChecked();
+  await settings.getByRole("button", { name: "Increase duration" }).click();
+  await expect(draftTemporary).toHaveAccessibleDescription(
+    "Archives after 2 weeks without activity.",
+  );
+  await settings.getByRole("button", { name: "Decrease duration" }).click();
+  await expect(draftTemporary).toHaveAccessibleDescription(
+    "Archives after 7 days without activity.",
+  );
+  const draftSave = settings.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  const inspect = async (dialog, save, prefix, nameLabel) => {
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      for (const width of [390, 950, 1280]) {
+        await page.setViewportSize({ width, height: 850 });
+        const name = dialog.getByRole("textbox", {
+          name: nameLabel,
+          exact: true,
+        });
+        await name.scrollIntoViewIfNeeded();
+        await expect(name).toBeInViewport();
+        await expect(name).toBeEnabled();
+        await expect
+          .poll(() =>
+            dialog.evaluate((el) => {
+              const name = el.querySelector("input").closest(".buzz-field");
+              const folders = el
+                .querySelector("textarea")
+                .closest(".buzz-field").parentElement;
+              const canvas = [...el.querySelectorAll(".buzz-field")].find(
+                (field) =>
+                  field.querySelector(".buzz-field-label")?.textContent ===
+                  "Canvas",
+              );
+              const lifetime = el
+                .querySelector('[role="radio"]')
+                .closest(".buzz-field");
+              const boxes = [name, folders, canvas, lifetime].map((field) =>
+                field.getBoundingClientRect(),
+              );
+              return boxes
+                .slice(1)
+                .map((box, i) => Math.round(box.top - boxes[i].bottom));
+            }),
+          )
+          .toEqual([32, 32, 32]);
+        await page.screenshot({
+          path: test.info().outputPath(`${prefix}-name-${mode}-${width}.png`),
+        });
+        const bounds = await name.evaluate((el) => ({
+          width: el.getBoundingClientRect().width,
+          right: el.getBoundingClientRect().right,
+          viewport: innerWidth,
+        }));
+        expect(bounds.width).toBeGreaterThan(100);
+        expect(bounds.right).toBeLessThanOrEqual(bounds.viewport);
+        await expect(name).toHaveAccessibleDescription("");
+        await save.scrollIntoViewIfNeeded();
+        await expect(save).toBeInViewport();
+        await expect(
+          dialog.getByRole("button", { name: "Close", exact: true }),
+        ).toBeInViewport();
+        // A content-sized form has one body scroll owner and only the shared bottom
+        // gutter, not a reserved empty area below the confirmation actions.
+        await expect(dialog).toHaveAttribute("data-height", "content");
+        await expect(dialog.locator(".buzz-dialog-body")).toHaveCSS(
+          "overflow-y",
+          "auto",
+        );
+        await dialog.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        await expect
+          .poll(() =>
+            dialog.evaluate((element) => {
+              const footer = element.querySelector(".buzz-dialog-actions");
+              const gutter = Number.parseFloat(
+                getComputedStyle(element).paddingBottom,
+              );
+              return Math.abs(
+                element.getBoundingClientRect().bottom -
+                  footer.getBoundingClientRect().bottom -
+                  gutter -
+                  element.clientTop,
+              );
+            }),
+          )
+          .toBeLessThan(1);
+        const temporaryControl = dialog.getByRole("radio", {
+          name: "Temporary",
+          exact: true,
+        });
+        await temporaryControl.scrollIntoViewIfNeeded();
+        await expect(temporaryControl).toBeInViewport();
+        await expect(
+          dialog.getByText("Lifetime", { exact: true }),
+        ).toBeVisible();
+        await expect(dialog.getByRole("tab")).toHaveCount(0);
+        await expect(
+          dialog.getByRole("button", {
+            name: /^(Save changes|Check save status)$/,
+          }),
+        ).toHaveCount(1);
+        await dialog.evaluate((element) =>
+          Promise.allSettled(
+            element
+              .getAnimations({ subtree: true })
+              .filter(
+                (animation) =>
+                  animation.effect?.getComputedTiming().endTime !== Infinity,
+              )
+              .map((animation) => animation.finished),
+          ),
+        );
+        await checkDurationLayout(dialog, { selected: false });
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(`${prefix}-${mode}-ongoing-${width}.png`),
+        });
+        await checkDurationLayout(dialog, { alongside: width >= 950 });
+        await page.screenshot({
+          path: test.info().outputPath(`${prefix}-${mode}-${width}.png`),
+        });
+      }
+    }
+    for (const { width, height } of [
+      { width: 390, height: 500 },
+      { width: 950, height: 400 },
+      { width: 1280, height: 600 },
+    ]) {
+      await page.setViewportSize({ width, height });
+      const close = dialog.getByRole("button", { name: "Close", exact: true });
+      const name = dialog.getByRole("textbox", {
+        name: nameLabel,
+      });
+      await name.scrollIntoViewIfNeeded();
+      await expect(close).toBeInViewport();
+      await expect(save).toBeInViewport();
+      const body = dialog.locator(".buzz-dialog-body");
+      await body.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      await expect(close).toBeInViewport();
+      await expect(save).toBeInViewport();
+      for (const control of [close, save]) {
+        await expect
+          .poll(() =>
+            control.evaluate((el) => {
+              const box = el.getBoundingClientRect();
+              const popup = el.closest('[role="dialog"]');
+              const bounds = popup.getBoundingClientRect();
+              const style = getComputedStyle(popup);
+              return (
+                box.top >=
+                  Math.max(0, bounds.top + parseFloat(style.paddingTop)) &&
+                box.bottom <=
+                  Math.min(
+                    innerHeight,
+                    bounds.bottom - parseFloat(style.paddingBottom),
+                  ) &&
+                box.left >=
+                  Math.max(0, bounds.left + parseFloat(style.paddingLeft)) &&
+                box.right <=
+                  Math.min(
+                    innerWidth,
+                    bounds.right - parseFloat(style.paddingRight),
+                  ) &&
+                el.contains(
+                  document.elementFromPoint(
+                    box.left + box.width / 2,
+                    box.top + box.height / 2,
+                  ),
+                )
+              );
+            }),
+          )
+          .toBe(true);
+      }
+      await expect
+        .poll(() => body.evaluate((el) => el.scrollHeight > el.clientHeight))
+        .toBe(true);
+      await page.screenshot({
+        path: test.info().outputPath(`${prefix}-short-${width}-${height}.png`),
+      });
+    }
+    // At the native minimum with enlarged text, fixed chrome alone cannot fit.
+    // Check pointer access BEFORE focus/scrollIntoView can mask hidden overflow.
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    await page.setViewportSize({ width: 480, height: 400 });
+    const close = dialog.getByRole("button", { name: "Close", exact: true });
+    const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });
+    const pointerReachable = (control) =>
+      control.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const bounds = el.closest('[role="dialog"]').getBoundingClientRect();
+        return (
+          box.top >= Math.max(0, bounds.top) &&
+          box.bottom <= Math.min(innerHeight, bounds.bottom) &&
+          box.left >= Math.max(0, bounds.left) &&
+          box.right <= Math.min(innerWidth, bounds.right) &&
+          el.contains(
+            document.elementFromPoint(
+              box.left + box.width / 2,
+              box.top + box.height / 2,
+            ),
+          )
+        );
+      });
+    // Wheel over visible chrome, not the body's independent scrollport.
+    // Overflow:hidden can be focus-scrolled but cannot pass this pointer path.
+    const wheelOuter = async (delta) => {
+      const chrome = (await pointerReachable(close)) ? close : cancel;
+      const bounds = await chrome.boundingBox();
+      expect(bounds).not.toBeNull();
+      await page.mouse.move(
+        bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2,
+      );
+      await page.mouse.wheel(0, delta);
+    };
+    await wheelOuter(-2000);
+    await expect.poll(() => dialog.evaluate((el) => el.scrollTop)).toBe(0);
+    await expect.poll(() => pointerReachable(close)).toBe(true);
+    await expect(dialog).toHaveCSS("overflow-y", "auto");
+    await wheelOuter(2000);
+    await expect
+      .poll(() => dialog.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(0);
+    for (const control of [cancel, save]) {
+      await expect.poll(() => pointerReachable(control)).toBe(true);
+    }
+    await page.screenshot({
+      path: test.info().outputPath(`${prefix}-minimum-enlarged-footer.png`),
+    });
+    await wheelOuter(-2000);
+    await expect.poll(() => pointerReachable(close)).toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath(`${prefix}-minimum-enlarged-header.png`),
+    });
+    // Keyboard access is independent of the pointer fallback.
+    await close.focus();
+    await page.keyboard.press("Tab");
+    const minimumName = dialog.getByRole("textbox", {
+      name: nameLabel,
+      exact: true,
+    });
+    await expect(minimumName).toBeFocused();
+    await expect
+      .poll(() =>
+        minimumName.evaluate((el) => {
+          const box = el.getBoundingClientRect();
+          const body = el.closest(".buzz-dialog-body").getBoundingClientRect();
+          return box.top >= body.top && box.bottom <= body.bottom;
+        }),
+      )
+      .toBe(true);
+    await expect.poll(() => pointerReachable(minimumName)).toBe(true);
+    await page.screenshot({
+      path: test
+        .info()
+        .outputPath(`${prefix}-minimum-enlarged-name-focused.png`),
+    });
+    let minimumTabs = 0;
+    while (
+      minimumTabs < 20 &&
+      !(await save.evaluate((el) => el === document.activeElement))
+    ) {
+      await page.keyboard.press("Tab");
+      minimumTabs++;
+    }
+    await expect(save).toBeFocused();
+    await expect.poll(() => pointerReachable(save)).toBe(true);
+    await page.setViewportSize({ width: 390, height: 850 });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      await checkDurationLayout(dialog, { selected: false });
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`${prefix}-${mode}-ongoing-enlarged-390.png`),
+      });
+      await checkDurationLayout(dialog);
+      await page.screenshot({
+        path: test.info().outputPath(`${prefix}-${mode}-enlarged-390.png`),
+      });
+    }
+    // Start at the user's current control: Tab must expose the footer without
+    // programmatic focus/scroll or resetting enlarged text to mask clipping.
+    let tabs = 0;
+    while (
+      tabs < 20 &&
+      !(await save.evaluate((el) => el === document.activeElement))
+    ) {
+      await page.keyboard.press("Tab");
+      tabs += 1;
+    }
+    await expect(save).toBeFocused();
+    await expect(save).toBeInViewport();
+    await expect
+      .poll(() =>
+        save.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return el.contains(
+            document.elementFromPoint(
+              rect.left + rect.width / 2,
+              rect.top + rect.height / 2,
+            ),
+          );
+        }),
+      )
+      .toBe(true);
+    console.log(
+      `${test.info().project.name} ${prefix}: enlarged Save reachable in ${tabs}/20 Tabs; focused, in viewport, center hit-test passed`,
+    );
+    await page.screenshot({
+      path: test.info().outputPath(`${prefix}-enlarged-footer-390.png`),
+    });
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    await page.setViewportSize({ width: 1280, height: 850 });
+    const worktree = dialog.getByRole("switch", {
+      name: "Work in a new worktree",
+    });
+    await worktree.click();
+    await expect(worktree).toBeChecked();
+    const repository = dialog.getByRole("textbox", {
+      name: "Source repository",
+      exact: true,
+    });
+    const location = dialog.getByRole("textbox", {
+      name: "Worktree location",
+      exact: true,
+    });
+    const branch = dialog.getByRole("textbox", {
+      name: "Base branch",
+      exact: true,
+    });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      for (const width of [390, 950, 1280]) {
+        await page.setViewportSize({ width, height: 850 });
+        for (const control of [repository, location, branch]) {
+          await control.scrollIntoViewIfNeeded();
+          await expect.poll(() => pointerReachable(control)).toBe(true);
+        }
+        await expect
+          .poll(() =>
+            location.evaluate((el) => {
+              const grid = el.closest(".buzz-field").parentElement;
+              const fields = [...grid.children].map((field) =>
+                field.getBoundingClientRect(),
+              );
+              const bounds = grid.getBoundingClientRect();
+              return (
+                grid.scrollWidth === grid.clientWidth &&
+                fields.every(
+                  (box) => box.left >= bounds.left && box.right <= bounds.right,
+                ) &&
+                fields[1].top >= fields[0].bottom
+              );
+            }),
+          )
+          .toBe(true);
+        await repository.click();
+        await page.keyboard.press("Tab");
+        await expect(location).toBeFocused();
+        await page.keyboard.press("Tab");
+        await expect(branch).toBeFocused();
+        await expect.poll(() => pointerReachable(branch)).toBe(true);
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(`${prefix}-worktree-${mode}-${width}.png`),
+        });
+      }
+    }
+    // Do not alter this journey's existing Canvas/save intent.
+    await worktree.click();
+    await expect(worktree).not.toBeChecked();
+    await page.setViewportSize({ width: 1280, height: 850 });
+    await save.focus();
+  };
+  await inspect(
+    settings,
+    draftSave,
+    "draft-lifetime",
+    "Session name (optional)",
+  );
+  await expect(draftSave).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(settings).not.toBeVisible();
+  await expect(actions).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await actions.click();
+  await expect(canvas).toHaveValue("Keep this local draft");
+  await expect(draftName).toHaveValue(
+    "Make contrast meet accessibility standards",
+  );
+  await expect(draftTemporary).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(settings).not.toBeVisible();
+
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  await row.click();
+  await expect(
+    page.getByText(`primary ${id} message 0`, { exact: false }),
+  ).toBeVisible();
+  await actions.click();
+  const lifetime = page.getByRole("dialog", {
+    name: "Session settings",
+    exact: true,
+  });
+  const save = lifetime.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  await expect(save).toBeEnabled();
+  await expect(
+    lifetime.getByRole("button", { name: "Close", exact: true }),
+  ).toBeFocused();
+  const ongoing = lifetime.getByRole("radio", { name: "Ongoing", exact: true });
+  const temporary = lifetime.getByRole("radio", {
+    name: "Temporary",
+    exact: true,
+  });
+  await ongoing.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(temporary).toBeChecked();
+  await lifetime.getByRole("button", { name: "Increase duration" }).click();
+  await inspect(lifetime, save, "session-lifetime", "Session name");
+  await expect(save).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Enter");
+  await expect(lifetime).not.toBeVisible();
+  await expect(actions).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await row.focus();
+  await row.press("Shift+F10");
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  await expect(save).toBeEnabled();
+  await expect(ongoing).toBeChecked();
+  await lifetime
+    .locator("label")
+    .filter({
+      has: page.getByRole("radio", { name: "Temporary", exact: true }),
+    })
+    .click();
+  await lifetime.getByRole("button", { name: "Increase duration" }).click();
+  await lifetime
+    .getByRole("textbox", { name: "Session name", exact: true })
+    .fill("Make contrast meet accessibility standards");
+  await save.click();
+  await expect(lifetime).not.toBeVisible();
+  const renamedRow = sidebar.getByRole("button", {
+    name: "Make contrast meet accessibility standards",
+    exact: true,
+  });
+  await expect(renamedRow).toBeFocused();
+  await expect(renamedRow).toBeVisible();
+  expect(app.report.detailsPublications).toHaveLength(1);
+  const event = app.report.detailsPublications[0];
+  expect(verifyEvent(event)).toBe(true);
+  expect(event.kind).toBe(9002);
+  expect(event.tags).toEqual([
+    ["h", id],
+    ["name", "Make contrast meet accessibility standards"],
+    ["ttl", "1209600"],
+  ]);
+  const saved = readbacks.find((entry) =>
+    entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
+  );
+  expect(saved).toBeDefined();
+  expect(verifyEvent(saved)).toBe(true);
+  expect(saved.tags).toContainEqual([
+    "about",
+    "Buzz session (buzz.sessions/v1)",
+  ]);
+  expect(saved.tags).toContainEqual(["private"]);
+  expect(saved.tags).not.toContainEqual(["public"]);
+  expect(
+    (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    ),
+  ).toHaveLength(0);
+  expect(
+    app.report.publications.filter(({ event }) =>
+      [9, 9000, 9007, 30315, 40100].includes(event.kind),
+    ),
+  ).toHaveLength(0);
+  await renamedRow.focus();
+  await renamedRow.press("Shift+F10");
+  await page
+    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .click();
+  await expect(save).toBeEnabled();
+  await expect(temporary).toHaveAccessibleDescription(
+    "Archives after 2 weeks without activity.",
+  );
+  await page.keyboard.press("Escape");
+
+  await expect(renamedRow).toBeFocused();
 });
