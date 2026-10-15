@@ -470,18 +470,6 @@ export function InboxView({
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected };
   });
-  // The header's Archive/Restore, so the shortcut follows the same rules.
-  useLayoutEffect(() => {
-    if (!archiveShortcut || !selected) return;
-    const current = () => {
-      if (!pending) archive(selected, !archived(selected));
-    };
-    archiveShortcut.current = current;
-    return () => {
-      if (archiveShortcut.current === current)
-        archiveShortcut.current = undefined;
-    };
-  });
   const profileKey = [
     ...new Set([
       ...authorIds,
@@ -1142,6 +1130,7 @@ export function InboxView({
                 disabled: pending,
                 run: () => archive(selected, !archived(selected)),
               }}
+              archiveShortcut={archiveShortcut}
               onBack={() => {
                 setRestoringFocus(true);
                 cancelRetry();

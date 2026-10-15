@@ -438,6 +438,35 @@ it("archives and restores the open conversation from the Archive shortcut", asyn
   );
 });
 
+it("offers the Archive shortcut only while the visible header's Archive is enabled", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  const header = () =>
+    screen.getByRole("button", { name: "Archive conversation" });
+  await waitFor(() => expect(header()).toBeEnabled());
+  expect(h.archive.current).toBeDefined();
+  act(() => h.archive.current?.());
+  // While the header's Archive is disabled, so is the shortcut.
+  expect(header()).toBeDisabled();
+  expect(h.archive.current).toBeUndefined();
+  await waitFor(() => expect(header()).toBeEnabled());
+  expect(h.archive.current).toBeDefined();
+  // Drafts hides the conversation, so the shortcut cannot archive it unseen.
+  await chooseFilter("Drafts");
+  expect(
+    screen.queryByRole("button", { name: "Archive conversation" }),
+  ).toBeNull();
+  expect(h.archive.current).toBeUndefined();
+});
+
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
   const h = fixture();
   const view = render(h.view);
