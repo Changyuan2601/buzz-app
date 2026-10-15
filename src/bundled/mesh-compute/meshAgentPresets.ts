@@ -3,6 +3,7 @@
 // small. Picking one fills the prompt and mode; the owner edits and saves as
 // usual. The main Shared compute page offers these before agent creation.
 import type { MeshMode } from "./meshAgent";
+import conciergePrompt from "./BUZZ_CONCIERGE.md?raw";
 
 export type MeshAgentPreset = Readonly<{
   id: string;
@@ -16,6 +17,14 @@ export type MeshAgentPreset = Readonly<{
 }>;
 
 export const MESH_AGENT_PRESETS: readonly MeshAgentPreset[] = [
+  {
+    id: "buzz-concierge",
+    name: "Buzz Concierge",
+    summary: "A conversation to help you create and try your first agent.",
+    mode: "chat",
+    fits: "small",
+    prompt: conciergePrompt,
+  },
   {
     id: "thread-summarizer",
     name: "Thread summarizer",

@@ -22,6 +22,7 @@ import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
 import { MeshHelpers } from "./MeshHelpers";
 import { MeshCreateSetup } from "./MeshCreateSetup";
+import { conciergeCreation, conciergeDraft, ConciergeDraft } from "./Concierge";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
   type MeshAgentConfig,
@@ -59,6 +60,7 @@ export const inject = [
   "communityReader",
   "agents",
   "host",
+  "conversation",
 ];
 
 // Settles when the most recent Share action has fully finished, so tests can
@@ -168,6 +170,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = ctx.host?.spawn?.bind(ctx.host);
   if (isTauri() && spawn && ctx.agents) {
     const agents = ctx.agents;
+    const creation = conciergeCreation(agents, ctx.relay);
+    ctx.effect(() => () => creation.dispose());
+    ctx.conversation.registerMessage({
+      id: "concierge-draft",
+      title: "Agent setup",
+      matches: (message) => !!conciergeDraft(message.content),
+      component: ({ message }) => (
+        <ConciergeDraft
+          message={message}
+          agents={agents}
+          relay={ctx.relay}
+          creation={creation}
+        />
+      ),
+    });
     const memoryReads = new MemoryReads();
     const readMemory = async (agent: string, signal: AbortSignal) => {
       const snapshot = agents.relay(agent)?.snapshot();

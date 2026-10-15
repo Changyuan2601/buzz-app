@@ -20,6 +20,7 @@ import { apply as applyPlugin, shareActionSettled } from "./index";
 const apply: typeof applyPlugin = (ctx) =>
   applyPlugin({
     ...ctx,
+    conversation: ctx.conversation ?? { registerMessage: vi.fn() },
     communityReader: ctx.communityReader ?? {
       snapshot: () => ({ viewer: ctx.relay.snapshot().viewer }),
       subscribe: ctx.relay.subscribe,

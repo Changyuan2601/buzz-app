@@ -29,6 +29,10 @@ export type MeshAgentConfig = Readonly<{
   scope: MeshScope;
   /** The preset it started from, if any; informational. */
   preset?: string;
+  /** The reviewed Concierge message this agent was created from. */
+  onboardingSource?: string;
+  /** Concierge's one unresolved creation, saved before generating an identity. */
+  onboardingAttempt?: string;
 }>;
 export const DEFAULT_PROMPT =
   "You are a helpful assistant in a Buzz community. Answer the latest message directly and concisely. Use your tools when the request needs them, and never claim to have run something you did not.";
@@ -63,6 +67,14 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
     mode,
     scope: raw.scope === "channel" ? "channel" : "thread",
     ...(preset ? { preset } : {}),
+    ...(typeof raw.onboardingSource === "string" &&
+    /^[0-9a-f]{64}$/.test(raw.onboardingSource)
+      ? { onboardingSource: raw.onboardingSource }
+      : {}),
+    ...(typeof raw.onboardingAttempt === "string" &&
+    /^[0-9a-f]{64}$/.test(raw.onboardingAttempt)
+      ? { onboardingAttempt: raw.onboardingAttempt }
+      : {}),
   };
 };
 
