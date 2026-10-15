@@ -43,6 +43,10 @@ const reads: (readonly number[])[] = [];
 // Parallel to `reads`: the directory search term a read carries, or null. The
 // directory reads once per new query by design, unlike cold session reads.
 const readSearches: (string | null)[] = [];
+// Parallel to `reads`: whether a typed query made the read rather than the
+// session. The people directory searches each query; the public channel
+// directory reads its page once per query after the typing pause.
+const readQueries: boolean[] = [];
 let pendingReads = 0;
 let libraryIncludesFirst = false;
 const admission = new URLSearchParams(location.search).has(
@@ -144,6 +148,16 @@ const owner = createRelaySession(
       reads.push(filters.flatMap((filter) => filter.kinds ?? []));
       readSearches.push(
         filters.find((filter) => filter.search !== undefined)?.search ?? null,
+      );
+      readQueries.push(
+        filters.some(
+          (filter) =>
+            filter.search !== undefined ||
+            (filter.kinds?.length === 1 &&
+              filter.kinds[0] === 39000 &&
+              !filter["#d"] &&
+              !filter.ids),
+        ),
       );
       pendingReads++;
       try {
@@ -371,6 +385,7 @@ Object.assign(window, {
     reads: () => ({
       kinds: reads,
       searches: readSearches,
+      queries: readQueries,
       pending: pendingReads,
     }),
     searches: () => [...searches],
