@@ -54,6 +54,9 @@ import {
 } from "./attention";
 import type { Agent, AgentChange } from "./service";
 import type { SkippedObject } from "./store";
+import type { RelaySession } from "../relay/session";
+import { useAgentChoices } from "./use-choices";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 
 /** The app's own writer: any field, including attention. */
 type Save = (change: AgentChange) => Promise<void>;
@@ -132,10 +135,12 @@ export function AttentionPanel({
   agent,
   save,
   channels = [],
+  session,
 }: {
   agent: Agent;
   save: Save;
   channels?: readonly ChannelChoice[];
+  session?: RelaySession | undefined;
 }) {
   const { interests, watches, orphans } = attentionOf(agent.attention);
   const [adding, setAdding] = useState(false);
@@ -186,7 +191,7 @@ export function AttentionPanel({
         <p className="m-0 text-body-sm text-secondary">
           Tasks the agent looks after, like tracking releases. Give each one
           instructions, then add a watch for new messages or a timer for a
-          schedule.
+          schedule. Instructions alone do not filter messages.
         </p>
       </div>
       {interests.map((object) => {
@@ -199,6 +204,7 @@ export function AttentionPanel({
             watches={watches.filter((watch) => watch.value.interest_id === id)}
             agent={agent}
             channels={channels}
+            session={session}
             save={save}
             row={row}
           />
@@ -264,6 +270,7 @@ function InterestGroup({
   watches,
   agent,
   channels,
+  session,
   save,
   row,
 }: {
@@ -272,6 +279,7 @@ function InterestGroup({
   watches: readonly WatchObject[];
   agent: Agent;
   channels: readonly ChannelChoice[];
+  session?: RelaySession | undefined;
   save: Save;
   row(object: WatchObject): React.ReactNode;
 }) {
@@ -349,6 +357,7 @@ function InterestGroup({
           interest={id}
           agent={agent}
           channels={channels}
+          session={session}
           save={save}
           onDone={() => setDraft(undefined)}
         />
@@ -474,7 +483,7 @@ function WatchRow({
           value.name && describeWatch(unnamed(value), channels),
           value.filter && `when ${value.filter}`,
           value.classifier &&
-            "has a classifier, which this app cannot run yet, so it matches without it",
+            "Paused: its classifier is unavailable on this device",
         ];
   return (
     <>
@@ -794,6 +803,53 @@ const KINDS = {
 } as const;
 const REPLIES = { any: "", only: "is_reply", none: "!is_reply" } as const;
 
+function WatchSender({
+  session,
+  agent,
+  value,
+  onChange,
+}: {
+  session: RelaySession;
+  agent: Agent;
+  value: string;
+  onChange(value: string): void;
+}) {
+  const choices = useAgentChoices(session, false, true);
+  const senders = choices.selectable.filter(
+    (choice) => choice.managed && choice.pubkey !== agent.pubkey,
+  );
+  const labels = publicKeyLabels(senders.map((sender) => sender.pubkey));
+  const name = (sender: (typeof senders)[number]) =>
+    sender.managedName ?? sender.name;
+  return (
+    <Select
+      label="From"
+      variant="preference"
+      value={value}
+      onValueChange={onChange}
+      description="Chat agents can follow a selected sender. Tool-enabled Mesh agents answer only you."
+      groups={[
+        {
+          label: "Senders",
+          options: [
+            { value: "any", label: "Any allowed sender" },
+            { value: agent.owner, label: "You" },
+            ...senders.map((sender) => ({
+              value: sender.pubkey,
+              label:
+                senders.filter(
+                  (other) => name(other).trim() === name(sender).trim(),
+                ).length > 1
+                  ? `${name(sender)} · ${labels.get(sender.pubkey)}`
+                  : name(sender),
+            })),
+          ],
+        },
+      ]}
+    />
+  );
+}
+
 /** Adds one watch or timer for `interest`. Editing an existing one is its JSON,
  * so the form never has to read every field of the schema back in. */
 function WatchForm({
@@ -801,6 +857,7 @@ function WatchForm({
   interest,
   agent,
   channels,
+  session,
   save,
   onDone,
 }: {
@@ -808,6 +865,7 @@ function WatchForm({
   interest: string;
   agent: Agent;
   channels: readonly ChannelChoice[];
+  session?: RelaySession | undefined;
   save: Save;
   onDone(): void;
 }) {
@@ -815,6 +873,8 @@ function WatchForm({
   const [scope, setScope] = useState<string[] | "all">("all");
   const [kinds, setKinds] = useState<keyof typeof KINDS>("messages");
   const [exactly, setExactly] = useState("");
+  const [words, setWords] = useState("");
+  const [sender, setSender] = useState("any");
   const [replies, setReplies] = useState<keyof typeof REPLIES>("any");
   const [advanced, setAdvanced] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -824,21 +884,31 @@ function WatchForm({
   const [until, setUntil] = useState("");
   const action = useAction();
   let filterProblem = "";
-  if (advanced.trim())
-    try {
-      compileFilter(advanced.trim());
-    } catch (error) {
-      filterProblem = message(error);
-    }
-  // The simple fields and the advanced expression, all of which must hold.
+  const wordFilter = words
+    .split(",")
+    .map((word) => word.trim())
+    .filter(Boolean)
+    .map((word) => `content has_word ${JSON.stringify(word)}`)
+    .join(" || ");
+  // All simple conditions and the advanced expression must hold.
   const filter = [
+    sender !== "any" && `author == ${JSON.stringify(sender)}`,
+    wordFilter && `(${wordFilter})`,
     exactly && `content == ${JSON.stringify(exactly)}`,
     REPLIES[replies],
     advanced.trim() &&
-      (exactly || REPLIES[replies] ? `(${advanced.trim()})` : advanced.trim()),
+      (sender !== "any" || wordFilter || exactly || REPLIES[replies]
+        ? `(${advanced.trim()})`
+        : advanced.trim()),
   ]
     .filter(Boolean)
     .join(" && ");
+  if (filter)
+    try {
+      compileFilter(filter);
+    } catch (error) {
+      filterProblem = message(error);
+    }
   const expires = until ? Math.floor(new Date(until).getTime() / 1000) : null;
   const build = (): AttentionValue =>
     kind === "event"
@@ -964,6 +1034,25 @@ function WatchForm({
               placeholder="deploy"
               spellCheck={false}
               onChange={(event) => setExactly(event.target.value)}
+            />
+          </Field>
+          {session && (
+            <WatchSender
+              session={session}
+              agent={agent}
+              value={sender}
+              onChange={setSender}
+            />
+          )}
+          <Field
+            label="Contains any word (optional)"
+            description="Separate words with commas, such as MUD, MUDs. Matches whole words, ignoring case."
+            error={words.trim() ? filterProblem : undefined}
+          >
+            <Input
+              value={words}
+              spellCheck={false}
+              onChange={(event) => setWords(event.target.value)}
             />
           </Field>
           <Select

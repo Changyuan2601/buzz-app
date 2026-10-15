@@ -137,6 +137,7 @@ function OwnedAgentProfile({
       types={types}
       channels={channels}
       memories={session.agentMemories}
+      session={session}
       onRemoved={close}
       initialActivity={initialActivity}
       conversation={
@@ -221,6 +222,7 @@ function ProfileDetails({
           agent: settings.agent,
           type: settings.type,
           channels: channelChoices,
+          session,
           memories: session.agentMemories,
           conversation: context && {
             channelId: context.channelId,

@@ -650,6 +650,26 @@ Packaged GUI quit/relaunch, real-relay agent ownership admission and hosted
 cross-platform checks are separate gates; consult the pull request for results
 tied to its head.
 
+## Topic and sender watches
+
+Interest instructions guide what to do after a watch wakes the agent; they do
+not filter messages. In Attention, add a watch and use **Contains any word** for
+case-insensitive whole words, separated by commas (for example, `MUD, MUDs`).
+**From** selects you or one of your available agents from this community's shared
+agent choices. Channel, sender, text and reply conditions must all hold.
+The equivalent filter is `author == "<sender hex>" && (content has_word "MUD" || content has_word "MUDs")`.
+`has_word` accepts letters/digits, treats punctuation as a boundary, and excludes
+larger words such as `muddy` and `MUD1`. Older clients preserve but skip filters
+using an unsupported operator. Watches with an unavailable classifier pause;
+classification is never silently bypassed. Direct mentions keep their separate
+always-on path, subject to the agent type's admission policy.
+
+Mesh Chat may follow an explicitly selected sender, including another agent.
+The parser proves the required author across every matching boolean branch;
+broad filters do not grant non-owner triggering. Tool-enabled Mesh Agent remains
+owner-only, and both modes suppress self events. These checks choose deliveries;
+native signing, channel membership and tool authority retain their existing owners.
+
 ## Shared identity names
 
 Distinct agent keys with the same displayed name receive a short npub suffix,

@@ -40,6 +40,7 @@ import { AgentIdentityDialog } from "./AgentIdentityDialog";
 import { AgentTabs } from "./AgentTabs";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
 import styles from "./AgentsPage.module.css";
+import type { RelaySession } from "../../features/relay/session";
 
 export function AgentDetails({
   agents,
@@ -47,6 +48,7 @@ export function AgentDetails({
   type,
   types,
   channels,
+  session,
   memories,
   onRemoved,
   messageAction,
@@ -58,6 +60,7 @@ export function AgentDetails({
   type: RegisteredAgentType | undefined;
   types: readonly RegisteredAgentType[];
   channels: readonly ChannelChoice[];
+  session?: RelaySession | undefined;
   memories: AgentMemories | undefined;
   onRemoved(): void;
   messageAction: ReactNode;
@@ -305,6 +308,7 @@ export function AgentDetails({
               agent={settings.agent}
               type={settings.type}
               channels={channels}
+              session={session}
               conversation={conversation}
               initialActivity={initialActivity}
               settingsHost={settings.settingsHost}

@@ -8,6 +8,11 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
+import {
+  compileFilter,
+  watchMatches,
+  type EventWatch,
+} from "../../features/agents/attention";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Memory } from "../../buzz-mcp/client";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
@@ -185,6 +190,25 @@ async function conversationMessages(
     .slice(-50);
 }
 
+/** Only tool-free Chat may follow an explicitly selected canonical sender. */
+export function allowMeshAgentWatch(
+  config: unknown,
+  watch: EventWatch,
+  event: EventData,
+) {
+  if (meshAgentConfig(config).mode !== "chat") return false;
+  try {
+    const filter = compileFilter(watch.filter ?? "true");
+    return (
+      /^[0-9a-f]{64}$/.test(filter.author ?? "") &&
+      filter.author === event.pubkey &&
+      watchMatches(watch, event, filter)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Turns in each agent conversation run in order; follow-ups queue, not steer. */
 export class MeshAgentRuntime {
   private readonly lanes = new Map<string, Promise<void>>();
@@ -198,8 +222,15 @@ export class MeshAgentRuntime {
     if (trigger.type === "timer" || !channelId) return Promise.resolve();
     const event = trigger.event;
     const config = meshAgentConfig(delivery.config);
-    // Both modes retain owner-only admission; watches do not grant authority.
-    if (event.pubkey === agent.pubkey || event.pubkey !== agent.owner)
+    // Tool-enabled runs stay owner-only. A scoped Chat watch grants no tools.
+    if (
+      event.pubkey === agent.pubkey ||
+      (event.pubkey !== agent.owner &&
+        !(
+          trigger.type === "watch" &&
+          allowMeshAgentWatch(config, trigger.watch, event)
+        ))
+    )
       return Promise.resolve();
     const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
     const conversation = conversationKey(channelId, event, dm, config.scope);

@@ -10,8 +10,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { describeWatch } from "./attention";
+import { compileFilter } from "./attention";
+import type { RelaySession } from "../relay/session";
 import { AttentionPanel } from "./AttentionPanel";
-import type { Agent } from "./service";
+import type { Agent, AgentChange } from "./service";
 
 afterEach(cleanup);
 
@@ -46,6 +48,61 @@ const agent: Agent = {
     },
   },
 };
+
+it("creates a selected-sender topic watch without JSON and ignores unrelated text", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn(async (_change: AgentChange) => {});
+  const sender = "b".repeat(64);
+  const available = {
+    pubkey: sender,
+    name: "Old Moonpal",
+    managedName: "Moonpal",
+    managed: true,
+  };
+  const choices = {
+    identities: [available],
+    selectable: [available],
+    pending: false,
+    complete: false,
+    archives: { status: "ready", archived: [] },
+  };
+  const session = {
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      ensure: vi.fn(),
+      retain: () => () => {},
+    },
+  } as unknown as RelaySession;
+  render(<AttentionPanel agent={agent} save={save} session={session} />);
+  await user.click(screen.getByRole("button", { name: "Add watch" }));
+  await user.click(screen.getByRole("combobox", { name: "From" }));
+  await user.click(await screen.findByRole("option", { name: "Moonpal" }));
+  await user.type(
+    screen.getByLabelText("Contains any word (optional)"),
+    "MUD, MUDs",
+  );
+  await user.click(screen.getByRole("button", { name: "Add watch" }));
+  expect(save).toHaveBeenCalledOnce();
+  const watch = save.mock.calls[0]?.[0].attention?.["watch/messages"];
+  if (watch?.type !== "event" || !watch.filter)
+    throw new Error("Missing saved watch");
+  const filter = compileFilter(watch.filter);
+  expect(filter.author).toBe(sender);
+  const event = {
+    pubkey: sender,
+    content: "a mud game",
+    id: "x",
+    kind: 9,
+    created_at: 1,
+    tags: [],
+  };
+  expect(filter(event)).toBe(true);
+  expect(filter({ ...event, content: "what is going on @Palmer?" })).toBe(
+    false,
+  );
+  expect(filter({ ...event, pubkey: agent.owner })).toBe(false);
+});
 
 it("names watches by what and where they wake", () => {
   const watch = agent.attention["watch/questions"]?.value;

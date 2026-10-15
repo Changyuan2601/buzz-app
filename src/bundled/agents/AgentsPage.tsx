@@ -322,6 +322,7 @@ export function AgentsPage({
             ? connection.session.agentMemories
             : undefined
         }
+        session={connection.status === "ready" ? connection.session : undefined}
         onRemoved={() => browse()}
       />
     )

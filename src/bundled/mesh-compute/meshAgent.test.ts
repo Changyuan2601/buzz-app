@@ -152,8 +152,8 @@ describe("Mesh agent runtime", () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it("answers the owner's watched reply in Chat mode, in the same thread", async () => {
-    const sender = OWNER;
+  it("answers a selected sender's watched reply in Chat mode, in the same thread", async () => {
+    const sender = "e".repeat(64);
     const { delivery, publish, query, deps, inline, runtime } = setup(
       {},
       sender,
@@ -172,7 +172,7 @@ describe("Mesh agent runtime", () => {
       since: 1,
       channels: ["chan"],
       kinds: [9],
-      filter: `author == "${sender}"`,
+      filter: `author == "${sender}" && content has_word "MUD"`,
     };
     const reply = delivery({
       ...inThread("e".repeat(64), 2),
@@ -218,7 +218,7 @@ describe("Mesh agent runtime", () => {
     expect(messages?.at(-1)).toEqual({
       role: "user",
       content:
-        "[aaaaaaaa] I recommend a time-travel MUD with branching histories.",
+        "[eeeeeeee] I recommend a time-travel MUD with branching histories.",
     });
     expect(inline.run).not.toHaveBeenCalled();
     expect(publish).toHaveBeenCalledWith(
@@ -243,12 +243,18 @@ describe("Mesh agent runtime", () => {
   });
 
   it.each([
-    ["chat", "d".repeat(64), `author == "${"d".repeat(64)}"`],
     ["agent", "d".repeat(64), `author == "${"d".repeat(64)}"`],
     ["chat", "d".repeat(64), undefined],
     ["chat", "d".repeat(64), "true"],
     ["chat", "d".repeat(64), `author == "${"e".repeat(64)}"`],
     ["chat", "d".repeat(64), `author == "${"d".repeat(64)}" || true`],
+    [
+      "chat",
+      "d".repeat(64),
+      `author == "${"d".repeat(64)}" && content == "different"`,
+    ],
+    ["chat", "d".repeat(64), `!(author == "${"d".repeat(64)}")`],
+    ["chat", "d".repeat(64), "author =="],
     ["chat", AGENT, `author == "${AGENT}"`],
   ])(
     "refuses a non-owner watch in %s mode from %s with filter %s",

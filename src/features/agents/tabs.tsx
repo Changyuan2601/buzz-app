@@ -14,6 +14,7 @@ import type {
   RegisteredAgentType,
 } from "./service";
 import { AgentSaveButton } from "./AgentSaveButton";
+import type { RelaySession } from "../relay/session";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
@@ -33,11 +34,13 @@ export function agentSections({
   memories,
   settingsSection,
   settingsContent,
+  session,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
+  session?: RelaySession | undefined;
   conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
@@ -88,6 +91,7 @@ export function agentSections({
           agent={agent}
           save={(change) => agents.save(agent.pubkey, change)}
           channels={channels}
+          session={session}
         />
       ),
     },

@@ -26,6 +26,7 @@ import {
   teamPrompt,
 } from "./service";
 import { memoryStorage } from "./test-fakes";
+import { allowMeshAgentWatch } from "../../bundled/mesh-compute/meshAgent";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
 
@@ -325,6 +326,7 @@ async function setup({
   listed = [] as RelayEvent[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
+  allowAgentWatch = undefined as AgentType<Config>["allowAgentWatch"],
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -357,6 +359,7 @@ async function setup({
     id: "echo",
     title: "Echo",
     timeoutMs,
+    ...(allowAgentWatch ? { allowAgentWatch } : {}),
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
     carry: ({ reply }) => ({ instructions: reply, workspace: "~/echo" }),
     describeMigration: () => [
@@ -1582,6 +1585,116 @@ it("wakes on another of the owner's agents only when it names the agent", async 
   });
 });
 
+it("delivers only the selected sibling to a tool-free watch opt-in", async () => {
+  const { service, run, emit } = await setup({
+    allowAgentWatch: (_config, watch, event) =>
+      allowMeshAgentWatch({ mode: "chat" }, watch, event),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("Missing watch");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, filter: `author == "${sibling}"` },
+    },
+  });
+  const auth = ["auth", viewer, "", "f".repeat(128)];
+  emit({
+    events: [
+      event("unrelated", {
+        pubkey: viewer,
+        content: "what is going on @Palmer?",
+      }),
+      event("different", { pubkey: other, tags: [["h", channel], auth] }),
+      event("self", { pubkey: bot, tags: [["h", channel], auth] }),
+      event("source", { pubkey: sibling, tags: [["h", channel], auth] }),
+      event("barrier", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() =>
+    expect(run.mock.calls.at(-1)?.[0].trigger).toMatchObject({
+      type: "mention",
+    }),
+  );
+  expect(run.mock.calls.map(([delivery]) => delivery.trigger)).toEqual([
+    expect.objectContaining({
+      type: "watch",
+      event: expect.objectContaining({ id: event("source").id }),
+    }),
+    expect.objectContaining({ type: "mention" }),
+  ]);
+});
+
+it("drops a queued sibling watch after retyping to a type without opt-in", async () => {
+  const { service, native, ctx, emit, run } = await setup({
+    allowAgentWatch: (_config, watch, event) =>
+      allowMeshAgentWatch({ mode: "chat" }, watch, event),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("Missing watch");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...watch, filter: `author == "${sibling}"` },
+    },
+  });
+  const destination = vi.fn();
+  const standalone = vi.fn();
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run: destination,
+      runOnce: standalone,
+    });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const persist = native.setType.getMockImplementation();
+  native.setType.mockImplementationOnce(async (...args) => {
+    await gate;
+    return persist?.(...args);
+  });
+  const changing = service.retype(bot, "other/relay");
+  try {
+    await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
+    emit({
+      events: [
+        event("queued-sibling", {
+          pubkey: sibling,
+          tags: [
+            ["h", channel],
+            ["auth", viewer, "", "f".repeat(128)],
+          ],
+        }),
+        event("owner-barrier", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(destination).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await changing;
+  }
+  await vi.waitFor(() => expect(destination).toHaveBeenCalledOnce());
+  expect(destination.mock.calls[0]?.[0].trigger.type).toBe("mention");
+  expect(standalone).not.toHaveBeenCalled();
+});
+
 it("answers the owner and agents the owner attested, nobody else", async () => {
   const secret = schnorr.utils.randomSecretKey();
   const owner = bytesToHex(schnorr.getPublicKey(secret));
@@ -2411,7 +2524,7 @@ it("keeps the cleanup for later when the session closes while archive state is r
   expect(archives.request).toHaveBeenCalledOnce();
 });
 
-it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {
+it("pauses a classified watch until the unavailable classifier condition is removed", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
@@ -2437,18 +2550,32 @@ it("runs once per matching watch, and passes a classifier watch it cannot classi
       },
     },
   });
-  emit({ events: [event("w", { content: "deploy" })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  emit({
+    events: [
+      event("w", { content: "deploy" }),
+      event("barrier", { tags: [["p", bot]] }),
+    ],
+  });
+  await vi.waitFor(() =>
+    expect(run.mock.calls.at(-1)?.[0].trigger).toMatchObject({
+      type: "mention",
+    }),
+  );
   const triggers = run.mock.calls.map(([delivery]) => delivery.trigger);
   expect(triggers).toEqual([
     expect.objectContaining({ slug: "watch/channel" }),
-    expect.objectContaining({
-      slug: "watch/classified",
-      classifier: { outcome: "not-run", reason: expect.any(String) },
-    }),
+    expect.objectContaining({ type: "mention" }),
   ]);
-  // Its Interest does not exist, so it arrives without instructions.
-  expect(triggers[1]).not.toHaveProperty("interest");
+  const watch = service.find(bot)?.attention["watch/classified"]?.value;
+  if (watch?.type !== "event") throw new Error("Missing watch");
+  const { classifier: _, ...plain } = watch;
+  await service.save(bot, { attention: { "watch/classified": plain } });
+  emit({ events: [event("recovered", { content: "release" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls[2]?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/classified",
+  });
 });
 
 it("keeps DMs and reactions to its own messages away from watches", async () => {

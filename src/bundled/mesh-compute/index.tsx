@@ -26,6 +26,7 @@ import {
   DEFAULT_MESH_AGENT_CONFIG,
   type MeshAgentConfig,
   MeshAgentRuntime,
+  allowMeshAgentWatch,
   type PreparedInference,
 } from "./meshAgent";
 
@@ -255,6 +256,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ],
       // Covers compute startup (native waits up to 120s) plus one reply.
       timeoutMs: 5 * 60_000,
+      allowAgentWatch: allowMeshAgentWatch,
       run: (delivery) => {
         const done = runtime.run(delivery);
         if (delivery.config.mode === "chat") return done;

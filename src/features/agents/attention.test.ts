@@ -125,6 +125,56 @@ describe("validateObject", () => {
 });
 
 describe("compileFilter", () => {
+  it("matches topic words case-insensitively without matching larger words", () => {
+    const filter = compileFilter(
+      'content has_word "MUD" || content has_word "MUDs"',
+    );
+    for (const content of [
+      "MUD ideas?",
+      "a mud game",
+      "Play MuDs!",
+      "**MUD**",
+      "_MUD_",
+      "MUD-based games",
+    ])
+      expect(filter(event({ content })), content).toBe(true);
+    for (const content of [
+      "what is going on @Palmer?",
+      "muddy roads",
+      "smudges",
+      "MUD1",
+      "αMUDβ",
+      "",
+    ])
+      expect(filter(event({ content })), content).toBe(false);
+    for (const source of [
+      'content has_word ""',
+      'content has_word "MUD.*"',
+      'content has_word "two words"',
+      'author has_word "MUD"',
+    ])
+      expect(() => compileFilter(source)).toThrow();
+    expect(
+      validateObject("watch/w", { ...watch, filter: 'content has_word "MUD"' }),
+    ).toBeUndefined();
+  });
+  it("proves a selected author only when every matching branch requires it", () => {
+    const author = `author == "${agent}"`;
+    for (const filter of [
+      author,
+      `${author} && content == "hi"`,
+      `content == "hi" && ${author}`,
+      `(${author} && true) || (${author} && false)`,
+    ])
+      expect(compileFilter(filter).author).toBe(agent);
+    for (const filter of [
+      `${author} || true`,
+      `!${author}`,
+      `${author} || author == "${"b".repeat(64)}"`,
+      `(${author} && false) || true`,
+    ])
+      expect(compileFilter(filter).author).toBeUndefined();
+  });
   it("evaluates the grammar with precedence and negation", () => {
     const filter = compileFilter(
       `!is_reply && (content == "go" || author == "${"c".repeat(64)}")`,

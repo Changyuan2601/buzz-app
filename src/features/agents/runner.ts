@@ -53,7 +53,7 @@ const SEEN_LIMIT = 2_048;
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 
-/** Until a classifier is wired in, every classified watch passes unchecked. */
+/** Classified watches pause until their classifier can run. */
 const UNAVAILABLE: ClassifierSkip = Object.freeze({
   outcome: "not-run",
   reason: "no classifier is available on this device",
@@ -358,7 +358,7 @@ export class AgentRunners {
         slug: object.slug,
         watch,
         ...(interest?.type === "interest" ? { interest } : {}),
-        // No classifier model runs here yet, so the event passes unclassified.
+        // Keep the unavailable condition visible, but never bypass it.
         ...(watch.classifier && this.host.classifier() === "unavailable"
           ? { classifier: UNAVAILABLE }
           : {}),
@@ -401,22 +401,29 @@ export class AgentRunners {
   }
   private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
-    // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // watch enough, two agents replying to each other would never stop. The
-    // claimed owner only narrows this; the type verifies it before answering.
-    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
-      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? [{ type: "mention", event }]
-        : [];
+    const sibling = event.tags.some(
+      (tag) => tag[0] === "auth" && tag[1] === agent.owner,
+    );
+    if (sibling) {
+      if (CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey))
+        return [{ type: "mention", event }];
+      if (!runner.type?.allowAgentWatch) return [];
+    }
     // Addressed events never reach a watch. Only conversation starts a run: not a
     // DM it cannot read yet, nor a reaction to its message.
-    if (addressedTo(event, agent.pubkey, wrote))
+    else if (addressedTo(event, agent.pubkey, wrote))
       return CHAT_KINDS.includes(event.kind)
         ? [{ type: "mention", event }]
         : [];
     if (!agent.attentionEnabled || !this.host.member(agent, event)) return [];
     return this.watches(runner, agent)
-      .filter(({ watch, filter }) => watchMatches(watch, event, filter))
+      .filter(
+        ({ watch, filter, classifier }) =>
+          !classifier &&
+          (!sibling ||
+            runner.type?.allowAgentWatch?.(agent.config, watch, event)) &&
+          watchMatches(watch, event, filter),
+      )
       .map(({ filter: _, ...match }) => ({ type: "watch", event, ...match }));
   }
   /** The job as it should run now, or undefined when it should not run: a
@@ -433,15 +440,14 @@ export class AgentRunners {
       agent.attention[trigger.slug] !== job.matched.object
     )
       return undefined;
-    const match = this.watches(runner, agent).find(
-      ({ slug, watch, filter }) =>
-        slug === trigger.slug && watchMatches(watch, trigger.event, filter),
+    const match = this.heard(runner, agent, trigger.event).find(
+      (candidate): candidate is WatchTrigger =>
+        candidate.type === "watch" && candidate.slug === trigger.slug,
     );
     if (!match) return undefined;
-    const { filter: _, ...rest } = match;
     return {
       ...job,
-      trigger: { type: "watch", event: trigger.event, ...rest },
+      trigger: match,
     };
   }
 

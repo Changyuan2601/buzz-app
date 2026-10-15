@@ -10,6 +10,7 @@ import type {
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import { agentSections } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
+import type { RelaySession } from "../../features/relay/session";
 
 /** An agent's sections as tabs, opening on the first. */
 export function AgentTabs(props: {
@@ -17,6 +18,7 @@ export function AgentTabs(props: {
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
+  session?: RelaySession | undefined;
   settingsHost: AgentSettingsHost;
   memories: AgentMemories | undefined;
   settingsContent: ReactNode;

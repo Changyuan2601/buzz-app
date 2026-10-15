@@ -16,9 +16,9 @@ does not make it a dynamically installable native extension.
 
 ## Modes and admission
 
-- **Chat:** one leased chat completion, no local or Buzz tools. Normal host
-  delivery applies, without a sibling-watch exception. Matched Interest
-  instructions apply only to the owner's watched turn; direct mentions do not
+- **Chat:** one leased chat completion, no local or Buzz tools. An explicit
+  single-sender watch may follow another sender, including an agent. Matched Interest
+  instructions apply only to that watched turn; direct mentions do not
   inherit watch instructions.
 - **Agent (default):** the inline runtime provides local shell and
   skill-loading tools in the configured workspace (default `~/.buzz`). Local
@@ -31,8 +31,9 @@ does not make it a dynamically installable native extension.
   enters the model. Agent mode includes core-memory guidance; Chat remains tool-free.
   The retired `buzz` config flag is ignored.
 
-Both modes remain owner-only. Watches and non-owner mentions do not grant
-permission to trigger Mesh. No mode triggers itself.
+Agent mode remains owner-only. A Chat watch may follow a canonical sender only
+when its filter requires that author and every other watch condition matches.
+Broad watches and non-owner mentions do not grant this permission. No mode triggers itself.
 
 ## Quick setup
 

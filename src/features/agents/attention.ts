@@ -250,7 +250,11 @@ export function validateObject(
 // Filter grammar: predicate := or; or := and ("||" and)*; and := atom ("&&" atom)*;
 // atom := "!" atom | "(" predicate ")" | true | false | is_reply
 //       | (author | content) "==" string
-type Predicate = (event: EventData) => boolean;
+//       | content has_word string (case-insensitive letters/digits word)
+type Predicate = ((event: EventData) => boolean) & {
+  /** Every matching event must have this author, when the expression proves it. */
+  author?: string | undefined;
+};
 const MAX_DEPTH = 32;
 const MAX_NODES = 256;
 export function compileFilter(source: string): Predicate {
@@ -303,10 +307,22 @@ export function compileFilter(source: string): Predicate {
     if (take("is_reply")) return isReply;
     for (const field of ["author", "content"] as const)
       if (take(field)) {
+        if (field === "content" && take("has_word")) {
+          const word = string();
+          if (!/^[\p{L}\p{N}]+$/u.test(word))
+            fail("has_word needs a non-empty word of letters or digits");
+          const pattern = new RegExp(
+            `(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`,
+            "iu",
+          );
+          return (event) => pattern.test(event.content);
+        }
         if (!take("==")) fail("Expected == in filter");
         const expected = string();
         return field === "author"
-          ? (event) => event.pubkey === expected
+          ? Object.assign((event: EventData) => event.pubkey === expected, {
+              author: expected,
+            })
           : (event) => event.content === expected;
       }
     return fail("Unexpected token in filter");
@@ -319,7 +335,10 @@ export function compileFilter(source: string): Predicate {
     }
     return parts.length === 1
       ? (parts[0] as Predicate)
-      : (event) => parts.every((part) => part(event));
+      : Object.assign(
+          (event: EventData) => parts.every((part) => part(event)),
+          { author: parts.find((part) => part.author)?.author },
+        );
   };
   const or = (depth: number): Predicate => {
     const parts = [and(depth)];
@@ -329,7 +348,11 @@ export function compileFilter(source: string): Predicate {
     }
     return parts.length === 1
       ? (parts[0] as Predicate)
-      : (event) => parts.some((part) => part(event));
+      : Object.assign((event: EventData) => parts.some((part) => part(event)), {
+          author: parts.every((part) => part.author === parts[0]?.author)
+            ? parts[0]?.author
+            : undefined,
+        });
   };
   const predicate = or(1);
   space();

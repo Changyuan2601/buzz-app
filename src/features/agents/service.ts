@@ -224,7 +224,7 @@ export type AgentAttention = Readonly<{
     options: WriteOptions,
   ): Promise<Shown>;
 }>;
-/** Why a classified watch's event passed without a classifier answer. */
+/** Unavailable classification evidence; the runner pauses such a watch. */
 export type ClassifierSkip = Readonly<{
   outcome: "not-run";
   reason: string;
@@ -240,9 +240,7 @@ export type Trigger =
       watch: EventWatch;
       /** Absent when the watch names an Interest that does not exist. */
       interest?: Interest;
-      /** Set when the watch has a classifier that did not run. The event
-       * passes rather than lose a match to an unavailable model, and the
-       * agent is told why. */
+      /** Classification did not run. The runner does not deliver this watch. */
       classifier?: ClassifierSkip;
     }>
   | Readonly<{
@@ -387,6 +385,13 @@ export type AgentType<Config = unknown> = {
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** Allows an explicitly scoped sibling watch. The type also checks admission
+   * when it runs; this opt-in never grants tool or signing authority. */
+  allowAgentWatch?(
+    config: Config,
+    watch: EventWatch,
+    event: RelayEvent,
+  ): boolean;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
