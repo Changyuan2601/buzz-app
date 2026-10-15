@@ -127,8 +127,8 @@ it("creates and moves through the relay service, then restores in a fresh store"
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
   expect(
-    screen.queryByRole("menuitem", { name: "Session settings…" }),
-  ).toBeNull();
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  ).toHaveAttribute("aria-disabled", "true");
   (await screen.findByRole("menuitem", { name: "Section" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(

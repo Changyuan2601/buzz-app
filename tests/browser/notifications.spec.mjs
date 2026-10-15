@@ -501,7 +501,8 @@ test("asynchronous browser display failure reaches Settings once without redeliv
 }) => {
   await page.clock.install();
   await ready(page, app);
-  liveMessage(app, "Browser display error");
+  const event = liveMessage(app, "Browser display error");
+  await observed(page, event.id);
   await expect.poll(() => systemCount(page)).toBe(1);
   await page.evaluate(() => window.notificationEvents[0].onerror?.());
   await expect(

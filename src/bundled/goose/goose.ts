@@ -24,8 +24,13 @@ const ANSWERS = new Set(["send", "edit", "react"]);
 const STOPPED =
   "Buzz stopped this session's tools: another program used their token";
 
+/** How long goose has to answer a request that starts it or opens or closes
+ * a session. One that does not is stopped. A turn's prompt is never timed. */
+export const REQUEST_TIMEOUT_MS = 60_000;
+
 /** How a burst of work ended: every message sent so far has been answered,
- * or the session or its process is gone. */
+ * or the session or its process is gone. One message of the burst owns its
+ * `error` and `text`, to post them once; the others get only `ok`. */
 export type Settled = Readonly<{
   ok: boolean;
   error?: string;
@@ -83,6 +88,7 @@ type Wire = {
   result?: unknown;
   error?: { code?: number; message: string; data?: unknown };
 };
+type Waiter = (settled: Settled) => void;
 type Pending = {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -145,11 +151,15 @@ export class GooseProcess {
     goose = new GooseProcess(process, launch.tools, launch.serve);
     for (const data of early) goose.read(data);
     try {
-      const init = (await goose.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-        clientInfo: { name: "buzz", version: "1" },
-      })) as {
+      const init = (await goose.request(
+        "initialize",
+        {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: "buzz", version: "1" },
+        },
+        REQUEST_TIMEOUT_MS,
+      )) as {
         agentCapabilities?: { mcpCapabilities?: { http?: boolean } };
       };
       if (!init.agentCapabilities?.mcpCapabilities?.http)
@@ -206,19 +216,26 @@ export class GooseProcess {
     });
     let sessionId: string;
     try {
-      ({ sessionId } = (await this.request("session/new", {
-        cwd: launch.cwd,
-        mcpServers: buzz ? [buzz] : [],
-        _meta: {
-          // The session's whole tool set: goose's developer tools and the
-          // Buzz tools, so extensions in the owner's goose config and plugins
-          // never load into a Buzz agent. goose then ignores `mcpServers`.
-          enabledExtensions: buzz
-            ? [DEVELOPER, { type: "mcp", server: buzz }]
-            : [],
-          ...(launch.title ? { sessionTitle: launch.title } : {}),
+      ({ sessionId } = (await this.request(
+        "session/new",
+        {
+          cwd: launch.cwd,
+          mcpServers: buzz ? [buzz] : [],
+          _meta: {
+            // The session's whole tool set: goose's developer tools and the
+            // Buzz tools, so extensions in the owner's goose config and
+            // plugins never load into a Buzz agent. goose stores this list
+            // with the session. Since aaif-goose/goose#12908 it leaves out
+            // the Buzz entry and holds the `mcpServers` copy in memory, so
+            // the token stays out of sessions.db; older goose uses this one.
+            enabledExtensions: buzz
+              ? [DEVELOPER, { type: "mcp", server: buzz }]
+              : [],
+            ...(launch.title ? { sessionTitle: launch.title } : {}),
+          },
         },
-      })) as { sessionId: string });
+        REQUEST_TIMEOUT_MS,
+      )) as { sessionId: string });
     } catch (error) {
       void server?.close();
       throw error;
@@ -233,12 +250,11 @@ export class GooseProcess {
       // Appended under goose's own prompt, which carries each extension's
       // instructions; `set` would replace it, and render ours as a template.
       if (launch.systemPrompt)
-        await this.request("_goose/unstable/session/system-prompt/set", {
-          sessionId,
-          mode: "append",
-          key: "buzz",
-          text: launch.systemPrompt,
-        });
+        await this.request(
+          "_goose/unstable/session/system-prompt/set",
+          { sessionId, mode: "append", key: "buzz", text: launch.systemPrompt },
+          REQUEST_TIMEOUT_MS,
+        );
     } catch (error) {
       void this.close(session);
       throw error;
@@ -253,22 +269,44 @@ export class GooseProcess {
     void session.server?.close();
     if (!this.alive) return;
     this.notify("session/cancel", { sessionId: session.id });
-    await this.request("session/close", { sessionId: session.id }).catch(
-      (error) => console.warn("goose did not close a session", error),
-    );
+    await this.request(
+      "session/close",
+      { sessionId: session.id },
+      REQUEST_TIMEOUT_MS,
+    ).catch((error) => console.warn("goose did not close a session", error));
   }
 
   kill() {
     return this.process.kill();
   }
 
-  /** Sends a request and resolves with its result. */
-  request(method: string, params: Record<string, unknown>) {
+  /** Sends a request and resolves with its result. When goose does not
+   * answer within `timeout` ms it is stopped, which fails its sessions. */
+  request(method: string, params: Record<string, unknown>, timeout?: number) {
     if (!this.alive) return Promise.reject(new Error("goose is not running"));
     const id = ++this.requests;
-    const answer = new Promise<unknown>((resolve, reject) =>
-      this.calls.set(id, { resolve, reject }),
-    );
+    const answer = new Promise<unknown>((resolve, reject) => {
+      if (timeout === undefined) return this.calls.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.calls.delete(id);
+        reject(
+          new Error(
+            `goose did not answer ${method} in ${Math.round(timeout / 1000)}s`,
+          ),
+        );
+        void this.kill();
+      }, timeout);
+      this.calls.set(id, {
+        resolve: (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+    });
     this.write({ jsonrpc: "2.0", id, method, params }).catch((error) => {
       this.calls.get(id)?.reject(new Error(String(error)));
       this.calls.delete(id);
@@ -386,7 +424,10 @@ export class GooseSession {
   private readonly queue: string[] = [];
   /** Messages sent and not yet answered. */
   private pending = 0;
-  private waiters: ((settled: Settled) => void)[] = [];
+  private waiters: Waiter[] = [];
+  /** The waiter that posts the burst's error or text: the latest message
+   * acknowledged, else the latest sent. */
+  private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
   private lastError: string | undefined;
@@ -416,13 +457,15 @@ export class GooseSession {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
     this.pending++;
-    const settled = new Promise<Settled>((resolve) =>
-      this.waiters.push(resolve),
-    );
-    if (this.prompting) void this.steer(text, activity);
+    let waiter!: Waiter;
+    const settled = new Promise<Settled>((resolve) => {
+      waiter = resolve;
+      this.waiters.push(resolve);
+    });
+    if (this.prompting) void this.steer(text, activity, waiter);
     else {
       this.queue.push(text);
-      this.acknowledge(activity);
+      this.acknowledge(activity, waiter);
       void this.pump();
     }
     return settled;
@@ -475,7 +518,7 @@ export class GooseSession {
     this.settle({ ok: false, error });
   }
 
-  private async steer(text: string, activity: ActivityReceipt) {
+  private async steer(text: string, activity: ActivityReceipt, waiter: Waiter) {
     this.steering++;
     try {
       const runId =
@@ -492,14 +535,14 @@ export class GooseSession {
             prompt: [{ type: "text", text }],
             expectedRunId: runId,
           });
-          this.acknowledge(activity);
+          this.acknowledge(activity, waiter);
           return;
         } catch {
           // The turn ended, or another took its place: run it as the next.
         }
       }
       this.queue.push(text);
-      this.acknowledge(activity);
+      this.acknowledge(activity, waiter);
     } finally {
       this.steering--;
       // Runs the next turn, or ends work whose turn ended during the steer.
@@ -535,7 +578,8 @@ export class GooseSession {
   private ranAs(runId: string | undefined) {
     for (const resolve of this.runWaiters.splice(0)) resolve(runId);
   }
-  private acknowledge(activity: ActivityReceipt) {
+  private acknowledge(activity: ActivityReceipt, waiter: Waiter) {
+    if (this.waiters.includes(waiter)) this.owner = waiter;
     // Watches and timers have no message activity: they must not hide a mention.
     if (!activity.step) return;
     const scope = activity.activityScope ?? "conversation";
@@ -560,7 +604,10 @@ export class GooseSession {
     this.lastError = undefined;
     this.acted = false;
     this.written = "";
-    for (const resolve of this.waiters.splice(0)) resolve(settled);
+    const owner = this.owner ?? this.waiters.at(-1);
+    this.owner = undefined;
+    for (const resolve of this.waiters.splice(0))
+      resolve(resolve === owner ? settled : { ok: settled.ok });
   }
 }
 

@@ -427,6 +427,25 @@ it("opens a pending Me start through its original receipt after its section was 
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
 
+it("opens settings directly from the header and restores keyboard focus without navigating", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session settings" });
+  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  const dialog = await screen.findByRole("dialog", {
+    name: "Session settings",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.set).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
 it("preserves the Session actions menu trigger relationship and keyboard focus", async () => {
   const f = fixture();
   f.mount();

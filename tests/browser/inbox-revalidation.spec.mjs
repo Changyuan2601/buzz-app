@@ -194,17 +194,17 @@ for (const scenario of [
       await expect(editor).toHaveCount(0);
       expect(await detail.ariaSnapshot()).not.toContain("Unread reply 1");
     };
-    const viewer = page.getByRole("dialog", { name: "Video attachment" });
+    const viewer = page.getByRole("dialog", { name: "Video review" });
     const expectNoViewer = async () => {
       // Body scope is essential: the retained detail's hidden/inert ancestor
       // cannot contain a createPortal(..., document.body) or its modal effects.
       await expect(
-        page.locator('[role="dialog"][aria-label="Video attachment"]'),
+        page.locator('[role="dialog"][aria-label="Video review"]'),
       ).toHaveCount(0);
       await expect(viewer).toHaveCount(0);
       await expect(page.locator("video:visible")).toHaveCount(0);
       const accessible = await page.locator("body").ariaSnapshot();
-      expect(accessible).not.toContain("Video attachment");
+      expect(accessible).not.toContain("Video review");
       expect(accessible).not.toContain("Close fullscreen viewer");
     };
     try {
@@ -232,12 +232,23 @@ for (const scenario of [
         await expect(viewer).toBeVisible();
         await expect
           .poll(() =>
-            viewer.locator("video").evaluate((video) => video.videoWidth),
+            viewer
+              .locator("video[data-review-media]")
+              .evaluate((video) => video.videoWidth),
           )
           .toBeGreaterThan(0);
         const viewerClose = viewer.getByRole("button", {
           name: "Close fullscreen viewer",
         });
+        // The shared review viewer owns its entry focus; it must start inside.
+        await expect
+          .poll(() =>
+            viewer.evaluate((element) =>
+              element.contains(document.activeElement),
+            ),
+          )
+          .toBe(true);
+        await viewerClose.focus();
         await expect(viewerClose).toBeFocused();
         // Establish real modality before suspending: the app root is ARIA-hidden
         // and the last modal tab stop wraps to Close, not into the Inbox below.
@@ -307,11 +318,11 @@ for (const scenario of [
         await expect(target).not.toBeFocused();
         await expect(editor).not.toBeFocused();
         await expect(
-          page.locator('[role="dialog"][aria-label="Video attachment"]'),
+          page.locator('[role="dialog"][aria-label="Video review"]'),
         ).toHaveCount(0);
         await expect(viewer).toHaveCount(0);
         expect(await page.locator("body").ariaSnapshot()).not.toContain(
-          "Video attachment",
+          "Video review",
         );
       } else {
         const closeDetail = detail.getByRole("button", {

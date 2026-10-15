@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { GooseProcess, stepLabel, type ToolServer } from "./goose";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  GooseProcess,
+  REQUEST_TIMEOUT_MS,
+  stepLabel,
+  type ToolServer,
+} from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
 
 const ok: ToolServer = async (_conversation, message) => ({
@@ -8,8 +13,8 @@ const ok: ToolServer = async (_conversation, message) => ({
   result: { content: [{ type: "text", text: "done" }] },
 });
 
-const start = async (tools: ToolServer = ok) => {
-  const fake = fakeSpawn();
+const start = async (tools: ToolServer = ok, silent?: readonly string[]) => {
+  const fake = fakeSpawn(silent ? { silent } : {});
   const goose = await GooseProcess.start(fake.spawn, {
     cwd: "/work",
     env: { GOOSE_MODEL: "m" },
@@ -20,6 +25,10 @@ const start = async (tools: ToolServer = ok) => {
   if (!process) throw new Error("goose did not start");
   return { goose, process, fake };
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("GooseProcess", () => {
   it("starts goose-acp without the app's Buzz identity", async () => {
@@ -377,6 +386,74 @@ describe("GooseProcess", () => {
       error: "No provider configured",
     });
     expect(goose.running).toBe(false);
+  });
+
+  it("stops a goose that does not answer as it starts", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSpawn({ silent: ["initialize"] });
+    const starting = GooseProcess.start(fake.spawn, {
+      cwd: "/work",
+      tools: ok,
+    });
+    const failed = expect(starting).rejects.toThrow(
+      "goose did not answer initialize in 60s",
+    );
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await failed;
+    expect(fake.geese[0]?.killed).toBe(true);
+  });
+
+  it("stops a goose that does not open or close a session", async () => {
+    vi.useFakeTimers();
+    const { goose, process, fake } = await start(ok, ["session/new"]);
+    const opening = goose.open({ cwd: "/work", systemPrompt: "" });
+    const failed = expect(opening).rejects.toThrow(
+      "goose did not answer session/new in 60s",
+    );
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
+    expect(process.killed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await failed;
+    expect(process.killed).toBe(true);
+    expect(fake.servers.map((server) => server.closed)).toEqual([true]);
+
+    const other = await start(ok, ["session/close"]);
+    const session = await other.goose.open({ cwd: "/work", systemPrompt: "" });
+    const closing = other.goose.close(session);
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await closing;
+    expect(other.process.killed).toBe(true);
+  });
+
+  it("gives a burst's text to its latest acknowledged message only", async () => {
+    const { goose, process } = await start();
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const first = session.send("one", { step: () => {} });
+    await flush();
+    const second = session.send("two", { step: () => {} });
+    await flush();
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Forgot to send" },
+    });
+    await flush();
+    process.turns[0]?.finish();
+    await expect(first).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ ok: true, text: "Forgot to send" });
+  });
+
+  it("gives a failed burst's error to one message", async () => {
+    const { goose, process } = await start();
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const first = session.send("one", { step: () => {} });
+    await flush();
+    const second = session.send("two", { step: () => {} });
+    await flush();
+    process.exit(1, "crashed\n");
+    await expect(first).resolves.toEqual({ ok: false });
+    await expect(second).resolves.toEqual({ ok: false, error: "crashed" });
   });
 
   it("cancels a session's turn when it closes", async () => {

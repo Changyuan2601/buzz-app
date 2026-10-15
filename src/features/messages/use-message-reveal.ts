@@ -88,9 +88,21 @@ export function useMessageReveal({
         focusPending = document.activeElement !== row;
         if (!focusPending) focused.current = { signal, row };
       }
+      const position = {
+        top:
+          row.getBoundingClientRect().top -
+          container.getBoundingClientRect().top,
+        width: container.clientWidth,
+        height: container.clientHeight,
+      };
       frame = requestAnimationFrame(() => {
         if (signal?.aborted || !row.isConnected || !container.contains(row))
           return;
+        if (focus && (focusPending || row.closest("[inert]"))) return;
+        holding.current?.();
+        holding.current = hold
+          ? keep(container, target, signal, hold, position)
+          : undefined;
         const box = row.getBoundingClientRect();
         const viewport = container.getBoundingClientRect();
         const visible =
@@ -100,14 +112,13 @@ export function useMessageReveal({
           box.top < Math.min(viewport.bottom, window.innerHeight) &&
           box.right > Math.max(viewport.left, 0) &&
           box.left < Math.min(viewport.right, window.innerWidth);
-        if ((focus && (focusPending || row.closest("[inert]"))) || !visible)
+        if (!visible) {
+          holding.current?.();
+          holding.current = undefined;
           return;
+        }
         revealed.current = signal;
         cancel();
-        holding.current?.();
-        holding.current = hold
-          ? keep(container, target, signal, hold)
-          : undefined;
         readingPositioned(container);
         complete();
       });
@@ -154,9 +165,8 @@ function keep(
   messageId: string,
   signal: AbortSignal,
   hold: () => boolean,
+  { top: at, width, height }: { top: number; width: number; height: number },
 ) {
-  const width = container.clientWidth;
-  const height = container.clientHeight;
   const offset = () => {
     const row = [
       ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
@@ -165,7 +175,6 @@ function keep(
       ? row.getBoundingClientRect().top - container.getBoundingClientRect().top
       : undefined;
   };
-  const at = offset();
   let frame = 0;
   const release = () => {
     cancelAnimationFrame(frame);
@@ -181,7 +190,6 @@ function keep(
       !container.isConnected ||
       container.clientWidth !== width ||
       container.clientHeight !== height ||
-      at === undefined ||
       now === undefined
     )
       return release();
@@ -198,5 +206,6 @@ function keep(
     attributeFilter: ["style"],
   });
   signal.addEventListener("abort", release, { once: true });
+  check();
   return release;
 }

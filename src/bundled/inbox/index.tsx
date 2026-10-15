@@ -6,6 +6,7 @@ export const inject = [
   "relay",
   "navigation",
   "conversation",
+  "panels",
   "shortcuts",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -31,6 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     primary: true,
     component: () => (
       <InboxPage
+        host={ctx}
         relay={relay}
         navigator={navigator}
         extensions={ctx.conversation}

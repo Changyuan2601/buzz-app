@@ -1,10 +1,12 @@
+// Match the app entry: establish reset and layer order before component CSS.
+import "../../../src/shared/styles/globals.css";
+import "../../../src/bundled/workflows/workflows.css";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Button } from "../../../src/shared/design-system/ui/Button";
 import { Scene } from "./Scene";
 import { dialogs, type DialogId } from "./catalog";
 import { installCommunityFixture } from "./data";
-import "../../../src/shared/styles/globals.css";
 import "./styles.css";
 
 const params = new URLSearchParams(location.search);

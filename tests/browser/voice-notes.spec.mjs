@@ -103,6 +103,11 @@ test.beforeEach(async ({ page }) => {
     page.getByRole("button", { name: "Play voice note", exact: true }),
   ).toBeVisible();
 });
+test.afterEach(async ({ page }) => {
+  // Media routes evaluate in the page; finish them before its fixture closes.
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 async function record(page) {
   await page
     .getByRole("button", { name: "Record voice note", exact: true })

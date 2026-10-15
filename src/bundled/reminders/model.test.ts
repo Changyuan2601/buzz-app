@@ -4,6 +4,7 @@ import {
   MAX_DELAY_MS,
   TIME_PRESETS,
   countDue,
+  dueDateLabel,
   dueLabel,
   dueSince,
   groupReminders,
@@ -214,6 +215,21 @@ describe("dueLabel", () => {
   it("counts overdue reminders back from now", () => {
     expect(dueLabel(at(base) - 2 * 3600, at(base))).toBe(
       "Overdue · 2 hours ago",
+    );
+  });
+
+  it("keeps the scheduled time and an unambiguous date for overdue reminders", () => {
+    const earlier = new Date(2026, 9, 13, 10, 0);
+    const yesterday = new Date(2026, 9, 12, 9, 0);
+    const old = new Date(2025, 9, 1, 9, 0);
+    expect(dueDateLabel(at(earlier), at(base))).toBe(
+      `Today at ${time(earlier)}`,
+    );
+    expect(dueDateLabel(at(yesterday), at(base))).toBe(
+      `Yesterday at ${time(yesterday)}`,
+    );
+    expect(dueDateLabel(at(old), at(base))).toBe(
+      `${old.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} at ${time(old)}`,
     );
   });
 

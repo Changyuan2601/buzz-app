@@ -5,7 +5,12 @@ import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./goose-testing";
-import { DEFAULT_CONFIG, GooseRuntime, sessionTitle } from "./runtime";
+import {
+  DEFAULT_CONFIG,
+  GooseRuntime,
+  sessionTitle,
+  standalonePrompt,
+} from "./runtime";
 
 describe("sessionTitle", () => {
   it("names the agent, the channel and a thread's root", () => {
@@ -53,6 +58,7 @@ function setup(
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
+    scope?: "thread" | "channel";
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -122,14 +128,26 @@ function setup(
       trigger: { type: "mention", event },
       channelId: channel,
       agent,
-      config: DEFAULT_CONFIG,
+      config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
     } as unknown as Delivery);
   const goose = () => fake.geese.find((process) => process.turns.length);
+  const runOnce = (key: string, prompt: string) =>
+    runtime.runOnce({
+      delivery: {
+        agent,
+        channelId: channel,
+        config: DEFAULT_CONFIG,
+      },
+      key,
+      signal: new AbortController().signal,
+      prompt: async () => prompt,
+    } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
     agent,
     deliver,
+    runOnce,
     fake,
     goose,
     published,
@@ -190,12 +208,51 @@ describe("GooseRuntime", () => {
     expect(turn?.steered).toHaveLength(1);
     process?.exit(1, "Error: Invalid API key\n");
     await flush(100);
-    // Each mention reports the failure, at the chat's top level.
-    const report = [
-      ["h", channel],
-      ["p", alice],
-    ];
-    expect(published.map((event) => event.tags)).toEqual([report, report]);
+    // The turn both mentions joined reports its failure once, at the chat's
+    // top level.
+    expect(published.map((event) => event.tags)).toEqual([
+      [
+        ["h", channel],
+        ["p", alice],
+      ],
+    ]);
+  });
+
+  it("posts a channel session's burst once, in the latest message's thread", async () => {
+    const reply = (id: string, root: EventData): RelayEvent =>
+      message(id, "@Gander", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+        ],
+      });
+    const one = message("1", "First thread");
+    const two = message("2", "Second thread");
+    const { deliver, goose, published } = setup({
+      scope: "channel",
+      hold: true,
+      reply: "Forgot to send",
+    });
+    await deliver(reply("3", one));
+    await flush(100);
+    await deliver(reply("4", two));
+    await flush(100);
+    const process = goose();
+    expect(process?.turns).toHaveLength(1);
+    expect(process?.turns[0]?.steered).toHaveLength(1);
+    process?.turns[0]?.finish();
+    await flush(100);
+    expect(published).toEqual([
+      {
+        kind: 9,
+        content: "Forgot to send",
+        tags: [
+          ["h", channel],
+          ["e", two.id, "", "reply"],
+        ],
+      },
+    ]);
   });
 
   it("posts goose's own text in the thread, or at a Me chat's top level", async () => {
@@ -212,6 +269,16 @@ describe("GooseRuntime", () => {
     await me.deliver(message("1", "@Gander hi"));
     await flush(100);
     expect(me.published.map((event) => event.tags)).toEqual([[["h", channel]]]);
+  });
+
+  it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {
+    const { runOnce, goose } = setup();
+    await expect(
+      runOnce("timer/daily", "Post the daily summary."),
+    ).resolves.toEqual({ ok: true });
+    expect(goose()?.turns.map((turn) => turn.text)).toEqual([
+      standalonePrompt(self, "Post the daily summary."),
+    ]);
   });
 
   it("keeps a converted stream threaded despite the owner's retained Me entry", async () => {

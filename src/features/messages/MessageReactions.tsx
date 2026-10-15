@@ -376,6 +376,7 @@ export function MessageReactions(
     <div
       className={styles.reactions}
       data-testid="reaction-row"
+      data-populated={(active && reactions.length > 0) || undefined}
       role="group"
       aria-label="Reactions"
       onMouseEnter={() => setPointerInRow(true)}

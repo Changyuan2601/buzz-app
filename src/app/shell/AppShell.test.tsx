@@ -14,6 +14,9 @@ import type { RegisteredPage } from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AppShell } from "./AppShell";
+import { createAppearance } from "../../shared/theme/service";
+
+const testAppearance = createAppearance(window);
 
 vi.mock("../../bundled", () => ({ bundledPlugins: [] }));
 
@@ -80,6 +83,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
         sidebar={sidebar}
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -137,6 +141,7 @@ it("lets a plugin page hide and show the shell sidebar", async () => {
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -201,6 +206,7 @@ it("does not make a non-primary plugin page's sidebar collapsible", () => {
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -229,6 +235,7 @@ it("keeps built-in sidebar controls available before page contributions load", (
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -271,6 +278,7 @@ it("shows a primary plugin page's declared icon beside its nav label", () => {
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -315,6 +323,7 @@ it("contains a throwing page badge to its own nav row", () => {
           tone="default"
           communities={current.communities}
           accountActions={current.accountActions}
+          appearance={testAppearance}
         >
           content
         </AppShell>
@@ -364,6 +373,7 @@ it("partitions primary pages without duplicate links and preserves exact selecti
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -434,6 +444,7 @@ it("routes compact header pages through the labelled overflow with main focus ha
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         content
       </AppShell>
@@ -481,6 +492,7 @@ it("falls back from a failed toolbar image and isolates toolbar badge errors", (
           tone="default"
           communities={current.communities}
           accountActions={current.accountActions}
+          appearance={testAppearance}
         >
           content
         </AppShell>
@@ -523,6 +535,7 @@ it("uses chrome tabs with manual keyboard selection, page linkage, and isolated 
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        appearance={testAppearance}
       >
         Page content
       </AppShell>
@@ -617,6 +630,7 @@ it.each([false, true])(
           tone="default"
           communities={current.communities}
           accountActions={current.accountActions}
+          appearance={testAppearance}
         >
           <p>Child content</p>
         </AppShell>

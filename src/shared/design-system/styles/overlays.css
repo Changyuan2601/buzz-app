@@ -181,7 +181,7 @@
     padding-block: 0;
   }
   .buzz-dialog-actions[data-chrome-spacing="padded"] {
-    padding-top: var(--dialog-padding);
+    padding-top: calc(var(--dialog-padding) + var(--space-1));
   }
   .buzz-dialog-actions {
     min-width: 0;
@@ -193,6 +193,16 @@
     justify-content: safe end;
     gap: var(--space-3);
     overflow-x: auto;
+    /* Keep the 2px ring and its 2px offset inside the scrolling footer. */
+    padding: var(--space-1);
+    margin: calc(-1 * var(--space-1));
+  }
+  /* Keep ordinary title/actions outside the body scrollport. If enlarged chrome
+     alone exceeds the viewport, allow pointer scrolling rather than clip it.
+     AlertDialog has no height attribute and keeps its own flow. */
+  .buzz-dialog:where(:not([data-stepped])[data-height]),
+  .buzz-dialog-step:where([data-height]) {
+    overflow: auto;
   }
   /* Each step retains its own sizing while it exits, including when the next
      step is content-sized. The transparent popup only owns their shared grid. */
@@ -204,25 +214,30 @@
     height: min(36rem, calc(100dvh - 2 * var(--space-6)));
   }
   :where(
-      .buzz-dialog:not([data-stepped])[data-height^="stable"],
-      .buzz-dialog-step[data-height^="stable"]
+      .buzz-dialog:not([data-stepped])[data-height],
+      .buzz-dialog-step[data-height]
     )
     > .buzz-dialog-header,
   :where(
-      .buzz-dialog:not([data-stepped])[data-height^="stable"],
-      .buzz-dialog-step[data-height^="stable"]
+      .buzz-dialog:not([data-stepped])[data-height],
+      .buzz-dialog-step[data-height]
     )
     > .buzz-dialog-actions {
     flex-shrink: 0;
   }
   :where(
-      .buzz-dialog:not([data-stepped])[data-height^="stable"],
-      .buzz-dialog-step[data-height^="stable"]
+      .buzz-dialog:not([data-stepped])[data-height],
+      .buzz-dialog-step[data-height]
     )
     > .buzz-dialog-body {
-    flex: 1;
-    min-height: 0;
+    /* Contain positioned labels in this scrollport, not the outer fallback. */
+    position: relative;
+    flex: 1 1 auto;
+    /* Keep one complete control usable before falling back to outer scrolling. */
+    min-height: calc(2 * var(--dialog-padding) + var(--size-control));
     overflow: auto;
+    /* Reveal the whole focused field, not only WebKit's text selection. */
+    scroll-padding-block: var(--dialog-padding);
     overscroll-behavior: none;
     /* Preserve inset row backgrounds and focus rings inside the scrollport. */
     margin-inline: calc(-1 * var(--dialog-padding));

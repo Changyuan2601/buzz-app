@@ -593,10 +593,15 @@ The dialogs share `ChannelTextField` for Name and Description: the same code-poi
 input caps, middle-edit preservation, label-row counters and connected errors.
 Both forms canonicalize names with `canonicalDetailsName` before handing off the
 draft. `ChannelDurationField` shares the Ongoing/Temporary cards and draft-only
-subtle minus/plus controls beside the selected Temporary card. Unselected copy is
-“Cleans up without activity.”; selected copy is “Cleans up **after [duration]** without
+subtle minus/plus controls beside the selected Temporary card when space permits,
+or on a trailing row when its intrinsic content needs the full width. The duration
+phrase and feature-owned label wrap at enlarged text sizes; shared Radio styling
+and focus space are unchanged. Unselected copy is
+“Archives without activity.”; selected copy is “Archives **after [duration]** without
 activity.” `motion/react` expands/collapses the middle phrase and the adjustment
-space together over 200ms, without scaling text. The middle phrase uses Medium
+space together over 200ms, without scaling text. The interval remains single-line
+while animating or hidden and wraps only after expansion, so Ongoing reserves no
+hidden multiline height. The middle phrase uses Medium
 weight and standard text color against muted surrounding copy. Reduced motion and
 keyboard navigation switch immediately; hidden controls are inert and excluded
 from accessibility, with one complete accessible description per state.

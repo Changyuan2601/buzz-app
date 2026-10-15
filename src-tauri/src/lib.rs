@@ -54,7 +54,7 @@ use relay::{
     relay_upload_chunk, relay_workflow_runs,
 };
 mod terminal;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod test_executable;
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},

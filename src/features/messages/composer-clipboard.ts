@@ -5,7 +5,7 @@ import {
 } from "prosemirror-model";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey, profileTarget } from "../profiles/target";
-import { scanMarkdown } from "../relay/message-content";
+import { safeLinkUrl, scanMarkdown } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
 import { messageLinkParts } from "./message-link-parts";
@@ -168,4 +168,59 @@ export function buzzCopyMarkdown(html: string): string | undefined {
     .parseFromString(html, "text/html")
     .querySelector("[data-buzz-copy]");
   return copy ? serializeNode(copy, "markdown") : undefined;
+}
+
+/** External HTML contributes web links, never Buzz identity metadata or styling. */
+export function externalLinkMarkdown(
+  html: string,
+  plain?: string,
+): string | undefined {
+  if (!html) return;
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  for (const node of body.querySelectorAll(
+    "script, style, template, iframe, object",
+  ))
+    node.remove();
+  let linked = false;
+  for (const element of body.querySelectorAll("*")) {
+    const href =
+      element.tagName === "A"
+        ? safeLinkUrl(element.getAttribute("href") ?? "")
+        : undefined;
+    for (const attribute of [...element.attributes])
+      element.removeAttribute(attribute.name);
+    if (href && element.textContent?.trim()) {
+      element.setAttribute("href", href);
+      linked = true;
+    }
+    // Keep text and line boundaries; importing other rich formatting is separate.
+    if (/^(STRONG|B|EM|I|S|DEL|CODE)$/.test(element.tagName))
+      element.replaceWith(...element.childNodes);
+    else if (/^(UL|OL|LI|BLOCKQUOTE|PRE)$/.test(element.tagName)) {
+      const block = body.ownerDocument.createElement("div");
+      block.append(...element.childNodes);
+      element.replaceWith(block);
+    }
+  }
+  if (!linked) return;
+  // External labels must fit one Markdown paragraph. Read child boundaries
+  // before collapsing whitespace so adjacent blocks and <br> do not join words.
+  for (const anchor of body.querySelectorAll("a[href]")) {
+    const label = body.ownerDocument.createElement("div");
+    label.append(...anchor.childNodes);
+    anchor.textContent = serializeNode(label, "text")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  if (plain !== undefined) {
+    // Compare the serializer's actual labels, not the source HTML's textContent:
+    // serialization can lose image emoji or boundaries inside an anchor.
+    const visible = body.ownerDocument.createElement("div");
+    visible.innerHTML = serializeNode(body, "html");
+    for (const anchor of visible.querySelectorAll("a"))
+      anchor.replaceWith(...anchor.childNodes);
+    const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+    if (normalize(serializeNode(visible, "text")) !== normalize(plain)) return;
+  }
+  return serializeNode(body, "markdown");
 }

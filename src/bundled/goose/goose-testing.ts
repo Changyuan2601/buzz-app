@@ -45,6 +45,8 @@ export type FakeGoose = {
   hold: boolean;
   /** When set, a turn takes a steer and ends before goose answers the steer. */
   endOnSteer: boolean;
+  /** Requests it never answers, as a goose that hangs. */
+  silent: Set<string>;
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
@@ -98,6 +100,8 @@ export function fakeSpawn(
     supported?: readonly string[];
     /** Saved sessions `session/list` and `session/export` read. */
     history?: readonly FakeSession[];
+    /** Requests each process never answers. */
+    silent?: readonly string[];
   }> = {},
 ) {
   const processes: FakeGoose[] = [];
@@ -176,6 +180,7 @@ export function fakeSpawn(
       env: process.env ?? {},
       hold: options.hold ?? false,
       endOnSteer: false,
+      silent: new Set(options.silent),
       killed: false,
       ask: (method, params) => {
         const requestId = `goose-${++requests}`;
@@ -219,6 +224,7 @@ export function fakeSpawn(
         answers.delete(id ?? "");
         return;
       }
+      if (fake.silent.has(method)) return;
       const sessionId = String(params.sessionId ?? "");
       switch (method) {
         case "initialize":

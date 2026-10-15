@@ -1,3 +1,4 @@
+import { checkDurationConsumer } from "./duration-layout.mjs";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
@@ -271,6 +272,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(
     nameEditor.getByRole("textbox", { name: "Name", exact: true }),
   ).toBeFocused();
+  await nameEditor
+    .getByRole("radio", { name: "Temporary", exact: true })
+    .click();
+  await checkDurationConsumer(page, nameEditor, "edit-duration", testInfo);
   await nameEditor.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(title).toBeFocused();
   if (browserName === "chromium") {

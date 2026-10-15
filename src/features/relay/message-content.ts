@@ -43,7 +43,10 @@ type MarkdownScan = {
 /** Raw HTML in chat is shown as the typed text, except complete HTML
  * comments. Comments are hidden markup by Markdown convention, and clients
  * put protocol markers in them (Buzz Desktop waves start with
- * `<!-- buzz:wave:v1 -->`). An unclosed `<!--` stays visible. */
+ * `<!-- buzz:wave:v1 -->`). An unclosed `<!--` stays visible.
+ * This is text projection, not HTML sanitization: callers must render the
+ * result as text. Remove only authored comments once; joining their neighbors
+ * can form new HTML syntax that must remain visible literal text. */
 export function visibleHtmlSource(value: string): string {
   return value.replace(/<!--[\s\S]*?-->/g, "");
 }

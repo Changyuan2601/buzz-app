@@ -87,10 +87,9 @@ new tests should explicitly choose their data rather than inherit it accidentall
 
 Source-only diagnostic pages can import `test` and `expect` from
 `source-fixture.mjs` and navigate to `/tests/fixtures/example.html`. That fixture
-shares a stateless Vite server and its isolated optimizer cache per worker, with
-fresh browser contexts/storage for every test. Do not use it for custom mutable
-server middleware or a different Vite configuration. The existing `vite-server.mjs`
-helper keeps independently configured servers' caches isolated.
+shares a stateless Vite server per worker, with fresh browser contexts/storage
+for every test. Do not use it for custom mutable server middleware or a different
+Vite configuration; use the `vite-server.mjs` helper for those servers.
 
 Results go to ignored `test-results/browser/`: each built-app test writes `evidence.json`
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
@@ -480,8 +479,18 @@ can silently use platform fallback fonts.
 
 Concurrent Vite fixture servers must own separate optimizer caches. Use
 `tests/browser/vite-server.mjs` for new fixtures; its `close()` releases the owned
-cache. The existing emoji and conversation fixtures retain their explicitly owned
-temporary caches. Do not share Vite's default `node_modules/.vite`: another server
-can invalidate dependency imports and leave a blank fixture with a 504
-`Outdated Optimize Dep`. Keep import failures visible; retries or longer UI waits
-do not repair module loading.
+cache. The existing emoji fixture retains its explicitly owned temporary cache.
+Do not share Vite's default `node_modules/.vite`: another server can invalidate
+dependency imports and leave a blank fixture with a 504 `Outdated Optimize Dep`.
+Keep import failures visible; retries or longer UI waits do not repair module
+loading.
+
+A server must not scan or bundle dependencies inside a test's navigation budget.
+Playwright's `globalSetup` runs `vite-server.mjs` once per run: it scans every
+HTML page under `tests/` and bundles their dependencies. Each fixture server
+starts from its own copy of that cache. Vite reuses a cache only when the root,
+plugin names and `optimizeDeps` match, so the helper fixes all three. Fixture
+plugins may only add server middleware (`configureServer`) or rewrite index HTML
+(`transformIndexHtml`), and the helper runs them as one plugin. Fixtures cannot
+set `optimizeDeps`; if a test imports a dependency that no fixture page reaches,
+add it to `fixtureOptimizeDeps.include` in the helper.

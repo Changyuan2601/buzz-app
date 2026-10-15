@@ -9,6 +9,7 @@ type ButtonVariant =
   | "ghost"
   | "destructive"
   | "outline"
+  | "attention"
   | "inverted"
   | "link"
   | "primary"
@@ -68,6 +69,15 @@ export function Button({
       data-button-shape={shape}
       data-loading={loading || undefined}
     >
+      {variant === "attention" && (
+        <svg
+          className="buzz-button-attention"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <rect x="0.5" y="0.5" />
+        </svg>
+      )}
       <span className="buzz-button-label">{children}</span>
       {loading && (
         <CircleNotchIcon

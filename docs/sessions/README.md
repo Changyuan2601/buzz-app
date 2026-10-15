@@ -14,8 +14,8 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   migration, membership revocation, nested creation or transcript copy.
 - Projects are existing Me groups, and Chats are ordinary private channels. New
   chats use ordinary private channels. The first send freezes the
-  draft, channel ID, Canvas and group defaults in the existing pending-start
-  receipt. Setup and Me placement must succeed before sending; retries reuse that
+  draft, channel ID, name, lifetime, Canvas and group defaults in the existing
+  pending-start receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
 - New Me conversations add a `personal` line to the session description
   (`Buzz session (buzz.sessions/v1)`, then optional `parent:<uuid>`, then optional
@@ -42,14 +42,16 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   link grants no access; Done with no audience closes without writes. Shared uses
   verified membership and cached human evidence, not privacy inference or a required
   role refresh. See [sharing](sharing.md) for retries and evidence limits.
-- Lifetime/settings improvements are separate work. Backend read-only roles,
+- Naming and lifetime belong to [Session settings](#standalone-session-lifetime),
+  not Share. Backend read-only roles,
   dynamic inheritance/revocation and synced grant provenance remain deferred or
   blocked in this checkpoint. Sharing does not expose owner-private detailed agent
   activity or start an agent. Proposal documents remain design history, not
   implemented behavior.
 - Me chats and drafts use the full conversation pane. Right-click,
-  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel, Rename, Move to a Me
-  project, Copy and Chat settings (where eligible). Opening a row menu does not select the row.
+  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel,
+  Move to a Me project, Copy and Session settings (where eligible). Opening a row
+  menu does not select the row.
   A chat can also be dragged with a pointer onto another project or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
   rollback notice and Retry. Like Messages' empty Starred, a hidden empty
@@ -95,7 +97,9 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 Me projects, assignments and project defaults never fall back to Messages defaults.
 Workspace folders, optional worktree/base branch and Canvas are instructions saved
 in ordinary Canvas Markdown; saving settings does not create a worktree or change
-an agent process. Templates are copied into each new chat, not live-linked. Moving
+an agent process. Templates are copied into each new chat, not live-linked.
+Switching a draft to another project reloads its Workspace/Canvas defaults while
+retaining its independent name and lifetime. Moving
 a saved chat only changes its project assignment. Saved conversation
 settings retain the existing Canvas revision checks and explicit conflict recovery.
 
@@ -122,6 +126,100 @@ submitted operations, confirmed access or Me placement.
 An interrupted link can be retried by its exact ID in Outbox; confirmed delivery
 can be removed there before sharing to the same destination again. Unknown
 receipts remain protected. Whole-share intent does not survive an app restart.
+
+## Standalone session lifetime
+
+Lifetime is separate from Share. Before first send, **Session settings**
+offers the existing Ongoing/Temporary duration control for standalone drafts:
+Ongoing means no automatic archive; Temporary defaults to seven days and archives
+after the selected duration without activity. Existing custom values are retained.
+Parent-linked sessions do not offer this control.
+
+The validated `ttlSeconds` is frozen in the local first-attempt receipt before
+asynchronous setup begins and sent as the fourth `workSessions.create` argument.
+Retries reuse the saved creation event ID: no second creation or create-then-edit.
+Local settings now store name, Canvas and lifetime together; old Canvas-only strings
+still load. Invalid stored durations are visible failures, not implicit Ongoing.
+Setup, Me placement, and first-message ordering retain their existing owners.
+
+The **Session settings** gear in the header opens the form directly; saved-session
+row menus retain **Session settings…** alongside their other actions. Both open one
+scrollable dialog, with **Session name** above Workspace/Canvas
+(optional for a new draft),
+**Lifetime** below it, and one **Save changes** action. The separate Rename editor
+and menu action have been removed. There is no separate lifetime menu or tab.
+Changed Canvas confirms first, then changed name/lifetime use one fresh signed
+channel-details operation. The session marker, privacy, history, membership and
+Me placement remain unchanged. A no-op closes without writing. If details fail
+after Canvas confirms, the dialog keeps the choices
+and retry skips that confirmed Canvas revision. Partial confirmation is explained
+as an error, not presented as two independent normal save states.
+
+Conflicts require explicit Reload while retaining the selected lifetime; an
+unconfirmed save survives modal remount and relabels the single primary action
+**Check save status**, without republishing or implicitly saving other draft
+changes. Workspace drafts keep their existing revision and conflict recovery.
+Section defaults are unchanged; parent-linked sessions have no lifetime section.
+Archived, cached, read-only or unauthorized lifetime writes remain excluded or
+denied by signed details. Canvas/lifetime capabilities can be independently
+unavailable; a failed read never sends an inferred default lifetime.
+
+Closing/retiring a view fences later lifetime admission and late UI completion.
+Canvas remains session-owned: navigation does not guarantee cancellation of its
+internal preparation or already dispatched write. No atomic rollback or composite
+app-restart journal is added. Native GUI, packaged/live-relay and renewed human
+acceptance remain separate gates.
+
+The session edit wire command is exact `h,name[,ttl]`; it never rewrites `about`,
+so the legacy session marker and optional parent/personal lines stay unchanged.
+Unchanged lifetime omits `ttl`; a changed positive canonical decimal
+(1–2147483647) sets it, and an empty value removes it. Lifetime-only changes
+omit `about`; session settings always omit visibility. Creation permits positive
+TTL only for an ordinary channel or the exact standalone session marker, never a
+parent-linked marker; empty creation TTL is rejected. Browser and native signing
+and publish guards enforce this syntax independently. The host grammar cannot
+prove parent ancestry; the shared fresh-details owner remains edit authority.
+
+## Optional naming
+
+New and saved sessions use the same Session settings form. A blank new name retains
+the first-prompt automatic title (80 code points, canonicalized like relay names).
+Explicit names use the shared canonical 1–120-code-point validation. The first
+attempt freezes the chosen or first-prompt title before any asynchronous setup;
+retries do not change it when prompt or local settings change.
+Old Canvas-only settings and pending receipts still load without a migration or
+another creation/rename operation.
+
+New session `about` metadata uses only the existing marker, optional parent line,
+and the `personal` line for Solo chats, exactly as recognized by older Buzz clients.
+Custom creation and subsequent renames do not append a `naming:` extension.
+Name/lifetime edits leave that metadata unchanged; only explicit Convert to channel
+clears `personal`. Persisted naming provenance and automatic-name reset are deferred.
+Clearing a saved name silently preserves the last confirmed title without a name
+write or validation error. Other settings can still save. Old pending receipts without a frozen name derive it from their original first
+prompt, not an edited retry draft.
+The form uses the shared content-sized dialog and its normal footer spacing, with
+one body scrollport and no reserved bottom area. The title and actions stay visible
+in ordinary short windows. If enlarged controls cannot fit, the outer dialog also
+scrolls, retaining space for a complete body control and pointer access to actions.
+Name, Project folders, Canvas and Lifetime use consistent 32px section spacing;
+labels sit 8px above their controls. Parent-linked sessions retain their existing
+details-write exclusion.
+
+Naming uses the existing fresh signed authority/version check and exact full details
+readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save
+is checked without republishing or implicitly saving newer Canvas drafts. Browser
+and native guards consume a shared legacy-metadata contract fixture, accepting only
+the existing marker/parent/personal grammar for creation and rejecting extensions.
+The parser remains identical to the pre-feature parser. Source compatibility and
+synthetic signed create/rename/readback coverage are not live cross-version-client
+acceptance.
+
+Generated sharing messages and recovery receipts retain their original numeric
+`Session · short ID` labels and signed bytes, including after a rename. Dynamic
+explicit-only share-link titles are deferred together with naming provenance; no
+local title inference, metadata protocol, repost or authored-byte rewrite is added.
+Arbitrary authored labels, raw URLs, navigation and access rules are unchanged.
 
 ## Owners and validation limits
 

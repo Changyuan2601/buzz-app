@@ -189,9 +189,10 @@ wire tag and does not introduce an enforceable View-only role.
 ## Explicitly deferred or blocked
 
 - **Create new channel** was removed from the Share dialog for this slice.
-- **Optional session naming and named newly posted links** are explicitly deferred
-  to a separate PR by the human on 2026-10-13. This change adds no name field or
-  named-link format; the existing Rename action and numeric link labels remain.
+- Optional creation names, saved renames and standalone lifetime use the unified
+  [Session settings](README.md#optional-naming) form, not Share. Persisted naming
+  provenance, automatic-name reset and dynamic link titles remain deferred.
+  Old and new generated links keep their numeric labels after a rename.
 - **Can view / Can participate** is deferred to a second PR. Read-only requires
   relay-enforced authorization and a matching client capability contract; a
   cosmetic role switch or disabled composer is not sufficient. This slice shows
@@ -202,7 +203,7 @@ wire tag and does not introduce an enforceable View-only role.
 - Dynamic destination inheritance/revocation, synced grant provenance and removal
   permissions remain unimplemented. The approved device-local display history is
   not an authorization record or a composite restart journal. Standalone
-  creation/lifetime editing is separate work in PR #1079, not a dependency of
+  creation/lifetime editing belongs to Session settings, not a dependency of
   sharing or conversion and not a Share option.
   No provenance is inferred from links or membership.
 

@@ -13,7 +13,6 @@ test("channel completion preserves native editing, focus, popup geometry and sig
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     plugins: [react()],
     logLevel: "error",
     server: {
@@ -185,7 +184,6 @@ test("channel completion finds an open channel the viewer has not joined", async
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     plugins: [react()],
     logLevel: "error",
     server: {

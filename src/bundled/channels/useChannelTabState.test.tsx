@@ -3,12 +3,11 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
-import type { RegisteredPanel } from "../../features/panels/service";
-import {
-  panelTabId,
-  type PanelOpening,
-  useChannelTabState,
-} from "./useChannelTabState";
+import type {
+  PanelOpening,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import { panelTabId, useChannelTabState } from "./useChannelTabState";
 
 import {
   setThreadPlacementPreference,

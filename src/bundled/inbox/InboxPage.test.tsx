@@ -1,3 +1,5 @@
+const emptyPanels: never[] = [];
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
@@ -1759,6 +1761,17 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
+          host={
+            {
+              relay,
+              navigation: { open },
+              panels: {
+                subscribe: () => () => {},
+                snapshot: () => emptyPanels,
+                resolve: () => undefined,
+              },
+            } as unknown as ConversationHostServices
+          }
           relay={relay}
           navigator={{ open } as unknown as Navigation}
           archive={archive}

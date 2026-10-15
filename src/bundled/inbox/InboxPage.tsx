@@ -1,3 +1,4 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { LightningIcon } from "../../shared/design-system/icons";
 import {
@@ -147,11 +148,13 @@ export function InboxPage({
   relay,
   navigator,
   extensions,
+  host,
   archive,
 }: {
   relay: RelayData;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   archive?: ArchiveShortcut | undefined;
 }) {
   const connection = useRelayConnection(relay);
@@ -171,6 +174,7 @@ export function InboxPage({
             }}
             navigator={navigator}
             extensions={extensions}
+            host={host}
             archive={archive}
           />
         ) : (
@@ -206,12 +210,14 @@ export function InboxView({
   scope,
   navigator,
   extensions,
+  host,
   archive: archiveShortcut,
 }: {
   session: RelaySession;
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   archive?: ArchiveShortcut | undefined;
 }) {
   const split = usePanelSplit(undefined, 316, {
@@ -817,6 +823,7 @@ export function InboxView({
           scope={scope}
           navigator={navigator}
           extensions={extensions}
+          host={host}
         />
       ) : (
         <div
@@ -1117,6 +1124,7 @@ export function InboxView({
               scope={scope}
               navigator={navigator}
               extensions={extensions}
+              host={host}
               channelName={
                 list.channels.find(
                   (channel) => channel.id === selected.channelId,

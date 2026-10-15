@@ -464,7 +464,6 @@ test("preparation preserves snapshot/animation and uses lossless WebP for pixel 
   const server = await createServer({
     configFile: false,
     envFile: false,
-    optimizeDeps: { include: ["@jsquash/webp/encode.js"] },
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0 },
   });
