@@ -366,7 +366,9 @@ function projections(
 }
 /** With every channel still allowed, `purge` deletes nothing and only forces
  * the evidence index to rebuild, so it is the rescan oracle for the per-event
- * append path in `accept`. */
+ * append path in `accept`. The rebuild also resets every row and `awaited`,
+ * so it sees only divergence accumulated since the previous rebuild; callers
+ * read `projections` between comparisons instead. */
 function expectRebuiltToMatch(
   h: Awaited<ReturnType<typeof setup>>,
   emitted: readonly RelayEvent[],
@@ -389,8 +391,12 @@ it("resolves replies that arrive before their root, and the root's deletion, lik
       ...(i === 5 ? [["p", h.viewer.pubkey]] : []),
     ]),
   );
+  // Read between pushes, as subscribers do, instead of rebuilding: the replies
+  // append to a valid index, so only the `awaited` entries their own appends
+  // record make the root's arrival rescan.
+  projections(h, [], []);
   h.owner.accept(replies);
-  expectRebuiltToMatch(h, replies, [], "replies before root");
+  projections(h, replies, []);
   h.owner.accept([root]);
   expectRebuiltToMatch(h, [...replies, root], [root], "root after replies");
   expect(h.unread.attention("c0", at(replies, 1).id)).toMatchObject({
@@ -564,17 +570,25 @@ it.each(Array.from({ length: 12 }, (_, i) => i + 1))(
           batch.push(event);
           emitted.push(event);
         } else if (op < 0.7) {
-          // A reply under a message that arrives 1–6 batches later, or never
-          // arrives live. Sometimes a reply only the relay holds links them,
-          // so the chain to the late root runs through the lookup cache.
+          // A reply under a message that arrives later in the same batch, 1–6
+          // batches later, or never arrives live. Sometimes a reply only the
+          // relay holds links them, so the chain to the late root runs through
+          // the lookup cache.
           const late = content(pick(authors), pick(channels), viewerTags());
-          if (chance(0.4)) withhold(late);
-          else held.push({ event: late, due: step + Math.floor(random() * 6) });
+          const arrival = random();
+          if (arrival < 0.4) withhold(late);
+          else if (arrival < 0.7)
+            held.push({ event: late, due: step + Math.floor(random() * 6) });
           const parent = chance(0.3) ? replyTo(late, late.id) : late;
           if (parent !== late) withhold(parent);
           const event = replyTo(parent, parent.id);
           batch.push(event);
           emitted.push(event);
+          if (arrival >= 0.7) {
+            batch.push(late);
+            roots.push(late);
+            emitted.push(late);
+          }
         } else if (op < 0.85) {
           // A deletion by the author, the viewer, or a third party (forged),
           // sometimes of a message only the lookup cache holds.
@@ -604,7 +618,13 @@ it.each(Array.from({ length: 12 }, (_, i) => i + 1))(
         }
       }
       h.owner.accept(batch);
-      expectRebuiltToMatch(h, emitted, roots, `seed ${seed} step ${step}`);
+      // Read every step, as subscribers do, so the next batch appends to a
+      // valid index. Rebuild on a random half of steps: skipped steps let
+      // appends accumulate, and frequent ones see divergence that a later
+      // publish or rescan would hide.
+      if (chance(0.5) || step === 99)
+        expectRebuiltToMatch(h, emitted, roots, `seed ${seed} step ${step}`);
+      else projections(h, emitted, roots);
       // Let the conversation lookups this step queued resolve, as between live pushes.
       await flush();
     }

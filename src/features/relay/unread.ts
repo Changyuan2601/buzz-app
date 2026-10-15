@@ -214,6 +214,7 @@ export function createUnread({
   let error: string | undefined;
   let refresh: Promise<void> | undefined;
   const lifetime = new AbortController();
+  // Evidence-index input: changes besides the append set `indexed = false`.
   const events = new Map<string, RelayEvent>();
   const known = new Set<string>();
   const listeners = new Map<string, Set<() => void>>();
@@ -301,9 +302,10 @@ export function createUnread({
   // instead of appending: (1) root-chain links, the `rootId` tag of every
   // retained or cached reply, since `root()` walks through them; (2) deletion
   // targets, the `e` tags of every retained kind 5/9005, which would tombstone
-  // the arriving event. Rebuilt with the index and never decremented: removals
-  // always rescan. A new `Evidence` field that depends on other events must
-  // extend this set.
+  // the arriving event. (2) is defensive: `channelOwnership` retains a
+  // deletion only once its targets are present. Rebuilt with the index and
+  // never decremented: removals always rescan. A new `Evidence` field that
+  // depends on other events must extend this set.
   const awaited = new Set<string>();
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
@@ -333,6 +335,7 @@ export function createUnread({
     evidence: string | undefined;
     more: boolean;
   };
+  // Evidence-index inputs: changes besides the append set `indexed = false`.
   const lookups = new Map<string, Lookup>();
   const lookupEvents = new Map<string, RelayEvent>();
   const queued = new Map<
@@ -353,6 +356,7 @@ export function createUnread({
   // They are not counted evidence. Evicting one forgets the lookups it backs,
   // so a membership never outlives the means to observe its deletion. Callers
   // remember a lookup before witnessing it, so eviction always sees it.
+  // Evidence-index input: changes besides the append set `indexed = false`.
   const witnesses = new Map<string, RelayEvent>();
   const conversationKey = (channelId: string, parentId: string) =>
     `${channelId}:${parentId}`;
