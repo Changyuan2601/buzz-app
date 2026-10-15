@@ -188,11 +188,14 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
         const concierge = meshAgentConfig(
           agents.find(message.authorId)?.config,
         );
-        if (concierge.onboardingAttempt) {
-          const { onboardingAttempt: _, ...resolved } = concierge;
-          await agents.save(message.authorId, { config: resolved });
-          check();
-        }
+        const { onboardingAttempt: _, ...resolved } = concierge;
+        // Once the draft is created, let the new agent answer its own test.
+        // Explicit Concierge mentions still work with Attention switched off.
+        await agents.save(message.authorId, {
+          config: resolved,
+          attentionEnabled: false,
+        });
+        check();
         // The session owns signed membership, confirmation and retries. If this
         // fails, the saved agent is reused when the person chooses Continue.
         await snapshot.session.memberAdditions.add(
@@ -297,12 +300,6 @@ export function ConciergeDraft({
             {made ? "Continue setup" : "Create agent"}
           </Button>
         </div>
-      )}
-      {!creation.available(message) && (
-        <p role="status" className="m-0 text-body-sm text-secondary">
-          Open this draft in its original community as Concierge's owner to
-          continue.
-        </p>
       )}
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">

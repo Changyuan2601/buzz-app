@@ -176,6 +176,7 @@ it("requires a click, creates a tool-free agent, confirms membership, and surviv
     }),
   );
   expect(f.add).toHaveBeenCalledExactlyOnceWith(message.channelId, created);
+  expect(f.agents.find(author)?.attentionEnabled).toBe(false);
   expect(await screen.findByRole("status")).toHaveTextContent(
     "Idea Buddy is ready",
   );

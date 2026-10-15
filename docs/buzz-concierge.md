@@ -49,6 +49,8 @@ conversation-only first step before the draft is proposed.
 5. Review the proposed name and instructions. Choose **Create agent**. Confirm
    it reports that the agent is ready, then mention the new agent in this
    channel with the proposed test. Judge its actual reply before refining it.
+   Creation switches Concierge's Attention off so it does not answer the new
+   agent's test as well. Mention Buzz Concierge explicitly for more help.
 
 ## Checks and recovery
 
