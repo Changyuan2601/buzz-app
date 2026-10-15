@@ -46,6 +46,7 @@ export function InboxDetail({
   previewIncomplete,
   archiveAction,
   onBack,
+  entryFocus = true,
   resizeHandle,
 }: {
   resizeHandle?: ReactNode;
@@ -62,6 +63,8 @@ export function InboxDetail({
     | { archived: boolean; disabled: boolean; run(): void }
     | undefined;
   onBack(): void;
+  /** Off when list keyboard navigation opened the visit and keeps focus there. */
+  entryFocus?: boolean | undefined;
 }) {
   const archiveLabel = archiveAction?.archived
     ? "Restore conversation"
@@ -73,8 +76,8 @@ export function InboxDetail({
   const withheldFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
     // The one visible header owns entry focus; readers may reveal the exact target.
-    placeholderClose.current?.focus({ preventScroll: true });
-  }, []);
+    if (entryFocus) placeholderClose.current?.focus({ preventScroll: true });
+  }, [entryFocus]);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,

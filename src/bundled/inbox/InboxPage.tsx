@@ -279,6 +279,8 @@ export function InboxView({
     messageId: string;
     rootId?: string;
   }>();
+  // Keyboard list navigation keeps focus on the row instead of the opened detail.
+  const [detailFocus, setDetailFocus] = useState(true);
   const invokingRow = useRef<HTMLButtonElement | null>(null);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
   const fallbackControl = useRef<HTMLButtonElement | null>(null);
@@ -474,7 +476,9 @@ export function InboxView({
   useLayoutEffect(() => {
     if (!archiveShortcut || !selected) return;
     const current = () => {
-      if (!pending) archive(selected, !archived(selected));
+      const value = !archived(selected);
+      // Focus follows to the next conversation, ready for Up/Down.
+      if (!pending) archive(selected, value, value, true);
     };
     archiveShortcut.current = current;
     return () => {
@@ -522,18 +526,19 @@ export function InboxView({
     if (profileIds.length && list.status === "ready")
       void session.profiles.ensure(profileIds, "background").catch(() => {});
   }, [session, profileIds, list.status, list.asOf]);
+  const rowButton = (id: string) =>
+    [
+      ...(workspace.current?.querySelectorAll<HTMLElement>(
+        "li[data-inbox-row]",
+      ) ?? []),
+    ]
+      .find((entry) => entry.dataset.inboxRow === id)
+      ?.querySelector<HTMLButtonElement>("button");
   useLayoutEffect(() => {
     const id = focusRow.current;
     if (id === undefined || pending) return;
     focusRow.current = undefined;
-    const row = [
-      ...(workspace.current?.querySelectorAll<HTMLElement>(
-        "li[data-inbox-row]",
-      ) ?? []),
-    ].find((entry) => entry.dataset.inboxRow === id);
-    (
-      row?.querySelector<HTMLElement>("button") ?? fallbackControl.current
-    )?.focus({ preventScroll: true });
+    (rowButton(id) ?? fallbackControl.current)?.focus({ preventScroll: true });
   });
   async function run(
     work: () => Promise<unknown>,
@@ -584,7 +589,12 @@ export function InboxView({
       if (retrySync && active.current) await session.unread.retrySync();
     });
   }
-  function archive(item: InboxItem, value: boolean, navigate = value) {
+  function archive(
+    item: InboxItem,
+    value: boolean,
+    navigate = value,
+    focusNext = false,
+  ) {
     // Archive captures the conversation, not just the activity-filter projection.
     const conversation = session.unread
       .inbox()
@@ -646,7 +656,9 @@ export function InboxView({
         // Archiving the selected row advances; unselected actions leave the reader alone.
         if (navigate && open && next) {
           advanced = next;
+          setDetailFocus(!focusNext);
           setSelectedTarget(targetOf(next));
+          if (focusNext) focusRow.current = next.id;
         } else if (navigate && open) {
           setRestoringFocus(true);
           setSelectedTarget(undefined);
@@ -657,6 +669,16 @@ export function InboxView({
         if (advanced && hasUnread(advanced) && canRead) mutate(advanced, false);
       },
     );
+  }
+  function open(item: InboxItem, row: HTMLButtonElement, focus = true) {
+    // The selected row is the same visit, even when its
+    // current representative changed after reading.
+    if (busy.current || selectedId === item.id) return;
+    cancelRetry();
+    invokingRow.current = row;
+    setDetailFocus(focus);
+    setSelectedTarget(targetOf(item));
+    if (hasUnread(item) && canRead) mutate(item, false);
   }
   function mutate(item: InboxItem, unread: boolean) {
     // An open menu is not authority: recheck the current session at action entry.
@@ -959,7 +981,29 @@ export function InboxView({
                                 id: item.id,
                                 anchor: event.target as HTMLElement,
                               });
+                              return;
                             }
+                            // Mail's Up/Down: open the neighboring conversation, as a click would.
+                            const step =
+                              event.key === "ArrowDown"
+                                ? 1
+                                : event.key === "ArrowUp"
+                                  ? -1
+                                  : 0;
+                            const neighbor =
+                              step &&
+                              !event.altKey &&
+                              !event.ctrlKey &&
+                              !event.metaKey &&
+                              !event.shiftKey
+                                ? visible[visible.indexOf(item) + step]
+                                : undefined;
+                            const button =
+                              neighbor && !pending && rowButton(neighbor.id);
+                            if (!neighbor || !button) return;
+                            event.preventDefault();
+                            button.focus();
+                            open(neighbor, button, false);
                           }}
                         >
                           <NavigationItem
@@ -1054,16 +1098,7 @@ export function InboxView({
                                 />
                               )
                             }
-                            onClick={(event) => {
-                              // The selected row is the same visit, even when its
-                              // current representative changed after reading.
-                              if (busy.current || selectedId === item.id)
-                                return;
-                              cancelRetry();
-                              invokingRow.current = event.currentTarget;
-                              setSelectedTarget(targetOf(item));
-                              if (unread && canRead) mutate(item, false);
-                            }}
+                            onClick={(event) => open(item, event.currentTarget)}
                           />
                           <span className={styles.rowArchive}>
                             <IconButton
@@ -1125,6 +1160,7 @@ export function InboxView({
               navigator={navigator}
               extensions={extensions}
               host={host}
+              entryFocus={detailFocus}
               channelName={
                 list.channels.find(
                   (channel) => channel.id === selected.channelId,

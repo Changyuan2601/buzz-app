@@ -423,8 +423,12 @@ it("archives and restores the open conversation from the Archive shortcut", asyn
   await waitFor(() =>
     expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(1),
   );
-  // Like the header button, archiving the open conversation advances.
+  // Like the header button, archiving the open conversation advances,
+  // and focus follows so Up/Down keep going.
   expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
+  await waitFor(() =>
+    expect(list().getByRole("button", { name: /^Open / })).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   fireEvent.click(list().getByRole("button", { name: /^Open / }));
   await waitFor(() =>
@@ -436,6 +440,42 @@ it("archives and restores the open conversation from the Archive shortcut", asyn
   await waitFor(() =>
     expect(list().queryAllByRole("button", { name: /^Open / })).toHaveLength(0),
   );
+});
+
+it("opens the neighboring conversation with Up and Down, like Mail", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first, second] = list().getAllByRole("button", { name: /^Open / });
+  if (!first || !second) throw new Error("Missing fixture rows");
+  const settled = () =>
+    waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Archive conversation" }),
+      ).toBeEnabled(),
+    );
+  fireEvent.click(first);
+  first.focus();
+  await settled();
+  // The first row has nothing above it; modified arrows are left alone.
+  fireEvent.keyDown(first, { key: "ArrowUp" });
+  fireEvent.keyDown(first, { key: "ArrowDown", shiftKey: true });
+  expect(first.closest("li")).toHaveAttribute("data-selected");
+  expect(fireEvent.keyDown(first, { key: "ArrowDown" })).toBe(false);
+  await waitFor(() =>
+    expect(second.closest("li")).toHaveAttribute("data-selected"),
+  );
+  expect(second).toHaveFocus();
+  await settled();
+  fireEvent.keyDown(second, { key: "ArrowUp" });
+  await waitFor(() =>
+    expect(first.closest("li")).toHaveAttribute("data-selected"),
+  );
+  expect(first).toHaveFocus();
 });
 
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
