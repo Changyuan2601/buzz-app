@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  adopt,
   approve,
   approved,
+  carry,
   config,
   DEFAULT_CONFIG,
   digest,
@@ -159,5 +161,28 @@ describe("presets", () => {
       expect(p.verified).toBe(false);
       expect(problems(withPreset(DEFAULT_CONFIG, p.id))).toEqual([]);
     }
+  });
+});
+
+describe("carry and adopt", () => {
+  it("carries only the instructions", async () => {
+    const saved = await approve({ ...base, instructions: "Triage." });
+    expect(carry(saved)).toEqual({ instructions: "Triage." });
+    expect(carry({ ...saved, instructions: " " })).toEqual({});
+  });
+
+  it("can't launch an adopted config until it is confirmed again", async () => {
+    const confirmed = await approve(base);
+    const adopted = adopt(
+      { instructions: "Triage.", workspace: "/elsewhere" },
+      confirmed,
+    );
+    expect(adopted).toMatchObject({
+      instructions: "Triage.",
+      workspace: base.workspace,
+      approval: "",
+    });
+    expect(await launch(adopted)).toEqual({ error: UNCONFIRMED });
+    expect("launch" in (await launch(await approve(adopted)))).toBe(true);
   });
 });
