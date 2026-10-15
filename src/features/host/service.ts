@@ -46,11 +46,32 @@ const WRITE_UNITS = 256 * 1024;
 type ProcessEvent =
   | { type: "stdout" | "stderr"; data: string }
   | { type: "exit"; code: number | null };
+/** Answers one JSON-RPC message an agent sent: with the JSON-RPC response,
+ * or `undefined` for a notification, which needs none. */
+export type McpHandler = (message: unknown) => Promise<unknown>;
+/** A loopback MCP server (Streamable HTTP) whose messages the plugin answers.
+ * It belongs to the plugin and stops when the plugin unloads. */
+export type HostMcpServer = Readonly<{
+  /** `http://127.0.0.1:<port>/mcp` */
+  url: string;
+  /** What the agent must send with each request, as ACP's `mcpServers` and
+   * MCP clients take them. */
+  headers: readonly Readonly<{ name: string; value: string }>[];
+  close(): Promise<void>;
+  /** Resolves once it has stopped. */
+  closed: Promise<void>;
+}>;
+type McpEvent =
+  | { type: "message"; request: number; body: string }
+  | { type: "closed" };
 export interface Host {
   runCommand(id: string, input?: string): Promise<string | null>;
   /** Starts a process the manifest declares in `host.processes`. It lives until
    * it exits, is killed, or the plugin unloads. Desktop only. */
   spawn?: (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
+  /** Starts a loopback MCP server whose messages `handler` answers, for a
+   * plugin whose manifest declares `host.mcp`. Desktop only. */
+  serveMcp?: (handler: McpHandler) => Promise<HostMcpServer>;
   request(input: HostRequest): Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
@@ -228,6 +249,75 @@ export class HostService extends Service implements Host {
     });
   }
 
+  // A method, not a field: `this.ctx` is then the calling plugin's scope.
+  async serveMcp(handler: McpHandler): Promise<HostMcpServer> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("MCP servers require an installed desktop plugin");
+    let stopped!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      stopped = resolve;
+    });
+    let handle: number | undefined;
+    const answer = async (request: number, body: string) => {
+      const send = (reply: string | null) =>
+        invoke<void>("plugin_host_mcp_reply", {
+          id: owner.id,
+          handle,
+          request,
+          body: reply,
+        });
+      const reply = await answerMcp(handler, body);
+      try {
+        await send(reply === undefined ? null : JSON.stringify(reply));
+      } catch (error) {
+        // A reply that will not encode or is too large still answers the
+        // request, so the agent is not left waiting. When the agent has
+        // stopped waiting, this fails too.
+        await send(JSON.stringify(mcpError(requestId(body), error))).catch(
+          () => undefined,
+        );
+      }
+    };
+    const onEvent = new Channel<McpEvent>((event) => {
+      if (event.type === "closed") stopped();
+      // Only an agent given the token, which `serve` returns, can send one.
+      else void answer(event.request, event.body);
+    });
+    const server = await invoke<{ handle: number; url: string; token: string }>(
+      "plugin_host_mcp_serve",
+      { id: owner.id, revision: owner.revision, onEvent },
+    );
+    handle = server.handle;
+    const close = () =>
+      invoke<void>("plugin_host_mcp_close", {
+        id: owner.id,
+        handle: server.handle,
+      }).catch(
+        // Already stopped.
+        () => undefined,
+      );
+    let release: () => void;
+    try {
+      release = this.ctx.effect(() => () => void close(), "MCP server");
+    } catch (error) {
+      void close();
+      throw error;
+    }
+    void closed.then(() => release());
+    return Object.freeze({
+      url: server.url,
+      headers: Object.freeze([
+        Object.freeze({
+          name: "Authorization",
+          value: `Bearer ${server.token}`,
+        }),
+      ]),
+      close,
+      closed,
+    });
+  }
+
   async request(input: HostRequest): Promise<HostResponse> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri())
@@ -238,4 +328,49 @@ export class HostService extends Service implements Host {
       request: input,
     });
   }
+}
+
+/** The reply to one HTTP body, which carries one message: MCP has no batches
+ * since its 2025-06-18 revision. A handler that throws answers a request with
+ * an internal error. */
+export async function answerMcp(
+  handler: McpHandler,
+  body: string,
+): Promise<unknown> {
+  let message: unknown;
+  try {
+    message = JSON.parse(body);
+  } catch {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    };
+  }
+  try {
+    return await handler(message);
+  } catch (error) {
+    const id = (message as { id?: unknown } | null)?.id;
+    return id === undefined || id === null ? undefined : mcpError(id, error);
+  }
+}
+
+/** The id of the request in `body`, or `null` when it has none. */
+function requestId(body: string): unknown {
+  try {
+    return (JSON.parse(body) as { id?: unknown } | null)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function mcpError(id: unknown, error: unknown) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32603,
+      message: error instanceof Error ? error.message : String(error),
+    },
+  };
 }

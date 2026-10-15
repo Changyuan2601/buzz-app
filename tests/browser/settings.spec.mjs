@@ -534,6 +534,15 @@ confirmedPresence(
         sections.getByRole("button", { name: "Updates", exact: true }),
       ).toBeFocused();
       await tab();
+      // Wide Settings includes the shared sidebar resize stop before its content.
+      const handle = page.getByRole("separator", {
+        name: "Resize sidebar",
+        exact: true,
+      });
+      if (await handle.isVisible()) {
+        await expect(handle).toBeFocused();
+        await tab();
+      }
       // The current profile form begins with its avatar editor before text fields.
       await expect(
         page.getByRole("button", { name: "Edit avatar", exact: true }),

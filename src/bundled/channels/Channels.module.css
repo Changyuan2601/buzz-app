@@ -72,6 +72,14 @@
   mask: url("/buzz-mark.svg") center / contain no-repeat;
   transform: translateX(1px);
 }
+/* Berd's square mark (black, with eye and beak cutouts, from berd-oss). */
+.sidebarBrandMark[data-mark="berd"] {
+  /* A solid square reads heavier than Buzz's open mark; match its height. */
+  width: calc(var(--space-5) * 0.75);
+  height: calc(var(--space-5) * 0.75);
+  mask-image: url("/berd-mark.svg");
+  transform: none;
+}
 .destinations {
   display: flex;
   flex-direction: column;
@@ -146,16 +154,30 @@
      each row a proxy layer that lags behind fast scrolls. */
   isolation: isolate;
   padding-block: var(--sidebar-padding);
-  --channel-row-fill-start: var(--space-1);
-  --channel-row-fill-end: calc(var(--space-1) + 6px);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
+/* The brand and top destinations share the channel list's row geometry, so a
+   sidebar that does not use the channel list (Me) places them identically. */
+.channelList,
+.sidebarTop {
+  --channel-row-fill-start: var(--space-1);
+  --channel-row-fill-end: calc(var(--space-1) + 6px);
+}
+.sidebarTop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding-block-start: var(--sidebar-padding);
+  /* No scrollbar frame extension here, so the end fill omits its 6px. */
+  --channel-row-fill-end: var(--space-1);
+}
 /* Shorten every painted row symmetrically while preserving icon, label, trailing
    control, and scrollbar positions. Wrapped channel rows paint on the wrapper;
    direct destination/session rows paint on the navigation item itself. */
-.channelList [data-variant="row"] {
+.channelList [data-variant="row"],
+.sidebarTop [data-variant="row"] {
   width: calc(
     100% -
     var(--channel-row-fill-start) -
@@ -165,7 +187,8 @@
   padding-inline: calc(var(--space-2) - var(--channel-row-fill-start))
     calc(var(--space-1) + var(--space-half) - var(--channel-row-fill-start));
 }
-.channelList [data-variant="row"][data-inset] {
+.channelList [data-variant="row"][data-inset],
+.sidebarTop [data-variant="row"][data-inset] {
   padding-inline-start: calc(
     var(--space-2) +
     var(--space-6) -
@@ -575,26 +598,11 @@
     box-shadow: var(--elevation-dock);
   }
 }
-/* The shell's space-1 gutter follows the sidebar. Center the existing hit
-   target in that gutter without changing its width or the sidebar's geometry. */
-.sidebarResizeHandle[aria-orientation="vertical"] {
-  --resize-grip-opacity: 0.5;
-  translate: calc(-1 * var(--space-1) / 2) 0;
-}
-.sidebarResizeHandle[aria-orientation="vertical"]::after {
-  left: 50%;
-}
 /* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {
   .board,
   .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .sidebarResizeHandle[aria-orientation="vertical"] {
-    width: 0.25rem;
-    margin: 0;
-    visibility: hidden;
-    pointer-events: none;
   }
   .panelStack {
     grid-column: 1 / -1;

@@ -38,7 +38,7 @@ export async function meChat(
     );
   if (status() !== "ready")
     throw new Error(
-      `Couldn't read your Me chats to tell where to answer (${placement.snapshot().error ?? "not loaded"}). Try again.`,
+      `Couldn't read your Solo chats to tell where to answer (${placement.snapshot().error ?? "not loaded"}). Try again.`,
     );
   return placement.has(channelId);
 }

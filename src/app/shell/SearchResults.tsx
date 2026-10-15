@@ -755,9 +755,7 @@ export function SearchResults({
         {query.trim() &&
           !scopedChannelId &&
           (publicChannels.partial || operatorPublicChannels.partial) && (
-            <p>
-              Public channel results include only the first page of channels.
-            </p>
+            <p>Only the newest open channels were searched.</p>
           )}
         {!scopedChannelId && publicChannels.error && (
           <div>

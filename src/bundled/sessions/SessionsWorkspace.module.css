@@ -74,15 +74,6 @@
   margin: var(--space-1) var(--space-3);
 }
 
-.collectionHeading {
-  color: var(--text-subtle);
-  font-size: var(--text-caption);
-  font-weight: var(--type-weight-medium);
-  padding: var(--space-2) var(--space-2) 0;
-  text-transform: uppercase;
-  letter-spacing: var(--text-caption--letter-spacing);
-}
-
 .content {
   border-inline-start: 1px solid var(--border-standard);
   display: flex;
@@ -121,6 +112,10 @@
 .section {
   margin-block: var(--space-2);
 }
+.section[data-drop-target] {
+  border-radius: var(--radius-row);
+  background: var(--affordance-panel-hover);
+}
 .sectionHeading {
   display: flex;
   align-items: center;
@@ -128,9 +123,9 @@
   width: 100%;
   border: 0;
   background: transparent;
-  color: var(--text-unavailable);
-  min-height: var(--size-control-sm);
-  padding: var(--space-half) var(--space-2);
+  color: var(--text-subtle);
+  min-height: var(--session-action-size, var(--size-control-sm));
+  padding: var(--space-half) var(--session-row-inset, var(--space-2));
   font: inherit;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -138,9 +133,6 @@
   font-weight: var(--type-weight-normal);
   text-align: start;
   cursor: pointer;
-}
-.newSessionHeading {
-  color: var(--text-standard);
 }
 .sectionHeading span {
   overflow-wrap: anywhere;
@@ -160,39 +152,49 @@
   flex: 1;
   min-width: 0;
 }
+.sidebar .organizedRow > div > [data-variant="row"] {
+  padding-inline-start: var(--session-row-inset);
+}
 
 .sectionHeader {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  min-height: var(--session-action-size);
 }
 .sectionHeader .sectionHeading {
   flex: 1;
+  align-self: stretch;
   min-width: 0;
   width: auto;
   padding-inline-end: var(--space-1);
 }
+.sectionHeader .sectionHeading:has(.genericChevron) {
+  padding-inline-end: 0;
+}
+/* The collapse chevron sits in the rows' trailing action slot. */
+.sectionHeading .genericChevron {
+  width: var(--session-action-size);
+  flex-basis: var(--session-action-size);
+  margin-inline-end: var(--session-trailing-offset);
+}
+.sectionActions:empty {
+  display: none;
+}
 
 .sidebar {
   --section-icon-size: 0.9375rem;
-}
-.sectionIcon {
-  display: grid;
-  flex-shrink: 0;
-  width: var(--space-5);
-  height: var(--space-6);
-  place-items: center;
-}
-.sectionIcon svg {
-  width: var(--section-icon-size);
-  height: var(--section-icon-size);
-}
-.sectionIcon > * {
-  grid-area: 1 / 1;
-}
-.chevronGlyph {
-  display: flex;
-  opacity: 0;
+  /* Rows and section headers share one height and one trailing slot. */
+  /* The compact sidebar row height (Channels' .sidebar rows), as in Berd. */
+  --session-action-size: calc(var(--space-6) + var(--space-1));
+  /* Berd's 12px row inset: leading text and trailing glyphs share it. */
+  --session-row-inset: var(--space-3);
+  /* A 1rem glyph centered in the trailing slot lands on the row inset. */
+  --session-trailing-offset: calc(
+    var(--session-row-inset) -
+    (var(--session-action-size) - 1rem) /
+    2
+  );
 }
 [data-session-row-action] {
   opacity: 0;
@@ -201,31 +203,27 @@
 .organizedRow [data-session-row-action] {
   width: var(--session-action-size);
   height: var(--session-action-size);
+  margin-inline-end: var(--session-trailing-offset);
 }
-.sectionHeader [data-session-row-action],
-.organizedRow [data-session-row-action] {
-  color: var(--text-unavailable);
+/* Project actions sit in flow beside the row menu, ending on the row inset. */
+.sectionHeader [data-session-row-action] {
+  width: var(--session-action-size);
+  height: var(--session-action-size);
 }
 .sectionHeader:is(
     :hover,
-    :focus-within,
+    :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
   [data-session-row-action],
 .organizedRow:is(
     :hover,
-    :focus-within,
+    :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
   [data-session-row-action] {
   opacity: 1;
   pointer-events: auto;
-}
-.sectionHeader:is(:hover, :focus-within) .folderGlyph {
-  opacity: 0;
-}
-.sectionHeader:is(:hover, :focus-within) .chevronGlyph {
-  opacity: 1;
 }
 @media (hover: none) {
   [data-session-row-action] {
@@ -240,12 +238,12 @@
 }
 .organizedRow:is(
   :hover,
-  :focus-within,
+  :has(:focus-visible),
   :has([aria-expanded="true"][aria-haspopup="menu"])
 ):not(:has([aria-current="page"])),
 .sectionHeader:is(
   :hover,
-  :focus-within,
+  :has(:focus-visible),
   :has([aria-expanded="true"][aria-haspopup="menu"])
 ) {
   background: var(--affordance-panel-hover);
@@ -264,7 +262,7 @@
   overflow: hidden;
   white-space: nowrap;
 }
-.sectionHeading > span:last-child {
+.sectionName {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -291,18 +289,8 @@
 .sectionHeading[aria-expanded="false"] .genericChevron {
   transform: rotate(-90deg);
 }
-.chevronGlyph svg {
-  transform: rotate(-90deg);
-}
-.sectionHeading[aria-expanded="true"] .chevronGlyph svg {
-  transform: rotate(0deg);
-}
-.section[data-animate] .chevronGlyph svg {
-  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
-}
 @media (prefers-reduced-motion: reduce) {
-  .section[data-animate] .sectionPanel,
-  .section[data-animate] .chevronGlyph svg {
+  .section[data-animate] .sectionPanel {
     transition: none;
   }
 }
@@ -316,27 +304,17 @@
   );
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .sidebar [data-session-row-action]:hover:not(:disabled, [data-disabled]) {
-    color: var(--text-standard);
-  }
-}
-.sidebar
-  [data-session-row-action]:is(:focus-visible, [aria-expanded="true"]):not(
-    :disabled,
-    [data-disabled]
-  ) {
-  color: var(--text-standard);
-}
-
 /* Activity and the row menu share a fixed trailing slot. */
 .organizedRow {
   position: relative;
-  --session-action-size: var(--size-control);
 }
 .organizedRow :is([data-channel-priority], [data-channel-activity]) {
   position: absolute;
-  inset-inline-end: calc((var(--session-action-size) - 0.375rem) / 2);
+  inset-inline-end: calc(
+    (var(--session-action-size) - 0.375rem) /
+    2 +
+    var(--session-trailing-offset)
+  );
   top: 50%;
   transform: translateY(-50%);
   margin: 0;
@@ -344,7 +322,7 @@
 }
 .organizedRow:is(
     :hover,
-    :focus-within,
+    :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
   :is([data-channel-priority], [data-channel-activity]) {
@@ -356,27 +334,52 @@
   }
 }
 
-.section[data-project] .folderGlyph {
-  display: none;
-}
-.section[data-project] .chevronGlyph {
-  opacity: 1;
-}
-.section[data-project] .organizedRow {
-  margin-inline-start: var(--space-5);
-}
-.section[data-project] .sectionHeader {
+/* Section headers end in the collapse chevron. New chat sits just left of
+   it and a project's row menu left of that, revealed on hover without
+   reserving space. */
+.sectionHeader {
   position: relative;
 }
-.section[data-project] .sectionActions {
+.sectionHeader > [data-session-overflow-action],
+.sectionHeader .sectionActions {
   position: absolute;
-  inset-inline-end: 0;
+  top: 50%;
+  translate: 0 -50%;
+  margin-inline-end: 0;
+}
+.sectionHeader .sectionActions {
+  inset-inline-end: calc(
+    var(--session-trailing-offset) +
+    var(--session-action-size)
+  );
+}
+.sectionHeader > [data-session-overflow-action] {
+  inset-inline-end: calc(
+    var(--session-trailing-offset) +
+    2 *
+    var(--session-action-size)
+  );
+}
+.sectionHeader:is(
+    :hover,
+    :has(:focus-visible),
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  )
+  .sectionName {
+  margin-inline-end: calc(2 * var(--session-action-size));
+}
+
+/* Touch exposes actions without hover, so names need the same space. */
+@media (hover: none) {
+  .sectionHeader .sectionName {
+    margin-inline-end: calc(2 * var(--session-action-size));
+  }
 }
 
 /* Working occupies the same trailing action slot as attention, as in Messages. */
 .organizedRow [data-me-working-indicator] {
   position: absolute;
-  inset-inline-end: 0;
+  inset-inline-end: var(--session-trailing-offset);
   top: 50%;
   transform: translateY(-50%);
   width: var(--session-action-size);
@@ -385,7 +388,7 @@
 @media (hover: hover) {
   .organizedRow:is(
       :hover,
-      :focus-within,
+      :has(:focus-visible),
       :has([aria-expanded="true"][aria-haspopup="menu"])
     )
     [data-me-working-indicator] {
@@ -395,7 +398,10 @@
 @media (hover: none) {
   /* Touch always shows the overflow action; reserve a separate visible slot. */
   .organizedRow [data-me-working-indicator] {
-    inset-inline-end: var(--session-action-size);
+    inset-inline-end: calc(
+      var(--session-action-size) +
+      var(--session-trailing-offset)
+    );
   }
   .organizedRow:has([data-channel-working]) .sessionRow {
     padding-inline-end: var(--session-action-size);

@@ -454,7 +454,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     exact: true,
   });
   const handle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
   });
   // Pseudo-element help must paint outside the wrapper for pointer and keyboard.
   for (const activate of [

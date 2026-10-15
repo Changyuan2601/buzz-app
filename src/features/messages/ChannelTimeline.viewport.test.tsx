@@ -52,6 +52,93 @@ afterEach(() => {
   localStorage.clear();
 });
 
+it("keeps membership notices visible in personal chats", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const viewer = keypair();
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: keypair().pubkey,
+    media: () => undefined,
+    query: async () => [],
+  });
+  const row: ChannelMessage = {
+    id: "joined",
+    channelId: "alpha",
+    authorId: viewer.pubkey,
+    content: "",
+    createdAt: 1,
+    membership: {
+      type: "member_joined",
+      actor: viewer.pubkey,
+      target: viewer.pubkey,
+    },
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+  };
+  const window: ChannelWindow = {
+    channelId: "alpha",
+    rows: [row],
+    status: "ready",
+    hasMore: false,
+    loadingOlder: false,
+    freshness: "verified",
+    error: undefined,
+  };
+  try {
+    const view = render(
+      <ChannelTimeline
+        channelId="alpha"
+        scope="membership"
+        viewer={viewer.pubkey}
+        queries={owner.session}
+        window={window}
+        chatPresentation
+        onOpenLink={() => false}
+      />,
+    );
+    expect(screen.getByText("You joined")).toBeVisible();
+    view.rerender(
+      <ChannelTimeline
+        channelId="alpha"
+        scope="membership"
+        viewer={viewer.pubkey}
+        queries={owner.session}
+        window={{
+          ...window,
+          rows: [
+            {
+              ...row,
+              id: "left",
+              membership: {
+                type: "member_left",
+                actor: viewer.pubkey,
+                target: viewer.pubkey,
+              },
+            },
+          ],
+        }}
+        chatPresentation
+        onOpenLink={() => false}
+      />,
+    );
+    expect(screen.getByText("You left the channel")).toBeVisible();
+    view.unmount();
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([0, 600])(
   "prepend compensation requires a measured virtualizer viewport (%s)",
   (size) => {

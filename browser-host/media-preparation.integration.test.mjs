@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { expect, test } from "vitest";
 import { prepareMedia } from "./media-preparation.mjs";
@@ -54,3 +56,56 @@ test("tiled HEIC preparation preserves the full image dimensions", async () => {
     },
   );
 }, 30_000);
+
+test("video preparation shrinks Retina screen recordings into the relay envelope", async () => {
+  if (mediaToolVersion("ffmpeg") === null) return;
+  if (mediaToolVersion("ffprobe") === null) return;
+  const directory = await mkdtemp(join(tmpdir(), "buzz-envelope-"));
+  try {
+    // A full-screen Retina capture: short edge 2234 > 2160, and a naive
+    // scale would give an odd 3341 width that padding blackens.
+    const input = join(directory, "recording.mov");
+    execFileSync("ffmpeg", [
+      "-y",
+      "-nostdin",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=blue:s=3456x2234:r=1",
+      "-t",
+      "1",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      input,
+    ]);
+    const req = Readable.from([await readFile(input)]);
+    req.headers = { "x-attachment-name": "recording.mov" };
+    await prepareMedia(
+      req,
+      new AbortController().signal,
+      async (path, type) => {
+        expect(type).toBe("video/mp4");
+        const dimensions = execFileSync(
+          "ffprobe",
+          [
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            path,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(dimensions.trim()).toBe("3342,2160");
+      },
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);

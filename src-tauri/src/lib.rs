@@ -26,6 +26,7 @@ mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
+mod host_mcp;
 mod host_process;
 mod host_request;
 mod mesh_compute;
@@ -68,6 +69,9 @@ use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
 use host_command::plugin_host_run_command;
+use host_mcp::{
+    plugin_host_mcp_close, plugin_host_mcp_reply, plugin_host_mcp_serve, HostMcpServers,
+};
 use host_process::{
     plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
 };
@@ -475,6 +479,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_process_spawn,
         plugin_host_process_write,
         plugin_host_process_kill,
+        plugin_host_mcp_serve,
+        plugin_host_mcp_reply,
+        plugin_host_mcp_close,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
@@ -697,6 +704,7 @@ pub fn run() {
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(HostProcesses::default())
+        .manage(HostMcpServers::default())
         .manage(OAuthCallbackHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
@@ -739,6 +747,7 @@ pub fn run() {
                 // Processes belong to the page that started them.
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<mesh_compute::MeshHost>().cancel_agent_turns();
+                webview.state::<HostMcpServers>().stop_all();
             }
             browser::page_load(webview, payload);
         })
@@ -779,6 +788,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();
     app.state::<HostProcesses>().shutdown();
+    app.state::<HostMcpServers>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");

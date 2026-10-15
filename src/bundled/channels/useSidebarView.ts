@@ -1,27 +1,12 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
-export const CHANNEL_SIDEBAR_DEFAULT_WIDTH = 260;
-export const CHANNEL_SIDEBAR_MIN_WIDTH = 220;
-export const CHANNEL_SIDEBAR_MAX_WIDTH = 520;
-
-export function clampChannelSidebarWidth(width: number) {
-  return Math.min(
-    CHANNEL_SIDEBAR_MAX_WIDTH,
-    Math.max(CHANNEL_SIDEBAR_MIN_WIDTH, Math.round(width)),
-  );
-}
-
 type SidebarView = {
   collapsed: string[];
   scrollTop: number;
-  width: number;
   /** The destination whose sidebar entry the saved position shows. */
   location?: string | undefined;
 };
-
-// Preserve explicit resize intent across route remounts when storage is unavailable.
-const widths = new Map<string, number>();
 
 function restore(scope: string): SidebarView {
   const raw = readView<unknown>(scope, "channel-sidebar", null);
@@ -37,18 +22,8 @@ function restore(scope: string): SidebarView {
       saved.scrollTop >= 0
         ? saved.scrollTop
         : 0,
-    width:
-      widths.get(scope) ??
-      (typeof saved.width === "number" && Number.isFinite(saved.width)
-        ? clampChannelSidebarWidth(saved.width)
-        : CHANNEL_SIDEBAR_DEFAULT_WIDTH),
     location: typeof saved.location === "string" ? saved.location : undefined,
   };
-}
-
-/** Scoped to the ready community/viewer workspace; no roster or message cache. */
-export function readChannelSidebarWidth(scope: string): number {
-  return restore(scope).width;
 }
 
 /**
@@ -185,7 +160,11 @@ export function useSidebarView(
           ...intent.current,
           scrollTop: list.current.scrollTop,
         };
-      writeView(scope, "channel-sidebar", intent.current);
+      // ResizableSidebar owns the record's width; keep its latest value.
+      writeView(scope, "channel-sidebar", {
+        ...readView<object | null>(scope, "channel-sidebar", null),
+        ...intent.current,
+      });
     };
     window.addEventListener("pagehide", save);
     return () => {
@@ -215,14 +194,6 @@ export function useSidebarView(
   return {
     list,
     collapsed: view.collapsed,
-    width: view.width,
     toggle,
-    setWidth: (width: number) => {
-      const next = clampChannelSidebarWidth(width);
-      if (intent.current.width === next) return;
-      widths.set(scope, next);
-      update({ ...intent.current, width: next });
-      writeView(scope, "channel-sidebar", { ...intent.current, width: next });
-    },
   };
 }

@@ -222,10 +222,14 @@ function AttachmentItem({
               onError={() => setFailedSource(source)}
             />
           ) : (
+            // Not `muted`: this still preview never plays. WebKitGTK stops a
+            // muted video's pipeline whenever it leaves the viewport and
+            // reloads it on return. A stop during that reload can deadlock
+            // the page (MediaPlayerPrivateGStreamer::managePlayerSuspend).
+            // biome-ignore lint/a11y/useMediaCaption: silent still preview that never plays.
             <video
               key={source}
               src={videoSource}
-              muted
               playsInline
               preload="metadata"
               onError={() => setFailedSource(source)}

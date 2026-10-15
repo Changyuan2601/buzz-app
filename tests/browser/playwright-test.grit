@@ -1,0 +1,47 @@
+language js
+
+// Browser journeys take `test` from playwright-test.mjs, whose teardown stops
+// routes still in flight before Playwright closes the page or context. The
+// package's default export and namespace also carry `test`.
+or {
+  `import { $names } from $source` as $span where {
+    $source <: or {
+      `"@playwright/test"`,
+      `'@playwright/test'`
+    },
+    $names <: contains or {
+      `test`,
+      `test as $_`
+    },
+    register_diagnostic(span=$span, message="Import test from tests/browser/playwright-test.mjs.", severity="error")
+  },
+  `export { $names } from $source` where {
+    $source <: or {
+      `"@playwright/test"`,
+      `'@playwright/test'`
+    },
+    $names <: r".*\btest\b.*",
+    register_diagnostic(span=$names, message="Import test from tests/browser/playwright-test.mjs.", severity="error")
+  },
+  JsImportDefaultClause() as $span where {
+    $span <: contains or {
+      `"@playwright/test"`,
+      `'@playwright/test'`
+    },
+    register_diagnostic(span=$span, message="Import test from tests/browser/playwright-test.mjs.", severity="error")
+  },
+  JsImportCombinedClause() as $span where {
+    $span <: contains or {
+      `"@playwright/test"`,
+      `'@playwright/test'`
+    },
+    register_diagnostic(span=$span, message="Import test from tests/browser/playwright-test.mjs.", severity="error")
+  },
+  JsImportNamespaceClause() as $span where {
+    $span <: contains or {
+      `"@playwright/test"`,
+      `'@playwright/test'`
+    },
+    register_diagnostic(span=$span, message="Import test from tests/browser/playwright-test.mjs.", severity="error")
+  }
+}

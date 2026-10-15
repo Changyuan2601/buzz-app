@@ -280,6 +280,8 @@ export function useChannelTabState(
     (
       visit: string,
       routed?: { channelId: string; messageId: string; rootId: string },
+      /** A new visit keeps the current selection instead of the conversation. */
+      keep = false,
     ) =>
       update((state) => {
         if (state.visit === visit) return state;
@@ -297,7 +299,9 @@ export function useChannelTabState(
         const saved = visits?.[visit];
         return saved
           ? { ...next, ...saved }
-          : { ...next, mainSelected: undefined };
+          : keep
+            ? next
+            : { ...next, mainSelected: undefined };
       }),
     [update],
   );

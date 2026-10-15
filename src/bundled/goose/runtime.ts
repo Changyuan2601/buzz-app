@@ -1,0 +1,574 @@
+// Turns Agents deliveries into goose turns. Each agent of this type has its
+// own `goose-acp` process; a delivery becomes a prompt in the harness format,
+// sent to the ACP session for its conversation; a watch or timer wake runs as
+// a one-off turn in a new session, in its Interest's lane. The run returns once
+// the turn is handed over, so one agent works in several conversations at once.
+// goose acts in Buzz with the in-process Buzz tools over loopback HTTP MCP,
+// signed by the agent's native-held key; the runtime only reports a turn that
+// fails.
+import type { Context, Memory } from "../../buzz-mcp/client";
+import { respond } from "../../buzz-mcp/rpc";
+import { appClient } from "../../buzz-mcp/app-client";
+import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  fromOwner,
+  type Agent,
+  type AgentHandle,
+  type Delivery,
+  type StandaloneTurn,
+  type TurnResult,
+} from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
+import type { Host } from "../../features/host/service";
+import type { EventData } from "../../features/relay/events";
+import type { RelayData } from "../../features/relay/service";
+import { threadReference } from "../../features/relay/thread-reference";
+import {
+  CONTEXT_LIMIT,
+  type Scope,
+  steerPrompt,
+  systemPrompt,
+  turnPrompt,
+} from "../claude-code/prompt";
+import type { ServeMcp, Spawn, ToolServer } from "./goose";
+import { AgentSessions } from "./sessions";
+
+export type Config = Readonly<{
+  /** A model the provider offers; empty uses the goose config's. */
+  model: string;
+  /** A goose provider; empty uses the goose config's. */
+  provider: string;
+  instructions: string;
+  /** The agent's working directory, absolute or `~/…`. */
+  workspace: string;
+  /** Whether each thread is its own session, or the whole channel is one. */
+  scope: Scope;
+}>;
+export const DEFAULT_CONFIG: Config = Object.freeze({
+  model: "",
+  provider: "",
+  instructions: "",
+  workspace: "~/.buzz",
+  scope: "thread",
+});
+export const config = (value: unknown): Config => ({
+  ...DEFAULT_CONFIG,
+  ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+});
+
+/** How long a read of the agent's core memory is reused. */
+const MEMORY_TTL_MS = 5 * 60_000;
+const MEMORY_TIMEOUT_MS = 5_000;
+const NAMES_TIMEOUT_MS = 2_000;
+const CHAT = [9, 40002];
+const TITLE_LIMIT = 80;
+
+/** A session's title in goose, as harness agents name theirs:
+ * `Agent · #channel`, and the thread's root when each thread is a session. */
+export function sessionTitle(
+  agent: string | undefined,
+  place: string,
+  root?: string,
+) {
+  const suffix = root ? ` · ${root.slice(0, 8)}` : "";
+  const title = `${agent?.trim() || "Buzz agent"} · ${place}`
+    .replace(/\s+/g, " ")
+    .slice(0, TITLE_LIMIT - suffix.length)
+    .trim();
+  return `${title}${suffix}`;
+}
+
+type Entry = {
+  sessions: AgentSessions;
+  config: Config;
+  /** The team sections of the latest run; a change reopens idle sessions. */
+  team: string;
+  /** The agent's name, for its prompt; a rename reopens idle sessions. */
+  name?: string;
+  memory?: { value: string | null | undefined; at: number };
+  /** The agent's handle from its latest delivery, for the tools to act with. */
+  handle?: AgentHandle;
+  /** Where each conversation's tools default to: its latest turn's thread. */
+  contexts: Map<string, Context>;
+};
+
+/** The environment that picks the agent's model and provider over the goose
+ * config's. */
+const env = ({ model, provider }: Config) => ({
+  ...(model.trim() ? { GOOSE_MODEL: model.trim() } : {}),
+  ...(provider.trim() ? { GOOSE_PROVIDER: provider.trim() } : {}),
+});
+
+export class GooseRuntime {
+  private readonly agents = new Map<string, Entry>();
+  private readonly reading = new Map<string, Promise<readonly Memory[]>>();
+  private readonly listeners = new Set<() => void>();
+  private readonly views = new Map<
+    string,
+    ReturnType<AgentSessions["snapshot"]>
+  >();
+
+  constructor(
+    private readonly host: Host,
+    /** The owner's connection to each agent's own community. */
+    private readonly relay: (pubkey: string) => RelayData | undefined,
+  ) {}
+
+  private get spawn(): Spawn {
+    const spawn = this.host.spawn?.bind(this.host);
+    if (!spawn) throw new Error("goose agents run only in the desktop app");
+    return spawn;
+  }
+  private get serve(): ServeMcp {
+    const serve = this.host.serveMcp?.bind(this.host);
+    if (!serve) throw new Error("goose agents run only in the desktop app");
+    return serve;
+  }
+
+  /** Brings the runtime in line with this type's agents: changed settings
+   * reopen idle sessions, and removed agents stop. */
+  sync(agents: readonly Agent[]) {
+    const current = new Set(agents.map((agent) => agent.pubkey));
+    for (const [pubkey, entry] of this.agents)
+      if (!current.has(pubkey)) {
+        entry.sessions.dispose();
+        this.agents.delete(pubkey);
+      }
+    for (const agent of agents) {
+      const next = config(agent.config);
+      const entry = this.agents.get(agent.pubkey);
+      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
+      else if (
+        JSON.stringify(entry.config) !== JSON.stringify(next) ||
+        entry.name !== agent.name
+      ) {
+        entry.config = next;
+        entry.name = agent.name;
+        entry.sessions.reconfigure();
+      }
+    }
+    this.notify();
+  }
+
+  /** Conversations each agent has a session for, for its status view. */
+  sessions(pubkey: string) {
+    let view = this.views.get(pubkey);
+    if (!view) {
+      view = this.agents.get(pubkey)?.sessions.snapshot() ?? [];
+      this.views.set(pubkey, view);
+    }
+    return view;
+  }
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  private notify() {
+    this.views.clear();
+    for (const listener of this.listeners) listener();
+  }
+
+  dispose() {
+    for (const entry of this.agents.values()) entry.sessions.dispose();
+    this.agents.clear();
+  }
+
+  async run({
+    trigger,
+    agent,
+    config: raw,
+    channelId,
+    team,
+    workingUntil,
+    ignored,
+    signal,
+    step,
+    acknowledged,
+    superseded,
+  }: Delivery) {
+    const settings = config(raw);
+    // Watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention") return ignored?.();
+    // goose runs commands as you; mentions need owner or delegated authority.
+    {
+      const snapshot = this.relay(agent.pubkey)?.snapshot();
+      if (
+        !(await fromOwner(trigger.event, agent.owner, {
+          agent: agent.pubkey,
+          authority:
+            snapshot?.status === "ready"
+              ? snapshot.session.workflowAuthority
+              : undefined,
+          profiles:
+            snapshot?.status === "ready"
+              ? snapshot.session.profiles
+              : undefined,
+        }))
+      ) {
+        ignored?.();
+        return;
+      }
+      signal.throwIfAborted();
+    }
+    const entry = this.entry(agent.pubkey, settings);
+    entry.handle = agent;
+    entry.team = team ?? "";
+    void this.memory(agent.pubkey, entry);
+    const { event } = trigger;
+    const channel =
+      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    if (!channel) return;
+    // Frozen for the turn: its key, prompt, tools and posts all follow it.
+    const topLevel = await meChat(
+      () => this.relay(agent.pubkey),
+      agent.owner,
+      channel,
+      signal,
+    );
+    // `fresh` is for a session that has been shown nothing yet.
+    const prompt = async (fresh: boolean) => {
+      const turn = await this.turn(
+        entry,
+        agent.pubkey,
+        event,
+        channel,
+        topLevel,
+        fresh,
+      );
+      const { channel: where } = turn;
+      return {
+        key: turn.key,
+        place: where.name
+          ? `#${where.name}`
+          : where.dm
+            ? "DM"
+            : where.id.slice(0, 8),
+        text: this.review(
+          entry,
+          turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
+        ),
+      };
+    };
+    const { key, text, place } = await prompt(false);
+    entry.contexts.set(
+      key,
+      topLevel
+        ? { channel, topLevel }
+        : key === channel
+          ? { channel }
+          : { channel, root: threadReference(event)?.rootId ?? event.id },
+    );
+    const done = entry.sessions.deliver(key, text, event.created_at, {
+      steer: steerPrompt(text),
+      fresh: async () => (await prompt(true)).text,
+      title: sessionTitle(entry.name, place, key.split("/")[1]),
+      activityScope: topLevel
+        ? channel
+        : (threadReference(event)?.rootId ?? event.id),
+      ...(step ? { step } : {}),
+      ...(acknowledged ? { acknowledged } : {}),
+      ...(superseded ? { superseded } : {}),
+    });
+    workingUntil(done);
+    this.notify();
+    void done
+      .then((result) => {
+        if (!result.ok)
+          return this.report(
+            agent,
+            channel,
+            event,
+            result.error ?? "",
+            topLevel,
+          );
+        // An answer goose wrote without `send` is posted for it, so the
+        // thread is not left waiting.
+        if (result.text)
+          return this.post(agent, channel, event, result.text, topLevel);
+      })
+      .catch((error) => console.warn("goose turn failed", error))
+      .finally(() => this.notify());
+  }
+
+  /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
+   * session that joins no conversation. */
+  async runOnce({
+    delivery,
+    key,
+    prompt,
+  }: StandaloneTurn): Promise<TurnResult> {
+    const { agent, team } = delivery;
+    const entry = this.entry(agent.pubkey, config(delivery.config));
+    entry.handle = agent;
+    entry.team = team ?? "";
+    void this.memory(agent.pubkey, entry);
+    const done = entry.sessions.runOnce(key, prompt, {
+      title: sessionTitle(entry.name, key),
+    });
+    this.notify();
+    return done.finally(() => this.notify());
+  }
+
+  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
+  private review(entry: Entry, text: string) {
+    const note = turnNote(entry.handle);
+    return note ? `${text}\n\n${note}` : text;
+  }
+
+  /** Says in the thread that a turn failed, so nobody waits on it. */
+  private report(
+    agent: AgentHandle,
+    channel: string,
+    event: EventData,
+    error: string,
+    topLevel: boolean,
+  ) {
+    return this.post(
+      agent,
+      channel,
+      event,
+      `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+      topLevel,
+      [["p", agent.owner]],
+    );
+  }
+
+  /** Replies as the agent in the event's thread, or at a Me chat's top
+   * level. */
+  private post(
+    agent: AgentHandle,
+    channel: string,
+    event: EventData,
+    content: string,
+    topLevel: boolean,
+    tags: string[][] = [],
+  ) {
+    return agent
+      .publish({
+        kind: 9,
+        content,
+        tags: [
+          ["h", channel],
+          ...(topLevel
+            ? []
+            : [["e", threadReference(event)?.rootId ?? event.id, "", "reply"]]),
+          ...tags,
+        ],
+      })
+      .catch((failure) => console.warn("goose could not post", failure));
+  }
+
+  /** Where the event's turn goes, and what its prompt needs. */
+  private async turn(
+    entry: Entry,
+    self: string,
+    event: EventData,
+    channelId: string,
+    topLevel: boolean,
+    fresh = false,
+  ) {
+    const snapshot = this.relay(self)?.snapshot();
+    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
+    const summary =
+      session?.channels.list().channels.find((item) => item.id === channelId) ??
+      session?.channels.get?.(channelId);
+    const dm = summary?.channelType === "dm";
+    const thread = threadReference(event);
+    const rootId = thread?.rootId ?? event.id;
+    // A Me chat is one conversation, as a DM is.
+    const key =
+      topLevel || dm || entry.config.scope === "channel"
+        ? channelId
+        : `${channelId}/${rootId}`;
+    // The conversation it was admitted to, not the scope as it is now.
+    const scope: Scope = key === channelId ? "channel" : "thread";
+    const seen = fresh ? 0 : entry.sessions.seen(key);
+    let earlier: readonly EventData[] = [];
+    if (session && (thread || dm || topLevel))
+      try {
+        const events = await session.read(
+          thread && !topLevel
+            ? [
+                { ids: [rootId], limit: 1 },
+                { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
+              ]
+            : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
+          { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
+        );
+        earlier = events
+          .filter(
+            (item) =>
+              CHAT.includes(item.kind) &&
+              item.id !== event.id &&
+              item.created_at <= event.created_at,
+          )
+          .sort((a, b) => a.created_at - b.created_at);
+      } catch (error) {
+        console.warn("goose could not read the conversation", error);
+      }
+    // A session already has its own replies; a new one is shown them too.
+    const unseen = earlier.filter(
+      (item) => item.created_at > seen && (!seen || item.pubkey !== self),
+    );
+    const pubkeys = [
+      ...new Set([
+        event.pubkey,
+        ...unseen.map((item) => item.pubkey),
+        ...event.tags
+          .filter((tag) => tag[0] === "p")
+          .map((tag) => tag[1] ?? ""),
+      ]),
+    ].filter(Boolean);
+    if (session)
+      await Promise.race([
+        session.profiles.ensure(pubkeys, "foreground").catch(() => undefined),
+        new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
+      ]);
+    const members = summary?.members ?? [];
+    return {
+      key,
+      event,
+      scope,
+      topLevel,
+      channel: {
+        id: channelId,
+        ...(summary?.name ? { name: summary.name } : {}),
+        dm,
+      },
+      ...(thread ? { thread } : {}),
+      context: unseen,
+      total: earlier.length + 1,
+      name: (pubkey: string) =>
+        session?.names.resolve(pubkey, undefined, members) ??
+        session?.profiles.snapshot().get(pubkey)?.name ??
+        undefined,
+    };
+  }
+
+  private entry(pubkey: string, initial: Config): Entry {
+    const existing = this.agents.get(pubkey);
+    if (existing) return existing;
+    const entry: Entry = {
+      config: initial,
+      team: "",
+      sessions: undefined as unknown as AgentSessions,
+      contexts: new Map(),
+    };
+    // One process serves every session, so the tools read the settings, the
+    // handle and the conversation's place as they are when called.
+    const tools: ToolServer = async (conversation, message) => {
+      const handle = entry.handle;
+      const client = handle && {
+        ...appClient(handle, {
+          spawn: this.spawn,
+          cwd: entry.config.workspace,
+          memories: () => this.memories(pubkey),
+        }),
+        remember: async (slug: string, body: string, after: number) => {
+          await handle.remember(slug, body, after);
+          if (slug === "core") delete entry.memory;
+        },
+      };
+      const context = (conversation && entry.contexts.get(conversation)) || {};
+      return respond(client, context, message);
+    };
+    entry.sessions = new AgentSessions({
+      spawn: (id, options) => this.spawn(id, options),
+      tools,
+      serve: (handler) => this.serve(handler),
+      onChange: () => this.notify(),
+      processFingerprint: () =>
+        JSON.stringify([
+          entry.config.workspace,
+          entry.config.model,
+          entry.config.provider,
+        ]),
+      fingerprint: () =>
+        JSON.stringify([
+          entry.config.workspace,
+          entry.config.instructions,
+          entry.config.scope,
+          entry.team,
+          entry.name,
+        ]),
+      launch: async () => {
+        const { workspace, instructions, scope } = entry.config;
+        const memory = await this.memory(pubkey, entry);
+        return {
+          workspace,
+          env: env(entry.config),
+          systemPrompt: systemPrompt({
+            scope,
+            cwd: workspace,
+            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
+            instructions,
+            team: entry.team,
+            ...(memory === undefined ? {} : { memory }),
+          }),
+        };
+      },
+    });
+    this.agents.set(pubkey, entry);
+    return entry;
+  }
+
+  /** The agent's `core` memory, as a new session's prompt carries it: its
+   * text, `null` when it has none, or undefined when it could not be read. */
+  private async memory(pubkey: string, entry: Entry) {
+    if (entry.memory && Date.now() - entry.memory.at < MEMORY_TTL_MS)
+      return entry.memory.value;
+    let value: string | null | undefined;
+    try {
+      const memories = await this.memories(pubkey);
+      value = memories.find((memory) => memory.slug === "core")?.body ?? null;
+    } catch (error) {
+      console.warn("goose could not read the agent's memory", error);
+    }
+    entry.memory = { value, at: Date.now() };
+    return value;
+  }
+
+  /** The agent's memory, read back through the owner's session: it is
+   * encrypted to the owner, so no agent key is needed to read it. */
+  private memories(pubkey: string): Promise<readonly Memory[]> {
+    let reading = this.reading.get(pubkey);
+    if (!reading) {
+      reading = this.readMemories(pubkey).finally(() =>
+        this.reading.delete(pubkey),
+      );
+      this.reading.set(pubkey, reading);
+    }
+    return reading;
+  }
+  private async readMemories(pubkey: string): Promise<readonly Memory[]> {
+    const snapshot = this.relay(pubkey)?.snapshot();
+    if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
+    const view = snapshot.session.agentMemories.open(pubkey);
+    try {
+      const done = new Promise<void>((resolve) => {
+        const settled = () =>
+          !["idle", "loading"].includes(view.snapshot().status) && resolve();
+        view.subscribe(settled);
+        settled();
+      });
+      void view.refresh();
+      await Promise.race([
+        done,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Memory read timed out")),
+            MEMORY_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+      const { status, listing } = view.snapshot();
+      if (status !== "ready" || !listing)
+        throw new Error(`Memory unavailable (${status})`);
+      return listing.entries;
+    } finally {
+      view.dispose();
+    }
+  }
+}

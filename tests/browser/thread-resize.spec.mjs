@@ -18,9 +18,7 @@ test("thread stays beside the channel whenever both panes fit", async ({
   app,
 }, testInfo) => {
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("Home");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
   const channel = page.getByRole("article", {
     name: "Conversation",
     exact: true,

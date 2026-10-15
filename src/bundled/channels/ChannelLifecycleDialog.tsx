@@ -35,6 +35,13 @@ const copy = {
   },
 } as const;
 
+// Enter confirms reversible actions; irreversible ones default to Cancel.
+const reversible = new Set<ChannelLifecycleAction>([
+  "archive",
+  "unarchive",
+  "hide",
+]);
+
 export function ChannelLifecycleDialog({
   channelId,
   channelName,
@@ -51,6 +58,8 @@ export function ChannelLifecycleDialog({
   completed(): void;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const confirms = reversible.has(action);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [refreshRequired, setRefreshRequired] = useState(false);
@@ -60,6 +69,10 @@ export function ChannelLifecycleDialog({
       operation.current?.abort();
     };
   }, []);
+  // Disabling a focused confirmation would otherwise drop focus to the page.
+  useEffect(() => {
+    if (refreshRequired) cancel.current?.focus();
+  }, [refreshRequired]);
   const submit = async () => {
     if (operation.current || refreshRequired) return;
     const controller = new AbortController();
@@ -84,7 +97,7 @@ export function ChannelLifecycleDialog({
       open
       dismissOnOutsideClick
       preventClose={busy}
-      initialFocus={cancel}
+      initialFocus={confirms ? confirm : cancel}
       // The sidebar owns both cancellation and completed-navigation focus.
       finalFocus={false}
       onOpenChange={(open) => {
@@ -94,12 +107,25 @@ export function ChannelLifecycleDialog({
       description={copy[action].detail}
       actions={
         <>
-          <Button ref={cancel} type="button" disabled={busy} onClick={close}>
+          <Button
+            ref={cancel}
+            type="button"
+            variant={confirms ? "subtle" : "prominent"}
+            disabled={busy}
+            onClick={close}
+          >
             Cancel
           </Button>
           <Button
+            ref={confirm}
             type="button"
-            variant={action === "delete" ? "destructive" : "prominent"}
+            variant={
+              action === "delete"
+                ? "destructive"
+                : confirms
+                  ? "prominent"
+                  : "subtle"
+            }
             loading={busy}
             disabled={refreshRequired}
             onClick={() => void submit()}

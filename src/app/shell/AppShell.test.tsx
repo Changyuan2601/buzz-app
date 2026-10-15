@@ -91,7 +91,8 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   });
   const navigation = document.getElementById("shell-navigation");
   const rendered = renders.mock.calls.length;
-  const row = () => within(content).getByRole("button", { name: "Messages" });
+  const row = () =>
+    within(content).getByRole("button", { name: "Multiplayer" });
   expect(row()).toHaveAttribute("aria-current", "page");
 
   for (const [label, hidden] of [
@@ -240,7 +241,7 @@ it("keeps built-in sidebar controls available before page contributions load", (
 
   rerender(shell("buzz.me/me"));
   expect(
-    screen.getByRole("button", { name: "Hide Me sidebar" }),
+    screen.getByRole("button", { name: "Hide Solo sidebar" }),
   ).toHaveAttribute("aria-expanded", "true");
 });
 
@@ -636,7 +637,7 @@ it.each([false, true])(
       name: compact ? "Header pages" : "Topbar pages",
     });
     const role = compact ? "button" : "tab";
-    const messages = within(nav).getByRole(role, { name: "Messages" });
+    const messages = within(nav).getByRole(role, { name: "Multiplayer" });
     if (compact) {
       expect(messages).toHaveAttribute("aria-current", "true");
       expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
@@ -648,7 +649,7 @@ it.each([false, true])(
       return;
     }
     expect(messages).toHaveAttribute("aria-selected", "true");
-    const panel = screen.getByRole("tabpanel", { name: "Messages" });
+    const panel = screen.getByRole("tabpanel", { name: "Multiplayer" });
     expect(panel).toHaveAttribute("id", messages.getAttribute("aria-controls"));
     expect(panel).toHaveAttribute("aria-labelledby", messages.id);
     expect(panel).toHaveTextContent("Child content");

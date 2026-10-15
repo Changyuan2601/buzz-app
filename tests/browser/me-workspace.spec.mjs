@@ -24,7 +24,7 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
   const composer = page.getByRole("textbox", {
     name: "Message your agents",
@@ -69,7 +69,10 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   await expect(panel).toBeVisible();
   await expect(composer).toHaveText("Keep my Me draft");
   await closeProfile(page).click();
-  // Restored panels no longer retain the original trigger element.
+  // Restored panels have no retained launcher; closing uses the stable chat region.
+  await expect(
+    page.getByRole("region", { name: "Chat Alpha", exact: true }),
+  ).toBeFocused();
   await trigger.focus();
   await page.mouse.move(0, 0);
   await page.keyboard.press("ArrowDown");
@@ -108,9 +111,11 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   page,
   app,
 }) => {
+  // Install before app timers exist so pausing also controls pending hover work.
+  await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
@@ -150,11 +155,9 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // The installed clock runs, so pause at a fixed instant ahead of it rather
-  // than a test-side timestamp that the page clock may already have passed.
-  const base = Date.now();
-  await page.clock.install({ time: base });
-  await page.clock.pauseAt(base + 1_000);
+  // Let the installed clock run through navigation, then pause ahead of its
+  // own current time. No native timers are left outside the controlled clock.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);
@@ -189,14 +192,14 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
 });
 
 // Me's actual host must not retain the removed blank-tab entry point.
-test("Me leaves an empty pane unavailable until content opens it", async ({
+test("Me hides the empty pane launcher until content opens it", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
   await page
-    .getByRole("navigation", { name: "Me conversations" })
+    .getByRole("navigation", { name: "Solo conversations" })
     .getByRole("button", { name: "Alpha", exact: true })
     .click();
   const composer = page.getByRole("textbox", {
@@ -208,9 +211,10 @@ test("Me leaves an empty pane unavailable until content opens it", async ({
     name: "Toggle tab pane",
     exact: true,
   });
-  await expect(split).toHaveAttribute("aria-disabled", "true");
-  await split.focus();
-  await split.press("Enter");
+  await expect(split).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Channel members", exact: true }),
+  ).toBeVisible();
   await expect(page.locator("[data-panel-workspace]")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Choose a tab" })).toHaveCount(
     0,
@@ -256,7 +260,7 @@ test.describe("personal recipients", () => {
       await page.goto(app.origin);
       await openPage(page, "Me");
       await page
-        .getByRole("navigation", { name: "Me conversations" })
+        .getByRole("navigation", { name: "Solo conversations" })
         .getByRole("button", { name: "Beta", exact: true })
         .click();
       const workspace = page.getByRole("main");
@@ -349,14 +353,14 @@ test.describe("personal recipients", () => {
       await page.keyboard.insertText("Not mine");
       await openPage(page, "Me");
       await page
-        .getByRole("navigation", { name: "Me conversations" })
+        .getByRole("navigation", { name: "Solo conversations" })
         .getByRole("button", { name: "Beta", exact: true })
         .click();
       await expect(composer).toContainText("@Outside Agent");
       await composer.press("Enter");
       await expect(
         workspace.getByText(
-          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
+          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
           { exact: true },
         ),
       ).toBeVisible();
@@ -418,7 +422,7 @@ test("Me sidebar opens a captured trigger in the canonical message reader", asyn
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();

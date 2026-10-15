@@ -465,13 +465,16 @@ When upgrading an already-running development server, restart the **Node process
 before trying Unarchive: Vite's in-process restart can retain the broker's imported
 archive-only validator even while the browser has the new action. A page reload
 alone does not update that host module.
-Archive, Unarchive and Leave use the default button style in Settings. Archive,
-Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
-keeps the default secondary style. Every shared confirmation shows its pending
+Archive, Unarchive and Leave use the default button style in Settings. As in macOS,
+the prominent confirmation button is the one Enter presses: reversible Archive, Unarchive
+and Hide initially focus their prominent action beside a default-style Cancel, while
+Leave and Delete initially focus a prominent Cancel beside a default-style Leave or
+destructive Delete. Every shared confirmation shows its pending
 state inside the primary button using the standard loading spinner (with an
 accessible status), without adding a visible status paragraph. Duplicate submission
 and Cancel/Escape remain blocked until the operation settles; rejection restores
-the action, while an uncertain outcome still blocks blind resubmission.
+the action, while an uncertain outcome still blocks blind resubmission and moves
+focus to Cancel.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
 separate.
@@ -525,7 +528,8 @@ The non-modal Settings panel is unchanged; the shared Dialog default stays opt-i
 Canvas reload uses a nested shared Dialog rather than a host-owned confirmation
 prompt. Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the parent draft,
 and never executes the action. Confirmations initially focus Cancel and return
-focus to their initiating control; lifecycle focus remains sidebar-owned.
+focus to their initiating control; lifecycle confirmations choose their initial
+focus as described above, and their final focus remains sidebar-owned.
 
 Existing pending operations continue to block dismissal. Members remains closable
 while session-owned invitations/recovery continue. Canvas keeps its local draft;

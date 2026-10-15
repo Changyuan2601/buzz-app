@@ -16,6 +16,16 @@ import { CpuIcon, ChatCircleIcon } from "../shared/design-system/icons";
 
 afterEach(cleanup);
 
+// The shared sidebar's resize handle measures its panel.
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
+
 it("keeps Administration separate and uses each card's navigation icon", () => {
   const client = {
     selected: "primary",
