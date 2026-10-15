@@ -32,6 +32,8 @@ import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import piManifest from "./pi/manifest.json";
 import * as pi from "./pi";
+import acpManifest from "./acp/manifest.json";
+import * as acp from "./acp";
 import channelsManifest from "./channels/manifest.json";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
@@ -192,6 +194,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...piManifest, apiVersion: 1 },
     module: pi,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...acpManifest, apiVersion: 1 },
+    module: acp,
+    // Off until its runtime lands: its agents can be set up but not run.
     enabledByDefault: false,
   },
   {

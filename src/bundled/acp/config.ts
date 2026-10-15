@@ -1,6 +1,7 @@
 // An ACP agent's settings, their validation, and the owner's approval of the
 // exact command they launch. Everything here stays on this device: `carry`
 // passes on only the instructions.
+import type { Carry } from "../../features/agents/native";
 import { CUSTOM, preset } from "./presets";
 
 export type Config = Readonly<{
@@ -155,3 +156,17 @@ export async function launch(
 /** The env values safe to show: only `PATH`, which decides what `env` runs. */
 export const shownValue = (name: string, value: string) =>
   name === "PATH" ? value : undefined;
+
+/** What another agent type may take: the instructions, never the launch. */
+export function carry(saved: unknown): Carry {
+  const { instructions } = config(saved);
+  return instructions.trim() ? { instructions } : {};
+}
+
+/** A brought-over agent's config: its instructions, and no approval, so it
+ * can't launch until the owner confirms its command here. */
+export const adopt = (from: Carry, saved: Config): Config => ({
+  ...saved,
+  instructions: from.instructions ?? saved.instructions,
+  approval: "",
+});
