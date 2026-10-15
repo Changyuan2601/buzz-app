@@ -1332,7 +1332,7 @@ it("fails a mention it cannot place, even in Messages, until the placement can b
   await expect(
     deliver({ type: "mention", event: mention("1") }),
   ).rejects.toThrow(
-    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
   );
   await flush(10);
   expect(placement.refresh).toHaveBeenCalledOnce();

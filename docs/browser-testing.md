@@ -165,13 +165,15 @@ is set on a Mac whose scrollbars take space:
 BUZZ_CLASSIC_SCROLLBARS=1 bin/pnpm test:browser --project chromium-classic-scrollbars --no-deps
 ```
 
-The following **three WebKit cases are local-only**, not passing CI coverage:
+The following **three WebKit cases are local-only**, not passing CI coverage,
+and one case is Chromium-only in every run:
 
 | Case | Reason and coverage gap |
 | --- | --- |
 | `channel-opening.spec.mjs`: cold opening / warm switching | Originally excluded after hosted Linux WebKit recorded 104ms against the former <100ms budget. The warm gate now uses the target/ceiling policy below; this change does not revalidate Linux WebKit or restore its CI selection. The whole case remains local-only, including cold opening under held DM labels and no-new-head-read assertions. Chromium retains the full case in CI. |
 | `scroll.spec.mjs`: cursor paging / large-history virtualization | Linux WebKit repeatedly stops short of the requested wheel edge. The cause remains unresolved between engine/input handling and the harness. Its 31 unique cursor requests, 640-message traversal, 4px anchors and DOM ceilings remain local-only on WebKit; Chromium retains them in CI. |
 | `scroll.spec.mjs`: live edits / reading anchor | Linux WebKit's fetch reader can leave part of an edit undelivered while the SSE stream is open. WebKit growth/shrinkage and reading-anchor checks are local-only; Chromium retains the case in CI. The delivery defect is not fixed by this selection change. |
+| `navigation-leak.spec.mjs`: Settings → Back releases the unmounted Settings DOM | Needs CDP `HeapProfiler.collectGarbage` and `Performance.getMetrics` for post-GC DOM node counts, which only Chromium exposes, so the case is skipped on WebKit in every run. The leak it guards is V8-specific: a reason-less `abort()`'s lazily formatted stack retains the aborting closure's scope, which JSC's stack capture does not. WebKit/JSC was measured on the real production bundle with `WeakRef` probes and never retained the unmounted Settings sidebar, pre- or post-fix, so the skip is for a case that engine does not have, not one it cannot verify. Chromium runs the case in CI. |
 
 Evidence: [Linux run at `d25ed65`](https://github.com/block/buzz-app/actions/runs/34538518724)
 and its measurement artifacts. Local Apple Silicon passes do not establish Linux

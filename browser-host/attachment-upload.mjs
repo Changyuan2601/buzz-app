@@ -5,6 +5,7 @@ import { receiveAttachment } from "./attachment-file.mjs";
 import {
   imageType,
   mediaByteLimit,
+  relayRejection,
   UPLOAD_MAX_BYTES,
   UPLOAD_TIMEOUT_MS,
 } from "../src/features/relay/attachment-limits.ts";
@@ -115,8 +116,7 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
     }
     bounded.throwIfAborted();
     const text = Buffer.concat(parts).toString("utf8");
-    if (!response.ok)
-      throw new UploadError(/metadata/i.test(text) ? "metadata" : "rejected");
+    if (!response.ok) throw new UploadError(relayRejection(text));
     let v, url;
     try {
       v = JSON.parse(text);

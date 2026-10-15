@@ -88,7 +88,11 @@ export function useConversationTabs({
   routed?:
     | { channelId: string; messageId: string; navigation: PageNavigation }
     | undefined;
-  onCloseThread?(tab: Extract<Tab, { kind: "thread" }>, active: boolean): void;
+  onCloseThread?(
+    tab: Extract<Tab, { kind: "thread" }>,
+    active: boolean,
+    last: boolean,
+  ): void;
   onRetryNavigation?(): void;
 }) {
   const currentId = current?.id;
@@ -376,9 +380,11 @@ export function useConversationTabs({
         ? tabState.mainSelected === id
         : tabState.paneOpen && selectedTab === id;
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
-    // The page's own focus return (to the opener) is the last word.
-    const notify = () => {
-      if (closing?.kind === "thread") onCloseThread?.(closing, !!wasActive);
+    // Once its pane empties, the page's own focus return (to the opener) is
+    // the last word; until then focus stays with the remaining tabs.
+    const notify = (last: boolean) => {
+      if (closing?.kind === "thread")
+        onCloseThread?.(closing, !!wasActive, last);
     };
     if (closing && tabPane(closing) === "main") {
       // The conversation remains; neighbours keep their order.
@@ -388,12 +394,12 @@ export function useConversationTabs({
         tabState.selectMain(
           remaining[Math.min(index, remaining.length - 1)]?.id,
         );
-      notify();
+      notify(!remaining.length);
       return;
     }
     afterClose(id);
     if (rootTabIds.length === 1) focusSplit.current = true;
-    notify();
+    notify(rootTabIds.length === 1);
   };
   const [announcement, setAnnouncement] = useState("");
   // Place the tab and focus it where it landed in the same task. Reinserting

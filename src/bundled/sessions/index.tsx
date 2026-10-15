@@ -9,7 +9,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // Preserve old page links without retaining a second workspace.
   ctx.pages.register({
     id: "sessions",
-    title: "Sessions (now in Me)",
+    title: "Sessions (now in Solo)",
     primary: false,
     component: ({ navigation }) => (
       <LegacySessions navigator={navigator} navigation={navigation} />
@@ -38,5 +38,5 @@ function LegacySessions({
       { replace: true },
     );
   }, [navigator, navigation]);
-  return <p role="status">Opening Me…</p>;
+  return <p role="status">Opening Solo…</p>;
 }

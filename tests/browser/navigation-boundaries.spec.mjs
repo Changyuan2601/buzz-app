@@ -81,7 +81,7 @@ test("Messages default resolution returns opened to cold and warm callers withou
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
-  await expectPageChoice(page, "Messages", 1);
+  await expectPageChoice(page, "Multiplayer", 1);
   for (const mode of ["cold", "warm"]) {
     const result = await page.evaluate(async () => {
       const nav = window.fixtureNavigation;

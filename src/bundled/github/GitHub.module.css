@@ -464,6 +464,31 @@
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
+/* The linked comment keeps GitHub's anchored wash while its link is current.
+   Like the channel feed's return wash, it paints the whole row and extends
+   into the timeline's inset without changing the row's box; the focus ring
+   draws on the same box, and the scroll margin keeps both clear of the
+   scroller edge. */
+.conversationMessage[data-anchored] {
+  position: relative;
+  isolation: isolate;
+  scroll-margin-block: var(--space-3);
+}
+.conversationMessage[data-anchored]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: calc(-1 * var(--space-2));
+  z-index: -1;
+  border-radius: var(--radius-row);
+  background: var(--affordance-accent);
+  pointer-events: none;
+}
+html[data-keyboard-navigation]
+  .conversationMessage[data-anchored]:focus-visible::before {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
 .messageHeader {
   position: relative;
   grid-area: 1 / 1;

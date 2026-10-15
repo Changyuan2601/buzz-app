@@ -37,7 +37,7 @@ const removeDm = async (page, id) => {
   await dm.click({ button: "right" });
   const menu = page.getByRole("menu", { name: /Actions for / });
   const remove = menu.getByRole("menuitem", {
-    name: "Remove from Messages",
+    name: "Remove from Multiplayer",
     exact: true,
   });
   await expect(remove).toBeVisible();

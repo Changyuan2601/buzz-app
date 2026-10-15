@@ -1,5 +1,5 @@
 import { fixtureRelayUrl, fixtureAliases } from "../relay-config.ts";
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, stopRoutes } from "./playwright-test.mjs";
 import { preview } from "vite";
 import {
   finalizeEvent,
@@ -2521,6 +2521,7 @@ export const test = base.extend({
         body: JSON.stringify(report, null, 2),
         contentType: "application/json",
       });
+      await stopRoutes(context);
       await page.close();
       for (const clients of streams.values())
         for (const client of clients) client.response.end();

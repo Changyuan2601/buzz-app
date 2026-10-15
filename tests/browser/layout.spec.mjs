@@ -80,7 +80,7 @@ const panel = (page) =>
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Multiplayer");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -281,7 +281,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   ).not.toBe("none");
   near((await box(mainPanel)).x - sidebar.x - sidebar.width, 4);
   const sidebarHandle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
   });
   const gripTarget = await box(sidebarHandle);
   near(gripTarget.width, 16);
@@ -418,7 +418,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
       page.getByRole("region", { name: "Settings", exact: true }),
     ).toBeVisible();
     if (width <= 650) await button(page, "Show navigation").click();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
@@ -474,7 +474,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     const choices = await pageChoices(page);
     // Messages proves the Pages group rendered before counting Projects.
     await expect(
-      choices.getByRole("option", { name: "Messages", exact: true }),
+      choices.getByRole("option", { name: "Multiplayer", exact: true }),
     ).toBeVisible();
     await expect(
       choices.getByRole("option", { name: "Projects", exact: true }),
@@ -496,9 +496,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   await page.setViewportSize({ width: 800, height: 600 });
   await link(page, app, "https://github.com/block/buzz/pull/7");
 
@@ -816,7 +814,7 @@ companionTest(
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
     await launch.click();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     const composer = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
@@ -971,7 +969,7 @@ todosOverlapTest(
     await page
       .getByRole("switch", { name: "Enable Todos", exact: true })
       .click();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
@@ -1197,14 +1195,14 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
-    "Me",
-    "Messages",
+    "Solo",
+    "Multiplayer",
     "Inbox",
     "Reminders",
     "Bestie",
     "Projects",
     "Agents",
-    "Sessions (now in Me)",
+    "Sessions (now in Solo)",
     "Workflows",
   ];
   const expectPageOrder = async (expected) => {
@@ -1280,13 +1278,13 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expectPageOrder([
-    "Me",
-    "Messages",
+    "Solo",
+    "Multiplayer",
     "Inbox",
     "Reminders",
     "Bestie",
     "Agents",
-    "Sessions (now in Me)",
+    "Sessions (now in Solo)",
     "Workflows",
   ]);
   await closeSearch();

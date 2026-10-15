@@ -46,7 +46,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   ctx.pages.register({
     id: "me",
-    title: "Me",
+    title: "Solo",
     primary: true,
     placement: "topbar",
     layout: "workspace",

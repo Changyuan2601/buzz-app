@@ -86,9 +86,11 @@
 .edge[data-history-space] {
   min-height: calc(var(--size-control) + var(--space-4));
 }
+.feed[data-chat-presentation] .edge:not([data-history-space]) {
+  min-height: var(--space-1);
+}
 .day {
   width: min(100%, var(--timeline-measure));
-  margin-inline: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -96,7 +98,8 @@
   padding: var(--space-2) 0;
   color: var(--text-subtle);
   @apply text-caption;
-  margin: var(--space-5) 0;
+  /* Centered within the timeline measure (Berd's chats narrow it). */
+  margin: var(--space-5) auto;
 }
 .day::before,
 .day::after {
@@ -133,6 +136,9 @@
   min-width: 0;
   flex: 1;
   background: var(--border-standard);
+}
+.feed[data-chat-presentation] ol > li:first-child .day {
+  margin-block-start: var(--space-2);
 }
 .dayLabel {
   display: inline-flex;

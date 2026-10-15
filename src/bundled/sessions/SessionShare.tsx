@@ -603,7 +603,7 @@ export function SessionShare({
           controller.signal,
         );
         exact.detailsApplied = true;
-        progress("Moving to Messages…");
+        progress("Moving to Multiplayer…");
         await session.mePlacement.set(channel.id, false, {
           signal: controller.signal,
         });
@@ -634,7 +634,7 @@ export function SessionShare({
           : "Couldn’t share this session.";
       progress("");
       setError(
-        `${message}${exact.detailsApplied ? " Channel settings were saved; retry to finish moving to Messages." : ""}${directShare && !session.mePlacement.has(channel.id) && session.mePlacement.snapshot().status === "ready" ? " Conversation is in Messages; access already granted is not revoked." : ""}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
+        `${message}${exact.detailsApplied ? " Channel settings were saved; retry to finish moving to Multiplayer." : ""}${directShare && !session.mePlacement.has(channel.id) && session.mePlacement.snapshot().status === "ready" ? " Conversation is in Multiplayer; access already granted is not revoked." : ""}${confirmed.length ? ` ${confirmed.length} session participant${confirmed.length === 1 ? "" : "s"} confirmed.` : ""}`,
       );
     } finally {
       delete exact.running;
@@ -850,10 +850,10 @@ export function SessionShare({
         <div className={styles.form}>
           {directShare && (
             <p>
-              Move this conversation to Messages with its full history, Canvas
-              and existing agents. No new conversation is created. Later agent
-              conversations use Messages threads; the private provider session
-              from Me does not transfer.
+              Move this conversation to Multiplayer with its full history,
+              Canvas and existing agents. No new conversation is created. Later
+              agent conversations use threads in Multiplayer; the private
+              provider session from Solo does not transfer.
             </p>
           )}
           {directShare &&
@@ -954,7 +954,7 @@ export function SessionShare({
           {directShare && base && !base.canEdit && (
             <p role="alert">
               Only a channel owner or admin can change these settings and share
-              to Messages.
+              to Multiplayer.
             </p>
           )}
           {!directShare && (
@@ -1107,7 +1107,7 @@ export function SessionShare({
             <p className="text-body-sm text-subtle">
               {directShare
                 ? "Starting over clears these choices, not settings or access already saved."
-                : "Starting over clears these choices, not work already submitted. Existing access, created channels, Messages placement and queued operations are kept. A new share may post another link."}
+                : "Starting over clears these choices, not work already submitted. Existing access, created channels, Multiplayer placement and queued operations are kept. A new share may post another link."}
             </p>
           )}
           {pendingCreation && !saved && !error && (

@@ -102,6 +102,8 @@ it("replaces a failed original-video preview with authenticated converted media"
   const root = render(<ComposerAttachments {...props} />);
   const original = root.container.querySelector("video");
   assert.exists(original);
+  // WebKitGTK suspends muted videos outside the viewport; see the component.
+  expect(original.muted).toBe(false);
   fireEvent.error(original);
   expect(screen.getByText("Preview unavailable")).toBeTruthy();
   const uploaded = {

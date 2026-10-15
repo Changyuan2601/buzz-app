@@ -441,10 +441,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     );
     expect(agents.find(browserKey)?.unfinished).toBeUndefined();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
-    expect(
-      screen.getByRole("tab", { name: "Instructions" }),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Instructions" }));
+    expect(screen.getByRole("tab", { name: "Identity" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
     const instructions = await screen.findByRole("textbox", {
       name: "Instructions",
     });

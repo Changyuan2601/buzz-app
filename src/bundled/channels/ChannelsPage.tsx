@@ -9,7 +9,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
-import { useChannelTabState } from "./useChannelTabState";
+import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -672,16 +672,32 @@ function ChannelWorkspace({
     threadId: routedThread?.messageId,
     mainPane: true,
     routed: routedThread,
-    onCloseThread: (tab, active) => {
+    onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a
       // later Back/Forward visit is the only way to reopen it.
+      // That channel visit keeps the tab selected in place of the closed one.
       if (
         routedThread?.channelId === tab.channelId &&
         routedThread.messageId === tab.messageId
-      )
+      ) {
         select(tab.channelId);
+        const entry = navigator?.snapshot().entry.id;
+        if (entry) tabState.enterVisit(`${entry}:channel`, undefined, true);
+      }
       const trigger = threadTrigger.current;
-      if (trigger) returnFocus.current = { trigger, channelId: currentId };
+      // While tabs remain, the opener takes focus only from within their pane.
+      if (
+        trigger &&
+        (last ||
+          trigger
+            .closest("[data-panel-workspace], [data-main-workspace]")
+            ?.hasAttribute(
+              tabPane(tab) === "main"
+                ? "data-main-workspace"
+                : "data-panel-workspace",
+            ))
+      )
+        returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),
@@ -1351,7 +1367,7 @@ function ChannelWorkspace({
             />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new conversations from Me. Channel-nested sessions are no
+              Start new conversations from Solo. Channel-nested sessions are no
               longer available.
             </p>
           ) : (

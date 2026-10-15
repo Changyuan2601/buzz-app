@@ -42,6 +42,10 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 - Me chats and drafts use the full conversation pane. Right-click,
   Shift+F10 and overflow share one sidebar action list: Share, Rename, Move to a Me
   project, Copy and Chat settings. Opening a row menu does not select the row.
+  A chat can also be dragged with a pointer onto another project or **Chats**;
+  the drop is the same Move to intent, with the same gate, optimistic placement,
+  rollback notice and Retry. Like Messages' empty Starred, a hidden empty
+  **Chats** section is not revealed during a drag.
 - **Archive chat** (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in
   Settings → Shortcuts) opens the Session actions Archive confirmation for the open
   chat, including from the composer, after the menu's fresh permission read; it does

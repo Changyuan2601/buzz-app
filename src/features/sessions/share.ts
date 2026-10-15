@@ -301,7 +301,7 @@ export async function applySharedChannelDetails(
       base.ttlSeconds !== expected.ttlSeconds
     )
       throw new Error(
-        "Channel settings changed after sharing. Check them in Messages before continuing.",
+        "Channel settings changed after sharing. Check them in Multiplayer before continuing.",
       );
     await details.save(base, draft, signal);
   }

@@ -3,7 +3,6 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
-import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -122,9 +121,9 @@ export function SessionsPage({
     />
   ) : (
     <PanelFrame companion={companion}>
-      <section className={styles.empty} aria-label="Me">
+      <section className={styles.empty} aria-label="Solo">
         <ChatCircleIcon size={28} />
-        <h1>Me</h1>
+        <h1>Solo</h1>
         <p>
           {connection.status === "connecting"
             ? "Connecting to your community…"
@@ -320,14 +319,12 @@ function SessionsView({
     <PanelFrame companion={companion}>
       <section className={styles.empty}>
         {placement.status !== "ready" ? (
-          <p role="status">{placement.error ?? "Loading Me placement…"}</p>
+          <p role="status">{placement.error ?? "Loading Solo chats…"}</p>
         ) : list.status === "loading" ? (
           <p role="status">Loading your conversation…</p>
         ) : (
           <>
-            <p>
-              This conversation isn’t in your Me workspace. Open it in Messages.
-            </p>
+            <p>This conversation isn’t in Solo. Open it in Multiplayer.</p>
             {selectedSession && (
               <Button
                 onClick={() => {
@@ -341,7 +338,7 @@ function SessionsView({
                     });
                 }}
               >
-                Open in Messages
+                Open in Multiplayer
               </Button>
             )}
             <Button
@@ -414,7 +411,9 @@ function SessionWork({
       mounted.current = false;
     };
   }, []);
+  const focusFallback = useRef<HTMLElement>(null);
   const secondary = useConversationTabs({
+    fallbackFocus: focusFallback,
     state: tabState,
     relay,
     session,
@@ -496,8 +495,10 @@ function SessionWork({
   const workspace = (
     <div className={channelStyles.root}>
       <div ref={split.ref} style={split.style} className={channelStyles.board}>
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker. */}
-        <div
+        <section
+          ref={focusFallback}
+          aria-label={`Chat ${channel.name}`}
+          tabIndex={-1}
           className={styles.work}
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
@@ -567,21 +568,17 @@ function SessionWork({
                 )}
               </MenuPopup>
             </MenuRoot>
-            {!showingPanel && (
-              <span className={panelStyles.paneToggle}>
-                <IconButton
-                  ref={splitTrigger}
-                  data-tab-pane-toggle=""
-                  size="toolbar"
-                  aria-label="Toggle tab pane"
-                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
-                  aria-expanded={!!showingPanel}
-                  icon={<SidebarRightIcon size="1rem" />}
-                  disabled={!hasLocalPanel}
-                  focusableWhenDisabled
-                  onClick={() => tabState.setPaneOpen(!showingPanel)}
-                />
-              </span>
+            {hasLocalPanel && !showingPanel && (
+              <IconButton
+                ref={splitTrigger}
+                data-tab-pane-toggle=""
+                size="toolbar"
+                aria-label="Toggle tab pane"
+                title="Open tab pane"
+                aria-expanded={false}
+                icon={<SidebarRightIcon size="1rem" />}
+                onClick={() => tabState.setPaneOpen(true)}
+              />
             )}
           </SessionHeading>
           {renameOpen && (
@@ -606,22 +603,22 @@ function SessionWork({
             <p role="status">
               {placement.error}{" "}
               <Button onClick={() => void session.mePlacement.refresh()}>
-                Retry Me
+                Retry Solo
               </Button>
             </p>
           ) : (
             placement.status !== "ready" && (
-              <p role="status">Loading Me placement…</p>
+              <p role="status">Loading Solo chats…</p>
             )
           )}
           {!inMe && placement.status === "ready" && (
             <div role="status">
-              <p>This conversation is in Messages.</p>
+              <p>This conversation is in Multiplayer.</p>
               {navigator && (
                 <Button
                   onClick={() => openLink(`buzz://channel/${channel.id}`)}
                 >
-                  Open in Messages
+                  Open in Multiplayer
                 </Button>
               )}
             </div>
@@ -710,7 +707,7 @@ function SessionWork({
             />
           </SessionColumn>
           {drawer.content}
-        </div>
+        </section>
         <PanelDock
           open={!!companion || !!showingPanel}
           keepMounted={hasLocalPanel && !tabState.paneOpen}

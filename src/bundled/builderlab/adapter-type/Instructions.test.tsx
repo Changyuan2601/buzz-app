@@ -72,7 +72,7 @@ function fixture() {
     revision: "test",
   };
   const Tab = type.tabs?.[0]?.component;
-  if (!Tab) throw new Error("Missing Instructions tab");
+  if (!Tab) throw new Error("Missing Builderlab settings");
   return {
     Tab,
     type,
@@ -153,18 +153,24 @@ it("retains a hosted instructions draft and failed save across profile tabs", as
     />,
     { wrapper: StrictMode },
   );
-  expect(h.request).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("tab", { name: "Instructions" }));
+  expect(screen.queryByRole("tab", { name: "Instructions" })).toBeNull();
   const field = await screen.findByRole("textbox", { name: "Instructions" });
+  expect(screen.getByRole("link", { name: "Builderlab" })).toHaveAttribute(
+    "href",
+    "https://builderlab.example",
+  );
   await user.type(field, " Unsaved.");
   const reads = h.request.mock.calls.length;
-  for (const name of ["Identity", "Settings"]) {
-    await user.click(screen.getByRole("tab", { name }));
-    expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
-    await user.click(screen.getByRole("tab", { name: "Instructions" }));
-    expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
-    expect(field).toHaveValue("First instructions. Unsaved.");
-  }
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
+  expect(screen.getByText("Workspace")).toBeVisible();
+  expect(screen.getByText("One session per thread")).toBeVisible();
+  expect(screen.getByText("Agent settings")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Builderlab" })).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
+  expect(field).toHaveValue("First instructions. Unsaved.");
+  expect(screen.queryByText("Workspace")).toBeNull();
   expect(h.request).toHaveBeenCalledTimes(reads);
   h.request.mockRejectedValueOnce(new Error("offline"));
   await user.click(screen.getByRole("button", { name: "Save instructions" }));
@@ -172,7 +178,7 @@ it("retains a hosted instructions draft and failed save across profile tabs", as
     "Could not reach Builderlab",
   );
   await user.click(screen.getByRole("tab", { name: "Settings" }));
-  await user.click(screen.getByRole("tab", { name: "Instructions" }));
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Could not reach Builderlab",
   );
