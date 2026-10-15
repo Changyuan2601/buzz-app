@@ -60,19 +60,31 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
       await expect(
         page.getByRole("switch", { name: "Share compute", exact: true }),
       ).toBeInViewport();
+      // Assert the page's layout boundary and actual controls, not scrollWidth
+      // of shared Select internals (WebKit includes its offscreen hidden input).
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBe(width);
       await expect
         .poll(() =>
-          page.evaluate(() =>
-            [
-              ...document.querySelectorAll(
-                "main div:not(.sr-only), main section",
-              ),
-            ].every(
-              (element) => element.scrollWidth <= element.clientWidth + 1,
-            ),
-          ),
+          page
+            .getByRole("region", { name: "Share compute", exact: true })
+            .evaluate((region) => {
+              const bounds = region.getBoundingClientRect();
+              return [
+                ...region.querySelectorAll(
+                  'button, input:not([aria-hidden="true"]), dd',
+                ),
+              ]
+                .filter((element) => element.getClientRects().length > 0)
+                .filter((element) => {
+                  const rect = element.getBoundingClientRect();
+                  return rect.left < bounds.left || rect.right > bounds.right;
+                })
+                .map((element) => element.outerHTML);
+            }),
         )
-        .toBe(true);
+        .toEqual([]);
       await page.screenshot({
         path: testInfo.outputPath(`sharing-${width}-${mode}.png`),
         fullPage: true,
@@ -90,9 +102,10 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
   }
 });
 
-// Browser-only boundary: native-page wiring, create-dialog keyboard/focus and
-// responsive geometry. Agent creation is synthetic; no host signing claim.
-test("main Shared compute helpers open an editable owner-reviewed creation flow", async ({
+// Browser-only boundary: real helper-page wiring, keyboard activation and responsive
+// geometry. Creation uses a synthetic service; no host signing claim. Preset
+// payloads, failures and duplicate prevention are covered by MeshHelpers.test.tsx.
+test("main Shared compute helpers disclose authority and create a preset directly", async ({
   page,
 }, testInfo) => {
   const server = await createServer({
@@ -107,29 +120,25 @@ test("main Shared compute helpers open an editable owner-reviewed creation flow"
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mesh-share.html`,
     );
+    const helpers = page.getByRole("region", { name: "Helpers", exact: true });
     for (const name of [
-      "Emoji maker",
       "Media converter",
       "Thread summarizer",
       "Translator",
       "Custom agent",
     ])
       await expect(
-        page.getByRole("button", { name: `Set up ${name}` }),
+        helpers.getByRole("button", { name: `Create ${name}`, exact: true }),
       ).toBeEnabled();
-    await page.getByRole("button", { name: "Set up Translator" }).focus();
-    await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "Create agent" });
-    await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue(
-      "Translator",
-    );
-    await dialog.getByLabel("Instructions").fill("Translate into French.");
-    await dialog.getByRole("combobox", { name: "Mode" }).click();
-    await page
-      .getByRole("option", { name: "Agent — goose with shell and files" })
-      .click();
-    await dialog.getByRole("checkbox", { name: /Buzz access/ }).click();
-    await dialog.getByLabel("Workspace", { exact: true }).fill("/tmp/helpers");
+    await expect(
+      helpers
+        .getByText(/Agent: shell and files on this machine, plus Buzz access/)
+        .first(),
+    ).toBeVisible();
+    const create = helpers.getByRole("button", {
+      name: "Create Translator",
+      exact: true,
+    });
     for (const width of [390, 1200])
       for (const mode of ["light", "dark"]) {
         await page.setViewportSize({ width, height: 950 });
@@ -137,33 +146,38 @@ test("main Shared compute helpers open an editable owner-reviewed creation flow"
           document.documentElement.setAttribute("data-color-mode", mode);
           document.documentElement.style.fontSize = "20px";
         }, mode);
-        await expect(
-          dialog.getByRole("button", { name: "Create agent" }),
-        ).toBeInViewport();
+        await create.scrollIntoViewIfNeeded();
+        await expect(create).toBeInViewport();
         expect(
-          await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+          await helpers.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
         ).toBe(true);
         await page.screenshot({
           path: testInfo.outputPath(`helper-${width}-${mode}.png`),
           fullPage: true,
         });
       }
-    expect(
-      await page.evaluate(() => window.meshHelperFixture.created.length),
-    ).toBe(0);
-    await dialog.getByRole("button", { name: "Create agent" }).click();
-    await expect(dialog).toHaveCount(0);
-    expect(
-      await page.evaluate(() => window.meshHelperFixture.created[0]),
-    ).toMatchObject({
-      name: "Translator",
-      config: {
-        prompt: "Translate into French.",
-        mode: "agent",
-        buzz: false,
-        workspace: "/tmp/helpers",
-      },
-    });
+    expect(await page.evaluate(() => window.meshHelperFixture.created)).toEqual(
+      [],
+    );
+    await create.focus();
+    await page.keyboard.press("Enter");
+    await expect(helpers.getByRole("status")).toHaveText(
+      "Translator created. Find it in Agents and add it to a conversation.",
+    );
+    expect(await page.evaluate(() => window.meshHelperFixture.created)).toEqual(
+      [
+        expect.objectContaining({
+          name: "Translator",
+          type: "buzz.mesh-compute/mesh",
+          config: expect.objectContaining({
+            preset: "translator",
+            mode: "chat",
+            workspace: "~/.buzz",
+            prompt: expect.stringContaining("You translate messages"),
+          }),
+        }),
+      ],
+    );
     expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();

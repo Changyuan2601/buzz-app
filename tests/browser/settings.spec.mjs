@@ -411,6 +411,10 @@ confirmedPresence(
       await profile.focus();
       await tab();
       await expect(
+        sections.getByRole("button", { name: "Shared compute", exact: true }),
+      ).toBeFocused();
+      await tab();
+      await expect(
         sections.getByRole("button", { name: "Messages", exact: true }),
       ).toBeFocused();
       await tab();
@@ -487,6 +491,10 @@ confirmedPresence(
         await button(page, "Show navigation").click();
         await profile.focus();
       }
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Shared compute", exact: true }),
+      ).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Messages", exact: true }),

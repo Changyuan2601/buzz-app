@@ -134,7 +134,10 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     let key = agent.read_key(&credentials).unwrap();
     let first = agent.profile_event(&key).unwrap();
     assert_eq!(first["kind"], 0);
-    assert_eq!(first["content"], r#"{"bot":true,"name":"Ada"}"#);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(first["content"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"bot":true,"name":"Ada"})
+    );
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     assert_eq!(first["tags"], serde_json::json!([saved]));
     // An accepted profile from the future: the next must still be newer.
@@ -156,7 +159,10 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     assert_eq!(renamed.profile, Some(published(future)));
     let next = renamed.profile_event(&key).unwrap();
     assert_eq!(next["created_at"], future + 1);
-    assert_eq!(next["content"], r#"{"bot":true,"name":"Bea"}"#);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(next["content"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"bot":true,"name":"Bea"})
+    );
 }
 
 #[test]
@@ -180,8 +186,13 @@ fn a_set_picture_is_published_and_can_be_cleared() {
     assert_eq!(pictured.picture.as_deref(), Some(url));
     assert!(!pictured.profile_is_current());
     assert_eq!(
-        pictured.profile_event(&key).unwrap()["content"],
-        format!(r#"{{"bot":true,"name":"Ada","picture":"{url}"}}"#)
+        serde_json::from_str::<serde_json::Value>(
+            pictured.profile_event(&key).unwrap()["content"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::json!({"bot":true,"name":"Ada","picture":url})
     );
     agents.set_picture(&agent.pubkey, None).unwrap();
     assert_eq!(agents.get(&agent.pubkey).unwrap().picture, None);
@@ -460,8 +471,8 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
         .profile_event(&agent.read_key(&credentials).unwrap())
         .unwrap();
     assert_eq!(
-        profile["content"],
-        r#"{"about":"Reviews pull requests","bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"}"#
+        serde_json::from_str::<serde_json::Value>(profile["content"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"about":"Reviews pull requests","bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"})
     );
     // Once here, it is not taken over again, nor while it is being removed.
     let again = adopt("https://a.example/b.png");
