@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
