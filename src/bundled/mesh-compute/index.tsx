@@ -11,6 +11,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { CpuIcon } from "../../shared/design-system/icons";
 import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityMesh } from "./CommunityMesh";
@@ -373,6 +374,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const [model, setModel] = useState("");
     const [auto, setAuto] = useState(true);
     const [recommended, setRecommended] = useState<string | null>(null);
+    const [modelNames, setModelNames] = useState<Record<string, string>>({});
     // biome-ignore lint/correctness/useExhaustiveDependencies: identity and community changes retire the prior model selection.
     useEffect(() => {
       setModel("");
@@ -591,7 +593,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
               : status.available === false
                 ? "Shared compute isn’t available in this build."
                 : leaseReady
-                  ? shareStatus(status, phase, community?.name)
+                  ? shareStatus(status, phase, community?.name, modelNames)
                   : "Checking shared compute…"
         }
         error={error ?? status?.settingsError ?? status?.reason}
@@ -608,11 +610,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
         refreshDisabled={busy || !isTauri()}
         refresh={() => void refresh()}
       >
-        {community?.name && (
-          <p className="m-0 text-body-sm text-secondary">
-            Shared compute for <strong>{community.name}</strong>
-          </p>
-        )}
+        {community?.name &&
+          (status?.sharing && !otherCommunity ? (
+            <p className="m-0 text-body">
+              Sharing{" "}
+              <strong title={status.sharing}>
+                {modelNames[status.sharing] ?? status.sharing}
+              </strong>{" "}
+              with <strong>{community.name}</strong>
+            </p>
+          ) : (
+            <p className="m-0 text-body-sm text-secondary">
+              Shared compute for <strong>{community.name}</strong>
+            </p>
+          ))}
         {otherCommunity && (
           <section aria-label="Bound compute community">
             <p>
@@ -693,6 +704,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
               model={model}
               auto={auto}
               onRecommendation={setRecommended}
+              onModelNames={setModelNames}
               runningModel={status.sharing ?? null}
               onReset={() => void reset()}
               resetDisabled={busy || snapshot.status !== "ready"}
@@ -706,11 +718,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 phase === "stopping" ||
                 Boolean(status.sharing)
               }
-            >
-              {phase === "ready" && (
-                <ComputeActivity data={status.activity ?? null} />
-              )}
-            </ShareModelPicker>
+            />
           </section>
         )}
         {isTauri() &&
@@ -724,17 +732,34 @@ export const apply: PluginModule["apply"] = (ctx) => {
               agents={ctx.agents}
             />
           )}
-        {isTauri() && status?.available && community && (
-          <details className={styles.options} open>
-            <summary className="text-body-sm">Community devices</summary>
-            <CommunityMesh
-              key={community.id}
-              community={community.id}
-              relay={ctx.relay}
-              refreshKey={refreshCount}
+        {isTauri() &&
+          status?.available &&
+          (community || (phase === "ready" && !otherCommunity)) && (
+            <Accordion
+              variant="settings"
+              items={[
+                {
+                  value: "Community and activity",
+                  title: "Community and activity",
+                  content: (
+                    <>
+                      {phase === "ready" && !otherCommunity && (
+                        <ComputeActivity data={status.activity ?? null} />
+                      )}
+                      {community && (
+                        <CommunityMesh
+                          key={community.id}
+                          community={community.id}
+                          relay={ctx.relay}
+                          refreshKey={refreshCount}
+                        />
+                      )}
+                    </>
+                  ),
+                },
+              ]}
             />
-          </details>
-        )}
+          )}
       </ConsumerComputeView>
     );
   }
@@ -751,9 +776,11 @@ function shareStatus(
   status: MeshStatus,
   phase: string | undefined,
   communityName: string | undefined,
+  modelNames: Record<string, string> = {},
 ): string {
   const where = communityName ?? "your community";
-  const model = status.sharing;
+  const model =
+    status.sharing && (modelNames[status.sharing] ?? status.sharing);
   const enabled = Boolean(model || status.savedSharing?.enabled);
   if (phase === "failed") {
     const cause = status.lifecycle?.reason

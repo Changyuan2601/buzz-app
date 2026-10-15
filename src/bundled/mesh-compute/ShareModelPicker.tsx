@@ -42,6 +42,7 @@ export function ShareModelPicker({
   onReset,
   resetDisabled,
   onRecommendation,
+  onModelNames,
   runningModel,
   children,
   activity,
@@ -54,6 +55,8 @@ export function ShareModelPicker({
   auto: boolean;
   onReset: () => void;
   onRecommendation?: (model: string | null) => void;
+  /** Friendly catalog names keyed by exact model reference. */
+  onModelNames?: (names: Record<string, string>) => void;
   runningModel?: string | null;
   resetDisabled?: boolean;
 }) {
@@ -97,6 +100,12 @@ export function ShareModelPicker({
   useEffect(() => {
     onRecommendation?.(catalog?.recommended ?? null);
   }, [catalog?.recommended, onRecommendation]);
+  useEffect(() => {
+    if (catalog)
+      onModelNames?.(
+        Object.fromEntries(catalog.entries.map((e) => [e.model, e.name])),
+      );
+  }, [catalog, onModelNames]);
   const displayModel = auto
     ? (catalog?.recommended ?? runningModel ?? model)
     : model;

@@ -1340,6 +1340,13 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
       render(<Component />);
     });
     expect(reads).toBe(2);
+    // Activity lives in the collapsed community section.
+    expect(
+      screen.queryByRole("region", { name: "Shared-compute activity" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Community and activity" }),
+    );
     expect(
       screen.getByRole("region", { name: "Shared-compute activity" }),
     ).toHaveTextContent("1,234");
