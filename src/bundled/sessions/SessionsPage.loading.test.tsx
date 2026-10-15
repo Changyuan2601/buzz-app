@@ -213,6 +213,11 @@ function fixture(
       state = next;
       for (const listener of listeners) listener();
     },
+    // Chat activity: a new summary object for the same chat.
+    retitle(name: string) {
+      list = { ...list, channels: [{ ...channel, name }] };
+      for (const listener of listListeners) listener();
+    },
     state,
   };
 }
@@ -472,6 +477,40 @@ it("opens no Archive from the shortcut where the menu offers none", async () => 
   expect(f.session.channelLifecycle.load).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(f.run).not.toHaveBeenCalled();
+});
+
+it("keeps a shortcut Archive across chat activity during the permission read", async () => {
+  const f = fixture();
+  let release = () => {};
+  f.session.channelLifecycle.load.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            channelId: id,
+            channelType: "stream",
+            canArchive: true,
+            canUnarchive: false,
+            canDelete: true,
+            canLeave: false,
+            canHide: false,
+          });
+      }),
+  );
+  f.mount();
+  let pending: Promise<void> | undefined;
+  act(() => {
+    pending = f.archive.current?.run();
+  });
+  act(() => f.retitle("Roadmap"));
+  await act(async () => {
+    release();
+    await pending;
+  });
+  // The confirmation names the latest summary, not the one at keypress.
+  expect(
+    screen.getByRole("dialog", { name: "Archive channel: Roadmap" }),
+  ).toBeInTheDocument();
 });
 
 it("stops offering the Archive shortcut when its visit ends", () => {
