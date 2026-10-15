@@ -1,8 +1,9 @@
+import { verifiedSymbol } from "nostr-tools";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import { createReadState } from "./read-state";
 import { readJournal, type ReadJournal } from "./read-state-storage";
-import type { RelayEvent } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 import { flush, keypair, message, signed } from "./testing";
 import { createUnread } from "./unread";
 
@@ -16,6 +17,8 @@ function at<T>(values: readonly T[], index: number): T {
   assert(value !== undefined, "Missing fixture entry");
   return value;
 }
+const channelOf = (event: RelayEvent) =>
+  event.tags.find(([name]) => name === "h")?.[1] ?? "";
 
 async function setup(count = 3) {
   const viewer = keypair(),
@@ -46,7 +49,29 @@ async function setup(count = 3) {
     loadOlder() {},
   };
   let journal: ReadJournal | undefined;
-  const reader = { read: vi.fn(async () => []) };
+  // Relay content reachable only by conversation lookup (`ids` and
+  // viewer-reply filters); channel samples and every other read are empty.
+  const store: RelayEvent[] = [];
+  const reader = {
+    read: vi.fn(async (filters: readonly ReadFilter[]) =>
+      filters.flatMap((filter) =>
+        filter.ids || filter.authors
+          ? store.filter(
+              (item) =>
+                (!filter.kinds || filter.kinds.includes(item.kind)) &&
+                (!filter.ids || filter.ids.includes(item.id)) &&
+                (!filter.authors || filter.authors.includes(item.pubkey)) &&
+                (!filter["#h"] || filter["#h"].includes(channelOf(item))) &&
+                (!filter["#e"] ||
+                  item.tags.some(
+                    ([name, value]) =>
+                      name === "e" && filter["#e"]?.includes(value ?? ""),
+                  )),
+            )
+          : [],
+      ),
+    ),
+  };
   const reads = createReadState({
     viewer: viewer.pubkey,
     reader,
@@ -96,6 +121,7 @@ async function setup(count = 3) {
     channels,
     reader,
     reads,
+    store,
     reset,
     changeList(patch: (channel: ChannelSummary) => ChannelSummary) {
       roster = roster.map(patch);
@@ -313,8 +339,6 @@ function prng(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const channelOf = (event: RelayEvent) =>
-  event.tags.find(([name]) => name === "h")?.[1] ?? "";
 /** Every public projection the evidence index feeds. */
 function projections(
   h: Awaited<ReturnType<typeof setup>>,
@@ -390,6 +414,85 @@ it("resolves replies that arrive before their root, and the root's deletion, lik
   });
 });
 
+// Marked verified, as the transport hands events to unread: signing thousands
+// of fixture events takes seconds (see unread-lookups.test.ts).
+let next = 0;
+function unsigned(
+  pubkey: string,
+  kind: number,
+  created_at: number,
+  tags: string[][],
+): RelayEvent {
+  return {
+    id: (next++).toString(16).padStart(64, "0"),
+    pubkey,
+    kind,
+    created_at,
+    content: "",
+    tags: [["h", "c0"], ...tags],
+    sig: "0".repeat(128),
+    [verifiedSymbol]: true,
+  };
+}
+
+it("a live viewer reply whose witness evicts another drops that membership like a rescan", async () => {
+  const h = await setup(1);
+  let clock = 100;
+  const content = (pubkey: string) => unsigned(pubkey, 9, clock++, []);
+  const replyTo = (pubkey: string, parent: RelayEvent) =>
+    unsigned(pubkey, 9, clock++, [
+      ["e", parent.id, "", "root"],
+      ["e", parent.id, "", "reply"],
+    ]);
+  // 4,096 peer roots, each answered by the viewer on the relay only and by one
+  // live peer sibling: a positive lookup with one witness per root, filling
+  // both bounds. The window holds fewer events, so the siblings arrive in two
+  // halves around an overflow reset, which lookups and witnesses survive.
+  const parents = Array.from({ length: 4096 }, () => content(h.peer.pubkey));
+  const mine = parents.map((parent) => replyTo(h.viewer.pubkey, parent));
+  const siblings = parents.map((parent) => replyTo(h.peer.pubkey, parent));
+  h.store.push(...parents, ...mine);
+  const settled = async (from: number, to: number) => {
+    h.owner.accept(siblings.slice(from, to));
+    await vi.waitFor(
+      () => {
+        for (const sibling of siblings.slice(from, to))
+          expect(h.unread.attention("c0", sibling.id)).toMatchObject({
+            category: "thread",
+            unread: true,
+          });
+      },
+      { timeout: 10_000 },
+    );
+  };
+  await settled(0, 2048);
+  h.owner.accept(Array.from({ length: 4096 }, () => content(h.peer.pubkey)));
+  await h.unread.refresh();
+  await settled(2048, 4096);
+  // The viewer deletes the first root's witness and answers again live: the
+  // replacement is the newest witness while its lookup stays the oldest.
+  h.owner.accept([
+    unsigned(h.viewer.pubkey, 5, clock++, [["e", at(mine, 0).id]]),
+  ]);
+  h.owner.accept([replyTo(h.viewer.pubkey, at(parents, 0))]);
+  // A negative lookup evicts that oldest lookup, stranding its witness.
+  const spare = content(h.peer.pubkey);
+  h.store.push(spare);
+  const sibling = replyTo(h.peer.pubkey, spare);
+  h.owner.accept([sibling]);
+  await vi.waitFor(() =>
+    expect(h.unread.attention("c0", sibling.id).pending).toBeUndefined(),
+  );
+  expect(h.unread.following("c0", at(parents, 1).id)).toBe(true);
+  // The viewer's live reply turns that lookup positive. Its witness is the
+  // 4,097th and evicts the second root's, ending that membership.
+  const reply = replyTo(h.viewer.pubkey, spare);
+  h.owner.accept([reply]);
+  expectRebuiltToMatch(h, [sibling, reply], parents, "witness evicted live");
+  expect(h.unread.following("c0", at(parents, 1).id)).toBe(false);
+  expect(h.unread.following("c0", spare.id)).toBe(true);
+});
+
 it.each(Array.from({ length: 12 }, (_, i) => i + 1))(
   "appends live evidence identically to a full rescan (seed %i)",
   async (seed) => {
@@ -408,6 +511,13 @@ it.each(Array.from({ length: 12 }, (_, i) => i + 1))(
     const channels = h.targets.map(({ channelId }) => channelId);
     const emitted: RelayEvent[] = [];
     const roots: RelayEvent[] = [];
+    // Parents withheld from `accept`: the relay store alone answers for them.
+    const relayOnly: RelayEvent[] = [];
+    const withhold = (event: RelayEvent) => {
+      h.store.push(event);
+      relayOnly.push(event);
+      roots.push(event);
+    };
     let held: { event: RelayEvent; due: number }[] = [];
     let clock = 12;
     const content = (
@@ -454,15 +564,23 @@ it.each(Array.from({ length: 12 }, (_, i) => i + 1))(
           batch.push(event);
           emitted.push(event);
         } else if (op < 0.7) {
-          // A reply to a message that arrives 1–6 batches later.
-          const future = content(pick(authors), pick(channels), viewerTags());
-          held.push({ event: future, due: step + Math.floor(random() * 6) });
-          const event = replyTo(future, future.id);
+          // A reply under a message that arrives 1–6 batches later, or never
+          // arrives live. Sometimes a reply only the relay holds links them,
+          // so the chain to the late root runs through the lookup cache.
+          const late = content(pick(authors), pick(channels), viewerTags());
+          if (chance(0.4)) withhold(late);
+          else held.push({ event: late, due: step + Math.floor(random() * 6) });
+          const parent = chance(0.3) ? replyTo(late, late.id) : late;
+          if (parent !== late) withhold(parent);
+          const event = replyTo(parent, parent.id);
           batch.push(event);
           emitted.push(event);
         } else if (op < 0.85) {
-          // A deletion by the author, the viewer, or a third party (forged).
-          const target = pick(emitted);
+          // A deletion by the author, the viewer, or a third party (forged),
+          // sometimes of a message only the lookup cache holds.
+          const target = pick(
+            relayOnly.length && chance(0.2) ? relayOnly : emitted,
+          );
           batch.push(
             signed(pick([authorOf(target), h.viewer, third]), {
               kind: chance(0.5) ? 5 : 9005,

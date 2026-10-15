@@ -370,7 +370,12 @@ export function createUnread({
       if (witnesses.size <= 4096) break;
       witnesses.delete(oldest);
       for (const [key, other] of lookups)
-        if (other.evidence === oldest) lookups.delete(key);
+        if (other.evidence === oldest) {
+          lookups.delete(key);
+          // `accept` reaches here through `indexOne`; the lost membership
+          // must leave `ownThreads` with the next rebuild.
+          indexed = false;
+        }
     }
   }
   let scheduled = false;
@@ -1699,7 +1704,15 @@ export function createUnread({
       // chains, so the evidence index must be rebuilt.
       if (witnesses.delete(id)) indexed = false;
       // A deleted message must be fetched again, not reused from the cache.
-      if (lookupEvents.delete(id)) indexed = false;
+      // Root chains ran through it, so its channel's selectors recompute
+      // even when the deletion itself is not retained.
+      const cached = lookupEvents.get(id);
+      if (cached) {
+        lookupEvents.delete(id);
+        indexed = false;
+        const channel = channelOf(cached);
+        if (channel) changed.add(channel);
+      }
       for (const [key, lookup] of lookups) {
         if (lookup.evidence !== id) continue;
         changed.add(lookup.channelId);
