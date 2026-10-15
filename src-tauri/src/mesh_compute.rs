@@ -8,6 +8,7 @@ mod activity;
 mod agent;
 #[cfg(feature = "mesh")]
 pub(crate) mod sharing;
+pub(crate) mod usb_display;
 pub(crate) mod widget;
 #[cfg(feature = "mesh")]
 pub(crate) use agent::community_origin as agent_community;

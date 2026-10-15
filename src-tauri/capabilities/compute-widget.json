@@ -7,6 +7,9 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-size",
     "core:window:allow-close",
-    "allow-mesh-compute-widget-status"
+    "allow-mesh-compute-widget-status",
+    "allow-mesh-compute-widget-usb-connect",
+    "allow-mesh-compute-widget-usb-frame",
+    "allow-mesh-compute-widget-usb-disconnect"
   ]
 }

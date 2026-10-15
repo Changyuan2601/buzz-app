@@ -1,4 +1,6 @@
 import { defineIcon } from "./createDecorativeIcon";
+import TablerMenuIcon from "@tabler/icons-react/dist/esm/icons/IconMenu2.mjs";
+export const MenuIcon = defineIcon("tabler", TablerMenuIcon);
 import { BestieMarkArtwork } from "./BestieMark";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
