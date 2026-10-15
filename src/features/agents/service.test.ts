@@ -27,7 +27,7 @@ import {
   teamPrompt,
 } from "./service";
 import type { ClassifierNative } from "./classifier";
-import { CATCH_UP_KEY } from "./catch-up";
+import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -3620,6 +3620,129 @@ it("gives each matching watch one catch-up turn with the events it matched", asy
           trigger.events.map(({ event }) => event.content),
       ).toEqual(Array.from({ length: 16 }, (_, i) => `m${i}`));
     }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not catch up after a restart on a message it already heard live", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    vi.setSystemTime(start * 1000);
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await settle();
+    vi.setSystemTime((start + 1) * 1000);
+    const live = posted("live", start + 1);
+    first.emit({ events: [live] });
+    await vi.waitFor(() => expect(first.run).toHaveBeenCalledTimes(1));
+    // Closed before a tick moves the checkpoint past it.
+    first.connect(false);
+    vi.setSystemTime((start + 2) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      // Another message of the same second was not heard.
+      history: [live, posted("unheard", start + 1)],
+    });
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    await settle();
+    expect(heard(second.run)).toEqual(["unheard"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes a kind 9 watch added since for nothing older, though an overlapping watch catches up on it", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const { service, run, history, recover } = await setup({
+      identities: [echo],
+    });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    const watch = chat["watch/chat"];
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": null, "watch/chat": watch },
+    });
+    await settle();
+    history.push(posted("missed", now + 30));
+    vi.setSystemTime((now + 60) * 1000);
+    // Added after the message: a stream for its channel, one for all
+    // channels, and a watch of every kind, which has none.
+    await service.save(bot, {
+      attention: {
+        "watch/chat2": watch,
+        "watch/all": { ...watch, channels: "all" as const },
+        "watch/any": { ...watch, kinds: [] },
+      },
+    });
+    await settle();
+    vi.setSystemTime((now + 90) * 1000);
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    await settle();
+    await settle();
+    // Only the watch of other kinds too, which hears what the app missed
+    // since it listened, as a reconnect replay would give it.
+    expect(turns(run).sort()).toEqual([
+      "catch-up watch/any 1",
+      "catch-up watch/chat 1",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const caught: number[] = [];
+    const { service, history, recover, storage } = await setup({
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        if (trigger.type === "catch-up") caught.push(trigger.events.length);
+        if (caught.length === 1) await blocked;
+        return { ok: true };
+      },
+    });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await settle();
+    vi.setSystemTime((now + 1_000) * 1000);
+    // Ten turns of 64: one runs, and its lane keeps eight waiting.
+    for (let i = 0; i < 640; i++) history.push(posted(`m${i}`, now + 1 + i));
+    recover();
+    // Nine turns are handed on, the last at the end of its 576th event.
+    const progress = () =>
+      Object.values(readCheckpoints(storage)).map(
+        ({ through, after }) => after?.created_at ?? through,
+      )[0] ?? 0;
+    await vi.waitFor(() =>
+      expect(progress()).toBeGreaterThanOrEqual(now + 576),
+    );
+    expect(caught).toHaveLength(1);
+    release();
+    await vi.waitFor(() => expect(caught).toHaveLength(10), {
+      timeout: 5_000,
+    });
+    expect(caught).toEqual(Array<number>(10).fill(64));
   } finally {
     vi.useRealTimers();
   }

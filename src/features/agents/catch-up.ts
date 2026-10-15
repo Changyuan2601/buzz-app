@@ -16,12 +16,18 @@ export const CATCH_UP_BYTES = 8 * 1024 * 1024;
 /** Every kind 9 event of the stream created at or before `through` was
  * delivered or skipped. While a window (`through`, `upper`] is being
  * delivered, `after` is the last event delivered of it, in delivery order:
- * oldest first, ties by id. A restart goes on after it, up to `upper`. */
+ * oldest first, ties by id. A restart goes on after it, up to `upper`.
+ * `heard` are later ones already heard live, which catch-up skips too. */
 export type Checkpoint = Readonly<{
   through: number;
   upper?: number;
   after?: Readonly<{ created_at: number; id: string }>;
+  heard?: readonly Readonly<{ created_at: number; id: string }>[];
 }>;
+/** Live events each stream keeps as heard past its checkpoint. A tick moves
+ * the checkpoint past them every few seconds while the app listens; past
+ * this, the oldest may be heard again after a restart. */
+export const HEARD_LIMIT = 256;
 export type Checkpoints = Readonly<Record<string, Checkpoint>>;
 /** One watch's history in one channel, or in every channel it may read. */
 export type Stream = Readonly<{
@@ -40,6 +46,16 @@ const ID = /^[0-9a-f]{64}$/;
 export const oldestFirst = (a: Position, b: Position) =>
   a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
+/** The key of a watch's stream in one channel, or in every channel. */
+export const streamKey = (pubkey: string, slug: string, channel?: string) =>
+  JSON.stringify([pubkey, slug, channel ?? null]);
+/** Whether `event` of a stream is past its checkpoint: not delivered or
+ * skipped yet. */
+export const undelivered = (checkpoint: Checkpoint, event: Position) =>
+  event.created_at > checkpoint.through &&
+  (!checkpoint.after || oldestFirst(event, checkpoint.after) > 0) &&
+  !checkpoint.heard?.some(({ id }) => id === event.id);
+
 export function readCheckpoints(storage: Storage): Checkpoints {
   let stored: unknown;
   try {
@@ -54,7 +70,7 @@ export function readCheckpoints(storage: Storage): Checkpoints {
   if (!streams || typeof streams !== "object") return {};
   const checkpoints: Record<string, Checkpoint> = {};
   for (const [key, value] of Object.entries(streams)) {
-    const { through, upper, after } = (value ?? {}) as Checkpoint;
+    const { through, upper, after, heard } = (value ?? {}) as Checkpoint;
     if (
       !time(through) ||
       (upper !== undefined && !(time(upper) && upper > through))
@@ -68,12 +84,23 @@ export function readCheckpoints(storage: Storage): Checkpoints {
         after.created_at <= upper &&
         ID.test(after.id));
     if (!valid) continue;
+    const live = (Array.isArray(heard) ? heard : [])
+      .filter(
+        (event) =>
+          time(event?.created_at) &&
+          event.created_at > through &&
+          typeof event.id === "string" &&
+          ID.test(event.id),
+      )
+      .slice(-HEARD_LIMIT)
+      .map(({ created_at, id }) => ({ created_at, id }));
     checkpoints[key] = {
       through,
       ...(upper !== undefined ? { upper } : {}),
       ...(after
         ? { after: { created_at: after.created_at, id: after.id } }
         : {}),
+      ...(live.length ? { heard: live } : {}),
     };
   }
   return checkpoints;
@@ -98,7 +125,7 @@ export function streamsOf(agent: Pick<Agent, "pubkey" | "attention">) {
       ? [undefined]
       : value.channels)
       streams.push({
-        key: JSON.stringify([agent.pubkey, slug, channel ?? null]),
+        key: streamKey(agent.pubkey, slug, channel),
         slug,
         ...(channel ? { channel } : {}),
         since: value.since,
@@ -139,10 +166,14 @@ export async function readWindow<Event extends Position>(
   const window = checkpoint.upper ?? upper;
   if (floor > window) return undefined;
   const after = checkpoint.after;
+  const heard = new Set(checkpoint.heard?.map(({ id }) => id));
   const pending = (events: Event[]) =>
     events
       .sort(oldestFirst)
-      .filter((event) => !after || oldestFirst(event, after) > 0);
+      .filter(
+        (event) =>
+          (!after || oldestFirst(event, after) > 0) && !heard.has(event.id),
+      );
   const events: Event[] = [];
   let bytes = 0;
   let cursor: Position | undefined;

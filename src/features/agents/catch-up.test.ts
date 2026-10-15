@@ -1,11 +1,14 @@
 import { expect, it } from "vitest";
 import type { ReadFilter } from "../relay/events";
 import {
+  CATCH_UP_KEY,
   CATCH_UP_PAGE,
   CATCH_UP_PAGES,
+  readCheckpoints,
   readWindow,
   type Stream,
 } from "./catch-up";
+import { memoryStorage } from "./test-fakes";
 
 type Stored = { id: string; created_at: number; content: string };
 const id = (i: number) => i.toString(16).padStart(64, "0");
@@ -112,4 +115,37 @@ it("goes on after the last event delivered when a window was cut short", async (
   expect(window?.events.map(({ content }) => content)).toEqual(
     Array.from({ length: 10 }, (_, i) => `m${i + 10}`),
   );
+});
+
+it("keeps only valid live events heard past a saved checkpoint, and skips them", async () => {
+  const storage = memoryStorage();
+  storage.setItem(
+    CATCH_UP_KEY,
+    JSON.stringify({
+      version: 1,
+      streams: {
+        k: {
+          through: 10,
+          heard: [
+            { created_at: 11, id: id(1) },
+            // At or before its checkpoint, or malformed.
+            { created_at: 10, id: id(2) },
+            { created_at: 12, id: "short" },
+            null,
+          ],
+        },
+      },
+    }),
+  );
+  const saved = readCheckpoints(storage).k;
+  expect(saved).toEqual({
+    through: 10,
+    heard: [{ created_at: 11, id: id(1) }],
+  });
+  const { read } = relay([
+    { id: id(1), created_at: 11, content: "heard" },
+    { id: id(3), created_at: 11, content: "missed" },
+  ]);
+  const window = await readWindow(all, saved, 20, read);
+  expect(window?.events.map(({ content }) => content)).toEqual(["missed"]);
 });

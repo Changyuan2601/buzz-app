@@ -17,7 +17,7 @@ import {
   type ReadFilter,
   type RelayEvent,
 } from "../relay/events";
-import { Lanes } from "../agent-harness/lanes";
+import { LANE_LIMIT, Lanes } from "../agent-harness/lanes";
 import { wake } from "../agent-harness/wakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
@@ -62,9 +62,12 @@ import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
   delivered,
+  HEARD_LIMIT,
   oldestFirst,
   readWindow,
+  streamKey,
   streamsOf,
+  undelivered,
   type Checkpoint,
   type Stream,
 } from "./catch-up";
@@ -225,6 +228,8 @@ type Runner = {
   epoch: number;
   /** Watch and timer turns for a type with `runOnce`, one lane per Interest. */
   lanes: Lanes;
+  /** Watch jobs taken from the queue and not yet given to their lane. */
+  handing: number;
   /** Whether a claim has been answered, so `mayHold` is known rather than
    * assumed. */
   asked?: boolean;
@@ -500,6 +505,7 @@ export class AgentRunners {
       mayHold: true,
       epoch: 0,
       lanes: new Lanes(),
+      handing: 0,
       classifying: 0,
       classified: Promise.resolve(),
     };
@@ -595,9 +601,17 @@ export class AgentRunners {
     if (runner.seenIn.size > SEEN_CHANNELS)
       runner.seenIn.delete(runner.seenIn.keys().next().value as string);
   }
+  /** The most watch jobs an idle agent takes at once. A type with `runOnce`
+   * hands each to an Interest's lane, which keeps fewer waiting than the
+   * queue does. Turns waiting in every lane count against one lane's limit,
+   * so no lane fills and drops one. */
+  private watchLimit(runner: Runner) {
+    return runner.type?.runOnce ? LANE_LIMIT : QUEUE_LIMIT;
+  }
   /** Whether the agent can take `jobs` more jobs, `classified` of them first
    * through the classifier, without dropping any. Events still being
-   * classified will take queue and rate room too. */
+   * classified will take queue and rate room too, and queued watch jobs lane
+   * room. */
   private fits(
     runner: Runner,
     mentions: number,
@@ -614,7 +628,11 @@ export class AgentRunners {
     return (
       mention.length + mentions <= QUEUE_LIMIT &&
       admitted("mention") + mentions <= RATE_LIMIT &&
-      watch.length + runner.classifying + watches <= QUEUE_LIMIT &&
+      watch.length +
+        runner.classifying +
+        (runner.type?.runOnce ? runner.handing + runner.lanes.pending : 0) +
+        watches <=
+        this.watchLimit(runner) &&
       runner.classifying + classified <= CLASSIFY_LIMIT &&
       admitted("watch") + runner.classifying + watches <= RATE_LIMIT
     );
@@ -627,7 +645,7 @@ export class AgentRunners {
     return this.fits(
       runner,
       Math.min(mentions, QUEUE_LIMIT),
-      Math.min(triggers.length - mentions, QUEUE_LIMIT),
+      Math.min(triggers.length - mentions, this.watchLimit(runner)),
       Math.min(
         triggers.reduce((sum, t) => sum + classifications(t), 0),
         CLASSIFY_LIMIT,
@@ -673,6 +691,38 @@ export class AgentRunners {
     if (this.isOwn(runner, agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
+  /** Saves `event` as heard by each of the agent's streams it is in and has
+   * not passed yet, so catch-up after a restart does not give it again. */
+  private heardLive(agent: Agent, event: RelayEvent) {
+    if (event.kind !== 9) return;
+    const channel = channelOf(event);
+    let changed = false;
+    for (const stream of streamsOf(agent)) {
+      if (stream.channel !== undefined && stream.channel !== channel) continue;
+      const checkpoint = this.checkpoints[stream.key];
+      if (!checkpoint || !undelivered(checkpoint, event)) continue;
+      const heard = [
+        ...(checkpoint.heard ?? []),
+        { created_at: event.created_at, id: event.id },
+      ];
+      this.checkpoints = {
+        ...this.checkpoints,
+        [stream.key]: { ...checkpoint, heard: heard.slice(-HEARD_LIMIT) },
+      };
+      changed = true;
+    }
+    if (changed) this.saveCheckpoints();
+  }
+  /** Sets a stream's checkpoint, keeping what it heard live past it. */
+  private setCheckpoint(key: string, checkpoint: Checkpoint) {
+    const heard = this.checkpoints[key]?.heard?.filter((event) =>
+      undelivered({ ...checkpoint, heard: [] }, event),
+    );
+    this.checkpoints = {
+      ...this.checkpoints,
+      [key]: heard?.length ? { ...checkpoint, heard } : checkpoint,
+    };
+  }
   /** Keeps each agent's catch-up going: on start, and after each connect, its
    * kind 9 watches read the events they missed from their saved checkpoints,
    * up to the connect. From then on live events cover them, so while the
@@ -682,7 +732,7 @@ export class AgentRunners {
     const now = seconds();
     let changed = false;
     const move = (key: string, checkpoint: Checkpoint) => {
-      this.checkpoints = { ...this.checkpoints, [key]: checkpoint };
+      this.setCheckpoint(key, checkpoint);
       changed = true;
     };
     for (const runner of this.runners.values()) {
@@ -768,7 +818,7 @@ export class AgentRunners {
       return events.filter(hasEventProof) as RelayEvent[];
     };
     const progress = (key: string, checkpoint: Checkpoint) => {
-      this.checkpoints = { ...this.checkpoints, [key]: checkpoint };
+      this.setCheckpoint(key, checkpoint);
       this.saveCheckpoints();
     };
     try {
@@ -876,10 +926,12 @@ export class AgentRunners {
           ? []
           : this.heard(runner, agent, event);
       if (heard === "held") break;
-      const triggers =
-        event.created_at < pass.community.connection.start
-          ? heard.filter((trigger) => trigger.type === "watch")
-          : heard;
+      const listened = event.created_at >= pass.community.connection.start;
+      const triggers = heard.filter((trigger) =>
+        trigger.type === "watch"
+          ? this.missed(runner, trigger, listened)
+          : listened,
+      );
       const nextMentions = [...mentions];
       const nextWatches = new Map(
         [...watches].map(([key, list]) => [key, [...list]]),
@@ -905,7 +957,7 @@ export class AgentRunners {
         !this.fits(
           runner,
           cap(nextMentions.length, QUEUE_LIMIT),
-          cap(nextWatches.size, QUEUE_LIMIT),
+          cap(nextWatches.size, this.watchLimit(runner)),
           cap(classified, CLASSIFY_LIMIT),
         )
       )
@@ -947,9 +999,26 @@ export class AgentRunners {
     }
     return taken;
   }
+  /** Whether a catch-up event read for one watch is also one `trigger`'s
+   * watch missed. One with its own stream missed it while it is past that
+   * stream's checkpoint, so a watch added or widened since wakes for nothing
+   * older; one with none has replay only, from when the app listened. */
+  private missed(runner: Runner, trigger: WatchTrigger, listened: boolean) {
+    const { watch, slug, event } = trigger;
+    if (watch.kinds.length !== 1 || watch.kinds[0] !== 9) return listened;
+    const checkpoint =
+      this.checkpoints[
+        streamKey(
+          runner.pubkey,
+          slug,
+          watch.channels === "all" ? undefined : channelOf(event),
+        )
+      ];
+    return !!checkpoint && undelivered(checkpoint, event);
+  }
   /** Saves the checkpoints of watches that still exist. Unsaved, catch-up
    * starts from the last saved one again, which `seen` dedupes until a
-   * restart. */
+   * restart, and each stream's saved `heard` after one. */
   private saveCheckpoints() {
     const keys = new Set(
       this.host
@@ -997,6 +1066,7 @@ export class AgentRunners {
       }
       return;
     }
+    this.heardLive(agent, event);
     for (const trigger of triggers) {
       const job = {
         trigger,
@@ -1474,6 +1544,9 @@ export class AgentRunners {
         attention: this.attention(agent.pubkey),
       });
       const working = this.working(runner, job, agent);
+      // A wake is not in its lane until it is handed there below.
+      const handing = job.trigger.type !== "mention" && !!type.runOnce;
+      if (handing) runner.handing++;
       const completion = Promise.resolve().then(async () => {
         const pick = await pickFor(job.trigger, agent, type);
         const team = this.host.team(agent.pubkey);
@@ -1517,6 +1590,12 @@ export class AgentRunners {
         () => working.release(),
         (error) => working.release({ ok: false, error: message(error) }),
       );
+      if (handing)
+        void completion
+          .catch(() => {})
+          .then(() => {
+            runner.handing--;
+          });
       try {
         await Promise.race([
           completion,

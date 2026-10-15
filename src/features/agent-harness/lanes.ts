@@ -23,6 +23,11 @@ export class Lanes {
 
   constructor(private readonly width = LANES) {}
 
+  /** Turns waiting for a slot, in every lane. */
+  get pending() {
+    return this.waiting;
+  }
+
   /** Queues `task` on `lane`, or says why it was not. `dropped` is called
    * if the task is dropped while it waits. */
   add(
