@@ -718,6 +718,7 @@ function ChannelWorkspace({
   });
   const {
     open,
+    toggleLink,
     drawer,
     drawerContext,
     selectedTab,
@@ -1013,7 +1014,7 @@ function ChannelWorkspace({
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && context.routedThread) select(context.channelId);
-        open(
+        toggleLink(
           {
             channelId: context.channelId,
             ...(rootId && { rootId }),
@@ -1029,6 +1030,7 @@ function ChannelWorkspace({
     [
       panels,
       open,
+      toggleLink,
       relay,
       queries,
       select,

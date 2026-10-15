@@ -94,7 +94,7 @@ it("retained offline tabs can close and open threads without activating connecte
   expect(restored.result.current.tabs).toHaveLength(2);
 });
 
-it("gives a panel the thread its link was opened from, retargeting a reopened tab", () => {
+it("toggles the selected link panel while preserving context changes and hidden tabs", () => {
   const channels = [{ id: "alpha", name: "Alpha" }];
   const session = {
     viewer: "viewer",
@@ -147,6 +147,34 @@ it("gives a panel the thread its link was opened from, retargeting a reopened ta
     h.result.current.openConversationLink("alpha", "buzz://profile");
   });
   expect(context()).not.toHaveProperty("rootId");
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://profile");
+  });
+  expect(h.result.current.items).toHaveLength(0);
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://profile");
+  });
+  act(() => h.result.current.closePane());
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://profile");
+  });
+  expect(h.result.current.items).toHaveLength(1);
+  expect(h.result.current.selectedTab).toBe("profile:buzz://profile");
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://other");
+  });
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://profile");
+  });
+  expect(h.result.current.items).toHaveLength(2);
+  expect(h.result.current.selectedTab).toBe("profile:buzz://profile");
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://profile");
+  });
+  expect(h.result.current.items.map((item) => item.id)).toEqual([
+    "profile:buzz://other",
+  ]);
+  expect(h.result.current.selectedTab).toBe("profile:buzz://other");
 });
 
 it("a keyboard move focuses the placed tab at once and never takes focus back later", async () => {

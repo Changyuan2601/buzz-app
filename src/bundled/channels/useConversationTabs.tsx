@@ -266,6 +266,24 @@ export function useConversationTabs({
     setEntries(remaining);
     afterClose(tabId(entry), panelTrigger.current);
   };
+  const toggleLink = (next: Opening, append = false) => {
+    if (!currentVisit()) return;
+    const entry = opening.current;
+    if (
+      tabState.paneOpen &&
+      entry &&
+      tabState.getSelected() === tabId(entry) &&
+      !entry.channelContext &&
+      entry.panel === next.panel &&
+      entry.target === next.target &&
+      entry.channelId === next.channelId &&
+      entry.rootId === next.rootId
+    ) {
+      closeTab(entry);
+      return;
+    }
+    open(next, append);
+  };
   const drawerContext = useMemo(
     () =>
       current && !current.readOnly && viewer
@@ -512,7 +530,7 @@ export function useConversationTabs({
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      open(
+      toggleLink(
         {
           channelId,
           ...(origin && { rootId: origin.rootId }),
@@ -642,6 +660,7 @@ export function useConversationTabs({
 
   return {
     open,
+    toggleLink,
     opened,
     panel,
     panelTabs,

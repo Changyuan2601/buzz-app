@@ -429,7 +429,7 @@ function SessionWork({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    secondary.open({
+    secondary.toggleLink({
       channelId: channel.id,
       ...(origin && { rootId: origin.rootId }),
       panel,
