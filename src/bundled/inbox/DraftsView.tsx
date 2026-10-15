@@ -1,3 +1,8 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import {
+  ConversationChannel,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
 import {
   type ReactNode,
   useEffect,
@@ -7,7 +12,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { ChannelPreview } from "./ChannelPreview";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -49,6 +53,7 @@ export function DraftsView({
   scope,
   navigator,
   extensions,
+  host,
   onEmptyRetire,
   toolbar,
   resizeHandle,
@@ -57,6 +62,7 @@ export function DraftsView({
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   onEmptyRetire(): void;
   toolbar: ReactNode;
   resizeHandle?: ReactNode;
@@ -376,37 +382,34 @@ export function DraftsView({
             )}
             <div className={styles.draftEditor}>
               {activeChannel ? (
-                active.coordinates.threadRootId ? (
-                  <ThreadPanel
-                    key={active.key}
-                    session={session}
-                    scope={session.scope}
-                    extensions={extensions}
-                    channelId={activeChannel.id}
-                    channelName={activeChannel.name}
-                    messageId={active.coordinates.threadRootId}
-                    requireReadyRoot
-                    onDraftSaved={retire}
-                    sessionConversation={
-                      activeChannel.channelType === "session"
-                    }
-                    onOpenLink={() => false}
-                  />
-                ) : (
-                  <ChannelPreview
-                    key={active.key}
-                    session={session}
-                    extensions={extensions}
-                    channelId={activeChannel.id}
-                    channelName={
-                      activeChannel.channelType === "dm"
-                        ? `DM with ${title}`
-                        : activeChannel.name
-                    }
-                    draft
-                    onDraftSaved={retire}
-                  />
-                )
+                <ConversationChannel
+                  key={active.key}
+                  session={session}
+                  scope={session.scope}
+                  extensions={extensions}
+                  host={host}
+                  threadId={active.coordinates.threadRootId}
+                  channel={activeChannel}
+                  active={false}
+                >
+                  {active.coordinates.threadRootId ? (
+                    <ConversationThread
+                      messageId={active.coordinates.threadRootId}
+                      requireReadyRoot
+                      onDraftSaved={retire}
+                    />
+                  ) : (
+                    <ChannelPreview
+                      channelName={
+                        activeChannel.channelType === "dm"
+                          ? `DM with ${title}`
+                          : activeChannel.name
+                      }
+                      draft
+                      onDraftSaved={retire}
+                    />
+                  )}
+                </ConversationChannel>
               ) : (
                 <p role="status" className="text-body text-subtle">
                   This conversation is unavailable. Your draft is unchanged.

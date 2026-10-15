@@ -1,3 +1,5 @@
+const emptyPanels: never[] = [];
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
 import { readView, writeView } from "../../shared/view-state";
 import { useAttachmentDraft } from "../../features/messages/attachment-draft";
@@ -205,7 +207,7 @@ function fixture(
       ...(options.withWriter
         ? {
             writer: {
-              kinds: [9, 9007],
+              kinds: [9, 9007, 40003, 5],
               sign: async (template: import("nostr-tools").EventTemplate) =>
                 signed(viewer, template),
               publish: async (event: RelayEvent) => {
@@ -379,6 +381,17 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
+          host={
+            {
+              relay,
+              navigation: { open },
+              panels: {
+                subscribe: () => () => {},
+                snapshot: () => emptyPanels,
+                resolve: () => undefined,
+              },
+            } as unknown as ConversationHostServices
+          }
           relay={relay}
           navigator={{ open } as unknown as Navigation}
         />
@@ -676,6 +689,58 @@ it("a selected DM draft reads only its real window and preserves its scoped comp
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
     "DM draft body",
   );
+});
+
+it("a thread draft edits the viewer's own message like Channels and keeps the draft", async () => {
+  const h = fixture({ withWriter: true });
+  if (!h.root) throw new Error("Missing root");
+  const key = `draft:room:thread:${h.root.id}`;
+  writeView(h.owner.session.scope, key, "Thread draft body");
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  const history = await screen.findByRole("region", {
+    name: "Thread messages",
+  });
+  const row = (
+    await within(history).findByText("Our discussion")
+  ).closest<HTMLElement>("[data-message-id]");
+  if (!row) throw new Error("Missing owned root");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Reply to thread" }),
+    ).toHaveValue("Thread draft body"),
+  );
+  fireEvent.focus(row);
+  fireEvent.click(
+    within(row).getByRole("button", { name: "More message actions" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Delete message" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Edit message" }));
+  const editor = await screen.findByRole("textbox", { name: "Edit message" });
+  await waitFor(() => expect(editor).toHaveValue("Our discussion"));
+  act(() => {
+    (editor as HTMLTextAreaElement).value = "Corrected from Drafts";
+  });
+  fireEvent.input(editor);
+  const form = editor.closest("form");
+  if (!form) throw new Error("Missing edit composer form");
+  fireEvent.submit(form);
+  await waitFor(() =>
+    expect(h.published.map((event) => event.kind)).toContain(40003),
+  );
+  expect(h.published.find((event) => event.kind === 40003)).toMatchObject({
+    content: "Corrected from Drafts",
+  });
+  expect(
+    await screen.findByRole("textbox", { name: "Reply to thread" }),
+  ).toHaveValue("Thread draft body");
+  expect(readView(h.owner.session.scope, key, "")).toBe("Thread draft body");
 });
 
 it("DM draft composer labels use exact roster participants and recover as profiles arrive", async () => {

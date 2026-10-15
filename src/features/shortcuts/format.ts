@@ -30,17 +30,22 @@ const SPECIAL_KEYS: Readonly<Record<string, Words>> = {
   arrowleft: ["←", "Left Arrow"],
   arrowright: ["→", "Right Arrow"],
 };
+type Modifiers = readonly (readonly [
+  "ctrl" | "alt" | "shift" | "mod",
+  Words,
+])[];
 // Apple follows the platform convention Control, Option, Shift, Command.
-const APPLE_MODIFIERS: Readonly<Record<"alt" | "shift" | "mod", Words>> = {
-  alt: ["⌥", "Option"],
-  shift: ["⇧", "Shift"],
-  mod: ["⌘", "Command"],
-};
-const OTHER_MODIFIERS: Readonly<Record<"mod" | "alt" | "shift", Words>> = {
-  mod: ["Ctrl", "Control"],
-  alt: ["Alt", "Alt"],
-  shift: ["Shift", "Shift"],
-};
+const APPLE_MODIFIERS: Modifiers = [
+  ["ctrl", ["⌃", "Control"]],
+  ["alt", ["⌥", "Option"]],
+  ["shift", ["⇧", "Shift"]],
+  ["mod", ["⌘", "Command"]],
+];
+const OTHER_MODIFIERS: Modifiers = [
+  ["mod", ["Ctrl", "Control"]],
+  ["alt", ["Alt", "Alt"]],
+  ["shift", ["Shift", "Shift"]],
+];
 
 /** One formatter for every chord in the UI, so hints cannot drift from the dispatcher. */
 export function formatBinding(
@@ -55,10 +60,9 @@ export function formatBinding(
     binding.key.length === 1 ? binding.key.toUpperCase() : binding.key,
     binding.key.length === 1 ? binding.key.toUpperCase() : binding.key,
   ];
-  const table = apple ? APPLE_MODIFIERS : OTHER_MODIFIERS;
-  const modifiers = (Object.keys(table) as (keyof typeof table)[])
-    .filter((flag) => binding[flag])
-    .map((flag) => table[flag]);
+  const modifiers = (apple ? APPLE_MODIFIERS : OTHER_MODIFIERS)
+    .filter(([flag]) => binding[flag])
+    .map(([, words]) => words);
   const parts = [...modifiers, key];
   return Object.freeze({
     parts: Object.freeze(parts.map(([display]) => display)),

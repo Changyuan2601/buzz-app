@@ -56,6 +56,11 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   the drop is the same Move to intent, with the same gate, optimistic placement,
   rollback notice and Retry. Like Messages' empty Starred, a hidden empty
   **Chats** section is not revealed during a drag.
+- **Archive chat** (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in
+  Settings → Shortcuts) opens the Session actions Archive confirmation for the open
+  chat, including from the composer, after the menu's fresh permission read; it does
+  nothing where the menu offers no Archive. Success returns to Me. Archived chats
+  are restored from search and Channel Settings, as before.
 - Me uses the ordinary composer with a visible selected assistant plus explicit
   owner-scoped mentions. The selected assistant is device-local view intent keyed
   by account, community and chat; it is not Canvas, group data or channel metadata.

@@ -5,7 +5,7 @@ import styles from "./KeyCaptureControl.module.css";
 
 export type CapturedChord = Readonly<{
   binding: KeyBinding;
-  /** Control on Apple platforms or Command elsewhere: the dispatcher never matches it. */
+  /** The Windows/Command key off Apple platforms: the dispatcher never matches it. */
   otherPrimary: boolean;
 }>;
 
@@ -96,10 +96,11 @@ export function KeyCaptureControl({
             binding: {
               key: event.key.length === 1 ? event.key.toLowerCase() : event.key,
               ...(mod && { mod }),
+              ...(apple && event.ctrlKey && { ctrl: true }),
               ...(event.shiftKey && { shift: true }),
               ...(event.altKey && { alt: true }),
             },
-            otherPrimary: apple ? event.ctrlKey : event.metaKey,
+            otherPrimary: !apple && event.metaKey,
           });
         }}
       />

@@ -1,3 +1,8 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import {
+  ConversationChannel,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
 import { ConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import {
   type ReactNode,
@@ -13,11 +18,6 @@ import type { NavigationScope } from "../../features/navigation/targets";
 import type { Navigation } from "../../features/navigation/controller";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { InboxItem } from "../../features/relay/inbox";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
-import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
 import { ChannelPreview } from "./ChannelPreview";
 import { useChannelLabels } from "../channels/useChannelLabels";
 import { channelIcon } from "../../features/channels/channel-icon";
@@ -40,6 +40,7 @@ export function InboxDetail({
   scope,
   navigator,
   extensions,
+  host,
   channelName,
   previewIncomplete,
   archiveAction,
@@ -53,6 +54,7 @@ export function InboxDetail({
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   channelName: string;
   previewIncomplete?: "loading" | "error" | undefined;
   archiveAction?:
@@ -310,38 +312,32 @@ export function InboxDetail({
               // The flex class must not override native hidden presentation.
               style={previewIncomplete ? { display: "none" } : undefined}
             >
-              <MessageManagement
+              <ConversationChannel
                 session={session}
-                channelId={item.channelId}
+                scope={session.scope}
+                extensions={extensions}
+                host={host}
+                threadId={(timeline ?? flat) ? undefined : target.messageId}
+                channel={channel}
+                channelName={channelName}
                 active={false}
               >
-                <MessageManagementStatus />
                 {(timeline ?? flat) ? (
                   <ChannelPreview
-                    session={session}
-                    extensions={extensions}
-                    channelId={item.channelId}
                     channelName={
-                      channel?.channelType === "dm"
+                      channel.channelType === "dm"
                         ? `DM with ${dmName}`
                         : channelName
                     }
                     anchor={target.messageId}
                   />
                 ) : (
-                  <ThreadPanel
-                    session={session}
-                    scope={session.scope}
-                    extensions={extensions}
-                    channelId={item.channelId}
-                    channelName={channelName}
+                  <ConversationThread
                     messageId={target.messageId}
-                    sessionConversation={channel?.channelType === "session"}
                     revealSelected
-                    onOpenLink={() => false}
                   />
                 )}
-              </MessageManagement>
+              </ConversationChannel>
             </div>
           </ConversationPresentation>
         )}

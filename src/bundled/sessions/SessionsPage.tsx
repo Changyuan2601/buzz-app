@@ -91,6 +91,11 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import styles from "../../features/sessions/Sessions.module.css";
 
+/** The open chat's Archive, published for the Me shortcut while its visit is live. */
+export type ArchiveShortcut = {
+  current?: { available(): boolean; run(): Promise<void> } | undefined;
+};
+
 export function SessionsPage({
   relay,
   panels,
@@ -98,6 +103,7 @@ export function SessionsPage({
   extensions,
   navigator,
   navigation,
+  archive,
 }: {
   relay: RelayData;
   panels: Panels;
@@ -105,6 +111,7 @@ export function SessionsPage({
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
@@ -118,6 +125,7 @@ export function SessionsPage({
       extensions={extensions}
       navigator={navigator}
       navigation={navigation?.forSession(relay, connection)}
+      archive={archive}
     />
   ) : (
     <PanelFrame companion={companion}>
@@ -151,6 +159,7 @@ type LiveProps = {
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
+  archive?: ArchiveShortcut | undefined;
 };
 type Lifecycle = {
   channel: ChannelSummary;
@@ -198,6 +207,7 @@ function SessionsView({
   extensions,
   navigator,
   navigation,
+  archive,
   chooseLifecycle,
 }: LiveProps & { chooseLifecycle(lifecycle: Lifecycle): void }) {
   const list = useChannelList(session.channels);
@@ -213,6 +223,55 @@ function SessionsView({
   const select = (id: string) => {
     void navigator?.open(meTarget(scope, id));
   };
+  // Mail's Archive chord opens the same confirmation as the Session actions menu.
+  const archivable =
+    selected !== "new" &&
+    !pendingDraft &&
+    !selectedSession?.readOnly &&
+    !selectedSession?.cached &&
+    !selectedSession?.archived
+      ? selectedSession
+      : undefined;
+  const lifecycle = session.channelLifecycle;
+  // Chat activity replaces the summary; a pending request belongs to the chat.
+  const latest = useRef(archivable);
+  useLayoutEffect(() => {
+    latest.current = archivable;
+  });
+  const archivableId = archivable?.id;
+  useLayoutEffect(() => {
+    if (!archive || !archivableId || !lifecycle.available) return;
+    const signal = navigation?.signal;
+    const current = {
+      available: () => !signal?.aborted,
+      // The menu's fresh permission read: no Archive where the menu has none.
+      run: async () => {
+        const trigger =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : undefined;
+        const settings = await lifecycle
+          .load(archivableId, signal)
+          .catch(() => undefined);
+        const channel = latest.current;
+        if (
+          settings?.canArchive &&
+          archive.current === current &&
+          channel?.id === archivableId
+        )
+          chooseLifecycle({
+            channel,
+            action: "archive",
+            trigger,
+            origin: signal,
+          });
+      },
+    };
+    archive.current = current;
+    return () => {
+      if (archive.current === current) archive.current = undefined;
+    };
+  }, [archive, archivableId, lifecycle, navigation, chooseLifecycle]);
   if (selected === "new" || pendingDraft)
     return (
       <PanelFrame companion={companion}>

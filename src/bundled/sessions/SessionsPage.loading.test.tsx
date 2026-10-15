@@ -28,7 +28,7 @@ import {
   beginSessionShare,
   finishSessionShare,
 } from "../../features/sessions/share-attempt";
-import { SessionsPage } from "./SessionsPage";
+import { SessionsPage, type ArchiveShortcut } from "./SessionsPage";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -120,7 +120,7 @@ function fixture(
     channelLifecycle: {
       ...owner.session.channelLifecycle,
       available: true,
-      load: async () => ({
+      load: vi.fn(async () => ({
         channelId: id,
         channelType: "stream" as const,
         canArchive: true,
@@ -128,7 +128,7 @@ function fixture(
         canDelete: true,
         canLeave: false,
         canHide: false,
-      }),
+      })),
       run,
     },
     channels: {
@@ -190,6 +190,7 @@ function fixture(
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
+  const archive: ArchiveShortcut = {};
   const page = () => (
     <SessionsPage
       relay={relay}
@@ -197,6 +198,7 @@ function fixture(
       extensions={extensions}
       navigation={navigation}
       navigator={{ open } as unknown as Navigation}
+      archive={archive}
     />
   );
   const mount = () => render(page());
@@ -207,6 +209,7 @@ function fixture(
     relayAuthor,
     query,
     abort,
+    archive,
     set,
     run,
     refresh,
@@ -216,6 +219,11 @@ function fixture(
     update(next: KitSnapshot) {
       state = next;
       for (const listener of listeners) listener();
+    },
+    // Chat activity: a new summary object for the same chat.
+    retitle(name: string) {
+      list = { ...list, channels: [{ ...channel, name }] };
+      for (const listener of listListeners) listener();
     },
     state,
   };
@@ -584,6 +592,94 @@ it.each([
     expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
   },
 );
+
+it("confirms Archive from the shortcut, then leaves the archived chat", async () => {
+  const f = fixture();
+  f.mount();
+  expect(f.archive.current?.available()).toBe(true);
+  await act(async () => f.archive.current?.run());
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledWith(
+    id,
+    expect.any(AbortSignal),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: "Archive channel: Planning",
+  });
+  expect(f.run).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Archive channel" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(f.run).toHaveBeenCalledExactlyOnceWith(
+    "archive",
+    id,
+    expect.any(AbortSignal),
+  );
+  expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
+  expect(f.archive.current).toBeUndefined();
+});
+
+it("opens no Archive from the shortcut where the menu offers none", async () => {
+  const f = fixture();
+  f.mount();
+  f.session.channelLifecycle.load.mockResolvedValueOnce({
+    channelId: id,
+    channelType: "stream",
+    canArchive: false,
+    canUnarchive: false,
+    canDelete: false,
+    canLeave: true,
+    canHide: false,
+  });
+  await act(async () => f.archive.current?.run());
+  f.session.channelLifecycle.load.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => f.archive.current?.run());
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("keeps a shortcut Archive across chat activity during the permission read", async () => {
+  const f = fixture();
+  let release = () => {};
+  f.session.channelLifecycle.load.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            channelId: id,
+            channelType: "stream",
+            canArchive: true,
+            canUnarchive: false,
+            canDelete: true,
+            canLeave: false,
+            canHide: false,
+          });
+      }),
+  );
+  f.mount();
+  let pending: Promise<void> | undefined;
+  act(() => {
+    pending = f.archive.current?.run();
+  });
+  act(() => f.retitle("Roadmap"));
+  await act(async () => {
+    release();
+    await pending;
+  });
+  // The confirmation names the latest summary, not the one at keypress.
+  expect(
+    screen.getByRole("dialog", { name: "Archive channel: Roadmap" }),
+  ).toBeInTheDocument();
+});
+
+it("stops offering the Archive shortcut when its visit ends", () => {
+  const f = fixture();
+  f.mount();
+  f.abort.abort();
+  expect(f.archive.current?.available()).toBe(false);
+});
 
 it("drops a pending Delete confirmation when its visit ends", async () => {
   const f = fixture();

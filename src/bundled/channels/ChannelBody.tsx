@@ -1,28 +1,20 @@
 import { memo, useEffect, useId, useLayoutEffect } from "react";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
-import type { RelaySession } from "../../features/relay/session";
+import {
+  ConversationTimeline,
+  useConversation,
+} from "../../features/conversation/Conversation";
 import type { PageNavigation } from "../../features/navigation/service";
-import type { Attachment } from "../../features/relay/contracts";
 import { useChannelWindow } from "../../features/relay/react";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { clientMetrics } from "../../features/developer/client-metrics";
-import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
-import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Channels.module.css";
 
 export const ChannelBody = memo(function ChannelBody({
   cached,
   viewer,
-  extensions,
-  scope,
-  queries,
-  channelId,
-  onOpenLink,
-  canOpenLink,
   revealMessageId,
   onOpenThread,
-  onOpenMediaReview,
   navigation,
   onContentReady,
   activityLane,
@@ -30,26 +22,15 @@ export const ChannelBody = memo(function ChannelBody({
   onContentReady?(channelId: string): void;
   /** The channel composer follows this body and shows conversation activity. */
   activityLane?: boolean | undefined;
-  extensions?: ConversationExtensions | undefined;
-  scope: string;
-  queries: RelaySession;
   cached: boolean;
   viewer?: string | undefined;
-  channelId: string;
   navigation?: PageNavigation | undefined;
-  onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
-  canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
-  onOpenMediaReview(
-    messageId: string,
-    attachment: Attachment,
-    seconds: number,
-    hasComments?: boolean,
-  ): void;
 }) {
+  const { session: queries, channelId } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
   const window = useChannelWindow(queries.channels, channelId);
@@ -117,13 +98,9 @@ export const ChannelBody = memo(function ChannelBody({
       </div>
     );
   return (
-    <ChannelTimeline
+    <ConversationTimeline
       continuityKey={continuityKey}
       viewer={viewer}
-      extensions={extensions}
-      scope={scope}
-      channelId={channelId}
-      queries={queries}
       window={window}
       launchPending={
         !cached &&
@@ -132,10 +109,7 @@ export const ChannelBody = memo(function ChannelBody({
           window.status === "loading" ||
           (window.status === "ready" && window.freshness === "cached"))
       }
-      onOpenLink={onOpenLink}
-      canOpenLink={canOpenLink}
       {...(onOpenThread ? { onOpenThread } : {})}
-      onOpenMediaReview={onOpenMediaReview}
       revealMessageId={revealMessageId}
       navigation={navigation}
       activityLane={activityLane}

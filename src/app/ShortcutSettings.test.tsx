@@ -617,6 +617,46 @@ it.each([true, false])(
   },
 );
 
+it("records Control beside Command on Apple platforms, saves it and dispatches it", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    const title = "Open Settings";
+    await user.click(change(title));
+    fireEvent.keyDown(capture(title), { key: "a", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Include Command or Option so ordinary typing keeps working.",
+    );
+    const chord = { key: "u", ctrlKey: true, metaKey: true };
+    fireEvent.keyDown(capture(title), chord);
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "u", mod: true, ctrl: true },
+    ]);
+    expect(
+      JSON.parse(localStorage.getItem(SHORTCUT_BINDINGS_KEY) ?? "null"),
+    ).toEqual({ settings: { key: "u", mod: true, ctrl: true } });
+    expect(
+      within(row(title)).getByText("Control Command U"),
+    ).toBeInTheDocument();
+    expect(fireEvent.keyDown(document.body, { key: "u", metaKey: true })).toBe(
+      true,
+    );
+    expect(fireEvent.keyDown(document.body, chord)).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});
+
 it("ignores AltGraph capture without changing a saved override, then captures and dispatches a non-AltGraph chord", async () => {
   const user = userEvent.setup();
   const h = await harness();

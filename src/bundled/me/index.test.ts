@@ -18,8 +18,8 @@ function host(snapshot: { scope?: string }) {
     shortcuts,
   };
   apply(ctx as unknown as Parameters<typeof apply>[0]);
-  const [shortcut] = shortcuts.register.mock.calls[0] ?? [];
-  return { shortcut, open: navigation.open };
+  const [shortcut, archive] = shortcuts.register.mock.calls.map(([s]) => s);
+  return { shortcut, archive, open: navigation.open };
 }
 it("starts a new Me conversation with Mod+N", () => {
   const { shortcut, open } = host({ scope });
@@ -30,6 +30,20 @@ it("starts a new Me conversation with Mod+N", () => {
   expect(shortcut.when()).toBe(true);
   shortcut.run();
   expect(open).toHaveBeenCalledExactlyOnceWith(meTarget(scope));
+});
+it.each([
+  ["MacIntel", { key: "a", mod: true, ctrl: true }],
+  ["Win32", { key: "e", mod: true, shift: true }],
+])("on %s, Archive chat waits for an open chat", (platform, binding) => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  const { archive } = host({ scope });
+  expect(archive).toMatchObject({
+    id: "archive-chat",
+    binding,
+    allowInEditable: true,
+  });
+  expect(archive.when()).toBe(false);
+  expect(() => archive.run()).not.toThrow();
 });
 it("leaves Mod+N alone without a community", () => {
   const { shortcut, open } = host({});
