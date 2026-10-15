@@ -720,11 +720,11 @@ pub fn run() {
                 browser_status
             ];
             #[cfg(feature = "mesh")]
-            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm, mesh_compute::agent::mesh_compute_prepare_inference, mesh_compute::agent::mesh_compute_inference_current, mesh_compute::agent::mesh_compute_chat, mesh_compute::inline::mesh_compute_agent_run, mesh_compute::inline::mesh_compute_agent_cancel, mesh_compute::inline::mesh_compute_agent_result];
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, mesh_compute_widget_open, mesh_compute_widget_close, mesh_compute_widget_status, mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm, mesh_compute::agent::mesh_compute_prepare_inference, mesh_compute::agent::mesh_compute_inference_current, mesh_compute::agent::mesh_compute_chat, mesh_compute::inline::mesh_compute_agent_run, mesh_compute::inline::mesh_compute_agent_cancel, mesh_compute::inline::mesh_compute_agent_result];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
                 #[cfg(feature = "mesh")]
-                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release" | "mesh_compute_disarm" | "mesh_compute_prepare_inference" | "mesh_compute_inference_current" | "mesh_compute_chat" | "mesh_compute_agent_run" | "mesh_compute_agent_cancel" | "mesh_compute_agent_result") {
+                if request.message.command().starts_with("mesh_compute_") {
                     return mesh_commands(request);
                 }
                 if request.message.command().starts_with("browser_") {

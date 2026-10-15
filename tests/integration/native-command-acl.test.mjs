@@ -84,3 +84,22 @@ test("every declared app command has a main-window permission, including host st
     );
   }
 });
+
+// The prefix router owns every Mesh command in Mesh builds. In particular,
+// status/stop/widget calls must not be swallowed by the feature-only handler.
+test("Mesh prefix dispatch includes every declared Mesh command", () => {
+  const source = read("src-tauri/src/lib.rs");
+  const handler = source.match(
+    /let mesh_commands:[\s\S]*?tauri::generate_handler!\[([\s\S]*?)\];/,
+  )?.[1];
+  assert.ok(handler, "Mesh native handler must exist");
+  const registered = new Set(handler.match(/mesh_compute_[a-z_]+/g));
+  const declared = new Set(
+    [...commands].filter((name) => name.startsWith("mesh_compute_")),
+  );
+  assert.deepEqual(registered, declared);
+  assert.match(
+    source,
+    /#\[cfg\(feature = "mesh"\)\]\s*if request\.message\.command\(\)\.starts_with\("mesh_compute_"\)/,
+  );
+});
