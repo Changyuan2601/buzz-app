@@ -86,7 +86,7 @@ import styles from "../../features/sessions/Sessions.module.css";
 
 /** The open chat's Archive, published for the Me shortcut while its visit is live. */
 export type ArchiveShortcut = {
-  current?: { available(): boolean; run(): void } | undefined;
+  current?: { available(): boolean; run(): Promise<void> } | undefined;
 };
 
 export function SessionsPage({
@@ -225,27 +225,35 @@ function SessionsView({
     !selectedSession?.archived
       ? selectedSession
       : undefined;
+  const lifecycle = session.channelLifecycle;
   useLayoutEffect(() => {
-    if (!archive || !archivable) return;
+    if (!archive || !archivable || !lifecycle.available) return;
     const signal = navigation?.signal;
     const current = {
       available: () => !signal?.aborted,
-      run: () =>
-        chooseLifecycle({
-          channel: archivable,
-          action: "archive",
-          trigger:
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : undefined,
-          origin: signal,
-        }),
+      // The menu's fresh permission read: no Archive where the menu has none.
+      run: async () => {
+        const trigger =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : undefined;
+        const settings = await lifecycle
+          .load(archivable.id, signal)
+          .catch(() => undefined);
+        if (settings?.canArchive && archive.current === current)
+          chooseLifecycle({
+            channel: archivable,
+            action: "archive",
+            trigger,
+            origin: signal,
+          });
+      },
     };
     archive.current = current;
     return () => {
       if (archive.current === current) archive.current = undefined;
     };
-  }, [archive, archivable, navigation, chooseLifecycle]);
+  }, [archive, archivable, lifecycle, navigation, chooseLifecycle]);
   if (selected === "new" || pendingDraft)
     return (
       <PanelFrame companion={companion}>

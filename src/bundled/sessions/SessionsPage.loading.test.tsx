@@ -100,7 +100,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     channelLifecycle: {
       ...owner.session.channelLifecycle,
       available: true,
-      load: async () => ({
+      load: vi.fn(async () => ({
         channelId: id,
         channelType: "stream" as const,
         canArchive: true,
@@ -108,7 +108,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
         canDelete: true,
         canLeave: false,
         canHide: false,
-      }),
+      })),
       run,
     },
     channels: {
@@ -329,7 +329,11 @@ it("confirms Archive from the shortcut, then leaves the archived chat", async ()
   const f = fixture();
   f.mount();
   expect(f.archive.current?.available()).toBe(true);
-  act(() => f.archive.current?.run());
+  await act(async () => f.archive.current?.run());
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledWith(
+    id,
+    expect.any(AbortSignal),
+  );
   const dialog = screen.getByRole("dialog", {
     name: "Archive channel: Planning",
   });
@@ -346,6 +350,26 @@ it("confirms Archive from the shortcut, then leaves the archived chat", async ()
   );
   expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
   expect(f.archive.current).toBeUndefined();
+});
+
+it("opens no Archive from the shortcut where the menu offers none", async () => {
+  const f = fixture();
+  f.mount();
+  f.session.channelLifecycle.load.mockResolvedValueOnce({
+    channelId: id,
+    channelType: "stream",
+    canArchive: false,
+    canUnarchive: false,
+    canDelete: false,
+    canLeave: true,
+    canHide: false,
+  });
+  await act(async () => f.archive.current?.run());
+  f.session.channelLifecycle.load.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => f.archive.current?.run());
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.run).not.toHaveBeenCalled();
 });
 
 it("stops offering the Archive shortcut when its visit ends", () => {
