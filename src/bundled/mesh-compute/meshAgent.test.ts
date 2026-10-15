@@ -10,6 +10,7 @@ import {
   instructions,
   type MeshAgentConfig,
   type MeshAgentDeps,
+  type ChatMessage,
   MeshAgentRuntime,
   meshAgentConfig,
 } from "./meshAgent";
@@ -676,10 +677,14 @@ it("does not infer or publish when Solo placement cannot be read", async () => {
 it("queues new top-level Solo follow-ups in one conversation", async () => {
   const first = deferred<string>();
   const started = deferred<void>();
-  const chat = vi.fn(async () => {
-    started.resolve();
-    return first.promise;
-  });
+  const chat = vi.fn(
+    async (_inference: unknown, messages: readonly ChatMessage[]) => {
+      if (messages.at(-1)?.content.includes("Other conversation"))
+        return "Other reply";
+      started.resolve();
+      return first.promise;
+    },
+  );
   const f = setup({ solo: async () => true, chat }, OWNER, {
     mode: "chat",
     scope: "thread",
@@ -690,15 +695,18 @@ it("queues new top-level Solo follow-ups in one conversation", async () => {
   // A different conversation completing proves the second admission has had
   // its chance to start, while the first Solo completion remains held.
   const other = f.runtime.run({
-    ...f.delivery({ id: "3".repeat(64) }),
+    ...f.delivery({ id: "3".repeat(64), content: "Other conversation" }),
     channelId: "other",
   });
-  await vi.waitFor(() => expect(chat).toHaveBeenCalledTimes(2));
   try {
-    expect(f.publish).not.toHaveBeenCalled();
+    await other;
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(f.publish).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ content: "Other reply" }),
+    );
   } finally {
     first.resolve("A brief reply");
   }
-  await Promise.all([one, two, other]);
+  await Promise.all([one, two]);
   expect(f.publish).toHaveBeenCalledTimes(3);
 });
