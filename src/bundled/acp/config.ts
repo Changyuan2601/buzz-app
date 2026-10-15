@@ -111,7 +111,10 @@ function canonical({ command, args, env, workspace }: Config) {
   ]);
 }
 
-/** The SHA-256 digest, in hex, of the launch `value` would run. */
+/** The SHA-256 digest, in hex, of the launch `value` would run. It holds no
+ * secret: anything that writes the stored config can write a matching one.
+ * If config sync or import ever carries the launch fields, this must become
+ * an HMAC with a device-local key first. */
 export async function digest(value: Config): Promise<string> {
   const bytes = new TextEncoder().encode(canonical(value));
   const hash = await crypto.subtle.digest("SHA-256", bytes);
