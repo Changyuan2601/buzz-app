@@ -8,6 +8,7 @@ import type {
   Agents,
   Delivery,
   Models,
+  SessionAction,
   StandaloneTurn,
   TurnResult,
 } from "../../features/agents/service";
@@ -63,9 +64,10 @@ type Request = {
   team: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
-  /** The model and effort the owner picked for this turn. */
+  /** The model, effort and session action the owner picked for this turn. */
   model?: string;
   effort?: string;
+  session?: SessionAction;
   /** Called once a final send answers this request, or one steered after it,
    * a steering rejection is posted in its place, or the turn ends normally. */
   answered: () => void;
@@ -545,6 +547,7 @@ export class CodexRuntime {
       ...(toolRoot ? { toolRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
+      ...(delivery.session ? { session: delivery.session } : {}),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -594,16 +597,17 @@ export class CodexRuntime {
             request.failActivity("Codex was stopped");
             return;
           }
-          // Steering cannot carry a model or effort, so a differing pick
-          // waits for this turn and runs as the next one. Everything after
-          // it queues too until the lane drains: steering would run later
-          // messages first. A turn keeps the posting policy it was admitted
-          // with, so a request under the other policy waits for it too. A
-          // turn the owner stopped takes nothing more.
+          // Steering cannot carry a model, effort or session action, so a
+          // differing pick waits for this turn and runs as the next one.
+          // Everything after it queues too until the lane drains: steering
+          // would run later messages first. A turn keeps the posting policy
+          // it was admitted with, so a request under the other policy waits
+          // for it too. A turn the owner stopped takes nothing more.
           if (
             active.finished ||
             active.stopped ||
             lane.queued ||
+            request.session ||
             request.conversation.topLevel !==
               active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
@@ -827,6 +831,38 @@ export class CodexRuntime {
     request.acknowledged?.();
   }
 
+  /** Compacts thread `threadId`, which runs as a turn of its own on it. */
+  private async compact(
+    rpc: AppServer,
+    signal: AbortSignal,
+    threadId: string,
+    pubkey: string,
+    key: string,
+  ) {
+    const turn: { threadId: string; turnId?: string; finished: boolean } = {
+      threadId,
+      finished: false,
+    };
+    const followed = follow(rpc, signal, turn);
+    try {
+      this.status(pubkey, key, "Compacting");
+      await rpc.request("thread/compact/start", { threadId });
+      await followed.completed;
+    } catch (error) {
+      // A stopped agent's compaction stops too, so nothing resumes it mid-way.
+      if (signal.aborted && turn.turnId && !turn.finished)
+        await rpc
+          .request("turn/interrupt", { threadId, turnId: turn.turnId })
+          .catch(() => rpc.close());
+      // The turn never takes the thread over, so nothing else lets go of it.
+      await rpc
+        .request("thread/unsubscribe", { threadId })
+        .catch(() => rpc.close());
+      throw error;
+    } finally {
+      followed.stop();
+    }
+  }
   private start(
     request: Request,
     text: string,
@@ -1149,7 +1185,8 @@ export class CodexRuntime {
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       active.workspace = workspace;
-      const existing = entry.saved[key];
+      // A new session is a new thread; the binding moves to it once it starts.
+      const existing = request.session === "new" ? undefined : entry.saved[key];
       const { params, model, effort } = await this.prepare(
         rpc,
         agent,
@@ -1197,6 +1234,11 @@ export class CodexRuntime {
             return start();
           });
       } else started = await start();
+      if (
+        request.session === "compact" &&
+        started.thread.id === existing?.threadId
+      )
+        await this.compact(rpc, signal, started.thread.id, agent.pubkey, key);
       active.threadId = started.thread.id;
       server.threads.set(active.threadId, agent.pubkey);
       signal.throwIfAborted();

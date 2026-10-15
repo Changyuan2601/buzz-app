@@ -2401,6 +2401,93 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+/** Agents of one type whose sessions have `scope`, with one model and no
+ * efforts unless `models` are given. */
+const sessionAgents = (
+  scope: "thread" | "channel",
+  models = [{ id: "fast", label: "Fast", efforts: [] }],
+) => {
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const types = [
+    {
+      key: "test/agent",
+      models: () => ({ current: "fast", models }),
+      sessionActions: () => scope,
+    },
+  ];
+  return {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+};
+
+it("asks an agent whose type has them to compact its session first on the next run", async () => {
+  // A channel-scoped agent's top-level message joins the channel's session.
+  const h = mount({}, undefined, undefined, sessionAgents("channel"));
+  await h.user.type(h.input(), "tidy up");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  // One model and no efforts is no choice of its own; the session still is.
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  await h.user.click(
+    await screen.findByRole("button", { name: "Honey's session" }),
+  );
+  await h.user.click(
+    await screen.findByRole("menuitemcheckbox", {
+      name: "Compact session first",
+    }),
+  );
+  await h.user.keyboard("{Escape}");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("tidy up"),
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { session: "compact" } },
+  );
+});
+
+it("offers a thread-scoped agent session actions in a thread, not on a message that starts one", async () => {
+  const h = mount(
+    {},
+    undefined,
+    undefined,
+    sessionAgents("thread", [
+      { id: "fast", label: "Fast", efforts: [] },
+      { id: "deep", label: "Deep", efforts: [] },
+    ]),
+  );
+  const open = async () => {
+    await h.user.type(h.input(), "tidy up");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    // Its choices have loaded.
+    await screen.findByRole("button", { name: "Model for Honey's next run" });
+  };
+  await open();
+  // A top-level message starts a thread, which has no session yet.
+  expect(screen.queryByRole("button", { name: "Honey's session" })).toBeNull();
+  await h.user.keyboard("{Escape}");
+  h.retarget({ threadRootId: "root" });
+  await open();
+  expect(screen.getByRole("button", { name: "Honey's session" })).toBeTruthy();
+});
+
 it.each([
   "claude-sonnet-4-5@20250929",
   "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5",

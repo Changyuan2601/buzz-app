@@ -2,7 +2,7 @@
 // desktop app registers it with its tabs, and a standalone host runs it alone.
 import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 import type { AgentType } from "../../features/agents/service";
-import type { ClaudeRuntime, Config } from "./runtime";
+import { type ClaudeRuntime, type Config, config } from "./runtime";
 
 export const TYPE_ID = "claude-code";
 /** A turn's run returns once Claude has it, so this bounds only the hand-over. */
@@ -15,9 +15,15 @@ export const claudeRun = (
   ready?: (signal: AbortSignal) => Promise<void>,
 ): Pick<
   AgentType<Config>,
-  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  | "models"
+  | "sessionActions"
+  | "run"
+  | "runOnce"
+  | "timeoutMs"
+  | "syncedSettings"
 > => ({
   models: (agent) => runtime.models(agent.pubkey),
+  sessionActions: (agent) => config(agent.config).scope,
   run: async (delivery) => {
     await ready?.(delivery.signal);
     return runtime.run(delivery);

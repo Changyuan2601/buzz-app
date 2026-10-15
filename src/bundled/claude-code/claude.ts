@@ -111,6 +111,9 @@ export class ClaudeProcess {
   private buffer = "";
   private stderr = "";
   private lastError: string | undefined;
+  /** A `/compact` was sent: its failure fails the turn, unlike an automatic
+   * compaction's mid-turn. */
+  private compacting = false;
   private alive = true;
   /** The owner stopped the running turn, so how it ends is not a failure. */
   private stopping = false;
@@ -316,6 +319,7 @@ export class ClaudeProcess {
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
+    if (text === "/compact") this.compacting = true;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
@@ -428,6 +432,7 @@ export class ClaudeProcess {
     this.activeReceipts.clear();
     this.lastError = undefined;
     this.stopping = false;
+    this.compacting = false;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
 
@@ -498,6 +503,19 @@ export class ClaudeProcess {
         (task) => !(task as Message | null)?.ambient,
       ).length;
       if (active && !this.active) this.onQuiet?.();
+      return;
+    }
+    // `/compact` ends in a successful result even when compacting failed.
+    if (
+      this.compacting &&
+      message.type === "system" &&
+      message.subtype === "status" &&
+      message.compact_result === "failed"
+    ) {
+      this.lastError =
+        typeof message.compact_error === "string" && message.compact_error
+          ? message.compact_error
+          : "Claude could not compact the session";
       return;
     }
     if (

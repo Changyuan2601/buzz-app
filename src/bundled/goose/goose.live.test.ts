@@ -392,6 +392,26 @@ describe.skipIf(!BIN)("goose-acp", () => {
     }
   });
 
+  it("compacts a session, saying so in its text", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools } = await live();
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        systemPrompt: "You are a Buzz agent. Answer in one short sentence.",
+      });
+      await session.send("Remember the word pineapple.");
+      await expect(session.send("/compact")).resolves.toEqual({
+        ok: true,
+        text: "Compaction complete",
+      });
+    } finally {
+      await goose.kill();
+    }
+  });
+
   it("serves two agents in one goose, each in its workspace with its tools", {
     timeout: 180_000,
   }, async () => {

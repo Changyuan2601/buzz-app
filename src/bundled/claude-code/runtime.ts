@@ -334,6 +334,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    session,
     team,
     workingUntil,
     ignored,
@@ -395,14 +396,23 @@ export class ClaudeRuntime {
       );
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
-    // than steering into them and changing their tools' context.
+    // than steering into them and changing their tools' context. So does one
+    // that compacts or replaces their session.
     const prior = entry.policies.get(key);
-    const same = prior?.topLevel === topLevel;
+    const same = prior?.topLevel === topLevel && !session;
     const wait = prior && (same ? prior.handed : prior.settled);
     let delivered!: Promise<Settled>;
     const handed = (async () => {
       await wait;
-      const text = await prompt(false);
+      if (session === "compact") {
+        const compacted = await entry.sessions.compact(key);
+        if (!compacted.ok) {
+          delivered = Promise.resolve(compacted);
+          return;
+        }
+      }
+      // A new session is shown the conversation so far.
+      const text = await prompt(session === "new");
       // A conversation's tools default to its thread; a session shared by
       // several threads is told which to reply in instead.
       entry.contexts.set(
@@ -423,6 +433,7 @@ export class ClaudeRuntime {
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
         pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+        ...(session === "new" ? { renew: true } : {}),
       });
     })();
     const done = handed.then(
@@ -441,8 +452,9 @@ export class ClaudeRuntime {
       if (entry.policies.get(key) === policy) entry.policies.delete(key);
     });
     // Deliveries keep their order: a later one waits on this handover, and
-    // one with nothing to wait for is handed over before `run` returns.
-    if (!wait) await handed;
+    // one with nothing to wait for is handed over before `run` returns. A
+    // compaction is work of its own, so `run` does not wait for it.
+    if (!wait && !session) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
     interruptible?.(() => entry.sessions.interrupt(key));

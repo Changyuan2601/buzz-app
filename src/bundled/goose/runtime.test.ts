@@ -317,6 +317,26 @@ describe("GooseRuntime", () => {
     expect(memoryOpen).not.toHaveBeenCalled();
   });
 
+  it("starts a new session for a thread when asked", async () => {
+    const { deliver, goose } = setup();
+    const one = message("1", "@Gander look");
+    await deliver(one);
+    await flush(100);
+    const reply = message("2", "@Gander start over", {
+      tags: [
+        ["h", channel],
+        ["e", one.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+    await deliver(reply, { session: "new" });
+    await flush(100);
+    const process = goose();
+    expect(process?.closed).toEqual(["session-1"]);
+    expect(process?.turns[1]?.sessionId).toBe("session-2");
+    expect(process?.turns[1]?.text).toContain("@Gander start over");
+  });
+
   it("posts goose's own text in the thread, or at a Solo chat's top level", async () => {
     const plain = setup({ reply: "Plain answer" });
     await plain.deliver(message("1", "@Gander hi"));

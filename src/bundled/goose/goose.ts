@@ -468,6 +468,7 @@ export class GooseSession {
   private stopped:
     | { waiters: Waiter[]; receipts: Set<ActivityReceipt> }
     | undefined;
+  private idlers: (() => void)[] = [];
 
   constructor(
     private readonly goose: GooseProcess,
@@ -488,6 +489,13 @@ export class GooseSession {
   /** The thinking level it was put on; empty while it runs on goose's own. */
   get effort() {
     return this.chosen.effort ?? "";
+  }
+  /** Resolves once nothing runs, waits to run or waits for its answer:
+   * unlike `busy`, it waits out the model call goose makes after a final
+   * `send` too. */
+  idle(): Promise<void> {
+    if (this.quiet()) return Promise.resolve();
+    return new Promise((resolve) => this.idlers.push(resolve));
   }
 
   /** Sends one user message, whose turn runs on `model` of the provider when
@@ -653,6 +661,7 @@ export class GooseSession {
       this.ranAs(undefined);
     }
     if (!this.steering && !this.closed) this.done();
+    this.wake();
   }
 
   /** Puts the session on the provider, model and thinking level chosen now,
@@ -768,6 +777,16 @@ export class GooseSession {
     this.owner = undefined;
     for (const resolve of this.waiters.splice(0))
       resolve(resolve === owner ? settled : { ok: settled.ok });
+    this.wake();
+  }
+  private quiet() {
+    return (
+      this.closed ||
+      (!this.prompting && !this.steering && !this.pending && !this.queue.length)
+    );
+  }
+  private wake() {
+    if (this.quiet()) for (const resolve of this.idlers.splice(0)) resolve();
   }
 }
 

@@ -17,6 +17,7 @@ import {
   type Spawn,
   type ToolServer,
 } from "./goose";
+import type { SessionAction } from "../../features/agents/service";
 
 /** A conversation's session closes after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -25,6 +26,7 @@ export const IDLE_MS = 15 * 60_000;
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
 const LATE: Settled = { ok: false, error: "goose did not start in time" };
+const nothing = () => undefined;
 /** Saved conversations per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -170,6 +172,11 @@ export class AgentSessions {
     string,
     Promise<{ settled?: Promise<Settled> }>
   >();
+  /** Each conversation's latest message, which resolves once it has been
+   * handed to the session or given up. */
+  private readonly handing = new Map<string, Promise<void>>();
+  /** Each conversation's session actions not yet handed over. */
+  private readonly resets = new Map<string, number>();
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
   /** Conversations that have had a session, whose next new one may have been
@@ -206,9 +213,10 @@ export class AgentSessions {
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again when the session it was built for was closed;
    * `title` names a session opened for it; `model`, one of the agent's
-   * provider's, is what its turn runs on. Once `signal` aborts, it stops
-   * waiting for a session to open, which is then kept for the next message,
-   * and sends nothing. */
+   * provider's, is what its turn runs on; `session` compacts or closes the
+   * session first, once it has finished its work. Once `signal` aborts, it
+   * stops waiting for a session to open, which is then kept for the next
+   * message, and sends nothing. */
   async deliver(
     key: string,
     text: string,
@@ -219,6 +227,7 @@ export class AgentSessions {
       title,
       signal,
       model,
+      session,
       ...activity
     }: Readonly<{
       steer?: string;
@@ -226,71 +235,95 @@ export class AgentSessions {
       title?: string;
       signal?: AbortSignal;
       model?: string;
+      session?: SessionAction;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
-    for (;;) {
-      if (this.disposed) return STOPPED;
-      // A message that arrives while its conversation's session opens uses it.
-      const opening = this.opening.get(key);
-      if (opening) {
-        // The session stays shared; only this message gives up on it.
+    // Messages are handed to their conversation's session in the order they
+    // came: each waits until the one before it was, and one that compacts or
+    // closes the session also until the session has finished its work.
+    const ahead = this.handing.get(key);
+    let handed!: (after?: Promise<unknown>) => void;
+    const mine = new Promise<void>((resolve) => {
+      handed = (after) => resolve(after?.then(nothing, nothing));
+    });
+    this.handing.set(key, mine);
+    void mine.then(() => {
+      if (this.handing.get(key) === mine) this.handing.delete(key);
+    });
+    // A session action, and a message behind one, has spent its time to start
+    // waiting, so it waits as long as that takes.
+    const resets = this.resets.get(key) ?? 0;
+    if (resets || session) signal = undefined;
+    if (session) {
+      this.resets.set(key, resets + 1);
+      void mine.then(() => {
+        const left = (this.resets.get(key) ?? 1) - 1;
+        if (left) this.resets.set(key, left);
+        else this.resets.delete(key);
+      });
+    }
+    try {
+      if (ahead)
         try {
-          await abortable(
-            opening.catch(() => undefined),
-            signal,
-          );
+          await abortable(ahead, signal);
         } catch {
+          // Those after it still wait for the one before it.
+          handed(ahead);
           return LATE;
         }
-        continue;
+      if (this.disposed) return STOPPED;
+      if (session) {
+        const reset = await this.reset(key, session);
+        if (!reset.ok) return reset;
       }
       const live = this.live.get(key);
-      if (!live) break;
-      if (!live.session.open || (!live.session.busy && this.stale(live))) {
-        this.drop(key, live);
-        break;
+      if (live?.session.open && (live.session.busy || !this.stale(live))) {
+        this.touch(key, live, seen);
+        // Returned rather than awaited: it was handed over once sent.
+        return this.answer(
+          key,
+          live,
+          live.session.busy ? steer : text,
+          activity,
+          model,
+        );
       }
-      this.touch(key, live, seen);
-      return this.answer(
-        key,
-        live,
-        live.session.busy ? steer : text,
-        activity,
-        model,
-      );
-    }
-    // Reserved before anything is awaited, so a message that comes meanwhile
-    // waits for this session instead of opening another.
-    const starting = (async () => {
-      // Perhaps built for a session closed since, which had been shown the rest.
-      if (this.had.has(key) && fresh) text = await fresh();
-      const live = await this.open(
-        key,
-        title,
-        (live) => this.disposed || this.adopt(key, live),
-      );
-      if (this.disposed) {
-        void this.close(live);
-        throw new Error("goose was stopped");
+      if (live) this.drop(key, live);
+      const starting = (async () => {
+        // Perhaps built for a session closed since, which had been shown the rest.
+        if (this.had.has(key) && fresh) text = await fresh();
+        const live = await this.open(
+          key,
+          title,
+          (live) => this.disposed || this.adopt(key, live),
+        );
+        if (this.disposed) {
+          void this.close(live);
+          throw new Error("goose was stopped");
+        }
+        if (signal?.aborted) return {};
+        this.touch(key, live, seen);
+        return { settled: this.answer(key, live, text, activity, model) };
+      })();
+      // The next message uses the session this one opens, once it has.
+      this.opening.set(key, starting);
+      handed(starting);
+      const opened = () => {
+        if (this.opening.get(key) === starting) this.opening.delete(key);
+      };
+      starting.then(opened, opened);
+      try {
+        const { settled } = await abortable(starting, signal);
+        return settled ? await settled : LATE;
+      } catch (error) {
+        if (this.disposed) return STOPPED;
+        if (signal?.aborted) return LATE;
+        console.warn("goose could not start", error);
+        return { ok: false, error: `goose could not start: ${message(error)}` };
       }
-      if (signal?.aborted) return {};
-      this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
-    })();
-    this.opening.set(key, starting);
-    const opened = () => {
-      if (this.opening.get(key) === starting) this.opening.delete(key);
-    };
-    starting.then(opened, opened);
-    try {
-      const { settled } = await abortable(starting, signal);
-      return settled ? await settled : LATE;
-    } catch (error) {
-      if (this.disposed) return STOPPED;
-      if (signal?.aborted) return LATE;
-      console.warn("goose could not start", error);
-      return { ok: false, error: `goose could not start: ${message(error)}` };
+    } finally {
+      handed();
     }
   }
 
@@ -299,6 +332,27 @@ export class AgentSessions {
   async interrupt(key: string) {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
+  }
+  /** Waits for the conversation's session to finish its work, then compacts
+   * it or closes it, so the message opens a new one. Without an open session
+   * there is nothing to do. */
+  private async reset(key: string, action: SessionAction): Promise<Settled> {
+    const live = this.live.get(key);
+    if (!live?.session.open) return { ok: true };
+    await live.session.idle();
+    if (this.disposed) return STOPPED;
+    if (this.live.get(key) !== live || !live.session.open) return { ok: true };
+    if (action === "new") {
+      this.drop(key, live);
+      return { ok: true };
+    }
+    const result = await this.answer(key, live, "/compact", {}, undefined);
+    // goose ends the turn either way, and says which in its text.
+    if (!result.ok || result.text === "Compaction complete") return result;
+    return {
+      ok: false,
+      error: result.text || "goose could not compact the session",
+    };
   }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the

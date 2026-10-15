@@ -3546,3 +3546,56 @@ const canvasHead = (content: string, author = owner) => ({
   tags: [],
   content,
 });
+describe("session actions", () => {
+  const methods = (f: ReturnType<typeof fixture>) =>
+    f.sent.flatMap((wire) => (wire.method ? [wire.method] : []));
+
+  it("compacts a conversation's thread before the turn, after the one working", async () => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    // Asked while the turn works, it runs as the next turn, not a steer.
+    await f.runtime.run({ ...f.delivery("second"), session: "compact" });
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(methods(f)).toContain("thread/compact/start"),
+    );
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Compacting");
+    expect(f.starts()).toHaveLength(1);
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "compact", status: "completed" },
+      },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const since = methods(f).slice(methods(f).lastIndexOf("thread/resume"));
+    expect(since.slice(0, 2)).toEqual([
+      "thread/resume",
+      "thread/compact/start",
+    ]);
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    expect(methods(f)).not.toContain("turn/steer");
+  });
+
+  it("starts a new thread for the conversation", async () => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await f.runtime.run({ ...f.delivery("second"), session: "new" });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(methods(f)).not.toContain("thread/resume");
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-2" });
+    await f.complete();
+    // The conversation keeps the new thread.
+    await f.runtime.run(f.delivery("third"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(f.starts()[2]?.params).toMatchObject({ threadId: "thread-2" });
+  });
+});

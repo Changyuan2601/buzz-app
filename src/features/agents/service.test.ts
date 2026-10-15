@@ -84,6 +84,7 @@ async function setup({
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
+  sessionActions = false,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -169,6 +170,7 @@ async function setup({
     }),
     run,
     ...(runOnce ? { runOnce } : {}),
+    ...(sessionActions ? { sessionActions: () => "thread" as const } : {}),
   };
   plugin.agents.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -1200,7 +1202,8 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
   emit({
     events: [
-      asked("owner", viewer, ["effort", bot, "high"]),
+      // A type without `sessionActions` takes no session action.
+      asked("owner", viewer, ["effort", bot, "high"], ["session", bot, "new"]),
       asked("stranger", other, ["effort", bot, "high"], ["model", bot, "deep"]),
       asked("unlisted", viewer, ["effort", bot, "max"]),
       asked("elsewhere", viewer, ["effort", sibling, "high"]),
@@ -1210,6 +1213,7 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(7));
+  expect(run.mock.calls[0]?.[0].session).toBeUndefined();
   expect(
     run.mock.calls.map(([{ model, effort }]) => ({ model, effort })),
   ).toEqual([
@@ -1221,6 +1225,30 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: "max" },
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
+  ]);
+});
+
+it("passes the session action its owner asked for to a type that takes it", async () => {
+  const { service, run, emit } = await setup({ sessionActions: true });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const asked = (id: string, pubkey: string, ...tags: string[][]) =>
+    event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
+  emit({
+    events: [
+      asked("compact", viewer, ["session", bot, "compact"]),
+      asked("new", viewer, ["session", bot, "new"], ["effort", bot, "high"]),
+      asked("stranger", other, ["session", bot, "new"]),
+      asked("unknown", viewer, ["session", bot, "forget"]),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+  expect(
+    run.mock.calls.map(([{ session, effort }]) => ({ session, effort })),
+  ).toEqual([
+    { session: "compact", effort: undefined },
+    { session: "new", effort: "high" },
+    { session: undefined, effort: undefined },
+    { session: undefined, effort: undefined },
   ]);
 });
 

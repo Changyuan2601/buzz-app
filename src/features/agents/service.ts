@@ -427,6 +427,9 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The effort level the owner asked for in the triggering message: one of
    * that model's `efforts`. Absent means the agent's own default. */
   effort?: string;
+  /** What the owner asked the turn to do to its conversation's session
+   * first, for a type with `sessionActions`. */
+  session?: SessionAction;
   /** A section for each team the agent is on, with the team's name, roster and
    * instructions, to follow the agent's own instructions. Absent without one. */
   team?: string;
@@ -460,6 +463,9 @@ export type Delivery<Config = unknown> = Readonly<{
   current(): boolean;
 }>;
 export type Effort = Readonly<{ id: string; label: string }>;
+/** What a turn does to its conversation's session first: `compact`
+ * summarizes its history to free context, and `new` starts a new session. */
+export type SessionAction = "compact" | "new";
 export type AgentMigrationSetting = Readonly<{
   id: string;
   label: string;
@@ -550,6 +556,12 @@ export type AgentType<Config = unknown> = {
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
+  /** Its runs honour `Delivery.session`, so the owner can ask for one with
+   * the model and effort. It returns the agent's session scope: under
+   * `channel` a channel's top-level message joins the channel's one session,
+   * and under `thread` it starts a thread of its own, with no session to act
+   * on. A DM or Solo chat is one session either way. */
+  sessionActions?(agent: Agent<Config>): "thread" | "channel";
   /** Read-only: snapshots of the sessions the agent ran from Buzz on this
    * device with activity since `since` (milliseconds). `since` only bounds
    * activity time; it is no checkpoint, and a session last active before it

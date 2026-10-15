@@ -443,6 +443,69 @@ it("starts over when a saved session no longer loads", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 9 });
 });
 
+it("compacts a quiet conversation's saved session in place", async () => {
+  vi.useFakeTimers();
+  const store = memoryStore();
+  const { pool, claudes } = sessions({ store });
+  await pool.deliver("c/root", "first", 4);
+  vi.advanceTimersByTime(IDLE_MS + 1);
+  await expect(pool.compact("c/root")).resolves.toEqual({ ok: true });
+  const resumed = claudes().at(-1);
+  expect(resumed?.options.args).toContain("--resume");
+  expect(resumed?.prompts).toEqual(["/compact"]);
+  expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 4 });
+});
+
+it("has no session to compact before a conversation starts", async () => {
+  const { pool, claudes } = sessions();
+  await expect(pool.compact("c/root")).resolves.toEqual({ ok: true });
+  expect(claudes().filter((process) => process.prompts.length)).toEqual([]);
+});
+
+it("reports a compaction that failed", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const first = pool.deliver("c/root", "first", 1);
+  await flush();
+  claudes()[0]?.finish();
+  await first;
+  const compacted = pool.compact("c/root");
+  await flush();
+  const process = claudes()[0];
+  process?.emit({
+    type: "system",
+    subtype: "status",
+    status: null,
+    compact_result: "failed",
+    compact_error: "Not enough messages to compact.",
+  });
+  process?.finish();
+  await expect(compacted).resolves.toEqual({
+    ok: false,
+    error: "Not enough messages to compact.",
+  });
+});
+
+it("starts a new session when asked, whose id replaces the saved one's", async () => {
+  const store = memoryStore();
+  store.set("c/root", { id: "old", seen: 4, at: 1 });
+  const { pool, claudes } = sessions({ store, hold: true });
+  // Its saved session is not resumed.
+  const first = pool.deliver("c/root", "first", 5, { renew: true });
+  await flush();
+  expect(claudes()[0]?.options.args).not.toContain("--resume");
+  expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
+  claudes()[0]?.finish();
+  await first;
+  // Nor is the one its running process has.
+  const next = pool.deliver("c/root", "again", 6, { renew: true });
+  await flush();
+  expect(claudes()[0]?.killed).toBe(true);
+  expect(claudes().at(-1)?.options.args).toContain("--session-id");
+  claudes().at(-1)?.finish();
+  await next;
+  expect(store.get("c/root")).toMatchObject({ id: "new-2", seen: 6 });
+});
+
 it("runs a turn with the model and effort it was delivered with, starting over included", async () => {
   const store = memoryStore();
   store.set("c/root", { id: "lost", seen: 4, at: 1 });

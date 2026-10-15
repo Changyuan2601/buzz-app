@@ -70,7 +70,7 @@ export class AgentSessions {
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
-  private readonly opening = new Map<string, Promise<Live | undefined>>();
+  private readonly opening = new Map<string, Promise<Live | Settled>>();
   private discovery:
     | {
         fingerprint: string;
@@ -168,7 +168,9 @@ export class AgentSessions {
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again for a new session when the saved one is lost;
-   * `pick` is the model and effort the turn was asked to run with. */
+   * `pick` is the model and effort the turn was asked to run with; `renew`
+   * starts a new session in place of the one it has, whose id the new one's
+   * replaces where it was saved. */
   async deliver(
     key: string,
     text: string,
@@ -177,6 +179,7 @@ export class AgentSessions {
       steer = text,
       fresh,
       pick = {},
+      renew,
       step,
       acknowledged,
       superseded,
@@ -185,6 +188,7 @@ export class AgentSessions {
       steer?: string;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
+      renew?: true;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -196,7 +200,8 @@ export class AgentSessions {
     let live = this.live.get(key);
     if (
       live &&
-      (!live.process.running ||
+      (renew ||
+        !live.process.running ||
         (live.fingerprint !== this.options.fingerprint(key) &&
           !live.process.busy))
     ) {
@@ -213,20 +218,10 @@ export class AgentSessions {
         ...(superseded ? { superseded } : {}),
       });
     }
-    const saved = this.options.store.get(key);
-    const starting = this.start(saved?.id, key).catch((error) => {
-      console.warn("Claude could not start", error);
-      return undefined;
-    });
-    this.opening.set(key, starting);
-    live = await starting;
-    if (this.opening.get(key) === starting) this.opening.delete(key);
-    if (live && !this.disposed) this.adopt(key, live, seen);
-    if (!live) return { ok: false, error: "Claude could not start" };
-    if (this.disposed) {
-      void live.process.kill();
-      return { ok: false, error: "Claude was stopped" };
-    }
+    const saved = renew ? undefined : this.options.store.get(key);
+    const opened = await this.open(key, saved?.id, seen);
+    if (!("process" in opened)) return opened;
+    live = opened;
     const activity = {
       ...pick,
       ...(activityScope ? { activityScope } : {}),
@@ -253,6 +248,28 @@ export class AgentSessions {
   async interrupt(key: string) {
     await this.opening.get(key);
     await this.live.get(key)?.process.interrupt();
+  }
+  /** Compacts the conversation's session, resuming it when its process has
+   * stopped. Without a session there is nothing to compact. */
+  async compact(key: string): Promise<Settled> {
+    if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    let live = this.live.get(key);
+    const saved = this.options.store.get(key);
+    if (!live && !saved) return { ok: true };
+    if (!live) {
+      const opened = await this.open(key, saved?.id, 0);
+      if (!("process" in opened)) return opened;
+      live = opened;
+    }
+    // Claude takes the command in stream-json input as it does in a terminal.
+    const settled = await this.answer(key, live, "/compact", {});
+    // A saved session that no longer loads is the message's to start over.
+    if (!settled.ok && !live.process.started) {
+      this.options.store.delete(key);
+      this.drop(key, live);
+      return { ok: true };
+    }
+    return settled;
   }
 
   /** Runs one turn in a new session, then stops its process. The session is
@@ -328,6 +345,33 @@ export class AgentSessions {
     for (const live of this.once.values()) void live?.process.kill();
   }
 
+  /** Starts the conversation's process, resuming session `resume` when given;
+   * a message that arrives meanwhile waits for it, and is answered after the
+   * caller's. */
+  private open(
+    key: string,
+    resume: string | undefined,
+    seen: number,
+  ): Promise<Live | Settled> {
+    const opened = this.start(resume, key).then(
+      (live): Live | Settled => {
+        if (this.opening.get(key) === opened) this.opening.delete(key);
+        if (this.disposed) {
+          void live.process.kill();
+          return { ok: false, error: "Claude was stopped" };
+        }
+        this.adopt(key, live, seen);
+        return live;
+      },
+      (error) => {
+        if (this.opening.get(key) === opened) this.opening.delete(key);
+        console.warn("Claude could not start", error);
+        return { ok: false, error: "Claude could not start" };
+      },
+    );
+    this.opening.set(key, opened);
+    return opened;
+  }
   private async start(resume: string | undefined, key?: string): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);

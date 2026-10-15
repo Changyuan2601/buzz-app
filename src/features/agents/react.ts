@@ -67,9 +67,16 @@ export const MentionModelsContext = createContext<
 >(undefined);
 
 export type MentionModelChoice = Models &
-  Readonly<{ pubkey: string; name: string; loading?: boolean }>;
+  Readonly<{
+    pubkey: string;
+    name: string;
+    loading?: boolean;
+    /** Its type can compact a session or start a new one before a run, in
+     * sessions of this scope. */
+    session?: "thread" | "channel";
+  }>;
 /** The mentioned agents, of the viewer's own, whose type offers a choice of
- * model or effort. */
+ * model or effort, or session actions. */
 export function useMentionModels(
   pubkeys: readonly string[],
 ): readonly MentionModelChoice[] {
@@ -112,8 +119,10 @@ export function useMentionModels(
                 try {
                   const { current, models, sendDefaults } =
                     await type.models(agent);
+                  const session = type.sessionActions?.(agent);
                   return models.length > 1 ||
-                    models.some((m) => m.efforts.length)
+                    models.some((m) => m.efforts.length) ||
+                    session
                     ? [
                         {
                           pubkey,
@@ -121,6 +130,7 @@ export function useMentionModels(
                           current,
                           models,
                           ...(sendDefaults ? { sendDefaults: true } : {}),
+                          ...(session ? { session } : {}),
                         },
                       ]
                     : [];

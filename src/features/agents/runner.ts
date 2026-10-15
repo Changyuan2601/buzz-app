@@ -8,6 +8,7 @@ import type {
   AgentAttention,
   AgentHandle,
   RegisteredAgentType,
+  SessionAction,
   Trigger,
 } from "./service";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
@@ -19,7 +20,7 @@ import {
 } from "../relay/events";
 import { wake } from "../agent-harness/wakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
-import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
+import { EFFORT_TAG, MODEL_TAG, SESSION_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { LIVE_REPLAY_LIMIT } from "../relay/live";
 import type { RelaySession } from "../relay/session";
@@ -120,14 +121,15 @@ const bounded = (set: Set<string>, id: string, limit = SEEN_LIMIT) => {
   if (set.size > limit) set.delete(set.values().next().value as string);
 };
 
-/** The model and effort the triggering message asks of this agent. Only the
- * owner picks them, so nobody else in a channel can run the agent at their
- * level, and only ones the type lists: effort from the model the run uses. */
+/** The model, effort and session action the triggering message asks of this
+ * agent. Only the owner picks them, so nobody else in a channel can run the
+ * agent at their level, and only ones the type lists: effort from the model
+ * the run uses. */
 async function pickFor(
   trigger: Trigger,
   agent: Agent,
   type: RegisteredAgentType,
-): Promise<{ model?: string; effort?: string }> {
+): Promise<{ model?: string; effort?: string; session?: SessionAction }> {
   if (
     (trigger.type !== "mention" && trigger.type !== "watch") ||
     trigger.event.pubkey !== agent.owner
@@ -139,7 +141,12 @@ async function pickFor(
     )?.[2];
   const model = asked(MODEL_TAG);
   const effort = asked(EFFORT_TAG);
-  if (!model && !effort) return {};
+  const action = asked(SESSION_TAG);
+  const session: { session?: SessionAction } =
+    type.sessionActions && (action === "compact" || action === "new")
+      ? { session: action }
+      : {};
+  if (!model && !effort) return session;
   try {
     const offered = await type.models?.(agent);
     const picked = offered?.models.find((item) => item.id === model);
@@ -150,10 +157,11 @@ async function pickFor(
       ...(effort && runs?.efforts.some((level) => level.id === effort)
         ? { effort }
         : {}),
+      ...session,
     };
   } catch (error) {
     console.warn(`Agent type ${type.key} could not list its models`, error);
-    return {};
+    return session;
   }
 }
 

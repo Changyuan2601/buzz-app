@@ -2,7 +2,7 @@
 // desktop app registers it with its tabs, and a standalone host runs it alone.
 import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 import type { AgentType } from "../../features/agents/service";
-import type { Config } from "./config";
+import { type Config, config } from "./config";
 import type { CodexRuntime } from "./runtime";
 
 export const TYPE_ID = "codex";
@@ -17,9 +17,15 @@ export const codexRun = (
   ready?: (signal: AbortSignal) => Promise<void>,
 ): Pick<
   AgentType<Config>,
-  "models" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  | "models"
+  | "sessionActions"
+  | "run"
+  | "runOnce"
+  | "timeoutMs"
+  | "syncedSettings"
 > => ({
   models: (agent) => runtime.preview(agent),
+  sessionActions: (agent) => config(agent.config).scope,
   run: async (delivery) => {
     await ready?.(delivery.signal);
     return runtime.run(delivery);

@@ -381,6 +381,13 @@ function Composer({
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
   const solo = !!soloConversation || ownSoloConversation;
+  const channelType = list.channels.find(
+    (channel) => channel.id === channelId,
+  )?.channelType;
+  // A DM or Solo chat is one conversation; elsewhere a top-level message
+  // starts a thread of its own.
+  const startsThread =
+    !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
@@ -1935,6 +1942,7 @@ function Composer({
                   onResolved={(next) => {
                     resolvedPicks.current = next;
                   }}
+                  startsThread={startsThread}
                 />
               )}
             <IconButton

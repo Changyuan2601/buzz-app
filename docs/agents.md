@@ -114,6 +114,22 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
+A type with `sessionActions` (Claude, Codex and goose) also offers its owner two
+session picks in the composer's model popover, behind each agent's **…** menu:
+**Compact session first** and **Start a new session**. Like a model or effort
+pick, it applies to the next message only, travels on it as a
+`["session", agent, "compact" | "new"]` tag that only the owner's counts, and
+reaches the run as `Delivery.session`. The run waits for any turn already
+working in that conversation, then compacts its session or starts a new one
+before answering. A new session is primed with the conversation as any new one
+is. A failed compaction fails that message's turn with its error.
+`sessionActions(agent)` returns the agent's session scope, and the menu shows
+only where the message has a session to act on: in a thread, a DM or a Solo
+chat, and at a channel's top level only for a channel-scoped agent. A
+thread-scoped agent's top-level message starts a thread of its own, so it has
+none. goose keeps no session once it closes, so it compacts only one still
+open.
+
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
 recommendation; blank thinking preferences follow the selected model's default
