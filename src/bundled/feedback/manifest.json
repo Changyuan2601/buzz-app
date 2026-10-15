@@ -1,1 +1,7 @@
-{ "id": "buzz.feedback", "name": "Feedback", "apiVersion": 1 }
+{
+  "id": "buzz.feedback",
+  "name": "Feedback",
+  "apiVersion": 1,
+  "description": "Send feedback about Buzz.",
+  "discovery": { "category": "people-and-communities" }
+}

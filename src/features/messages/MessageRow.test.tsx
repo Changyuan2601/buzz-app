@@ -2857,3 +2857,95 @@ it("keeps reply activity dots when the root summary also contains a failed agent
     view.unmount();
   }
 });
+
+function styleSession(viewer: string) {
+  return {
+    viewer,
+    channels: {
+      list: () => ({ channels: [], status: "ready" }),
+      subscribeList: () => () => {},
+    },
+    messages: {},
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+  } as unknown as RelaySession;
+}
+const styleTargets = (container: HTMLElement) => {
+  const payload =
+    container.querySelector("[data-message-action-anchor]")?.parentElement ??
+    container.querySelector("[data-message-attachments]")?.parentElement;
+  if (!payload?.parentElement) throw new Error("Expected a message payload");
+  return {
+    message: container.querySelector("[data-layout]"),
+    content: payload.parentElement,
+    payload,
+  };
+};
+it.each([
+  { kind: "own text", viewer: row.authorId, attachments: [], own: true },
+  {
+    kind: "another author's text",
+    viewer: "viewer",
+    attachments: [],
+    own: false,
+  },
+  {
+    kind: "own attachment-only",
+    viewer: row.authorId,
+    attachments: [{ kind: "image" as const, url: "https://image.test/a.png" }],
+    own: false,
+  },
+])(
+  "marks $kind rows for own-message, bubble and attachment styling",
+  ({ viewer, attachments, own }) => {
+    const { container } = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: attachments.length ? "" : row.content,
+          attachments,
+        }}
+        session={styleSession(viewer)}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    try {
+      const { message, content, payload } = styleTargets(container);
+      const bubble = attachments.length === 0;
+      expect(message?.hasAttribute("data-own")).toBe(own);
+      expect(content.hasAttribute("data-bubble")).toBe(bubble);
+      expect(payload.hasAttribute("data-attachments")).toBe(!bubble);
+    } finally {
+      cleanup();
+    }
+  },
+);
+it("keeps own-message and bubble styling off a shown thread root", () => {
+  const { container } = renderDom(
+    <MessageRow
+      row={{ ...row, audience: "agents" }}
+      session={styleSession(row.authorId)}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    const { message, content } = styleTargets(container);
+    expect(message).not.toHaveAttribute("data-own");
+    expect(content).not.toHaveAttribute("data-bubble");
+  } finally {
+    cleanup();
+  }
+});

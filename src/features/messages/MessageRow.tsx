@@ -312,6 +312,8 @@ function MessageRowContent({
     !row.agentEnvelope &&
     row.attachments.length > 0 &&
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
+  // Own-message surface colours apply to a bubble, never to a shown thread root.
+  const ownBubble = !shownRow && !!viewer && row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -722,12 +724,16 @@ function MessageRowContent({
         data-viewer-message={
           alignViewer && row.authorId === viewer ? "" : undefined
         }
+        data-own={(!attachmentOnly && ownBubble) || undefined}
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
         <div className={styles.messageBody}>
           {!renderMessage && overlays}
-          <div className={styles.messageContent}>
+          <div
+            className={styles.messageContent}
+            data-bubble={(!attachmentOnly && !shownRow) || undefined}
+          >
             {/* A live append must not remove the reader's current focus target. */}
             {!renderMessage && (!stackNext || avatarFocused) && (
               <div className={styles.messageAvatar}>{avatar}</div>
@@ -790,6 +796,7 @@ function MessageRowContent({
               createdAt={
                 !renderMessage && stackPrevious ? row.createdAt : undefined
               }
+              attachments={attachmentGroups.length > 0}
             >
               {!attachmentOnly && (
                 <div
@@ -797,10 +804,7 @@ function MessageRowContent({
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}
-                  data-own={
-                    (!shownRow && !!viewer && row.authorId === viewer) ||
-                    undefined
-                  }
+                  data-own={ownBubble || undefined}
                 >
                   {timeReply && (
                     <span className={styles.mediaTimeLink}>

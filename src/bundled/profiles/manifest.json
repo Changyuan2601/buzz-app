@@ -1,1 +1,7 @@
-{ "id": "buzz.profiles", "name": "Profiles", "apiVersion": 1 }
+{
+  "id": "buzz.profiles",
+  "name": "Profiles",
+  "apiVersion": 1,
+  "description": "View member and agent profiles and recent activity.",
+  "discovery": { "category": "people-and-communities", "tags": ["Essentials"] }
+}

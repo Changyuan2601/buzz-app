@@ -61,6 +61,25 @@
     .buzz-settings-page .buzz-tabs[data-variant="panel"] {
       --settings-group-inset: var(--space-3);
     }
+    [data-preference-description-layout="wide"]
+      .buzz-preference-row[data-has-icon] {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      row-gap: var(--space-1);
+    }
+    [data-preference-description-layout="wide"] .buzz-preference-row-content {
+      display: contents;
+    }
+    [data-preference-description-layout="wide"] .buzz-preference-row-label {
+      grid-column: 2;
+    }
+    [data-preference-description-layout="wide"]
+      .buzz-preference-row-description {
+      grid-column: 2 / -1;
+    }
+    [data-preference-description-layout="wide"] .buzz-preference-row-trailing {
+      grid-column: 3;
+      grid-row: 1;
+    }
   }
   @container (max-width: 8rem) {
     .buzz-settings-group,

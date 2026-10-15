@@ -359,6 +359,14 @@ it.each([false, true])(
       "claude-fable-5-1[1m]",
     ]);
     expect(tags).toContainEqual(["effort", honey.pubkey, "xhigh"]);
+    // goose catalogs name models by their provider: `openrouter`'s `vendor/…`.
+    post({ [honey.pubkey]: { model: "anthropic/claude-sonnet-5-5" } });
+    await flush();
+    expect(h.publish.mock.calls[1]?.[0]?.tags).toContainEqual([
+      "model",
+      honey.pubkey,
+      "anthropic/claude-sonnet-5-5",
+    ]);
     expect(() => post({ [namesake.pubkey]: { effort: "high" } })).toThrow(
       /mentioned agent/,
     );

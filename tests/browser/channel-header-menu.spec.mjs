@@ -1,3 +1,4 @@
+import { checkDurationConsumer } from "./duration-layout.mjs";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
@@ -271,6 +272,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(
     nameEditor.getByRole("textbox", { name: "Name", exact: true }),
   ).toBeFocused();
+  await nameEditor
+    .getByRole("radio", { name: "Temporary", exact: true })
+    .click();
+  await checkDurationConsumer(page, nameEditor, "edit-duration", testInfo);
   await nameEditor.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(title).toBeFocused();
   if (browserName === "chromium") {
@@ -361,7 +366,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     await trigger.click();
     await menu.getByRole("menuitem", { name: label, exact: true }).click();
     const dialog = page.getByRole("dialog", {
-      name: `${label}: ${channelName}`,
+      name:
+        label === "Delete channel"
+          ? `Delete ${channelName}?`
+          : `${label}: ${channelName}`,
       exact: true,
     });
     await expect(dialog).toBeVisible();
@@ -565,7 +573,7 @@ test.describe("dialog origin retirement", () => {
             .getByRole("menuitem", { name: "Delete channel", exact: true })
             .click();
         const dialog = page.getByRole("dialog", {
-          name: action === "create" ? "Create new section" : /Delete channel:/,
+          name: action === "create" ? "Create new section" : /^Delete .+\?$/,
         });
         await expect(dialog).toBeVisible();
         await back(page);

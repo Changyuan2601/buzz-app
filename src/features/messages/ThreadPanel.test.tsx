@@ -11,6 +11,7 @@ import {
 import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import { useActivityLanePublisher } from "./activity-lane";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -834,15 +835,66 @@ it("counts replies recovered after a completed traversal, not initial history pa
   expect(screen.getByRole("button", { name: "2 new messages" })).toBeVisible();
 });
 
+it("reserves the jump button's activity lane only for this thread's composer in a live channel", () => {
+  const h = messagesHarness();
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  let list: ChannelList = {
+    status: "ready",
+    channels: [{ id: "channel", name: "General" }],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: subscribe },
+  });
+  // The composer is mocked here; publish what its TypingIndicator would.
+  function Shown({ threadRootId }: { threadRootId: string | undefined }) {
+    useActivityLanePublisher(h.session, "channel", threadRootId, true);
+    return null;
+  }
+  h.render();
+  h.scroll(500);
+  const lane = () =>
+    screen
+      .getByRole("button", { name: "Jump to latest" })
+      .closest("[data-visible]");
+  const live = lane();
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  // Channel-level activity shows in the channel composer, not this thread's.
+  const channelLevel = render(<Shown threadRootId={undefined} />);
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  channelLevel.unmount();
+  const thread = render(<Shown threadRootId={row.id} />);
+  expect(live).toHaveAttribute("data-activity-lane");
+  // A cached channel's composer mounts no TypingIndicator, so no lane; the
+  // gate flip keeps the same button mounted.
+  list = {
+    status: "ready",
+    channels: [{ id: "channel", name: "General", cached: true }],
+  };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  expect(lane()).toBe(live);
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  thread.unmount();
+});
+
 it("transfers keyboard focus to the thread history before removing the jump button", () => {
   const h = messagesHarness();
   h.render();
   h.scroll(500);
   const jump = screen.getByRole("button", { name: "Jump to latest" });
+  expect(h.element).toHaveAttribute("data-jump-visible");
   jump.focus();
   fireEvent.click(jump);
   expect(h.element).toHaveFocus();
   expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  expect(h.element).not.toHaveAttribute("data-jump-visible");
 });
 
 it("routes media in replies through the resolved root review workspace", () => {

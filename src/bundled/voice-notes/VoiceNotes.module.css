@@ -213,16 +213,23 @@
   pointer-events: none;
   opacity: 0;
 }
+.card:has(.remove) {
+  padding-inline-end: calc(var(--space-6) + var(--space-1));
+}
 .remove {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 20px;
-  height: 20px;
-  transform: translate(25%, -25%);
-  border-radius: var(--radius-pill);
-  background: var(--surface-popover);
-  border: 1px solid var(--border-standard);
+  top: var(--space-1);
+  right: var(--space-1);
+  display: flex;
+}
+@media (hover: hover) and (pointer: fine) {
+  .card .remove {
+    opacity: 0;
+  }
+  .card:hover .remove,
+  .card:focus-within .remove {
+    opacity: 1;
+  }
 }
 .error {
   color: var(--text-danger);
@@ -278,7 +285,6 @@
     background: var(--affordance-subtle-hover);
   }
   .card:hover {
-    --voice-card-border: var(--border-prominent);
     --voice-card-background: var(--affordance-panel-hover);
   }
 }
@@ -328,4 +334,28 @@
   .iconButton:active:not(:disabled) {
     transform: none;
   }
+}
+
+/* Composer drafts share the enclosing composer's circular inset geometry. */
+[data-voice-draft] .card {
+  margin: 0;
+  border-radius: var(--radius-icon-button);
+  background: var(--voice-card-background);
+  border-color: var(--voice-card-border);
+}
+[data-voice-draft] .card .cardSurface {
+  display: none;
+}
+
+[data-voice-draft] .play {
+  /* Expand into the chip padding without moving the text/waveform column. */
+  width: calc(36px + 2 * var(--space-1h));
+  height: calc(36px + 2 * var(--space-1h));
+  margin-block: calc(-1 * var(--space-1h));
+  margin-inline-start: calc(-1 * var(--space-2));
+  margin-inline-end: calc(-1 * var(--space-1));
+  border-radius: calc(var(--radius-icon-button) - var(--space-half) - 1px);
+}
+[data-voice-draft] .play[data-smooth-corners] > button {
+  clip-path: none;
 }

@@ -1,1 +1,7 @@
-{ "id": "buzz.diffs", "name": "Diff viewer", "apiVersion": 1 }
+{
+  "id": "buzz.diffs",
+  "name": "Diff viewer",
+  "apiVersion": 1,
+  "description": "Render code changes as structured diffs in conversations.",
+  "discovery": { "category": "developer-tools-and-integrations" }
+}

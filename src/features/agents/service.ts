@@ -1,5 +1,5 @@
 import { createLocalAgentActivity } from "./local-activity";
-import { AgentRunners } from "./runner";
+import { AgentRunners, type Connection } from "./runner";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -42,6 +42,7 @@ import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
+import { threadReference } from "../relay/thread-reference";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import {
@@ -55,11 +56,20 @@ import {
 } from "./attention";
 import type {
   ClassifierAvailability,
+  ClassifierKey,
   Shown,
   WatchFilter,
   WatchSummary,
   WriteOptions,
 } from "./attention-objects";
+import {
+  excerpt,
+  mentionFacts,
+  nativeClassifier,
+  type ClassifierContext,
+  type ClassifierNative,
+  type ClassifierOutcome,
+} from "./classifier";
 import {
   nativeAgents,
   type AgentEventTemplate,
@@ -85,6 +95,7 @@ import {
   type Unfinished,
 } from "./store";
 import { meChat } from "./me-chat";
+import { readCheckpoints, writeCheckpoints } from "./catch-up";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -224,10 +235,10 @@ export type AgentAttention = Readonly<{
     options: WriteOptions,
   ): Promise<Shown>;
 }>;
-/** Why a classified watch's event passed without a classifier answer. */
-export type ClassifierSkip = Readonly<{
-  outcome: "not-run";
-  reason: string;
+export type { ClassifierOutcome } from "./classifier";
+export type CaughtUp = Readonly<{
+  event: RelayEvent;
+  classifier?: ClassifierOutcome;
 }>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. */
@@ -240,10 +251,24 @@ export type Trigger =
       watch: EventWatch;
       /** Absent when the watch names an Interest that does not exist. */
       interest?: Interest;
-      /** Set when the watch has a classifier that did not run. The event
-       * passes rather than lose a match to an unavailable model, and the
-       * agent is told why. */
-      classifier?: ClassifierSkip;
+      /** Set when the watch has a classifier: its answers, or why it did
+       * not run or failed. An event the classifier cannot check passes
+       * rather than lose a match, and the agent is told why. */
+      classifier?: ClassifierOutcome;
+    }>
+  /** Events one watch missed while the agent was offline, delivered together
+   * once it is back: oldest first, from one channel unless it watches "all". */
+  | Readonly<{
+      type: "catch-up";
+      slug: string;
+      watch: EventWatch;
+      /** Absent when the watch names an Interest that does not exist. */
+      interest?: Interest;
+      /** Each with its classifier outcome when the watch has a classifier;
+       * only the events it passed are here. */
+      events: readonly CaughtUp[];
+      /** Older missed events were skipped: catch-up reads a bounded window. */
+      skipped?: boolean;
     }>
   | Readonly<{
       type: "timer";
@@ -328,7 +353,13 @@ export type Model = Readonly<{
   effort?: string;
 }>;
 /** The models an owner can pick from, and the id of the one used without a pick. */
-export type Models = Readonly<{ current: string; models: readonly Model[] }>;
+export type Models = Readonly<{
+  current: string;
+  models: readonly Model[];
+  /** Send displayed defaults as per-turn picks even when untouched. Opt in only
+   * when explicit defaults preserve this provider's running-turn semantics. */
+  sendDefaults?: boolean;
+}>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
   /** Action-oriented menu copy for direct recovery or recovery guidance. */
@@ -446,6 +477,10 @@ export type RetypePreview = Readonly<{
 }>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
+  /** Whether a watch's classifier can run on this device now. */
+  classifier: ClassifierAvailability;
+  /** What is known about the saved classifier key, for the owner. */
+  classifierKey: ClassifierKey;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -557,6 +592,12 @@ export type Agents = {
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Whether a watch's classifier can run on this device now. */
+  classifier(): ClassifierAvailability;
+  /** Saves the TypeSafe key in native storage, which the classifier uses.
+   * It is never read back into the app or given to an agent. */
+  setClassifierKey(key: string): Promise<void>;
+  clearClassifierKey(): Promise<void>;
   /** Creates a team, or replaces the one with `id`. Members must be agents on
    * this device. */
   saveTeam(team: TeamChange): Promise<Team>;
@@ -593,6 +634,8 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
     record = setAttention(record, slug, value);
   return record;
 }
+/** How long the classifier waits for a reply's parent before it goes on. */
+const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 /** The team sections for agent `self`: each team it is on, its members that
@@ -647,6 +690,7 @@ type Binding = {
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
   stopLive: () => void;
+  connection: Connection;
 };
 /** A community the viewer has an agent in, and its session while live. */
 type Bound = {
@@ -719,6 +763,13 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  /** Settles once the saved key's status is known; until then a classified
+   * event waits rather than pass unchecked. */
+  private jevStatus: Promise<void> | undefined;
+  /** Goes up when a save or remove of the key starts and when it ends, so
+   * that what a read or classifier call found under an older key is not
+   * shown over the newer one. */
+  private keyGeneration = 0;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -775,6 +826,7 @@ export class AgentsService extends Service implements Agents {
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
+    private readonly jev: ClassifierNative | undefined = nativeClassifier(),
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
@@ -784,6 +836,8 @@ export class AgentsService extends Service implements Agents {
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
+      classifier: "unavailable",
+      classifierKey: "checking",
       agents: [],
       running: [],
       teams: this.teamList,
@@ -791,9 +845,14 @@ export class AgentsService extends Service implements Agents {
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
-      find: (pubkey) => this.find(pubkey),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
+      community: (agent) => this.bindingOf(agent),
+      records: () => Object.values(this.records),
+      checkpoints: {
+        read: () => readCheckpoints(this.storage),
+        write: (checkpoints) => writeCheckpoints(this.storage, checkpoints),
+      },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
       record: (pubkey) => {
@@ -827,6 +886,15 @@ export class AgentsService extends Service implements Agents {
         }));
       },
       classifier: () => this.classifier(),
+      jev: () => this.jev,
+      jevStatus: () => this.jevStatus,
+      classifierKey: () => this.state.classifierKey,
+      classifierKeyGeneration: () => this.keyGeneration,
+      setClassifierKey: (key, generation) => {
+        if (generation === this.keyGeneration) this.setKey(key);
+      },
+      context: (agent, event) => this.context(agent, event),
+      displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
       meChat: (agent, channel, signal) =>
@@ -845,11 +913,23 @@ export class AgentsService extends Service implements Agents {
       ];
       this.watch();
       void this.refresh();
+      const generation = this.keyGeneration;
+      const found = (key: ClassifierKey) => {
+        if (generation === this.keyGeneration) this.setKey(key);
+      };
+      this.jevStatus = this.jev
+        ?.status()
+        .then((configured) => found(configured ? "saved" : "missing"))
+        .catch((error) => {
+          console.warn("The classifier key could not be read", error);
+          found("unreadable");
+        });
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runners.tick();
         this.reconnect();
         this.announce();
+        this.runners.catchUp(true);
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -967,8 +1047,103 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
-  /** Whether watch classifiers can run on this device. */
-  private classifier = (): ClassifierAvailability => "unavailable";
+  /** Whether watch classifiers can run on this device: a key is saved. */
+  classifier(): ClassifierAvailability {
+    return this.state.classifier;
+  }
+  async setClassifierKey(key: string) {
+    const jev = this.jev;
+    if (!jev) throw new Error("The classifier runs only in the desktop app");
+    await this.changeKey(() => jev.setKey(key));
+    this.setKey("saved");
+  }
+  async clearClassifierKey() {
+    const jev = this.jev;
+    if (!jev) throw new Error("The classifier runs only in the desktop app");
+    await this.changeKey(() => jev.clearKey());
+    this.setKey("missing");
+  }
+  /** Saves or removes the key. A read or classifier call that started before
+   * it ends may have used the old key, so its finding is ignored. */
+  private async changeKey(change: () => Promise<void>) {
+    this.keyGeneration++;
+    try {
+      await change();
+    } finally {
+      this.keyGeneration++;
+    }
+  }
+  /** Agents are told a classifier can run only while a key is known to be
+   * saved. A key the service refused still runs, and each event reports why
+   * it passed unchecked. */
+  private setKey(classifierKey: ClassifierKey) {
+    const classifier =
+      classifierKey === "saved" || classifierKey === "refused"
+        ? "available"
+        : "unavailable";
+    if (this.state.classifierKey === classifierKey) return;
+    this.state = Object.freeze({ ...this.state, classifier, classifierKey });
+    this.notify();
+  }
+  /** The event's surroundings for the classifier, from what the app knows. */
+  private async context(
+    agent: Agent,
+    event: RelayEvent,
+  ): Promise<ClassifierContext> {
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.bindingOf(agent)?.session.channels;
+    const summary = channelId
+      ? (channels?.list().channels.find((item) => item.id === channelId) ??
+        channels?.get?.(channelId))
+      : undefined;
+    const parent = threadReference(event)?.parentId ?? null;
+    let found: RelayEvent | undefined;
+    const native = this.native;
+    if (parent && native)
+      try {
+        // Bounded: classified events release in order, so a stuck lookup
+        // would hold back every later one.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        [found] = await Promise.race([
+          native.query(agent.pubkey, [{ ids: [parent], limit: 1 }]),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("The parent lookup timed out")),
+              PARENT_LOOKUP_MS,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+      } catch {
+        // The parent stays unknown; the classifier still runs.
+      }
+    return {
+      channel: { name: summary?.name ?? null },
+      thread: {
+        is_reply: !!parent,
+        parent: found
+          ? {
+              author: {
+                role:
+                  found.pubkey === agent.pubkey
+                    ? "self"
+                    : found.pubkey === agent.owner
+                      ? "owner"
+                      : "other",
+                name: this.displayName(agent, found.pubkey),
+              },
+              content: excerpt(found.content),
+            }
+          : null,
+      },
+      mentions: mentionFacts(event.tags, agent.pubkey, agent.owner),
+    };
+  }
+  private displayName(agent: Agent, pubkey: string) {
+    return (
+      this.bindingOf(agent)?.session.profiles?.snapshot().get(pubkey)?.name ??
+      null
+    );
+  }
 
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */
@@ -2062,9 +2237,14 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
+      const connection: Connection = {
+        epoch: 0,
+        start: Math.floor(Date.now() / 1000),
+      };
       entry.binding = live && {
         ...live,
-        stopLive: this.listen(live.session, origin),
+        connection,
+        stopLive: this.listen(live.session, origin, connection),
       };
     }
     // Disconnecting stops its agents even when no binding changed.
@@ -2074,20 +2254,43 @@ export class AgentsService extends Service implements Agents {
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
-   * connection recovers, which happens within the same session. */
-  private listen(session: RelaySession, origin: string) {
+   * connection recovers, which happens within the same session. A subscription
+   * that comes back, after a reconnect or a failed route, first sends its
+   * recent history again: what in it is new since this listener started was
+   * missed while it was down, and is delivered now (`seen` drops the rest).
+   * Older history is catch-up's, not replay's. */
+  private listen(
+    session: RelaySession,
+    origin: string,
+    connection: Connection,
+  ) {
     let connected = session.live.snapshot().status === "connected";
-    const stopEvents = session.subscribeLive((batch) =>
-      this.runners.dispatch(batch, (agent) => originOf(agent.relay) === origin),
+    const since = connection.start;
+    if (connected) Object.assign(connection, { epoch: 1, since });
+    const heard = (agent: Agent) => originOf(agent.relay) === origin;
+    const stopEvents = session.subscribeLive(
+      (batch) => this.runners.dispatch(batch, heard, since),
+      { replay: true },
     );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
+      if (now !== connected) {
+        // Catch-up reads what this connect may have missed, up to now.
+        connection.epoch += now ? 1 : 0;
+        connection.since = now ? Math.floor(Date.now() / 1000) : undefined;
+      }
       if (now && !connected) this.sync();
       connected = now;
+      this.runners.catchUp(false);
     });
+    // A roster the relay confirms decides the events held for it.
+    const stopRosters = session.channels.subscribeList?.(() =>
+      this.runners.releaseHeld(heard),
+    );
     return () => {
       stopEvents();
       stopStatus();
+      stopRosters?.();
     };
   }
 
@@ -2149,6 +2352,7 @@ export class AgentsService extends Service implements Agents {
       ),
     );
     this.announce();
+    this.runners.catchUp(false);
   }
 
   /** Tells each community which agents this copy runs there: online every
@@ -2238,9 +2442,13 @@ export class AgentsService extends Service implements Agents {
   /** Whether the agent is in the event's channel, by its relay-signed roster.
    * The stream is the owner's, so a watch, even of "all", sees only what the
    * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. */
-  private member(agent: Agent, event: RelayEvent) {
-    return !!this.channelOf(agent, event)?.members?.includes(agent.pubkey);
+   * unknown, wakes no watch. A roster only loaded from disk decides nothing
+   * (undefined): the agent may have been removed or added since it was saved,
+   * so the event waits until the relay confirms it. */
+  private member(agent: Agent, event: RelayEvent): boolean | undefined {
+    const summary = this.channelOf(agent, event);
+    if (summary?.cached) return undefined;
+    return !!summary?.members?.includes(agent.pubkey);
   }
   /** Whether the event's channel is a DM of exactly the agent and one other,
    * by the same roster. A group DM, or one whose roster is unknown, is not. */

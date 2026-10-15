@@ -206,6 +206,10 @@ test("a message link's context menu opens its thread as a tab without leaving th
   await expect(link).toBeVisible();
   await virtuaIdle(page);
   const before = (await state(page)).entry;
+  // Target the link itself instead of a cached coordinate: under load WebKit can
+  // spend the first pointer move opening the preview and toolbar, shifting the
+  // actionable point before the contextmenu event. The test is about the link's
+  // composed context-menu owner, not stale coordinate hit-testing.
   await link.click({ button: "right" });
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([

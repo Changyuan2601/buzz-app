@@ -13,7 +13,11 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import type { Panels } from "../../features/panels/service";
+import {
+  panelOpening,
+  type PanelOpening,
+  type Panels,
+} from "../../features/panels/service";
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelCard } from "../../features/panels/PanelCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
@@ -32,7 +36,6 @@ import {
   panelTabId,
   tabPane,
   type ConversationTab as Tab,
-  type PanelOpening,
   type TabPane,
   type useChannelTabState,
 } from "./useChannelTabState";
@@ -108,8 +111,9 @@ export function useConversationTabs({
   const focusSplit = useRef(false);
   // The opening control remounts in the main header when the pane closes.
   useLayoutEffect(() => {
-    if (focusSplit.current && splitTrigger.current) {
-      splitTrigger.current.focus({ preventScroll: true });
+    if (focusSplit.current) {
+      const target = splitTrigger.current ?? fallbackFocus?.current;
+      target?.focus({ preventScroll: true });
       focusSplit.current = false;
     }
   });
@@ -256,9 +260,9 @@ export function useConversationTabs({
     },
     push: (target: string) => {
       if (!panelActive(entry)) return false;
-      const next = panels.resolve(target);
+      const next = panelOpening(panels, entry.channelId, target, entry.rootId);
       if (!next) return false;
-      open({ channelId: entry.channelId, panel: next, target }, true);
+      open(next, true);
       return true;
     },
   });
@@ -512,21 +516,13 @@ export function useConversationTabs({
         )
     )
       return openLink(url);
-    const candidate = panels.resolve(url);
-    if (candidate) {
+    const next = panelOpening(panels, channelId, url, origin?.rootId);
+    if (next) {
       panelTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      open(
-        {
-          channelId,
-          ...(origin && { rootId: origin.rootId }),
-          panel: candidate,
-          target: url,
-        },
-        true,
-      );
+      open(next, true);
       return true;
     }
     return openLink(url);

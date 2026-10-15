@@ -479,6 +479,11 @@ function ThreadMessages({
     },
   );
   const preview = channelAccess === "joinable" || channelAccess === "preview";
+  const cached = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) => !!listed?.cached,
+  );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
   const snapshot = useSyncExternalStore(
@@ -1254,6 +1259,13 @@ function ThreadMessages({
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  // The reply composer, and the activity lane its TypingIndicator needs.
+  const composerRoot =
+    !preview &&
+    (!requireReadyRoot ||
+      (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
+      ? snapshot.root
+      : undefined;
   const retryThread = () => {
     if (showOlderPageStatus) {
       if (scroller.current) captureOlderAnchor(scroller.current);
@@ -1294,6 +1306,7 @@ function ThreadMessages({
         aria-label="Thread messages"
         aria-busy={positioning}
         data-positioning={positioning || undefined}
+        data-jump-visible={showJumpToLatest || undefined}
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;
@@ -1359,6 +1372,11 @@ function ThreadMessages({
           visible={showJumpToLatest}
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}
+          activityLane={
+            composerRoot && !cached
+              ? { session, channelId, threadRootId: composerRoot.id }
+              : undefined
+          }
         />
         <div data-thread-rows="" inert={positioning}>
           {snapshot.root ? (
@@ -1466,81 +1484,77 @@ function ThreadMessages({
           onHeightChange={setJoinNoticeHeight}
         />
       )}
-      {!preview &&
-        snapshot.root &&
-        (!requireReadyRoot ||
-          (snapshot.root.id === messageId &&
-            snapshot.targetStatus === "ready")) && (
-          <MessageComposer
-            sessionConversation={sessionConversation}
-            personalConversation={personalConversation}
-            activityClickOpensPanel={activityClickOpensPanel}
-            key={`${scope}:${channelId}:${snapshot.root.id}`}
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            channelName={channelName}
-            placeholder={replyPlaceholder(snapshot.root)}
-            threadRootId={snapshot.root.id}
-            replyParentId={replyParent}
-            disabled={
-              disabled ||
-              (requireReadyRoot &&
-                (snapshot.status !== "ready" || !!snapshot.error)) ||
-              (!!replyParent && !selectedParent)
-            }
-            replyContext={
-              replyParent && !selectedParent ? (
+      {composerRoot && (
+        <MessageComposer
+          sessionConversation={sessionConversation}
+          personalConversation={personalConversation}
+          activityClickOpensPanel={activityClickOpensPanel}
+          key={`${scope}:${channelId}:${composerRoot.id}`}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          channelName={channelName}
+          placeholder={replyPlaceholder(composerRoot)}
+          threadRootId={composerRoot.id}
+          replyParentId={replyParent}
+          disabled={
+            disabled ||
+            (requireReadyRoot &&
+              (snapshot.status !== "ready" || !!snapshot.error)) ||
+            (!!replyParent && !selectedParent)
+          }
+          replyContext={
+            replyParent && !selectedParent ? (
+              <div className={styles.replyContext}>
+                <span>Reply target is no longer available.</span>
+                <Button size="sm" onClick={focusReply}>
+                  Cancel reply target
+                </Button>
+              </div>
+            ) : (
+              selectedParent && (
                 <div className={styles.replyContext}>
-                  <span>Reply target is no longer available.</span>
-                  <Button size="sm" onClick={focusReply}>
-                    Cancel reply target
-                  </Button>
-                </div>
-              ) : (
-                selectedParent && (
-                  <div className={styles.replyContext}>
-                    <div>
-                      <span>Replying to {senderName(selectedParent)}</span>
-                      <p>{selectedParent.content}</p>
-                    </div>
-                    <IconButton
-                      size="sm"
-                      aria-label="Cancel reply target"
-                      onClick={focusReply}
-                      icon={<XIcon size={16} aria-hidden="true" />}
-                    />
+                  <div>
+                    <span>Replying to {senderName(selectedParent)}</span>
+                    <p>{selectedParent.content}</p>
                   </div>
-                )
+                  <IconButton
+                    size="sm"
+                    aria-label="Cancel reply target"
+                    onClick={focusReply}
+                    icon={<XIcon size={16} aria-hidden="true" />}
+                  />
+                </div>
               )
-            }
-            editMessages={rows}
-            focusRequest={replyFocus}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            onDraftSaved={onDraftSaved}
-            onSend={(id) => {
-              targetAnchor.current = undefined;
-              positioned.current = true;
-              follow.current = !selectedParent;
-              if (selectedParent)
-                setExpanded(
-                  (current) =>
-                    new Set([
-                      ...current,
-                      selectedParent.id,
-                      ...tree.ancestors(selectedParent.id),
-                    ]),
-                );
-              // A background send may publish after the user picked a new target.
-              setReplyParent((current) =>
-                current === replyParent ? undefined : current,
+            )
+          }
+          editMessages={rows}
+          focusRequest={replyFocus}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          onDraftSaved={onDraftSaved}
+          onSend={(id) => {
+            targetAnchor.current = undefined;
+            positioned.current = true;
+            follow.current = !selectedParent;
+            if (selectedParent)
+              setExpanded(
+                (current) =>
+                  new Set([
+                    ...current,
+                    selectedParent.id,
+                    ...tree.ancestors(selectedParent.id),
+                  ]),
               );
-              setSent(id);
-            }}
-          />
-        )}
+            // A background send may publish after the user picked a new target.
+            setReplyParent((current) =>
+              current === replyParent ? undefined : current,
+            );
+            setSent(id);
+          }}
+        />
+      )}
     </MessageEditScope>
   );
 }

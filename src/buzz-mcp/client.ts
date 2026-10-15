@@ -36,6 +36,13 @@ export type ChannelTemplate = Readonly<{
   canvas: string;
   agents: readonly string[];
 }>;
+/** Memory entries, and whether some may be missing: a read cut short by a
+ * limit, a deadline or the relay's rate limit. */
+export type Memories = Readonly<{
+  entries: readonly Memory[];
+  partial: boolean;
+}>;
+
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -54,8 +61,8 @@ export interface BuzzClient {
   media(url: string): Promise<string>;
   /** A local file's bytes, for tools that take a `path`. */
   read(path: string): Promise<Uint8Array>;
-  /** The agent's memory entries, decrypted. */
-  memories(): Promise<readonly Memory[]>;
+  /** The agent's memory entries, decrypted; only entry `slug` when given. */
+  memories(slug?: string): Promise<Memories>;
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
   remember(slug: string, body: string, after: number): Promise<void>;
   /** The owner's channel templates, where the host has them. */

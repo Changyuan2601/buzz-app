@@ -223,9 +223,7 @@ export function ShortcutSettings({
       return refuse("That key can’t be used for a shortcut. Try another.");
     if (otherPrimary)
       return refuse(
-        apple
-          ? "Control isn’t used for shortcuts on this device. Try Command or Option."
-          : "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
+        "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
       );
     if (!binding.mod && !binding.alt)
       return refuse(

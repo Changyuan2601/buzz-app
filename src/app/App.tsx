@@ -7,14 +7,14 @@ import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
-import { useAppNavigation } from "./navigation";
+import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
 import { AppShell } from "./shell/AppShell";
@@ -27,7 +27,6 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
-import { profileTarget } from "../features/profiles/target";
 import { setLaunchReady } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
@@ -59,7 +58,10 @@ export function App({ services }: { services: AppServices }) {
 function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
-  const route = useAppNavigation(services);
+  const [departure, setDeparture] = useState<PendingSettingsDeparture | null>(
+    null,
+  );
+  const route = useAppNavigation(services, departure);
   const launcher = usePanelLauncher(services.panels, startup === "ready");
   const client = useSyncExternalStore(
     services.communities.subscribe,
@@ -94,6 +96,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
       document.getElementById("main-content")?.focus({ preventScroll: true });
     retryFocus.current = undefined;
   }, [restoring, settings, route.state.attempt]);
+  useEffect(() => {
+    if (
+      departure &&
+      (departure.attempt !== route.state.attempt ||
+        departure.viewer !== client.viewer ||
+        (client.selected !== null && client.selected !== departure.communityId))
+    )
+      setDeparture(null);
+  }, [client.selected, client.viewer, departure, route.state.attempt]);
   const terminal =
     startup === "recovery" ||
     route.state.status === "failed" ||
@@ -137,9 +148,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
-  // Personal space has no community profile to view; the panel needs a session.
-  const ownProfile =
-    client.selected && client.viewer ? profileTarget(client.viewer) : undefined;
   const pageOwnsCompanion = !!route.page?.companion;
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
@@ -230,11 +238,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             onInviteClose={services.invites.clear}
             settingsCards={services.settingsCards}
             accountActions={services.accountActions}
-            onProfile={
-              ownProfile && launcher.canOpen(ownProfile)
-                ? (trigger) => launcher.open(ownProfile, trigger)
-                : undefined
-            }
+            appearance={services.appearance}
             searchServices={services}
             launchers={
               <PanelLaunchers
@@ -305,6 +309,20 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 updates={services.updates}
                 navigation={route.request}
                 navigationPane
+                onDeparturePending={(pending) => {
+                  const client = services.communities.snapshot();
+                  const attempt = route.state.attempt;
+                  if (pending && client.viewer && client.selected)
+                    setDeparture({
+                      attempt,
+                      viewer: client.viewer,
+                      communityId: client.selected,
+                    });
+                  else if (!pending)
+                    setDeparture((current) =>
+                      current?.attempt === attempt ? null : current,
+                    );
+                }}
                 onSection={(section) => {
                   const client = services.communities.snapshot();
                   void services.navigation.open({

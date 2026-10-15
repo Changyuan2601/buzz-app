@@ -89,6 +89,10 @@
     "allow-app-agent-remember",
     "allow-app-agent-claim",
     "allow-app-agent-release",
+    "allow-jev-classifier-status",
+    "allow-jev-classifier-set-key",
+    "allow-jev-classifier-clear-key",
+    "allow-jev-classify",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

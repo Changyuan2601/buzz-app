@@ -3,6 +3,8 @@ export type KeyBinding = Readonly<{
   key: string;
   /** Command on Apple platforms, Control elsewhere. Other modifiers match exactly. */
   mod?: boolean;
+  /** Control beside Command on Apple platforms. Elsewhere Control is `mod`, so this never matches. */
+  ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
 }>;
@@ -61,7 +63,7 @@ export function isKeyBinding(value: unknown): value is KeyBinding {
   return (
     typeof binding.key === "string" &&
     binding.key.length > 0 &&
-    [binding.mod, binding.shift, binding.alt].every(
+    [binding.mod, binding.ctrl, binding.shift, binding.alt].every(
       (flag) => flag === undefined || typeof flag === "boolean",
     )
   );
@@ -72,6 +74,7 @@ export function sameBinding(a: KeyBinding, b: KeyBinding) {
   return (
     a.key.toLowerCase() === b.key.toLowerCase() &&
     !!a.mod === !!b.mod &&
+    !!a.ctrl === !!b.ctrl &&
     !!a.shift === !!b.shift &&
     !!a.alt === !!b.alt
   );
@@ -92,7 +95,9 @@ export function matches(
     (binding) =>
       binding.key.toLowerCase() === event.key.toLowerCase() &&
       !!binding.mod === (apple ? event.metaKey : event.ctrlKey) &&
-      !(apple ? event.ctrlKey : event.metaKey) &&
+      (apple
+        ? !!binding.ctrl === event.ctrlKey
+        : !binding.ctrl && !event.metaKey) &&
       !!binding.shift === event.shiftKey &&
       !!binding.alt === event.altKey,
   );

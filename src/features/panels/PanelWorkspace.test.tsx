@@ -104,6 +104,34 @@ test("switches retained panels, associates their tabs, and closes inactive or ac
   expect(screen.getByText("No open panels")).toBeVisible();
 });
 
+test("middle-click closes inactive tabs without taking draft focus", async () => {
+  const user = userEvent.setup();
+  render(<Fixture />);
+  const draft = screen.getByRole("textbox", { name: "Thread draft" });
+  await user.type(draft, "Keep this draft");
+
+  await user.pointer({ target: tab("Ada"), keys: "[MouseRight]" });
+  expect(tab("Ada")).toBeInTheDocument();
+  draft.focus();
+  await user.pointer({ target: tab("Ada"), keys: "[MouseMiddle]" });
+  expect(within(tabs()).queryByRole("tab", { name: "Ada" })).toBeNull();
+  expect(draft).toHaveFocus();
+  expect(draft).toHaveValue("Keep this draft");
+
+  await user.pointer({ target: tab("Thread"), keys: "[MouseMiddle]" });
+  expect(screen.getByText("No open panels")).toBeVisible();
+});
+
+test("middle-clicking the active tab recovers focus to its selected neighbor", async () => {
+  const user = userEvent.setup();
+  render(<Fixture />);
+  await user.click(tab("Ada"));
+  await user.pointer({ target: tab("Ada"), keys: "[MouseMiddle]" });
+  expect(within(tabs()).queryByRole("tab", { name: "Ada" })).toBeNull();
+  expect(tab("Thread")).toHaveAttribute("aria-selected", "true");
+  expect(tab("Thread")).toHaveFocus();
+});
+
 test("local details are retained sibling tabs and close without dismissing the profile", async () => {
   const user = userEvent.setup();
   render(

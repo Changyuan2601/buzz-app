@@ -159,6 +159,18 @@ html[data-keyboard-navigation] .thumb:focus-within {
   transform: scaleX(-1);
 }
 
+.solo {
+  justify-self: end;
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-sm);
+}
+
 .about {
   overflow: hidden;
   text-overflow: ellipsis;

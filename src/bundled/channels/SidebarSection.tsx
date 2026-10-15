@@ -149,6 +149,7 @@ export function SidebarSection({
       data-drop-target={dropTarget || undefined}
       data-drop-edge={dropEdge}
       data-section-dragging={dragging || undefined}
+      data-menu-open={menuOpen || undefined}
     >
       <div className={styles.sectionHeader}>
         <details open={open}>

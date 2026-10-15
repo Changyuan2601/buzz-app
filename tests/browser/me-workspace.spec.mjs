@@ -12,6 +12,60 @@ test.use({
   meChannels: [id, other],
   historyCounts: { [id]: 2, [other]: 1, gamma: 1 },
 });
+// Browser-only: Sessions shares Channels' review, with real portalled dismissal.
+test("Me opens video review and Escape returns to its opener", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/message-gallery/assets/sample.mp4",
+      contentType: "video/mp4",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me video", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.mp4", "m video/mp4"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  await work.locator("[data-video-preview]").hover();
+  const opener = work.getByRole("button", { name: "Open video fullscreen" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Video review" });
+  await expect(review.locator("video")).toBeVisible();
+  await review.getByRole("button", { name: "Close fullscreen viewer" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+test("Me opens image review with its comments", async ({ page, app }) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/attachment-media/still.png",
+      contentType: "image/png",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me image", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.png", "m image/png"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  const opener = work.getByRole("link", { name: "Open image attachment" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Image viewer" });
+  await expect(
+    review.getByRole("button", { name: "Show comments" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
 // Activity opens the agent's profile, where its type's Activity tab lives.
 const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });
@@ -183,7 +237,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   // Context actions must remain separate from the activity trigger.
   await alpha.press("Shift+F10");
   await expect(
-    page.getByRole("menuitem", { name: "Rename", exact: true }),
+    page.getByRole("menuitem", { name: "Session settings…", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);

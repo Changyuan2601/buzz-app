@@ -445,22 +445,12 @@
 .untitledSectionContent {
   padding-inline-end: calc(var(--space-8) + var(--space-1));
 }
-.channelSection:has(
-    summary:hover,
-    summary:focus-visible,
-    .sectionActions:hover,
-    .sectionActions:focus-within,
-    [data-popup-open]
-  )
-  .sectionActions,
-.channelSection:has(
-    summary:hover,
-    summary:focus-visible,
-    .sectionActions:hover,
-    .sectionActions:focus-within,
-    [data-popup-open]
-  )
-  .sectionChevron {
+.sectionActions:focus-within,
+.sectionHeader:hover :is(.sectionActions, .sectionChevron),
+.channelSection[data-menu-open] :is(.sectionActions, .sectionChevron),
+html[data-keyboard-navigation]
+  .sectionHeader:focus-within
+  :is(.sectionActions, .sectionChevron) {
   opacity: 1;
   pointer-events: auto;
 }

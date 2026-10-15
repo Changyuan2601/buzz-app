@@ -82,7 +82,7 @@ export function createMessages(
     Object.entries(picks).flatMap(([key, { model, effort }]) => {
       if (
         !mentions.includes(key) ||
-        (model !== undefined && !/^[\w.:[\]-]{1,64}$/.test(model)) ||
+        (model !== undefined && !/^[\w.:/[\]-]{1,64}$/.test(model)) ||
         (effort !== undefined && !/^[a-z0-9-]{1,32}$/.test(effort))
       )
         throw new Error("A model or effort applies only to a mentioned agent");

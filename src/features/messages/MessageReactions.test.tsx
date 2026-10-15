@@ -618,3 +618,21 @@ it("offers the first reaction inline for coordination messages and respects disa
   );
   expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(7);
 });
+
+it("marks the reaction row populated only while active reactions render", () => {
+  const h = harness([react(other)]);
+  const view = render(<h.Controls />);
+  const populated = () =>
+    screen.getByTestId("reaction-row").hasAttribute("data-populated");
+  expect(populated()).toBe(true);
+  view.rerender(
+    <ConversationPresentation value={false}>
+      <h.Controls />
+    </ConversationPresentation>,
+  );
+  expect(populated()).toBe(false);
+  view.unmount();
+  const empty = harness();
+  render(<empty.Controls />);
+  expect(populated()).toBe(false);
+});

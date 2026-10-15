@@ -1424,7 +1424,7 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   });
   dispatch.mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_memories_read");
-    expect(args).toEqual({ community, agent: agent.pubkey });
+    expect(args).toEqual({ community, agent: agent.pubkey, slug: null });
     return { entries: [], partial: true };
   });
   expect(await transport.readAgentMemories?.(agent.pubkey, signal)).toEqual({

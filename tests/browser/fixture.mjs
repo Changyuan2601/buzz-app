@@ -855,10 +855,12 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
+      // Me read state shares id lookups with the messages a review resolves.
       if (meChannels.length > 0 && filter.ids)
-        return [...readEvents.get(community).values()].filter((event) =>
-          filter.ids.includes(event.id),
-        );
+        return [
+          ...readEvents.get(community).values(),
+          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+        ].filter((event) => filter.ids.includes(event.id));
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(
@@ -1554,24 +1556,25 @@ export const test = base.extend({
         meChannels.includes(event.tags.find(([key]) => key === "h")?.[1])
       ) {
         const id = event.tags.find(([key]) => key === "h")[1];
-        const value = (key) => event.tags.find(([name]) => name === key)?.[1];
-        expect(value("about")).toBe("");
+        const base = answer(community, { kinds: [39000], "#d": [id] })[0];
+        const tags = base.tags.filter(
+          ([key]) =>
+            !event.tags.some(
+              ([changed]) =>
+                changed === key ||
+                (changed === "visibility" &&
+                  ["public", "private"].includes(key)),
+            ),
+        );
+        for (const [key, next] of event.tags) {
+          if (key === "h") continue;
+          if (key === "visibility")
+            tags.push([next === "open" ? "public" : "private"]);
+          else if (key !== "ttl" || next) tags.push([key, next]);
+        }
         meDetails.set(
           `${community}/${id}`,
-          sign(
-            39000,
-            [
-              ["d", id],
-              ["name", value("name")],
-              ["about", ""],
-              ["t", "stream"],
-              [value("visibility") === "open" ? "public" : "private"],
-              ...(value("ttl") ? [["ttl", value("ttl")]] : []),
-            ],
-            "",
-            relayKey,
-            ++lifecycleTime,
-          ),
+          sign(39000, tags, "", relayKey, ++lifecycleTime),
         );
         report.detailsPublications ??= [];
         report.detailsPublications.push(event);

@@ -172,7 +172,7 @@ function Player({
           variant="solid"
           disabled={!source}
           size="compact"
-          style={{ width: "100%", height: "100%" }}
+          style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
           aria-label={
             error
               ? "Retry voice note"
@@ -266,14 +266,17 @@ function Player({
         </span>
       )}
       {onRemove && (
-        <button
-          className={`${styles.iconButton} ${styles.remove}`}
-          type="button"
-          aria-label="Remove voice note"
-          onClick={onRemove}
-        >
-          <X size={16} aria-hidden="true" />
-        </button>
+        <span className={styles.remove}>
+          <IconButton
+            size="xs"
+            shape="round"
+            variant="media"
+            type="button"
+            aria-label="Remove voice note"
+            onClick={onRemove}
+            icon={<X size={16} aria-hidden="true" />}
+          />
+        </span>
       )}
       {/* biome-ignore lint/a11y/useMediaCaption: user-recorded voice notes do not include a transcript. */}
       <audio

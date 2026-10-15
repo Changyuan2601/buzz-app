@@ -71,10 +71,19 @@ export function Tabs<Value extends string>({
           <BaseTabs.Indicator className="buzz-tabs-indicator" />
         )}
         {items.map((item) => (
+          // biome-ignore lint/a11y/noStaticElementInteractions: Suppress mouse defaults for the tab and its close button without adding a nested control.
           <span
             key={item.value}
             className="buzz-tabs-item"
             data-closable={!!item.onClose || undefined}
+            onMouseDown={(event) => {
+              if (event.button === 1 && item.onClose) event.preventDefault();
+            }}
+            onAuxClick={(event) => {
+              if (event.button !== 1 || !item.onClose) return;
+              event.preventDefault();
+              item.onClose();
+            }}
           >
             <BaseTabs.Tab
               value={item.value}

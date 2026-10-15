@@ -27,6 +27,8 @@ function fixture(t) {
   const extracted = join(root, "extracted");
   mkdirSync(join(extracted, "usr/lib"), { recursive: true });
   writeFileSync(join(extracted, "usr/lib/libwayland-client.so.0"), "fixture");
+  writeFileSync(join(extracted, "usr/lib/libglib-2.0.so.0"), "fixture");
+  writeFileSync(join(extracted, "usr/lib/libwebkit2gtk-4.1.so.0"), "fixture");
   writeFileSync(
     join(extracted, "AppRun.wrapped"),
     "GST_PLUGIN_SYSTEM_PATH_1_0",
@@ -72,18 +74,31 @@ NODE
   return { extracted, repacked, run };
 }
 
-test("AppImage repair fixes libraries and installs the launch shim without an agent runtime", (t) => {
+for (const wayland of ["bundled", "excluded by linuxdeploy"]) {
+  test(`AppImage repair fixes libraries and installs the launch shim with Wayland ${wayland}`, (t) => {
+    const f = fixture(t);
+    if (wayland === "excluded by linuxdeploy")
+      rmSync(join(f.extracted, "usr/lib/libwayland-client.so.0"));
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    for (const library of ["libwayland-client.so.0", "libglib-2.0.so.0"])
+      assert.equal(existsSync(join(f.repacked, "usr/lib", library)), false);
+    assert.equal(
+      readFileSync(join(f.repacked, "usr/lib/libwebkit2gtk-4.1.so.0"), "utf8"),
+      "fixture",
+    );
+    assert.equal(
+      readFileSync(join(f.repacked, "usr/bin/buzz-foundation.bin"), "utf8"),
+      "fixture app",
+    );
+  });
+}
+
+test("AppImage repair refuses a missing library directory before repack", (t) => {
   const f = fixture(t);
-  const result = f.run();
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(
-    existsSync(join(f.repacked, "usr/lib/libwayland-client.so.0")),
-    false,
-  );
-  assert.equal(
-    readFileSync(join(f.repacked, "usr/bin/buzz-foundation.bin"), "utf8"),
-    "fixture app",
-  );
+  rmSync(join(f.extracted, "usr/lib"), { recursive: true });
+  assert.notEqual(f.run().status, 0);
+  assert.equal(existsSync(f.repacked), false);
 });
 
 test("AppImage repair refuses a missing app executable before repack", (t) => {

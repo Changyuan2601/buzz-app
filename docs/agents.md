@@ -95,6 +95,22 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
+Codex's provider model menu offers **Codex recommended** (the catalog's
+recommendation) and specific models. Blank model preferences follow the
+recommendation; blank thinking preferences follow the selected model's default
+unless a supported Buzz provider thinking preference is inherited. Explicit Buzz
+selections take precedence. Local Codex configuration does not supply model or
+thinking preferences to Buzz; unrelated configuration is still used where needed.
+Preview and execution resolve the same concrete model and thinking level, and
+execution passes both explicitly rather than falling through to host preferences.
+Composer discovery caches reads until effective model or thinking settings change.
+Codex opts into sending the concrete displayed model and known effort with each
+composer message; this does not rewrite saved provider preferences or agent
+overrides. Model discovery's `sendDefaults` flag is opt-in: other types send only
+explicit picks. In particular, an untouched Claude picker must not emit an override,
+so follow-up messages preserve a running turn's model and configured cloud model
+IDs do not become per-turn tags.
+
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 

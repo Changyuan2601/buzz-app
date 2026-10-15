@@ -1,18 +1,15 @@
 import { useRef, useState } from "react";
-import type {
-  Attachment,
-  ChannelSummary,
-} from "../../features/relay/contracts";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
+  ConversationChannel,
+  ConversationComposer,
+  ConversationThread,
+  useMediaReview,
+} from "../../features/conversation/Conversation";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
-import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
 import {
@@ -63,27 +60,21 @@ export function ConversationTab({
   const restoredTab = useRef(focusOnMount ? undefined : tab);
   const sessionConversation = channel.channelType === "session";
   const [sent, setSent] = useState<string>();
-  const [media, setMedia] = useState<{
-    messageId: string;
-    attachment: Attachment;
-    seconds: number;
-    hasComments: boolean;
-  }>();
-  const mediaTrigger = useRef<HTMLElement | null>(null);
-  const openMedia = (
-    messageId: string,
-    attachment: Attachment,
-    seconds: number,
-    hasComments = false,
-  ) => {
-    mediaTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setMedia({ messageId, attachment, seconds, hasComments });
-  };
+  const media = useMediaReview();
   return (
-    <MessageManagement session={session} channelId={channel.id} active={active}>
+    <ConversationChannel
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      channel={channel}
+      active={active}
+      interactions={{
+        onOpenLink: openLink,
+        canOpenLink,
+        onOpenMediaReview: media.open,
+      }}
+      mediaReview={media.review}
+    >
       <section
         data-attachment-drop-zone=""
         onDragOver={rejectUnhandledFileDrop}
@@ -94,13 +85,8 @@ export function ConversationTab({
         <MessageManagementStatus />
         {sessionConversation && <SessionHeading channel={channel} />}
         {tab.kind === "thread" ? (
-          <ThreadPanel
-            sessionConversation={sessionConversation}
+          <ConversationThread
             active={active}
-            session={session}
-            scope={scope}
-            channelId={channel.id}
-            channelName={channel.name}
             messageId={tab.messageId}
             navigation={navigation}
             retainThread
@@ -111,58 +97,25 @@ export function ConversationTab({
             replyRequest={
               tab === restoredTab.current ? undefined : tab.replyRequest
             }
-            extensions={extensions}
             close={close}
-            onOpenLink={openLink}
-            canOpenLink={canOpenLink}
-            onOpenMediaReview={openMedia}
           />
         ) : (
           <SessionColumn enabled={sessionConversation}>
             <ChannelBody
-              queries={session}
-              scope={scope}
-              channelId={channel.id}
               viewer={session.viewer}
               cached={!!channel.cached}
-              extensions={extensions}
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
+              // The composer below mounts TypingIndicator for a live channel.
+              activityLane={!channel.cached}
               onOpenThread={openThread}
-              onOpenMediaReview={openMedia}
               revealMessageId={sent}
             />
-            <MessageComposer
-              sessionConversation={sessionConversation}
+            <ConversationComposer
               label={sessionConversation ? "Message this session" : undefined}
-              session={session}
-              scope={scope}
-              channelId={channel.id}
-              channelName={channel.name}
-              extensions={extensions}
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
               onSend={setSent}
             />
           </SessionColumn>
         )}
-        {media && (
-          <MediaReviewViewer
-            session={session}
-            scope={scope}
-            channelId={channel.id}
-            channelName={channel.name}
-            extensions={extensions}
-            messageId={media.messageId}
-            attachment={media.attachment}
-            initialTime={media.seconds}
-            hasComments={media.hasComments}
-            restoreFocus={mediaTrigger}
-            onOpenLink={openLink}
-            close={() => setMedia(undefined)}
-          />
-        )}
       </section>
-    </MessageManagement>
+    </ConversationChannel>
   );
 }

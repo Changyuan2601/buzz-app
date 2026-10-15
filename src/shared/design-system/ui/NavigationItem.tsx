@@ -6,6 +6,7 @@ export function NavigationItem({
   icon,
   trailing,
   selected = false,
+  highlighted = false,
   inset = false,
   variant = "row",
   ...props
@@ -14,6 +15,8 @@ export function NavigationItem({
   icon?: ReactNode;
   trailing?: ReactNode;
   selected?: boolean;
+  /** Transient picker focus; persistent navigation selection stays separate. */
+  highlighted?: boolean;
   inset?: boolean;
   variant?: "row" | "pill" | "option";
 } & Omit<ComponentProps<typeof BaseButton>, "className" | "children">) {
@@ -25,6 +28,7 @@ export function NavigationItem({
       data-buzz-ui=""
       className="navigation-item"
       data-selected={selected || undefined}
+      data-highlighted={highlighted || undefined}
       data-inset={inset || undefined}
       aria-current={props["aria-current"] ?? (selected ? "page" : undefined)}
     >

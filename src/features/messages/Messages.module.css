@@ -212,7 +212,7 @@
   gap: 0;
   margin: var(--space-1h) 0 0;
 }
-.reactions:has(.reactionItem),
+.reactions[data-populated],
 .reactionFallback {
   position: relative;
   align-self: flex-start;
@@ -224,12 +224,12 @@
   border-radius: calc(var(--size-control-sm) / 2 + 1.5px);
   background: var(--reaction-surface, var(--surface-message));
 }
-.message:has(.messageBubble[data-own]) > .messageBody {
+.message[data-own] > .messageBody {
   --reaction-surface: var(--surface-message-own);
   --reaction-ink: var(--text-message-own);
 }
-.messageContent:has(.messageBubble) + .reactions:has(.reactionItem),
-.messageContent:has(.messageBubble) + .reactionFallback {
+.messageContent[data-bubble] + .reactions[data-populated],
+.messageContent[data-bubble] + .reactionFallback {
   margin-top: calc(-1 * var(--space-1));
 }
 .reactions:empty {
@@ -500,8 +500,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
 }
 /* Soften the scroll edge without reserving a blank strip above the composer. */
-:is(.feed, .threadHistory):has(.jumpToLatest[data-visible="true"])
-+ .composerContext::before {
+:is(.feed, .threadHistory)[data-jump-visible] + .composerContext::before {
   content: "";
   position: absolute;
   inset-inline: 0;
@@ -534,6 +533,12 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
 }
+.feed:has(.emptyConversation) .edge:empty {
+  min-height: 0;
+}
+.emptyConversation {
+  padding-block: var(--space-panel-inset);
+}
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
 }
@@ -547,6 +552,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 @media (max-width: 40.625rem) {
   .feed {
     padding-inline: var(--space-3);
+  }
+  .emptyConversation {
+    padding-block: var(--space-3);
   }
   .composer {
     width: min(calc(100% - 2 * var(--space-3)), 52rem);
@@ -605,13 +613,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-items: center;
   gap: var(--space-2);
 }
-.composer:is([data-chat-presentation], :has(.composerConversationControls))
+.composer:is([data-chat-presentation], [data-conversation-controls])
   .composerActions {
   flex-direction: column;
   flex-wrap: nowrap;
   align-items: stretch;
 }
-.composer:is([data-chat-presentation], :has(.composerConversationControls))
+.composer:is([data-chat-presentation], [data-conversation-controls])
   .composerToolRow {
   display: flex;
   flex-wrap: nowrap;
@@ -619,7 +627,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
   gap: var(--space-2);
 }
-.composer:is([data-chat-presentation], :has(.composerConversationControls))
+.composer:is([data-chat-presentation], [data-conversation-controls])
   .composerConversationControls {
   width: 100%;
 }
@@ -861,7 +869,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composerLeadingTools:empty {
   display: none;
 }
-.composerLeadingTools:has(.mentionRecipients) {
+.composerLeadingTools[data-recipients] {
   border-radius: var(--radius-pill);
   padding-inline: var(--space-half);
   background: var(--affordance-subtle);
@@ -2140,7 +2148,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   background: var(--affordance-subtle);
 }
 
-.composer:has([aria-label="Attachments"]) {
+.composer[data-attachments] {
   --composer-gap: var(--space-2);
   padding-top: var(--space-1h);
   gap: var(--composer-gap);
@@ -2504,11 +2512,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   );
 }
 /* Leave a separate floating lane when the composer has an activity pill. */
-:is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
-.jumpToLatest,
-[data-channel-history]:has(~ .composerContext [data-agent-activity-trigger])
-  > .feed
-  .jumpToLatest {
+.jumpToLatest[data-activity-lane] {
   top: calc(
     100% +
     var(--history-bottom-inset) -
@@ -2643,7 +2647,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 /* Percentage-sized media needs a definite available width, unlike text bubbles. */
-.messagePayload:has(.messageAttachments) {
+.messagePayload[data-attachments] {
   width: 100%;
 }
 

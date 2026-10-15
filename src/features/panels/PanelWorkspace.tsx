@@ -329,7 +329,12 @@ export function PanelWorkspace({
               draggable: !!drag && "move" in tab && !!tab.move,
               onClose: tab.close
                 ? () => {
-                    closingTab.current = tab.id;
+                    // Recover focus only when removing its current owner.
+                    closingTab.current = document
+                      .getElementById(`${panelId(tab.id)}-tab`)
+                      ?.parentElement?.contains(document.activeElement)
+                      ? tab.id
+                      : undefined;
                     tab.close?.();
                   }
                 : undefined,

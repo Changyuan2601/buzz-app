@@ -7,23 +7,47 @@ import {
 
 const parent = "22222222-2222-4222-8222-222222222222";
 
-it("round-trips parent and personal session descriptions", () => {
-  expect(sessionDescription()).toBe(SESSION_CHANNEL_DESCRIPTION);
-  for (const [parentId, personal, metadata] of [
-    [undefined, false, {}],
-    [parent, false, { parentId: parent }],
-    [undefined, true, { personal: true }],
-    [parent, true, { parentId: parent, personal: true }],
-  ] as const)
-    expect(sessionMetadata(sessionDescription(parentId, personal))).toEqual(
-      metadata,
-    );
+it("retains the exact legacy marker, parent and personal grammar", () => {
+  expect(sessionMetadata(sessionDescription())).toEqual({});
+  expect(sessionMetadata(sessionDescription(parent))).toEqual({
+    parentId: parent,
+  });
+  expect(sessionMetadata(sessionDescription(undefined, true))).toEqual({
+    personal: true,
+  });
+  expect(sessionMetadata(sessionDescription(parent, true))).toEqual({
+    parentId: parent,
+    personal: true,
+  });
   expect(sessionDescription(undefined, true)).toBe(
     `${SESSION_CHANNEL_DESCRIPTION}\npersonal`,
   );
 });
 
-it("rejects session descriptions outside the exact line grammar", () => {
+it.each([
+  '{"automatic":"First prompt","explicit":true}',
+  '{"automatic":"First prompt","explicit":false}',
+  '{"explicit":true}',
+  '{"explicit":false}',
+  '{"automatic":"","explicit":false}',
+  '{"automatic":null,"explicit":true}',
+  '{"automatic":"#name","explicit":true}',
+  '{"automatic":"name ","explicit":false}',
+  '{"automatic":"name","explicit":"true"}',
+  '{"automatic":"name","explicit":true,"extra":1}',
+  '{"explicit":true,"automatic":"name"}',
+  '{"automatic":"name","automatic":"name","explicit":true}',
+  JSON.stringify({ automatic: "a".repeat(81), explicit: true }),
+])(
+  "rejects deferred naming extensions, including malformed evidence %s",
+  (json) => {
+    expect(
+      sessionMetadata(`${sessionDescription()}\nnaming:${json}`),
+    ).toBeUndefined();
+  },
+);
+
+it("rejects extra lines and malformed ancestry without changing legacy recognition", () => {
   for (const description of [
     undefined,
     "",
@@ -38,4 +62,7 @@ it("rejects session descriptions outside the exact line grammar", () => {
     ` ${SESSION_CHANNEL_DESCRIPTION}`,
   ])
     expect(sessionMetadata(description)).toBeUndefined();
+  expect(
+    sessionMetadata(`${sessionDescription()}\nnaming:{"explicit":true}\nextra`),
+  ).toBeUndefined();
 });

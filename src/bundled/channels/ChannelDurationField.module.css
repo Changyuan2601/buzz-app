@@ -1,10 +1,19 @@
 .temporary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
 }
 
+.temporary > :first-child {
+  flex: 1 1 min-content;
+}
+
+.temporaryLabel {
+  overflow-wrap: anywhere;
+}
+
 .reveal {
+  margin-inline-start: auto;
   overflow: hidden;
 }
 
@@ -25,5 +34,5 @@
   display: inline-block;
   overflow: hidden;
   vertical-align: bottom;
-  white-space: nowrap;
+  max-width: 100%;
 }
