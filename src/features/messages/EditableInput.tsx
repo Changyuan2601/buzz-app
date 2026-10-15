@@ -1394,6 +1394,15 @@ export function EditableInput({
           return false;
         },
         handleDOMEvents: {
+          // A caret key moves the native caret, and ProseMirror adopts it on
+          // the next selectionchange or keydown. Focus can leave first, for
+          // example to a tab chosen right after the key, and ProseMirror skips
+          // a selectionchange that arrives after blur. Adopt the caret now, so
+          // a later return to the editor resumes where it was left.
+          blur() {
+            syncNativeSelection();
+            return false;
+          },
           click(_view, event) {
             // Composer links are editable text, never navigation targets.
             if (event.target instanceof Element && event.target.closest("a"))
