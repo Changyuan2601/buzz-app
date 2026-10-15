@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { watchPageErrors } from "../../browser/page-errors.mjs";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
 import { TABLER_ICONS } from "../../../src/shared/design-system/icons/inventory";
@@ -16,6 +16,26 @@ const expectKeyboardRing = async (control: Locator, offset = "2px") => {
   await expect(control).toHaveCSS("outline-width", "2px");
   await expect(control).toHaveCSS("outline-offset", offset);
 };
+
+/**
+ * Hold real CSS transitions on `selector` when Base UI commits the attribute
+ * that starts them, before any frame can finish them. A transitionrun listener
+ * is too late under load: the event is queued, and a busy renderer can deliver
+ * it after a short transition has already ended. Install before navigation.
+ */
+const holdMotion = (page: Page, selector: string) =>
+  page.addInitScript((selector) => {
+    new MutationObserver((records) => {
+      for (const { target } of records)
+        if (target instanceof HTMLElement && target.matches(selector))
+          // getAnimations() flushes style, so the new transition exists.
+          for (const animation of target.getAnimations()) animation.pause();
+    }).observe(document, {
+      attributes: true,
+      attributeFilter: ["data-starting-style", "data-ending-style"],
+      subtree: true,
+    });
+  }, selector);
 
 test("floating fills nest with their painted owner across themes, widths and text scales", async ({
   page,
@@ -1400,26 +1420,13 @@ test("button loading keeps focus and labels stay single-line in constrained layo
 test("dialog motion retains exit presence and respects immediate interaction paths", async ({
   page,
 }) => {
+  // Hold real CSS transitions, so intermediate presence does not depend on speed.
+  await holdMotion(page, '.buzz-dialog[data-motion="default"]');
   await page.goto(`${viewer}#/design/components/dialog`);
   const trigger = page
     .getByRole("region", { name: "Single field", exact: true })
     .getByRole("button", { name: "Open dialog", exact: true });
   const popup = page.locator(".buzz-dialog");
-  // Hold real CSS transitions, so intermediate presence does not depend on speed.
-  await page.evaluate(() => {
-    document.addEventListener(
-      "transitionrun",
-      (event) => {
-        if (
-          !(event.target instanceof HTMLElement) ||
-          !event.target.matches('.buzz-dialog[data-motion="default"]')
-        )
-          return;
-        for (const animation of event.target.getAnimations()) animation.pause();
-      },
-      true,
-    );
-  });
   const finish = () =>
     page.evaluate(() => {
       for (const animation of document.getAnimations()) animation.finish();
@@ -1837,26 +1844,13 @@ test("Messages gallery fullscreen stays reachable and returns focus to its trigg
 test("form choice popups settle, retain exit presence, and respect immediate motion", async ({
   page,
 }) => {
+  await holdMotion(page, ".buzz-select-popup");
   await page.goto(`${viewer}#/design/forms`);
   // Select retains a hidden portal to measure labels; Combobox unmounts it.
   // Both must remove the active surface after its exit completes.
   const popup = page.locator(
     ".buzz-select-positioner:not([hidden]) .buzz-select-popup",
   );
-  await page.evaluate(() => {
-    document.addEventListener(
-      "transitionrun",
-      (event) => {
-        if (
-          !(event.target instanceof HTMLElement) ||
-          !event.target.matches(".buzz-select-popup")
-        )
-          return;
-        for (const animation of event.target.getAnimations()) animation.pause();
-      },
-      true,
-    );
-  });
   const finish = () =>
     page.evaluate(() => {
       for (const animation of document.getAnimations()) animation.finish();
@@ -2103,20 +2097,7 @@ test("popover reduced motion and outside dismissal remain immediate", async ({
 test("menus and popovers reuse the dropdown unblur and placement offset", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    document.addEventListener(
-      "transitionrun",
-      (event) => {
-        if (
-          !(event.target instanceof HTMLElement) ||
-          !event.target.matches(".buzz-menu-popup, .buzz-popover-popup")
-        )
-          return;
-        for (const animation of event.target.getAnimations()) animation.pause();
-      },
-      true,
-    );
-  });
+  await holdMotion(page, ".buzz-menu-popup, .buzz-popover-popup");
   const finish = () =>
     page.evaluate(() => {
       for (const animation of document.getAnimations()) animation.finish();
