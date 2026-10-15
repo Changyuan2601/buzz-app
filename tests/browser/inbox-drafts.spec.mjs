@@ -54,11 +54,9 @@ test("Draft and conversation previews share their plain layout and show real sel
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const chooseActivity = async (label) => {
     if (label !== "Drafts") {
-      await inbox
-        .getByRole("button", { name: "Inbox filters", exact: true })
-        .click();
+      await inbox.getByRole("button", { name: /^Inbox filters:/ }).click();
       await page
-        .getByRole("menu", { name: "Inbox filters", exact: true })
+        .getByRole("menu", { name: /^Inbox filters/ })
         .getByRole("menuitemradio", { name: label, exact: true })
         .click();
       return;

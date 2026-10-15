@@ -13,6 +13,7 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
+import { useChannelLabels } from "../channels/useChannelLabels";
 import { InboxDetail } from "./InboxDetail";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { DraftsView } from "./DraftsView";
@@ -284,6 +285,11 @@ export function InboxView({
   }, [drafts]);
   // Row to focus after its predecessor leaves the list ("" means the toolbar).
   const focusRow = useRef<string | undefined>(undefined);
+  const readFocus = useRef<{
+    id: string;
+    neighbor?: string | undefined;
+    control: HTMLButtonElement;
+  }>(undefined);
   const workspace = useRef<HTMLDivElement | null>(null);
   const retryFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
@@ -456,6 +462,18 @@ export function InboxView({
           item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const visible = matching;
+  const labelRoster = useMemo(
+    () =>
+      list.channels.filter((channel) =>
+        matching.some((item) => item.channelId === channel.id),
+      ),
+    [list.channels, matching],
+  );
+  const { channels: labelledChannels } = useChannelLabels(
+    labelRoster,
+    session.profiles,
+    session.names,
+  );
   const archiveView = useRef({ show, visible, selected });
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected };
@@ -493,8 +511,20 @@ export function InboxView({
       void session.profiles.ensure(profileIds, "background").catch(() => {});
   }, [session, profileIds, list.status, list.asOf]);
   useLayoutEffect(() => {
+    if (pending) return;
+    const read = readFocus.current;
+    readFocus.current = undefined;
+    if (
+      read &&
+      (document.activeElement === document.body ||
+        document.activeElement === read.control)
+    ) {
+      focusRow.current = visible.some((row) => row.id === read.id)
+        ? read.id
+        : (read.neighbor ?? "");
+    }
     const id = focusRow.current;
-    if (id === undefined || pending) return;
+    if (id === undefined) return;
     focusRow.current = undefined;
     const row = [
       ...(workspace.current?.querySelectorAll<HTMLElement>(
@@ -628,7 +658,11 @@ export function InboxView({
       },
     );
   }
-  function mutate(item: InboxItem, unread: boolean) {
+  function mutate(
+    item: InboxItem,
+    unread: boolean,
+    control?: HTMLButtonElement,
+  ) {
     // An open menu is not authority: recheck the current session at action entry.
     if (
       !active.current ||
@@ -698,8 +732,17 @@ export function InboxView({
           revision = session.unread.revision();
         }
     };
+    if (control && document.activeElement === control) {
+      const index = visible.findIndex((row) => row.id === item.id);
+      readFocus.current = {
+        id: item.id,
+        neighbor: (visible[index + 1] ?? visible[index - 1])?.id,
+        control,
+      };
+    }
     void run(work, valid);
   }
+
   function retry() {
     // Keep source errors mounted too while their refresh clears live evidence.
     setError(failure);
@@ -899,7 +942,9 @@ export function InboxView({
                       : resolved;
                     const context =
                       channel?.channelType === "dm"
-                        ? "DM"
+                        ? (channel.participants?.length ?? 0) > 1
+                          ? `DM with ${labelledChannels.find((entry) => entry.id === channel.id)?.name ?? channel.name}`
+                          : "DM"
                         : channel
                           ? `#${channel.name}`
                           : "Conversation";
@@ -1043,7 +1088,9 @@ export function InboxView({
                                   size="sm"
                                   disabled={pending || !canRead}
                                   aria-label={`${unread ? "Mark read" : "Mark unread"} ${sender} in ${context}`}
-                                  onClick={() => mutate(item, !unread)}
+                                  onClick={(event) =>
+                                    mutate(item, !unread, event.currentTarget)
+                                  }
                                   icon={
                                     unread ? (
                                       <EnvelopeOpenIcon size={16} />

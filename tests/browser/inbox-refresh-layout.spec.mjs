@@ -28,7 +28,7 @@ for (const width of [1280, 390, 320]) {
     const list = inbox.getByRole("list", { name: "Inbox conversations" });
     const rows = list.getByRole("listitem");
     const filters = inbox.getByRole("button", {
-      name: "Inbox filters",
+      name: /^Inbox filters:/,
       exact: true,
     });
     await expect(rows).toHaveCount(3);
@@ -61,7 +61,7 @@ for (const width of [1280, 390, 320]) {
             ),
           ].map((row) => ({ ...box(row), text: row.textContent })),
           header: box(element.querySelector("header")),
-          filters: box(element.querySelector('[aria-label="Inbox filters"]')),
+          filters: box(element.querySelector('[aria-label^="Inbox filters:"]')),
           unread: box(element.querySelector('[aria-label="Unread only"]')),
         };
       });
@@ -104,7 +104,7 @@ for (const width of [1280, 390, 320]) {
     await expect.poll(geometry).toEqual(before);
     await expect(inbox.getByRole("alert")).toHaveCount(0);
     await expect(filters).toHaveAccessibleDescription(/Activity: All\./);
-    await inbox.getByRole("button", { name: "Filter by sender" }).click();
+    await inbox.getByRole("button", { name: /^Filter by sender/ }).click();
     await expect(
       page.getByRole("menuitemradio", { name: "Everyone", exact: true }),
     ).toBeChecked();
@@ -187,20 +187,18 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
   );
   await inbox.getByRole("tab", { name: "Inbox", exact: true }).click();
   const filters = inbox.getByRole("button", {
-    name: "Inbox filters",
+    name: /^Inbox filters:/,
     exact: true,
   });
   await filters.click();
   await page
     .getByRole("menuitemradio", { name: "Mentions", exact: true })
     .click();
-  await inbox.getByRole("button", { name: "Filter by sender" }).click();
+  await inbox.getByRole("button", { name: /^Filter by sender/ }).click();
   await page
     .getByRole("menuitemradio", { name: "Agents", exact: true })
     .click();
-  await expect(filters).toHaveAccessibleDescription(
-    "Activity: Mentions. From: Agents.",
-  );
+  await expect(filters).toHaveAccessibleDescription("Activity: Mentions.");
   await expect
     .poll(() =>
       filters.evaluate((element) => element.getBoundingClientRect().right),

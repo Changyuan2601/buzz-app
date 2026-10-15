@@ -127,7 +127,7 @@ export function InboxFilters({
   )?.label;
   const senderLabel = senders.find((item) => item.value === sender)?.label;
   const filtered = activity !== "all" || sender !== "everyone";
-  const summary = `Activity: ${activityLabel}. From: ${senderLabel}.`;
+  const summary = `Activity: ${activityLabel}.`;
   return (
     <span ref={controls} className={styles.filterControls}>
       <IconButton
@@ -147,13 +147,13 @@ export function InboxFilters({
       />
       <MenuRoot>
         <MenuTrigger
-          aria-label="Inbox filters"
+          aria-label={`Inbox filters: ${activityLabel}`}
           aria-describedby={summaryId}
           render={
             compact ? (
               <IconButton
                 size="sm"
-                aria-label="Inbox filters"
+                aria-label={`Inbox filters: ${activityLabel}`}
                 variant={activity !== "all" ? "subtle" : "ghost"}
                 title={`Activity: ${activityLabel}`}
                 icon={
@@ -198,12 +198,12 @@ export function InboxFilters({
       </MenuRoot>
       <MenuRoot>
         <MenuTrigger
-          aria-label="Filter by sender"
+          aria-label={`Filter by sender: ${senderLabel}`}
           render={
             compact ? (
               <IconButton
                 size="sm"
-                aria-label="Filter by sender"
+                aria-label={`Filter by sender: ${senderLabel}`}
                 variant={sender !== "everyone" ? "subtle" : "ghost"}
                 title={`From: ${senderLabel}`}
                 icon={

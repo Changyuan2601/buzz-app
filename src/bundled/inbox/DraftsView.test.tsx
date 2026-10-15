@@ -436,12 +436,12 @@ async function chooseFilter(label: string, control = "Activity type") {
   if (control === "Show" || label === "Drafts") {
     await user.click(screen.getByRole("tab", { name: label }));
   } else {
-    if (!screen.queryByRole("button", { name: "Inbox filters" })) {
+    if (!screen.queryByRole("button", { name: /^Inbox filters:/ })) {
       await user.click(screen.getByRole("tab", { name: "Inbox" }));
     }
     await user.click(
       screen.getByRole("button", {
-        name: control === "Sender" ? "Filter by sender" : "Inbox filters",
+        name: control === "Sender" ? /^Filter by sender:/ : /^Inbox filters:/,
       }),
     );
     const option = await screen.findByRole("menuitemradio", {
@@ -488,7 +488,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   screen.getByRole("tab", { selected: true }).focus();
   await user.keyboard("{Enter}");
   expect(screen.getByRole("tablist", { name: "Inbox views" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Inbox filters" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Inbox filters:/ })).toBeNull();
   expect(screen.queryByRole("tablist", { name: "Inbox activity" })).toBeNull();
   await user.keyboard("{Escape}");
   expect(
@@ -542,13 +542,13 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(screen.getByText("No drafts")).toBeVisible();
   await chooseFilter("Threads");
-  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^Inbox filters:/ })).toHaveFocus();
   expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
+    screen.getByRole("button", { name: /^Inbox filters:/ }),
   ).toHaveAccessibleDescription(/Activity: Threads/);
   expect(
-    screen.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveAccessibleDescription(/From: People/);
+    screen.getByRole("button", { name: /^Filter by sender:/ }),
+  ).toHaveAccessibleName(/People/);
   expect(screen.getByRole("button", { name: "Unread only" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -687,10 +687,12 @@ it("DM draft composer labels use exact roster participants and recover as profil
     within(row).getByRole("button", { name: /^Open draft for / }),
   );
   expect(
-    within(detail()).getByRole("heading", { name: /^npub/ }),
+    within(detail()).getByRole("heading", { name: /^[a-f0-9]{10}$/ }),
   ).toBeInTheDocument();
   expect(
-    within(detail()).getByRole("textbox", { name: /Message DM with npub/ }),
+    within(detail()).getByRole("textbox", {
+      name: /^Message DM with [a-f0-9]{10}$/,
+    }),
   ).toHaveValue("  hi\n  again ");
   try {
     await act(async () => h.releaseProfiles());

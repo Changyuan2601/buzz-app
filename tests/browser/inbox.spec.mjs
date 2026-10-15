@@ -51,8 +51,8 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   };
   await expect(inbox.getByRole("tab", { selected: true })).toBeVisible();
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters" }),
-  ).toHaveAccessibleDescription("Activity: All. From: Everyone.");
+    inbox.getByRole("button", { name: /^Inbox filters:/ }),
+  ).toHaveAccessibleDescription("Activity: All.");
   await expect(unread).toHaveAttribute("aria-pressed", "false");
   await unread.click();
   await expect(unread).toHaveAttribute("aria-pressed", "true");
@@ -64,11 +64,11 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(
     inbox.getByRole("tab", { name: "Inbox", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  const sender = inbox.getByRole("button", { name: "Filter by sender" });
+  const sender = inbox.getByRole("button", { name: /^Filter by sender/ });
   const chooseSender = async (name) => {
     await sender.click();
     await page
-      .getByRole("menu", { name: "Filter by sender" })
+      .getByRole("menu", { name: /^Filter by sender/ })
       .getByRole("menuitemradio", { name, exact: true })
       .click();
   };
@@ -183,7 +183,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
       const bounds = element.getBoundingClientRect();
       const controls = [
         ...element.querySelectorAll(
-          '[aria-label="Inbox filters"], [aria-label="Unread only"]',
+          '[aria-label^="Inbox filters:"], [aria-label="Unread only"]',
         ),
       ].map((control) => {
         const { left, right, top, bottom } = control.getBoundingClientRect();
@@ -1029,14 +1029,107 @@ test("Escape from an unread detail restores its invoking row", async ({
 });
 
 async function chooseActivity(page, inbox, label) {
-  await inbox
-    .getByRole("button", { name: "Inbox filters", exact: true })
-    .click();
+  await inbox.getByRole("button", { name: /^Inbox filters:/ }).click();
   await page
-    .getByRole("menu", { name: "Inbox filters", exact: true })
+    .getByRole("menu", { name: /^Inbox filters/ })
     .getByRole("menuitemradio", { name: label, exact: true })
     .click();
   await expect(
-    page.getByRole("menu", { name: "Inbox filters", exact: true }),
+    page.getByRole("menu", { name: /^Inbox filters/ }),
   ).not.toBeVisible();
 }
+
+// Native disabling/removal can move focus to body; jsdom cannot prove this handoff.
+for (const scenario of ["survives", "first", "last", "only"]) {
+  test(`row read action retains keyboard navigation when ${scenario}`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await openPage(page, "Inbox");
+    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    await expect(
+      inbox.getByText("Unread reply 1", { exact: true }),
+    ).toBeVisible();
+    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+    if (scenario !== "survives")
+      await inbox
+        .getByRole("button", { name: "Unread only", exact: true })
+        .click();
+    if (scenario === "only") await chooseActivity(page, inbox, "DMs");
+    const rows = inbox
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem");
+    const count = await rows.count();
+    if (scenario === "only") expect(count).toBe(1);
+    else expect(count).toBeGreaterThan(1);
+    const index = scenario === "last" ? count - 1 : 0;
+    const row = rows.nth(index);
+    const rowId = await row.getAttribute("data-inbox-row");
+    const nextId =
+      scenario === "survives"
+        ? rowId
+        : scenario === "only"
+          ? null
+          : await rows
+              .nth(index === count - 1 ? index - 1 : index + 1)
+              .getAttribute("data-inbox-row");
+    await row.getByRole("button", { name: /^Open / }).focus();
+    await expect(
+      row.getByRole("button", { name: /^Mark read / }),
+    ).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(
+      row.getByRole("button", { name: /^Mark read / }),
+    ).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(
+      inbox.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false");
+    if (scenario === "survives")
+      await expect(
+        row.getByRole("button", { name: /^Mark unread / }),
+      ).toBeEnabled();
+    else await expect(rows).toHaveCount(count - 1);
+    await expect(
+      nextId
+        ? inbox
+            .locator(`[data-inbox-row="${nextId}"]`)
+            .getByRole("button", { name: /^Open / })
+        : inbox.getByRole("tab", { selected: true }),
+    ).toBeFocused();
+  });
+}
+
+test.describe("touch Inbox metadata", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  });
+  test("keeps timestamps and actions visible without hover", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await openPage(page, "Inbox");
+    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    await expect(
+      inbox.getByText("Unread reply 1", { exact: true }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => matchMedia("(hover: none)").matches)).toBe(
+      true,
+    );
+    const row = inbox
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem")
+      .first();
+    await expect(row.locator("time")).toBeVisible();
+    await expect(row.getByRole("button", { name: /^Archive / })).toBeVisible();
+    const time = await row.locator("time").boundingBox();
+    const action = await row
+      .getByRole("button", { name: /^Mark / })
+      .boundingBox();
+    expect(time.x + time.width).toBeLessThanOrEqual(action.x);
+  });
+});

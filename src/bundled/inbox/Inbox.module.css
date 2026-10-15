@@ -223,15 +223,6 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   visibility: hidden;
 }
 
-@media (hover: none) {
-  .rowActions {
-    visibility: visible;
-  }
-  .timestamp {
-    visibility: hidden;
-  }
-}
-
 .unreadSlot {
   display: grid;
   place-items: center;
@@ -330,5 +321,27 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+}
+
+/* Touch keeps recency visible while exposing actions without hover. */
+@media (hover: none) {
+  .content {
+    padding-block-end: var(--size-control-sm);
+  }
+  .heading {
+    padding-inline-end: 0;
+  }
+  .row .timestamp {
+    visibility: visible;
+    top: auto;
+    bottom: var(--space-4);
+    inset-inline-start: var(--space-4);
+    inset-inline-end: auto;
+  }
+  .rowActions {
+    visibility: visible;
+    top: auto;
+    bottom: var(--space-2);
   }
 }

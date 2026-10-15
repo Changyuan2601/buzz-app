@@ -77,7 +77,7 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await expect(dm.getByRole("img", { name: "Unread" })).toHaveCount(0);
 
   const filter = inbox.getByRole("button", {
-    name: "Inbox filters",
+    name: /^Inbox filters:/,
     exact: true,
   });
   await filter.focus();

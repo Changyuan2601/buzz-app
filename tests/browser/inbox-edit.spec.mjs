@@ -231,7 +231,7 @@ for (const submitted of [false, true])
       await expect(editor).toHaveCount(0);
       const close = detail.getByRole("button", { name: "Close detail" });
       if (!submitted) await expect(close).toBeFocused();
-      const filters = inbox.getByRole("button", { name: "Inbox filters" });
+      const filters = inbox.getByRole("button", { name: /^Inbox filters:/ });
       await filters.focus();
       await expect(filters).toBeFocused();
       closure.resolve();

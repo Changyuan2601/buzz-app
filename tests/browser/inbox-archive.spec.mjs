@@ -21,7 +21,7 @@ async function choose(page, inbox, control, option) {
     await inbox.getByRole("tab", { name: option, exact: true }).click();
     return;
   }
-  const label = control === "Sender" ? "Filter by sender" : "Inbox filters";
+  const label = control === "Sender" ? /^Filter by sender:/ : /^Inbox filters:/;
   await inbox.getByRole("button", { name: label, exact: true }).click();
   const menu = page.getByRole("menu", { name: label });
   await expect(menu).toBeVisible();
@@ -52,7 +52,7 @@ test("Inbox status choices combine with attention filters and preserve them", as
     .getByRole("listitem");
 
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+    inbox.getByRole("button", { name: /^Inbox filters:/ }),
   ).toHaveAccessibleDescription(/Activity: All\./);
   await expect(
     inbox.getByRole("button", { name: "About Inbox archive" }),
@@ -75,8 +75,8 @@ test("Inbox status choices combine with attention filters and preserve them", as
   await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toHaveAccessibleDescription(/From: Agents\./);
+    inbox.getByRole("button", { name: /^Filter by sender:/ }),
+  ).toHaveAccessibleName(/Agents/);
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -87,11 +87,11 @@ test("Inbox status choices combine with attention filters and preserve them", as
     inbox.getByRole("tab", { name: "Archived", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+    inbox.getByRole("button", { name: /^Inbox filters:/ }),
   ).toHaveAccessibleDescription(/Activity: Mentions\./);
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toHaveAccessibleDescription(/From: Agents\./);
+    inbox.getByRole("button", { name: /^Filter by sender:/ }),
+  ).toHaveAccessibleName(/Agents/);
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -105,11 +105,11 @@ test("Inbox status choices combine with attention filters and preserve them", as
   await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
+    inbox.getByRole("button", { name: /^Inbox filters:/ }),
   ).toHaveAccessibleDescription(/Activity: Mentions\./);
   await expect(
-    inbox.getByRole("button", { name: "Inbox filters", exact: true }),
-  ).toHaveAccessibleDescription(/From: Agents\./);
+    inbox.getByRole("button", { name: /^Filter by sender:/ }),
+  ).toHaveAccessibleName(/Agents/);
   await expect(
     inbox.getByRole("button", { name: "Unread only" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -132,7 +132,7 @@ test("Inbox status choices combine with attention filters and preserve them", as
   await expect(rows).toHaveCount(1);
   await expect(archived).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("menu", { name: "Inbox filters" })).toHaveCount(
+  await expect(page.getByRole("menu", { name: /^Inbox filters/ })).toHaveCount(
     0,
   );
   await expect(archived).toHaveAttribute("aria-selected", "true");
@@ -700,11 +700,11 @@ test("same-account windows reconcile filters and archive intent without reload",
     await choose(page, inbox, "Sender", "Agents");
     await inbox.getByRole("button", { name: "Unread only" }).click();
     await expect(
-      sibling.getByRole("button", { name: "Inbox filters", exact: true }),
+      sibling.getByRole("button", { name: /^Inbox filters:/ }),
     ).toHaveAccessibleDescription(/Activity: Mentions\./);
     await expect(
-      sibling.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toHaveAccessibleDescription(/From: Agents\./);
+      sibling.getByRole("button", { name: /^Filter by sender:/ }),
+    ).toHaveAccessibleName(/Agents/);
     await expect(
       sibling.getByRole("button", { name: "Unread only" }),
     ).toHaveAttribute("aria-pressed", "true");
@@ -724,8 +724,8 @@ test("same-account windows reconcile filters and archive intent without reload",
     await expect(siblingRows).toHaveCount(0);
     await choose(page, inbox, "Show", "Inbox");
     await expect(
-      sibling.getByRole("button", { name: "Inbox filters", exact: true }),
-    ).toHaveAccessibleDescription("Activity: Mentions. From: Agents.");
+      sibling.getByRole("button", { name: /^Inbox filters:/ }),
+    ).toHaveAccessibleDescription("Activity: Mentions.");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
   } finally {

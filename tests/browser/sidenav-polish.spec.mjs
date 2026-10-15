@@ -791,7 +791,7 @@ test.extend({ companionFixture: true })(
       const body = page.getByRole("region", { name, exact: true });
       await expect(
         name === "Inbox"
-          ? body.getByRole("button", { name: "Inbox filters", exact: true })
+          ? body.getByRole("button", { name: /^Inbox filters:/ })
           : body.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
       return body;

@@ -45,6 +45,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import { useChannelLabels } from "../channels/useChannelLabels";
 import { avatarMedia } from "../../shared/avatar-source";
 
 export function DraftsView({
@@ -171,10 +172,19 @@ export function DraftsView({
   const activeChannel = active
     ? channelFor(active.coordinates.channelId)
     : undefined;
+  const headerRoster = useMemo(
+    () => (activeChannel ? [activeChannel] : []),
+    [activeChannel],
+  );
+  const { channels: headerChannels } = useChannelLabels(
+    headerRoster,
+    session.profiles,
+    session.names,
+  );
   const title = !activeChannel
     ? "Unavailable conversation"
     : activeChannel.channelType === "dm"
-      ? destination(activeChannel)
+      ? (headerChannels[0]?.name ?? activeChannel.name)
       : activeChannel.name;
   const ActiveChannelIcon = channelIcon(activeChannel);
   const open = async () => {
@@ -426,7 +436,7 @@ export function DraftsView({
                     channelId={activeChannel.id}
                     channelName={
                       activeChannel.channelType === "dm"
-                        ? `DM with ${destination(activeChannel)}`
+                        ? `DM with ${title}`
                         : activeChannel.name
                     }
                     draft
