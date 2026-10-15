@@ -204,13 +204,17 @@ function maxVersion(tree: Tree): number {
     0,
   );
 }
-/** Apply only the requested leaves; preserve every other register and tombstone. */
+/**
+ * Apply only the requested leaves; preserve every other register and tombstone.
+ * With `all`, any change restamps every requested leaf (a whole-list reorder).
+ */
 export function editSidebarRecord(
   coordinate: Coordinate,
   current: Record<string, unknown>,
   createdAt: number,
   writes: readonly (readonly [readonly string[], unknown])[],
   now = Date.now(),
+  all = false,
 ): Record<string, unknown> {
   const tree =
     current.meta === undefined
@@ -240,7 +244,7 @@ export function editSidebarRecord(
   const version = Math.max(now, maxVersion(tree) + 1);
   if (!Number.isSafeInteger(version))
     throw new Error("Sidebar register clock exhausted");
-  for (const [path, value] of changed) {
+  for (const [path, value] of all ? writes : changed) {
     let node = tree;
     for (const key of path.slice(0, -1)) {
       const child = own(node, key);

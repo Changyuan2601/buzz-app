@@ -677,30 +677,31 @@ it("allows only a single canonical TTL command tag without widening other fields
   }
 });
 
-it("renames standalone sessions with a name-only command and confirmed relay readback", async () => {
-  const h = harness();
-  h.set([
-    h.metadata("Old title", sessionDescription(), "private"),
-    ...h.events().slice(1),
-  ]);
-  const base = await h.owner.capability.load(id);
-  expect(base.canEdit).toBe(true);
-  h.publish.mockImplementationOnce(async () => {
-    h.set([
-      h.metadata("New title", sessionDescription(), "private"),
-      ...h.events().slice(1),
+it.each([false, true])(
+  "renames standalone sessions with a name-only command and confirmed relay readback (personal=%s)",
+  async (personal) => {
+    const h = harness();
+    const about = sessionDescription(undefined, personal);
+    h.set([h.metadata("Old title", about, "private"), ...h.events().slice(1)]);
+    const base = await h.owner.capability.load(id);
+    expect(base.canEdit).toBe(true);
+    h.publish.mockImplementationOnce(async () => {
+      h.set([
+        h.metadata("New title", about, "private"),
+        ...h.events().slice(1),
+      ]);
+    });
+    await h.owner.capability.save(base, { ...base, name: "New title" });
+    const command = h.sign.mock.calls[0]?.[0];
+    expect(command?.tags).toEqual([
+      ["h", id],
+      ["name", "New title"],
     ]);
-  });
-  await h.owner.capability.save(base, { ...base, name: "New title" });
-  const command = h.sign.mock.calls[0]?.[0];
-  expect(command?.tags).toEqual([
-    ["h", id],
-    ["name", "New title"],
-  ]);
-  assert(command);
-  expect(() => validateDetailsTemplate(command)).not.toThrow();
-  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
-});
+    assert(command);
+    expect(() => validateDetailsTemplate(command)).not.toThrow();
+    expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+  },
+);
 it.each([false, true])(
   "promotes a standalone session in place (public/temporary=%s)",
   async (changed) => {

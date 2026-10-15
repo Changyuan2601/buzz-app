@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -49,17 +50,25 @@ it("shows core first, then other memories in Markdown accordions", async () => {
     ],
     partial: false,
   }));
-  const intro = screen.getByText(
-    "These memories help this agent maintain context. Core memories are always available; other memories are recalled as needed. Only the agent can update them.",
-  );
-  expect(intro.querySelector("code")).toBeNull();
   const core = await screen.findByRole("region", { name: "Core memories" });
   expect(
-    within(core).getByRole("button", { name: "Refresh" }),
+    within(core).getByText("Automatically included when the agent works."),
   ).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("region", { name: "Memories" })).getByText(
+      "Saved details the agent looks up when needed.",
+    ),
+  ).toBeInTheDocument();
+  expect(
+    within(core).queryByRole("button", { name: "Refresh" }),
+  ).not.toBeInTheDocument();
   const coreTrigger = within(core).getByRole("button", { name: "core" });
   expect(coreTrigger).toHaveAttribute("aria-expanded", "false");
-  await user.click(within(core).getByText("core"));
+  await user.click(within(coreTrigger).getByText("core"));
+  expect(coreTrigger).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Enter}");
+  expect(coreTrigger).toHaveAttribute("aria-expanded", "false");
+  await user.keyboard(" ");
   expect(coreTrigger).toHaveAttribute("aria-expanded", "true");
   expect(within(core).getByText("Ada").tagName).toBe("STRONG");
   const references = screen.getByRole("region", {
@@ -69,8 +78,8 @@ it("shows core first, then other memories in Markdown accordions", async () => {
     within(references).getByRole("button", { name: "mem/notes" }),
   ).toBeInTheDocument();
   expect(
-    within(references).queryByTitle(formatFullTimestamp(1_700_000_000)),
-  ).not.toBeInTheDocument();
+    within(references).getByTitle(formatFullTimestamp(1_700_000_000)),
+  ).toBeInTheDocument();
   expect(within(references).getByText("Cold detail.")).toBeInTheDocument();
   expect(within(references).queryByText("core")).not.toBeInTheDocument();
 });
@@ -84,8 +93,7 @@ it("shows a spinner while memories load", async () => {
   expect(screen.queryByText("Loading memory…")).not.toBeInTheDocument();
 });
 
-it("sorts memories alphabetically or chronologically", async () => {
-  const user = userEvent.setup();
+it("shows memories newest first without a sorting control", async () => {
   setup(async () => ({
     entries: [
       entry("core", "Core.", 400),
@@ -99,32 +107,25 @@ it("sorts memories alphabetically or chronologically", async () => {
     name: "Memories",
   });
   const core = screen.getByRole("region", { name: "Core memories" });
+  expect(
+    screen.queryByRole("button", { name: "Organize memories" }),
+  ).not.toBeInTheDocument();
   const titles = () =>
     [
       ...references.querySelectorAll<HTMLButtonElement>(
-        "button[aria-controls]",
+        "button[aria-expanded]",
       ),
-    ].map((button) => button.textContent);
+    ].map((button) => button.getAttribute("aria-label"));
   expect(titles()).toEqual([
-    expect.stringContaining("mem/alpha"),
-    expect.stringContaining("mem/middle"),
     expect.stringContaining("mem/zulu"),
+    expect.stringContaining("mem/middle"),
+    expect.stringContaining("mem/alpha"),
   ]);
   expect(
-    within(references).queryByTitle(formatFullTimestamp(300)),
-  ).not.toBeInTheDocument();
-  expect(
-    within(core).queryByTitle(formatFullTimestamp(400)),
-  ).not.toBeInTheDocument();
+    within(references).getByTitle(formatFullTimestamp(300)),
+  ).toBeInTheDocument();
+  expect(within(core).getByTitle(formatFullTimestamp(400))).toBeInTheDocument();
 
-  await user.click(
-    within(core).getByRole("button", {
-      name: "Organize memories",
-    }),
-  );
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: "Chronologically" }),
-  );
   expect(titles()).toEqual([
     expect.stringContaining("mem/zulu"),
     expect.stringContaining("mem/middle"),
@@ -136,7 +137,7 @@ it("sorts memories alphabetically or chronologically", async () => {
   expect(within(core).getByTitle(formatFullTimestamp(400))).toBeInTheDocument();
 });
 
-it("copies a memory from its action or context menu", async () => {
+it("copies a memory from its context menu", async () => {
   const user = userEvent.setup();
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   setup(async () => ({
@@ -144,16 +145,16 @@ it("copies a memory from its action or context menu", async () => {
     partial: false,
   }));
   const core = await screen.findByRole("region", { name: "Core memories" });
-  const actions = within(core).getByRole("button", {
-    name: "Actions for core",
-  });
+  expect(
+    within(core).queryByRole("button", { name: "Actions for core" }),
+  ).not.toBeInTheDocument();
 
-  await user.click(actions);
+  fireEvent.contextMenu(within(core).getByRole("button", { name: "core" }));
   await user.click(await screen.findByRole("menuitem", { name: "Copy name" }));
   expect(write).toHaveBeenLastCalledWith("core");
   expect(screen.getByText("Memory name copied.")).toBeVisible();
 
-  await user.click(actions);
+  fireEvent.contextMenu(within(core).getByRole("button", { name: "core" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "Copy full body" }),
   );
@@ -161,7 +162,7 @@ it("copies a memory from its action or context menu", async () => {
   expect(screen.getByText("Memory body copied.")).toBeVisible();
 
   write.mockRejectedValueOnce(new Error("denied"));
-  await user.click(actions);
+  fireEvent.contextMenu(within(core).getByRole("button", { name: "core" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "Copy full body" }),
   );
@@ -178,47 +179,34 @@ it("copies a memory from its action or context menu", async () => {
 
 it("says when the agent has no memory yet", async () => {
   setup(async () => ({ entries: [], partial: false }));
-  expect(await screen.findByText(/No core memory yet/)).toBeInTheDocument();
-  expect(screen.getByText("No memories yet.")).toBeInTheDocument();
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  const memories = screen.getByRole("region", { name: "Memories" });
+  for (const section of [core, memories]) {
+    const empty = within(section).getByText("No memories yet");
+    expect(empty.closest(".buzz-settings-group")).toBeInTheDocument();
+    expect(section.querySelector("svg[aria-hidden=true]")).toBeInTheDocument();
+  }
 });
 
 it("shows memories from the first month in weeks", async () => {
-  const user = userEvent.setup();
   const now = new Date(2026, 9, 24, 12).getTime() / 1_000;
   vi.spyOn(Date, "now").mockReturnValue(now * 1_000);
   setup(async () => ({
     entries: [entry("core", "Remember.", now - 21 * 24 * 60 * 60)],
     partial: false,
   }));
-  const core = await screen.findByRole("region", { name: "Core memories" });
-  await user.click(
-    within(core).getByRole("button", {
-      name: "Organize memories",
-    }),
-  );
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: "Chronologically" }),
-  );
+
   expect(await screen.findByText("3 weeks ago")).toBeInTheDocument();
 });
 
 it("shows memories from the second month as one month ago", async () => {
-  const user = userEvent.setup();
   const now = new Date(2026, 9, 24, 12).getTime() / 1_000;
   vi.spyOn(Date, "now").mockReturnValue(now * 1_000);
   setup(async () => ({
     entries: [entry("core", "Remember.", now - 45 * 24 * 60 * 60)],
     partial: false,
   }));
-  const core = await screen.findByRole("region", { name: "Core memories" });
-  await user.click(
-    within(core).getByRole("button", {
-      name: "Organize memories",
-    }),
-  );
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: "Chronologically" }),
-  );
+
   expect(await screen.findByText("1 month ago")).toBeInTheDocument();
 });
 
@@ -235,49 +223,6 @@ it("reports a failed read and reads again on refresh", async () => {
   fail = false;
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByText("Back.")).toBeInTheDocument();
-});
-
-it("keeps the core-memory actions visible while refreshing", async () => {
-  const user = userEvent.setup();
-  let reads = 0;
-  let release = () => {};
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  setup(async () => {
-    reads += 1;
-    if (reads > 1) await pending;
-    return {
-      entries: [
-        entry("core", "Remember."),
-        entry("mem/alpha", "Alpha."),
-        entry("mem/beta", "Beta."),
-      ],
-      partial: false,
-    };
-  });
-  const core = await screen.findByRole("region", { name: "Core memories" });
-  await user.click(within(core).getByRole("button", { name: "Refresh" }));
-  expect(reads).toBe(2);
-  expect(
-    within(core).getByRole("button", { name: "Refresh" }),
-  ).toBeInTheDocument();
-  expect(
-    within(core).getByRole("button", {
-      name: "Organize memories",
-    }),
-  ).toBeInTheDocument();
-  expect(within(core).getByRole("button", { name: "Refresh" })).toHaveAttribute(
-    "data-refreshing",
-    "true",
-  );
-  expect(
-    within(core).getByRole("button", { name: "Refresh" }).querySelector("svg"),
-  ).toHaveClass("animate-spin");
-  expect(
-    core.querySelector("[data-memory-list][data-refreshing='true']"),
-  ).toHaveClass("opacity-50");
-  release();
 });
 
 it("shows nothing to read without a session", () => {
@@ -320,4 +265,52 @@ it("holds one revocable memory view until the panel unmounts", async () => {
   for (const view of views) view.dispose();
   unmount();
   expect(() => memories.open(pubkey)).not.toThrow();
+});
+
+it("loads memories automatically without a refresh control in the loaded view", async () => {
+  const read = vi.fn(async () => ({
+    entries: [entry("core", "Remember.")],
+    partial: false,
+  }));
+  setup(read);
+  await screen.findByRole("region", { name: "Core memories" });
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByRole("button", { name: "Refresh" }),
+  ).not.toBeInTheDocument();
+});
+
+it("retries a partial listing while retaining its memories until recovery", async () => {
+  const user = userEvent.setup();
+  let complete: (listing: MemoryListing) => void = () => {};
+  const pending = new Promise<MemoryListing>((resolve) => {
+    complete = resolve;
+  });
+  const read = vi
+    .fn<() => Promise<MemoryListing>>()
+    .mockResolvedValueOnce({
+      entries: [entry("core", "Retained.")],
+      partial: true,
+    })
+    .mockReturnValueOnce(pending);
+  setup(read);
+  await screen.findByText("Some memories couldn't be shown.");
+  const retry = screen.getByRole("button", { name: "Retry loading memories" });
+  await user.click(retry);
+  expect(retry).toHaveAttribute("aria-disabled", "true");
+  await user.click(retry);
+  expect(screen.getByText("Retained.")).toBeInTheDocument();
+  expect(document.querySelector("[data-memory-list]")).toHaveAttribute(
+    "data-refreshing",
+    "true",
+  );
+  expect(read).toHaveBeenCalledTimes(2);
+  await act(async () =>
+    complete({ entries: [entry("core", "Recovered.")], partial: false }),
+  );
+  expect(await screen.findByText("Recovered.")).toBeInTheDocument();
+  expect(screen.queryByText("Some memories couldn't be shown.")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /Retry loading memories|Refresh/ }),
+  ).toBeNull();
 });

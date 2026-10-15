@@ -1,7 +1,9 @@
 import { expect, it } from "vitest";
 import { projectSidebarRecord } from "./sidebar-registers";
 import {
+  editSidebarSectionOrder,
   editSidebarSectionRemoval,
+  validSidebarSectionOrder,
   validSidebarSectionRemoval,
   validSidebarAssignment,
   validSidebarChannelId,
@@ -40,6 +42,50 @@ it("tombstones one legacy section and clears only its channel assignments", () =
   });
   expect(editSidebarSectionRemoval(next, 0, "work", 43)).toBe(next);
   expect(editSidebarSectionRemoval(current, 0, "missing", 42)).toBe(current);
+});
+
+it("reorders live sections as one whole-list write and keeps unlisted ones after", () => {
+  const current = {
+    version: 1,
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+      { id: "home", name: "Home", order: 2 },
+    ],
+    assignments: { alpha: "work" },
+  };
+  const next = editSidebarSectionOrder(
+    current,
+    1_700_000_000,
+    ["work", "gone", "home"],
+    42,
+  );
+  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+    sections: [
+      { id: "work", order: 0 },
+      { id: "home", order: 1 },
+      { id: "later", order: 2 },
+    ],
+    assignments: { alpha: "work" },
+  });
+  const meta = next.meta as { s: Record<string, { order: unknown[] }> };
+  // Unchanged Work is restamped too: one stamp, so another device cannot interleave it.
+  const stamps = Object.values(meta.s).map(({ order }) => order.slice(0, 2));
+  expect(new Set(stamps.map(String)).size).toBe(1);
+  expect(stamps[0]?.[0]).toBeGreaterThan(1_700_000_000_000);
+  expect(meta.s).not.toHaveProperty("gone");
+  // A satisfied order does not rewrite the head.
+  expect(editSidebarSectionOrder(next, 0, ["work", "home"], 43)).toBe(next);
+});
+
+it("validates bounded unique section orders", () => {
+  expect(validSidebarSectionOrder([])).toBe(true);
+  expect(validSidebarSectionOrder(["a", "b"])).toBe(true);
+  expect(validSidebarSectionOrder(["a", "a"])).toBe(false);
+  expect(validSidebarSectionOrder([""])).toBe(false);
+  expect(
+    validSidebarSectionOrder(Array.from({ length: 101 }, (_, i) => `${i}`)),
+  ).toBe(false);
 });
 
 it("bounds sidebar identifiers without normalizing their wire value", () => {

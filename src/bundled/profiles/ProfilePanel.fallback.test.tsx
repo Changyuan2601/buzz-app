@@ -13,7 +13,7 @@ import { profileTarget } from "../../features/profiles/target";
 import type { RelayData } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, profile } from "../../features/relay/testing";
-import type { ReadTransport } from "../../features/relay/transport";
+import { mediaUrl, type ReadTransport } from "../../features/relay/transport";
 import { ProfilePanel } from "./ProfilePanel";
 import { formatPublicKey } from "../../shared/identity/public-key";
 
@@ -38,7 +38,10 @@ function fixture(configuredNames = false) {
       scope: "https://relay.example.test",
       relayAuthor: keypair().pubkey,
       query,
-      media: (url) => url,
+      // The real sizing rewrite behind a pass-through proxy, so relay-hosted
+      // pictures resolve to the variant the panel actually requested.
+      media: (url, size) =>
+        mediaUrl(url, (proxied) => proxied, "https://relay.example.test", size),
       readAgentLibrary: async () => ({ definitions: [], identities: [] }),
     },
     {
@@ -237,10 +240,11 @@ it("keeps an agent-avatar hint without granting ownership or native controls", a
 
 it("loads public agent names, avatars and bios without a local agent", async () => {
   const f = fixture();
+  const sha = "b".repeat(64);
   try {
     const publicProfile = profile(f.person, {
       name: "Remote agent",
-      picture: "https://relay.example.test/remote.png",
+      picture: `https://relay.example.test/media/${sha}.png`,
       about: "Remote agent bio",
       is_agent: true,
     });
@@ -257,9 +261,11 @@ it("loads public agent names, avatars and bios without a local agent", async () 
       "data-avatar-shape",
       "squircle",
     );
+    // The portrait (and the tab avatar fed from the same value) asks for the
+    // relay thumbnail the message row already loaded, not the original blob.
     expect(avatar.querySelector("img")).toHaveAttribute(
       "src",
-      "https://relay.example.test/remote.png",
+      `https://relay.example.test/media/${sha}.thumb.jpg`,
     );
   } finally {
     f.dispose();

@@ -825,10 +825,12 @@ it("updates the assigned avatar from live profiles through the session media own
   const f = fixture();
   const pubkey = "a".repeat(64);
   let profiles: ReturnType<typeof people.profiles.snapshot> = new Map([
-    [pubkey, { name: "Alex", picture: "first.png" }],
+    [pubkey, { name: "Alex", picture: "https://art.test/first.png" }],
   ]);
   const listeners = new Set<() => void>();
-  const media = vi.fn((picture: string) => `/media/${picture}`);
+  const media = vi.fn((picture: string) =>
+    picture.replace("https://art.test", "/media"),
+  );
   const users = {
     ...people,
     media,
@@ -858,14 +860,21 @@ it("updates the assigned avatar from live profiles through the session media own
     "src",
     "/media/first.png",
   );
-  expect(media).toHaveBeenCalledWith("first.png", "small");
+  expect(media).toHaveBeenCalledWith("https://art.test/first.png", "small");
   expect(trigger.querySelector("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
     "circle",
   );
   act(() => {
     profiles = new Map([
-      [pubkey, { name: "Alex", picture: "updated.png", isAgent: true }],
+      [
+        pubkey,
+        {
+          name: "Alex",
+          picture: "https://art.test/updated.png",
+          isAgent: true,
+        },
+      ],
     ]);
     for (const listener of listeners) listener();
   });

@@ -355,6 +355,74 @@ test.describe("Berd-style Me organization", () => {
   });
 });
 
+// A real pointer owns the activation distance and hit testing; the saved move
+// itself is the row menu's.
+test("dragging a chat between a project and Chats saves and reloads like Move to", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const chat = (name) => sidebar.getByRole("button", { name, exact: true });
+  const inProject = (name) =>
+    sidebar
+      .locator("[data-project]")
+      .getByRole("button", { name, exact: true });
+  const published = async (count) => {
+    await expect
+      .poll(() => app.report.sidebarPublications?.length ?? 0)
+      .toBe(count);
+    // Each replaceable preference write needs a later second.
+    await page.clock.runFor(1_100);
+    return app.report.sidebarPublications.at(-1).blob.value.assignments;
+  };
+  // Hold a real pointer drag over a section header, then release it.
+  async function drag(name, section, target = true) {
+    const from = await chat(name).boundingBox();
+    const to = await chat(section).boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+      steps: 8,
+    });
+    await expect(sidebar.locator("[data-channel-dragging]")).toBeVisible();
+    await expect(sidebar.locator("[data-drop-target]")).toHaveCount(
+      target ? 1 : 0,
+    );
+    await page.mouse.up();
+    await expect(sidebar.locator("[data-channel-dragging]")).toHaveCount(0);
+  }
+  await page.clock.install();
+  await chat("Alpha").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+  await page.getByRole("menuitem", { name: "New project…" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Project name" }).fill("Work");
+  await dialog.getByRole("button", { name: "Create and move" }).click();
+  await expect(inProject("Alpha")).toBeVisible();
+  const work = (await published(1))[id];
+
+  await drag("Alpha", "Chats");
+  await expect(chat("Alpha")).toBeFocused();
+  await expect(inProject("Alpha")).toHaveCount(0);
+  expect(await published(2)).toEqual({});
+
+  await drag("Beta", "Work");
+  await expect(inProject("Beta")).toBeFocused();
+  expect(await published(3)).toEqual({ [other]: work });
+
+  // Dropping back on the chat's own section is not a move.
+  await drag("Beta", "Work", false);
+  await expect(inProject("Beta")).toBeVisible();
+  expect(app.report.sidebarPublications).toHaveLength(3);
+
+  await page.reload();
+  await expect(inProject("Beta")).toBeVisible();
+  await expect(chat("Alpha")).toBeVisible();
+  await expect(inProject("Alpha")).toHaveCount(0);
+});
+
 test("Share promotes the same conversation and opens its preserved history in Messages", async ({
   page,
   app,

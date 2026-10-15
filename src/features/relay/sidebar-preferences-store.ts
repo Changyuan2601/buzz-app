@@ -4,6 +4,7 @@ import { projectSidebarPreferences } from "./sidebar-preferences";
 import type {
   SidebarAssignmentMutator,
   SidebarAssignmentIntent,
+  SidebarSectionOrderMutator,
   SidebarSectionRemovalMutator,
   SidebarStarMutator,
   SidebarMuteMutator,
@@ -26,6 +27,11 @@ type SortFailure = Readonly<{
   mode: SidebarSortMode;
   error: string;
 }>;
+type OrderFailure = Readonly<{
+  sectionId: string;
+  sectionIds: readonly string[];
+  error: string;
+}>;
 type Snapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error" | "unsupported";
   data?: SidebarPreferences;
@@ -35,6 +41,7 @@ type Snapshot = Readonly<{
   cached?: true;
   sortErrors?: readonly SortFailure[];
   moves?: readonly (MoveIntent & { pending: boolean; error?: string })[];
+  orderError?: OrderFailure;
 }>;
 
 /** One bounded account-preference projection per relay session, not per page. */
@@ -50,6 +57,7 @@ export function createSidebarPreferencesStore(
   removeSection?: SidebarSectionRemovalMutator,
   /** Me groups have no Star coordinate; do not write Messages stars on moves. */
   groupsOnly = false,
+  writeOrder?: SidebarSectionOrderMutator,
 ) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -75,6 +83,17 @@ export function createSidebarPreferencesStore(
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
   const latestMove = new Map<string, number>();
+  let nextOrder = 0;
+  let pendingOrder:
+    | Readonly<{ id: number; sectionIds: readonly string[] }>
+    | undefined;
+  let failedOrder: OrderFailure | undefined;
+  const orderWritable = () =>
+    !closed &&
+    !!confirmed &&
+    readFailure === undefined &&
+    !snapshot.cached &&
+    !!writeOrder;
   const withPendingMoves = (data: SidebarPreferences): SidebarPreferences => {
     let sections = data.sections;
     const assignments = { ...data.assignments };
@@ -97,6 +116,14 @@ export function createSidebarPreferencesStore(
         if (target) assignments[channelId] = target;
         else delete assignments[channelId];
       }
+    }
+    if (pendingOrder) {
+      const ids = pendingOrder.sectionIds;
+      const rank = (id: string) =>
+        ids.includes(id) ? ids.indexOf(id) : ids.length;
+      sections = [...sections]
+        .sort((a, b) => rank(a.id) - rank(b.id))
+        .map((section, order) => ({ ...section, order }));
     }
     return { ...data, sections, assignments, starred: [...starred] };
   };
@@ -138,7 +165,12 @@ export function createSidebarPreferencesStore(
       ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
     });
   const publish = (next: Snapshot) => {
-    const { moves: _moves, sortErrors: _errors, ...state } = next;
+    const {
+      moves: _moves,
+      sortErrors: _errors,
+      orderError: _order,
+      ...state
+    } = next;
     const moves = [
       ...Array.from(pendingMoves.values(), (intent) => ({
         ...intent,
@@ -155,6 +187,7 @@ export function createSidebarPreferencesStore(
         ? { sortErrors: Object.freeze([...failedSorts.values()]) }
         : {}),
       ...(moves.length ? { moves: Object.freeze(moves) } : {}),
+      ...(failedOrder ? { orderError: failedOrder } : {}),
     });
     for (const listener of listeners) notify(listener);
   };
@@ -483,6 +516,70 @@ export function createSidebarPreferencesStore(
         writeQueue = run.catch(() => {});
         return run;
       },
+      get sectionOrderWritable() {
+        return orderWritable();
+      },
+      /** Optimistic whole-list order; the latest intent supersedes older ones. */
+      reorderSections(sectionId: string, sectionIds: readonly string[]) {
+        if (!orderWritable() || !writeOrder)
+          return Promise.reject(
+            new Error("Sidebar section order is unavailable"),
+          );
+        const save = writeOrder;
+        const writeGeneration = generation;
+        const signal = writeLifetime.signal;
+        const intent = { id: ++nextOrder, sectionIds: [...sectionIds] };
+        pendingOrder = intent;
+        failedOrder = undefined;
+        mutation++;
+        project();
+        const run = writeQueue
+          .catch(() => {})
+          .then(async () => {
+            try {
+              if (closed || generation !== writeGeneration)
+                throw new Error("Sidebar section order is unavailable");
+              signal.throwIfAborted();
+              const groups = await save(intent.sectionIds, signal);
+              if (closed || generation !== writeGeneration || !confirmed)
+                throw new Error("Sidebar section order is unavailable");
+              confirmed = {
+                ...confirmed,
+                sections: groups.sections,
+                assignments: groups.assignments,
+              };
+              return retained(confirmed);
+            } catch (error) {
+              if (
+                !closed &&
+                generation === writeGeneration &&
+                !signal.aborted &&
+                pendingOrder === intent
+              )
+                failedOrder = {
+                  sectionId,
+                  sectionIds: intent.sectionIds,
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              throw error;
+            } finally {
+              if (!closed && generation === writeGeneration) {
+                mutation++;
+                if (pendingOrder === intent) pendingOrder = undefined;
+                project();
+              }
+            }
+          });
+        writeQueue = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      },
+      dismissOrderError() {
+        failedOrder = undefined;
+        publish(snapshot);
+      },
       dismissSortError(group: string) {
         failedSorts.delete(group);
         publish(snapshot);
@@ -669,6 +766,8 @@ export function createSidebarPreferencesStore(
       pendingMoves.clear();
       failedMoves.clear();
       latestMove.clear();
+      pendingOrder = undefined;
+      failedOrder = undefined;
       mutation++;
       writeLifetime.abort();
       writeLifetime = new AbortController();
@@ -688,6 +787,8 @@ export function createSidebarPreferencesStore(
       pendingMoves.clear();
       failedMoves.clear();
       latestMove.clear();
+      pendingOrder = undefined;
+      failedOrder = undefined;
       mutation++;
       active?.controller.abort();
       active = undefined;

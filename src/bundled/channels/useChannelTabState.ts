@@ -176,6 +176,7 @@ export function useChannelTabState(
     sessions.set(session, store);
   }
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
+  const snapshot = store.snapshot;
   const setChannels = store.update;
   const key = JSON.stringify([page, channelId ?? ""]);
   const state = channels[key] ?? empty;
@@ -279,6 +280,8 @@ export function useChannelTabState(
     (
       visit: string,
       routed?: { channelId: string; messageId: string; rootId: string },
+      /** A new visit keeps the current selection instead of the conversation. */
+      keep = false,
     ) =>
       update((state) => {
         if (state.visit === visit) return state;
@@ -296,7 +299,9 @@ export function useChannelTabState(
         const saved = visits?.[visit];
         return saved
           ? { ...next, ...saved }
-          : { ...next, mainSelected: undefined };
+          : keep
+            ? next
+            : { ...next, mainSelected: undefined };
       }),
     [update],
   );
@@ -445,6 +450,8 @@ export function useChannelTabState(
   return useMemo(
     () => ({
       ...state,
+      // Synchronous actions need the selection before React rerenders.
+      getSelected: () => snapshot()[key]?.selected ?? empty.selected,
       setEntries,
       retireMenuEntries,
       setTabs,
@@ -462,6 +469,8 @@ export function useChannelTabState(
     }),
     [
       state,
+      snapshot,
+      key,
       setEntries,
       retireMenuEntries,
       setTabs,

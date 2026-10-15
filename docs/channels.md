@@ -28,7 +28,11 @@ HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
 on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
 **Open in browser** uses the same `_blank` fallback above without consulting pane
 handlers; both actions retain the original URL, including query and fragment.
-Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+Normal and modified clicks are unchanged. In Messages, `buzz://` message links
+expose **Open link** and **Copy link** the same ways. **Open link** opens the
+linked thread as a tab in the current channel's workspace without navigating;
+another channel's thread uses the side pane. When that channel isn't readable
+there, it opens as a click would. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 
@@ -149,7 +153,13 @@ sessions and session draft do not.
 not reveal an empty section. Use the row menu to star the first channel.
 Dropping into Starred stars the channel; dropping out assigns the destination
 and clears its star, just like the row menu. Forums and Direct
-messages take no part in dragging, and the row menu remains the keyboard path. The
+messages take no part in dragging, and the row menu remains the keyboard path.
+A saved group also drags by its header, expanded or collapsed, onto another saved
+group; an accent line shows where it lands, and Escape cancels. Its section menu's
+**Move up** and **Move down** are the keyboard and single-pointer path. Each move
+rewrites every live section's `order` register with one stamp, so channels, sort
+and collapsed state stay with the group's id; the order shows optimistically and
+a failure rolls back with the same move notice and Retry. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields
@@ -455,13 +465,16 @@ When upgrading an already-running development server, restart the **Node process
 before trying Unarchive: Vite's in-process restart can retain the broker's imported
 archive-only validator even while the browser has the new action. A page reload
 alone does not update that host module.
-Archive, Unarchive and Leave use the default button style in Settings. Archive,
-Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
-keeps the default secondary style. Every shared confirmation shows its pending
+Archive, Unarchive and Leave use the default button style in Settings. As in macOS,
+the prominent confirmation button is the one Enter presses: reversible Archive, Unarchive
+and Hide initially focus their prominent action beside a default-style Cancel, while
+Leave and Delete initially focus a prominent Cancel beside a default-style Leave or
+destructive Delete. Every shared confirmation shows its pending
 state inside the primary button using the standard loading spinner (with an
 accessible status), without adding a visible status paragraph. Duplicate submission
 and Cancel/Escape remain blocked until the operation settles; rejection restores
-the action, while an uncertain outcome still blocks blind resubmission.
+the action, while an uncertain outcome still blocks blind resubmission and moves
+focus to Cancel.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
 separate.
@@ -515,7 +528,8 @@ The non-modal Settings panel is unchanged; the shared Dialog default stays opt-i
 Canvas reload uses a nested shared Dialog rather than a host-owned confirmation
 prompt. Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the parent draft,
 and never executes the action. Confirmations initially focus Cancel and return
-focus to their initiating control; lifecycle focus remains sidebar-owned.
+focus to their initiating control; lifecycle confirmations choose their initial
+focus as described above, and their final focus remains sidebar-owned.
 
 Existing pending operations continue to block dismissal. Members remains closable
 while session-owned invitations/recovery continue. Canvas keeps its local draft;
@@ -1116,6 +1130,17 @@ replies remain inline with the shared retry action and retain their signed ances
 Read-only connections keep the existing composer capability notice; missing/revoked
 roots do not expose a composer. Exact navigation can retain and focus a selected
 reply beyond the traversal range; it does not extend that range or promise complete history.
+
+A labelled divider separates the original message from replies only while at
+least one reply is displayed. With no displayed replies, including while loading,
+it is hidden even if a summary total is known. It shows the relay's thread summary
+total, the same count as the channel's reply link, including collapsed descendants. Without a positive summary total it says
+“Replies”, never inferring that history is empty from the loaded rows or reader
+state. Summary counts can briefly lag a just-sent reply, matching the channel link.
+The first reply always shows its author, even when it matches the original.
+The original has no day divider above it; its byline already names the day.
+Agent-addressed messages retain their date when expanded.
+Replies show a day divider only when their day differs from the previous row.
 
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start

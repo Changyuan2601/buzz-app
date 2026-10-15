@@ -297,8 +297,27 @@
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }
-[data-channel-dragging] {
+[data-channel-dragging],
+.channelSection[data-section-dragging] {
   opacity: 0.3;
+}
+/* A group drop shows the shared tab insertion line, centred in the section gap. */
+.channelSection[data-drop-edge]::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  height: calc(var(--space-1) / 2 + 1px);
+  border-radius: var(--radius-pill);
+  background: var(--border-accent);
+  pointer-events: none;
+}
+.channelSection[data-drop-edge="before"]::before {
+  top: calc(var(--space-2) * -1);
+  transform: translateY(-50%);
+}
+.channelSection[data-drop-edge="after"]::before {
+  bottom: calc(var(--space-2) * -1);
+  transform: translateY(50%);
 }
 .channelDragOverlay {
   display: flex;

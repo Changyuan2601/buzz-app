@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
-  fireEvent,
   render,
   screen,
   waitFor,
@@ -18,6 +17,7 @@ import {
   AgentsService,
   type AgentCommunities,
 } from "../../features/agents/service";
+import { AgentDefaults } from "../agents/AgentDefaults";
 import { AgentsPage } from "../agents/AgentsPage";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -233,24 +233,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
     expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
-    const picker = render(
-      <AgentsPage agents={agents} relay={community.relay} />,
-    );
+    const picker = render(<AgentDefaults agents={agents} />);
     const providerUser = userEvent.setup();
     await providerUser.click(
-      screen.getByRole("button", { name: "More agent actions" }),
-    );
-    await providerUser.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const providers = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await waitFor(() =>
-      expect(providers).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(providers).getByRole("menuitem", {
+      await screen.findByRole("button", {
         name: "Log in to Builderlab, attention",
       }),
     );
@@ -498,6 +484,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
 
     // Confirmed deletion waits for login before provider or community removal.
     await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
     await user.click(screen.getByRole("button", { name: "Delete agent" }));
     const deletion = screen.getByRole("dialog", { name: "Delete Browser?" });
     const remove = within(deletion).getByRole("button", { name: "Delete" });

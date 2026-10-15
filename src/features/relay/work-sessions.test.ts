@@ -1475,8 +1475,20 @@ it("starts a standalone session using existing private-channel creation without 
       ["about", `${SESSION_CHANNEL_DESCRIPTION}\nparent:${parent}`],
     ],
   });
+  test.service.create(id, "Me", undefined, true);
+  expect(test.outbox.send).toHaveBeenLastCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Me"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", `${SESSION_CHANNEL_DESCRIPTION}\npersonal`],
+    ],
+  });
   expect(() => test.service.create(id, "Child", id)).toThrow(/own parent/);
-  expect(test.outbox.send).toHaveBeenCalledTimes(2);
+  expect(test.outbox.send).toHaveBeenCalledTimes(3);
 });
 
 it("creates an ordinary stream with explicit visibility and optional description", () => {

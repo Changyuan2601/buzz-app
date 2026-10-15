@@ -1,5 +1,5 @@
 import { fixtureRelayUrl, fixtureAliases } from "../relay-config.ts";
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, stopRoutes } from "./playwright-test.mjs";
 import { preview } from "vite";
 import {
   finalizeEvent,
@@ -2018,14 +2018,18 @@ export const test = base.extend({
         preview: { host: "127.0.0.1", port: 0, strictPort: true },
       });
       const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-      await context.route("**/*", (route) => {
-        if (new URL(route.request().url()).origin === origin)
-          return route.continue();
-        report.unexpected.push(
-          `Blocked external request: ${route.request().url()}`,
-        );
-        return route.abort();
-      });
+      // Intercept only other origins. A same-origin passthrough here would race
+      // page.unroute(): Playwright continues a removed page route's in-flight
+      // request itself, so a later continue() reports "Route is already handled!".
+      await context.route(
+        (url) => url.origin !== origin,
+        (route) => {
+          report.unexpected.push(
+            `Blocked external request: ${route.request().url()}`,
+          );
+          return route.abort();
+        },
+      );
       await context.routeWebSocket("**/*", (socket) => {
         report.unexpected.push(`Blocked WebSocket: ${socket.url()}`);
         socket.close();
@@ -2517,6 +2521,7 @@ export const test = base.extend({
         body: JSON.stringify(report, null, 2),
         contentType: "application/json",
       });
+      await stopRoutes(context);
       await page.close();
       for (const clients of streams.values())
         for (const client of clients) client.response.end();

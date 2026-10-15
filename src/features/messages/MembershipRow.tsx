@@ -8,6 +8,7 @@ import type { Profile } from "../relay/contracts";
 import { membershipDescription, type TimelineRow } from "./membership-rows";
 import { DayDivider } from "./MessageTimestamp";
 import styles from "./Messages.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** Quiet, non-conversational activity. Avatars are decorative; prose owns the
  * label, and each named member opens their profile like a prose mention. */
@@ -50,9 +51,7 @@ export const MembershipRow = memo(function MembershipRow({
           {targets.slice(0, 3).map((id) => {
             const profile = profiles.get(id);
             const name = resolveName(id, profile?.name ?? id.slice(0, 10));
-            const picture = profile?.picture
-              ? media(profile.picture, "small")
-              : undefined;
+            const picture = avatarMedia(profile?.picture, media);
             return (
               <span
                 className={styles.membershipAvatar}

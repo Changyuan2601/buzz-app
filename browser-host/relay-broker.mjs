@@ -86,7 +86,9 @@ import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
+  assertSidebarSectionOrderIntent,
   assertSidebarSectionRemovalIntent,
+  mutateSidebarSectionOrder,
   mutateSidebarSectionRemoval,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
@@ -1156,6 +1158,7 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-assignment",
               "/api/relay/sidebar-section-removal",
+              "/api/relay/sidebar-section-order",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
               "/api/relay/sidebar-mute",
@@ -1167,6 +1170,11 @@ export function relayBrokerPlugin({
                 "channel-sections",
                 assertSidebarSectionRemovalIntent,
                 mutateSidebarSectionRemoval,
+              ],
+              "/api/relay/sidebar-section-order": [
+                "channel-sections",
+                assertSidebarSectionOrderIntent,
+                mutateSidebarSectionOrder,
               ],
               "/api/relay/sidebar-assignment": [
                 "channel-sections",
@@ -1191,11 +1199,14 @@ export function relayBrokerPlugin({
             }[route];
             const sorting = coordinate === "channel-sort";
             const muting = coordinate === "channel-mutes";
+            // Sort and order intents carry up to 100 section IDs.
+            const listing =
+              sorting || route === "/api/relay/sidebar-section-order";
             const chunks = [];
             let bytes = 0;
             for await (const part of req) {
               bytes += part.length;
-              if (bytes > (sorting ? 32 * 1024 : 2048))
+              if (bytes > (listing ? 32 * 1024 : 2048))
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
@@ -1436,6 +1447,7 @@ export function relayBrokerPlugin({
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
+              sidebarSectionOrder: true,
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,

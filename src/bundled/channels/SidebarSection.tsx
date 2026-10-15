@@ -1,5 +1,12 @@
 import { FadingLabel } from "./FadingLabel";
-import { useId, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type DOMAttributes,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   MenuIcon,
   MenuItem,
@@ -14,6 +21,8 @@ import {
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import {
+  ArrowDownIcon,
+  ArrowUpIcon,
   ArrowsDownUpIcon,
   CaretDownIcon,
   CaretUpIcon,
@@ -43,6 +52,10 @@ export function SidebarSection({
   sort,
   dropRef,
   dropTarget = false,
+  dropEdge,
+  dragHandle,
+  dragging = false,
+  move,
   onRemove,
   channelCount,
   removalFocus,
@@ -70,6 +83,19 @@ export function SidebarSection({
     | undefined;
   dropRef?: Ref<HTMLDivElement> | undefined;
   dropTarget?: boolean;
+  /** Where a dragged group would land relative to this one. */
+  dropEdge?: "before" | "after" | undefined;
+  dragHandle?:
+    | {
+        ref: Ref<HTMLElement>;
+        listeners?: DOMAttributes<HTMLElement> | undefined;
+      }
+    | undefined;
+  dragging?: boolean;
+  /** Single-pointer and keyboard reordering; an absent direction is disabled. */
+  move?:
+    | { up?: (() => void) | undefined; down?: (() => void) | undefined }
+    | undefined;
   children: ReactNode;
 }) {
   const id = useId();
@@ -121,11 +147,15 @@ export function SidebarSection({
       className={styles.channelSection}
       data-sidebar-section={sectionKey}
       data-drop-target={dropTarget || undefined}
+      data-drop-edge={dropEdge}
+      data-section-dragging={dragging || undefined}
     >
       <div className={styles.sectionHeader}>
         <details open={open}>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: summary has native keyboard activation. */}
           <summary
+            ref={dragHandle?.ref}
+            {...dragHandle?.listeners}
             aria-label={title}
             aria-controls={id}
             onClick={(event) => {
@@ -208,6 +238,34 @@ export function SidebarSection({
                 </MenuIcon>
                 {open ? "Collapse section" : "Expand section"}
               </MenuItem>
+              {move && (
+                <>
+                  <MenuItem
+                    disabled={!move.up}
+                    onClick={() => {
+                      move.up?.();
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <MenuIcon>
+                      <ArrowUpIcon size={14} />
+                    </MenuIcon>
+                    Move up
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!move.down}
+                    onClick={() => {
+                      move.down?.();
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <MenuIcon>
+                      <ArrowDownIcon size={14} />
+                    </MenuIcon>
+                    Move down
+                  </MenuItem>
+                </>
+              )}
               {canRemove && (
                 <>
                   <MenuSeparator />

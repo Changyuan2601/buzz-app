@@ -656,6 +656,44 @@ mod boundary_tests {
     }
 
     #[test]
+    fn creation_accepts_only_the_session_description_grammar() {
+        const PREFIX: &str = "Buzz session (buzz.sessions/v1)";
+        let parent = uuid::Uuid::new_v4().to_string();
+        let with_about = |about: &str| EventTemplate {
+            kind: 9007,
+            created_at: 1700000010,
+            content: String::new(),
+            tags: vec![
+                vec!["h".into(), uuid::Uuid::new_v4().to_string()],
+                vec!["name".into(), "Team".into()],
+                vec!["visibility".into(), "private".into()],
+                vec!["channel_type".into(), "stream".into()],
+                vec!["about".into(), about.into()],
+            ],
+        };
+        for about in [
+            PREFIX.to_string(),
+            format!("{PREFIX}\nparent:{parent}"),
+            format!("{PREFIX}\npersonal"),
+            format!("{PREFIX}\nparent:{parent}\npersonal"),
+        ] {
+            assert!(creation(&with_about(&about)), "{about:?}");
+        }
+        for about in [
+            format!("{PREFIX}\n"),
+            format!("{PREFIX}\nparent:"),
+            format!("{PREFIX}\nparent:not-a-uuid"),
+            format!("{PREFIX}\npersonal\nparent:{parent}"),
+            format!("{PREFIX}\npersonal\npersonal"),
+            format!("{PREFIX}\npersonal\n"),
+            format!("{PREFIX}\nme"),
+            format!(" {PREFIX}"),
+        ] {
+            assert!(!creation(&with_about(&about)), "{about:?}");
+        }
+    }
+
+    #[test]
     fn creation_and_details_admit_only_valid_label_tails() {
         let t = |label: &str| vec!["t".to_string(), label.to_string()];
         let create = |labels: Vec<Vec<String>>| EventTemplate {
@@ -727,12 +765,25 @@ pub(super) fn channel_label(label: &str) -> bool {
         && !matches!(label, "stream" | "forum" | "dm" | "workflow" | "system")
 }
 
+/// Mirrors `sessionMetadata` in `src/features/sessions/metadata.ts`: the header,
+/// then an optional `parent:<uuid>` line, then an optional `personal` line.
 fn session_metadata(description: &str) -> bool {
     const PREFIX: &str = "Buzz session (buzz.sessions/v1)";
-    description == PREFIX
-        || description
-            .strip_prefix(&format!("{PREFIX}\nparent:"))
-            .is_some_and(uuid)
+    let mut lines = description.split('\n');
+    if lines.next() != Some(PREFIX) {
+        return false;
+    }
+    let mut next = lines.next();
+    if let Some(parent) = next.and_then(|line| line.strip_prefix("parent:")) {
+        if !uuid(parent) {
+            return false;
+        }
+        next = lines.next();
+    }
+    if next == Some("personal") {
+        next = lines.next();
+    }
+    next.is_none()
 }
 
 #[cfg(test)]

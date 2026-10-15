@@ -1,5 +1,6 @@
 import { useConversationPresentation } from "./ConversationPresentation";
 import {
+  useContext,
   useRef,
   useState,
   useSyncExternalStore,
@@ -19,6 +20,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   BrowserIcon,
+  ChatCircleIcon,
   CopyIcon,
   FileTextIcon,
 } from "../../shared/design-system/icons";
@@ -30,6 +32,7 @@ import {
   LinkChannelPrivateContext,
   LinkLabelContext,
   LinkContentContext,
+  LinkThreadTabContext,
 } from "./LinkLabelContext";
 import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
 import { useChannelReference } from "./channel-reference";
@@ -120,6 +123,16 @@ export function MessageLink({
   if (!active && menuOpen) setMenuOpen(false);
   if (!active && notice) setNotice(undefined);
   const external = /^https?:\/\//i.test(url);
+  const openThreadTab = useContext(LinkThreadTabContext);
+  const thread =
+    openThreadTab && destination?.messageId
+      ? {
+          channelId: destination.channelId,
+          messageId: destination.messageId,
+          rootId: destination.threadRootId ?? destination.messageId,
+        }
+      : undefined;
+  const menu = active && interactive && (external || !!thread);
   async function copy() {
     if (!active || busy.current) return;
     busy.current = true;
@@ -157,6 +170,13 @@ export function MessageLink({
     session && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
       : undefined;
+  const openInternal = () => {
+    if (trigger.current?.isConnected)
+      trigger.current.focus({ preventScroll: true });
+    const opened = onOpenLink(url);
+    setUnavailable(!opened);
+    if (opened) setPreviewOpen(false);
+  };
   const navigation = {
     target: "_blank",
     rel: "noopener noreferrer",
@@ -167,11 +187,7 @@ export function MessageLink({
       }
       if (internal) {
         event.preventDefault();
-        if (trigger.current?.isConnected)
-          trigger.current.focus({ preventScroll: true });
-        const opened = onOpenLink(url);
-        setUnavailable(!opened);
-        if (opened) setPreviewOpen(false);
+        openInternal();
         return;
       }
       if (
@@ -191,11 +207,7 @@ export function MessageLink({
           }
           if (event.button === 1) {
             event.preventDefault();
-            if (trigger.current?.isConnected)
-              trigger.current.focus({ preventScroll: true });
-            const opened = onOpenLink(url);
-            setUnavailable(!opened);
-            if (opened) setPreviewOpen(false);
+            openInternal();
           }
         }
       : undefined,
@@ -239,46 +251,25 @@ export function MessageLink({
         {content}
       </span>
     );
-    if (active && interactive && external) {
-      return (
-        <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
-          <ContextMenuTrigger
-            render={element}
-            onContextMenu={() => setMenuAnchor(undefined)}
-            onTouchStart={() => setMenuAnchor(undefined)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "ContextMenu" ||
-                (event.shiftKey && event.key === "F10")
-              ) {
-                event.preventDefault();
-                setMenuAnchor(trigger.current ?? undefined);
-                setMenuOpen(true);
-              }
-            }}
-          />
-          <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
-            <MenuLinkItem
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              closeOnClick
-            >
-              <MenuIcon>
-                <BrowserIcon size={16} />
-              </MenuIcon>
-              Open in browser
-            </MenuLinkItem>
-            <MenuItem disabled={copying} onClick={() => void copy()}>
-              <MenuIcon>
-                <CopyIcon size={16} />
-              </MenuIcon>
-              Copy link
-            </MenuItem>
-          </MenuPopup>
-        </ContextMenuRoot>
-      );
-    }
+    const menuTrigger = menu ? (
+      <ContextMenuTrigger
+        render={element}
+        onContextMenu={() => setMenuAnchor(undefined)}
+        onTouchStart={() => setMenuAnchor(undefined)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            setMenuAnchor(trigger.current ?? undefined);
+            setMenuOpen(true);
+          }
+        }}
+      />
+    ) : (
+      element
+    );
     const card =
       !active || !interactive || !session
         ? undefined
@@ -307,11 +298,11 @@ export function MessageLink({
       (active && interactive && session && referenced
         ? { label: "Channel preview", body: null }
         : undefined);
-    return root ? (
+    const linked = root ? (
       <PreviewCard
-        trigger={element}
+        trigger={menuTrigger}
         link={<a href={url} {...navigation} />}
-        open={previewOpen && !!card}
+        open={previewOpen && !!card && !menuOpen}
         onOpenChange={setPreviewOpen}
         side="top"
         className={styles.popup ?? ""}
@@ -320,7 +311,58 @@ export function MessageLink({
         {root.body}
       </PreviewCard>
     ) : (
-      element
+      menuTrigger
+    );
+    if (!menu) return linked;
+    return (
+      <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+        {linked}
+        <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
+          {thread ? (
+            <MenuItem
+              onClick={() => {
+                if (!active) return;
+                // The host records the focused link as the tab's return target.
+                if (trigger.current?.isConnected)
+                  trigger.current.focus({ preventScroll: true });
+                // A workspace that cannot show the thread opens it as a click would.
+                if (
+                  openThreadTab?.(
+                    thread.channelId,
+                    thread.messageId,
+                    thread.rootId,
+                  )
+                )
+                  setUnavailable(false);
+                else openInternal();
+              }}
+            >
+              <MenuIcon>
+                <ChatCircleIcon size={16} />
+              </MenuIcon>
+              Open link
+            </MenuItem>
+          ) : (
+            <MenuLinkItem
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              closeOnClick
+            >
+              <MenuIcon>
+                <BrowserIcon size={16} />
+              </MenuIcon>
+              Open in browser
+            </MenuLinkItem>
+          )}
+          <MenuItem disabled={copying} onClick={() => void copy()}>
+            <MenuIcon>
+              <CopyIcon size={16} />
+            </MenuIcon>
+            Copy link
+          </MenuItem>
+        </MenuPopup>
+      </ContextMenuRoot>
     );
   };
   const link = renderer ? (

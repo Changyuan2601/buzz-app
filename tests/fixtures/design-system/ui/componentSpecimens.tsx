@@ -2046,6 +2046,16 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           },
         ]}
       />
+      <Accordion
+        variant="settings"
+        items={[
+          {
+            value: "memory",
+            title: "Core memory",
+            content: <p className="text-body-sm">Supporting agent context.</p>,
+          },
+        ]}
+      />
       <h3 className="text-label">
         Form disclosures · spacing owned by the form
       </h3>

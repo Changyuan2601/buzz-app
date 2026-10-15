@@ -104,6 +104,7 @@ import type {
   ComposerFormat,
 } from "./composer-dom";
 import { TargetOpenerProvider } from "../conversation/opener";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -1618,7 +1619,6 @@ function Composer({
                   !event.shiftKey &&
                   !event.altKey &&
                   !event.ctrlKey &&
-                  !event.metaKey &&
                   !event.repeat &&
                   !event.defaultPrevented &&
                   !editingDisabled &&
@@ -1912,7 +1912,7 @@ function RecipientAvatars({
                 <Avatar
                   alt=""
                   fallback={recipient.name}
-                  src={session.media(profile?.picture ?? "", "small")}
+                  src={avatarMedia(profile?.picture, session.media)}
                   size="small"
                   shape={
                     agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"

@@ -121,6 +121,10 @@
 .section {
   margin-block: var(--space-2);
 }
+.section[data-drop-target] {
+  border-radius: var(--radius-row);
+  background: var(--affordance-panel-hover);
+}
 .sectionHeading {
   display: flex;
   align-items: center;

@@ -544,7 +544,7 @@ export function createWorkSessions(
         active,
       );
     },
-    create(id: string, title: string, parentId?: string) {
+    create(id: string, title: string, parentId?: string, personal = false) {
       writer();
       identifier(id);
       if (parentId) identifier(parentId);
@@ -560,7 +560,7 @@ export function createWorkSessions(
           ["name", title],
           ["visibility", "private"],
           ["channel_type", "stream"],
-          ["about", sessionDescription(parentId)],
+          ["about", sessionDescription(parentId, personal)],
         ],
       });
     },

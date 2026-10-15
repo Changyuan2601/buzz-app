@@ -442,7 +442,7 @@ it("opens an agent's activity on its type's Activity tab, the profile's only one
     expect(screen.getAllByRole("tab", { name: "Activity" })).toHaveLength(1);
     expect(screen.getByText("Echo activity")).toBeVisible();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
     expect(screen.getByText("Echo settings")).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByText("Echo activity")).toBeVisible();
@@ -458,7 +458,7 @@ it("opens an agent's activity on its type's first tab when the type has no Activ
   ]);
   try {
     expect(
-      screen.getByRole("tab", { name: "Settings", selected: true }),
+      screen.getByRole("tab", { name: "Identity", selected: true }),
     ).toBeVisible();
     expect(screen.getByText("Echo settings")).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();

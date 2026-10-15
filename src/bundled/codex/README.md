@@ -22,7 +22,7 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
    optionally pick a model beside it and add instructions. Name the agent and
    click **Create agent**.
-3. **Agents → More → Provider settings → Codex** checks Buzz's copy of Codex and
+3. **Settings → Agents → AI defaults → Codex** checks Buzz's copy of Codex and
    its account. If it says Codex is not installed, click **Install Codex**; if
    it needs you to sign in, click **Sign in** and finish in the browser. It also
    manages explicit-save model/thinking defaults. A blank agent choice inherits

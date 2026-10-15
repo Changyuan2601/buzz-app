@@ -86,6 +86,7 @@ import {
 import { splitPartition } from "../relay/partition";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type Props = {
   relay: RelayData;
@@ -266,9 +267,7 @@ function ReadySidebar({
       const profile = dmProfiles.get(channel.participants[0] ?? "");
       previews.set(channel.id, {
         name: channel.name,
-        src: profile?.picture
-          ? queries.media(profile.picture, "small")
-          : undefined,
+        src: avatarMedia(profile?.picture, queries.media),
         isAgent: profile?.isAgent,
       });
     }
@@ -576,6 +575,14 @@ function ReadySidebar({
     );
   const placementWritable =
     preferences.writable && preferences.starWritable && !!preferences.data;
+  // Group drags land on the placement drop targets, so they need both writers.
+  const orderWritable = placementWritable && preferences.sectionOrderWritable;
+  const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  const moveGroup = (sectionId: string, to: number) => {
+    const ids = groupIds.filter((id) => id !== sectionId);
+    ids.splice(to, 0, sectionId);
+    void preferences.reorderSections(sectionId, ids).catch(() => {});
+  };
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {
     void preferences
       .setSort(
@@ -855,6 +862,20 @@ function ReadySidebar({
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, sidebar.list]);
+  const [groupFocus, setGroupFocus] = useState<string>();
+  // Group recovery removes its focused notice; return focus to the group header.
+  useLayoutEffect(() => {
+    if (!groupFocus) return;
+    (
+      sidebar.list.current?.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(groupFocus)}"] details > summary`,
+      ) ??
+      sidebar.list.current?.querySelector<HTMLElement>(
+        "[data-sidebar-section] details > summary",
+      )
+    )?.focus({ preventScroll: true });
+    setGroupFocus(undefined);
+  }, [groupFocus, sidebar.list]);
   const runReadAction = (channelId: string, action: () => Promise<unknown>) =>
     readAction.run(action, () => {
       setRowFocus(channelId);
@@ -1042,9 +1063,29 @@ function ReadySidebar({
                         : undefined,
                     )
               }
-              overlay={(channelId) => {
+              onReorder={(sectionKey, overKey) =>
+                moveGroup(
+                  sectionKey.slice("group:".length),
+                  groupIds.indexOf(overKey.slice("group:".length)),
+                )
+              }
+              overlay={(id, group) => {
+                if (group) {
+                  const section = sections.find(({ key }) => key === id);
+                  return section ? (
+                    <div className={styles.channelDragOverlay}>
+                      {section.icon && (
+                        <SidebarGroupIcon
+                          icon={section.icon}
+                          session={queries}
+                        />
+                      )}
+                      <span>{section.title}</span>
+                    </div>
+                  ) : null;
+                }
                 const channel = sidebarChannels.find(
-                  ({ id }) => id === channelId,
+                  (channel) => channel.id === id,
                 );
                 if (!channel) return null;
                 const Icon = channelIcon(channel);
@@ -1059,8 +1100,32 @@ function ReadySidebar({
               {sections.map((section) => (
                 <DroppableSidebarSection
                   key={section.key}
+                  groupIndex={groupIds.indexOf(
+                    section.key.slice("group:".length),
+                  )}
                   disabled={
                     !placementWritable || !isChannelDropSectionKey(section.key)
+                  }
+                  reorderable={
+                    orderWritable && section.key.startsWith("group:")
+                  }
+                  move={
+                    orderWritable && section.key.startsWith("group:")
+                      ? (() => {
+                          const id = section.key.slice("group:".length);
+                          const index = groupIds.indexOf(id);
+                          return {
+                            up:
+                              index > 0
+                                ? () => moveGroup(id, index - 1)
+                                : undefined,
+                            down:
+                              index < groupIds.length - 1
+                                ? () => moveGroup(id, index + 1)
+                                : undefined,
+                          };
+                        })()
+                      : undefined
                   }
                   sectionKey={section.key}
                   title={section.title}
@@ -1275,6 +1340,51 @@ function ReadySidebar({
                 </Button>
               </ToastNotice>
             ))}
+          {preferences.orderError && (
+            <div className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the move for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key === `group:${preferences.orderError?.sectionId}`,
+                )?.title ?? "this section"}
+                . {preferences.orderError.error}
+              </p>
+              <p>
+                The previous placement is shown. A partial save may already
+                exist on the relay.
+              </p>
+              {!preferences.sectionOrderWritable && (
+                <p>
+                  Refresh saved sidebar preferences before retrying this move.
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={!preferences.sectionOrderWritable}
+                onClick={() => {
+                  const failed = preferences.orderError;
+                  if (!failed) return;
+                  void preferences
+                    .reorderSections(failed.sectionId, failed.sectionIds)
+                    .catch(() => {});
+                  setGroupFocus(`group:${failed.sectionId}`);
+                }}
+              >
+                Retry move
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const failed = preferences.orderError;
+                  preferences.dismissOrderError();
+                  if (failed) setGroupFocus(`group:${failed.sectionId}`);
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {preferences.moves
             ?.filter((move) => !move.pending)
             .map((move) => (

@@ -1,6 +1,15 @@
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
+import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 // The type's tabs: Codex's setup on this computer, and the agent's settings;
 // and its part of the New agent dialog.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useId,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
@@ -270,15 +279,15 @@ const providerDefaultLabel = (model: string, data?: Catalog) => {
       (candidate) => candidate.model === model,
     );
     if (!data || selected)
-      return `Provider default · ${selected?.displayName || selected?.model || model}`;
+      return selected?.displayName || selected?.model || model;
   }
   const native = data?.models.find((candidate) => candidate.isDefault);
   const name = native?.displayName || native?.model;
-  return name ? `Codex default (${name})` : "Codex default";
+  return name || "Model unavailable";
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
-  return resolved ? `Codex default (${effortName(resolved)})` : "Codex default";
+  return resolved ? effortName(resolved) : "Automatic";
 };
 /** A model's choice also resets the effort to that model's default. */
 const modelChange = (model: string, data?: Catalog) => ({
@@ -367,7 +376,14 @@ export function createTabs(
         {...props}
         models={choices(data)}
         value={current.model}
+        defaultModel={
+          data?.models.find((model) => model.model === providerDefaults.model)
+            ?.model ??
+          data?.models.find((model) => model.isDefault)?.model ??
+          providerDefaults.model
+        }
         defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
+        defaultDescription="Following the provider's model default"
         loading={checking}
         error={error}
         retry={retry}
@@ -379,6 +395,7 @@ export function createTabs(
   }
 
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
+    const defaultsForm = useId();
     const state = useProvider();
     const { data, error, checking } = state;
     const installing = useSyncExternalStore(
@@ -400,7 +417,10 @@ export function createTabs(
       ? data?.models.find((model) => model.model === draft.model)
       : nativeModel;
     const efforts = [
-      { value: "", label: codexDefaultEffortLabel("", selected) },
+      {
+        value: "",
+        label: `${codexDefaultEffortLabel("", selected)} · Default`,
+      },
       ...(draft.effort &&
       !selected?.supportedReasoningEfforts.some(
         (effort) => effort.reasoningEffort === draft.effort,
@@ -432,7 +452,6 @@ export function createTabs(
                   ? "Waiting for Codex sign-in…"
                   : "Installing Codex…"}
               </p>
-              <Button onClick={() => void setup.cancel()}>Cancel</Button>
             </div>
           ) : checking ? (
             <p role="status" className="m-0">
@@ -443,17 +462,6 @@ export function createTabs(
               <strong>{error}</strong>
             </p>
           ) : null}
-          {action && !installing.running && !checking && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                autoFocus
-                variant="prominent"
-                onClick={() => void setup.run(action.step)}
-              >
-                {action.label}
-              </Button>
-            </div>
-          )}
           {action?.step === "install" && !installing.running && (
             <p className="m-0 text-body-sm text-subtle">
               Downloads Buzz's own copy of Codex (about 130 MB) from
@@ -473,6 +481,7 @@ export function createTabs(
           )}
         </div>
         <form
+          id={defaultsForm}
           className="grid gap-3"
           hidden={state.readiness !== "ready"}
           onSubmit={(event) => {
@@ -489,7 +498,7 @@ export function createTabs(
         >
           <Select
             label="Default model"
-            variant="field"
+            variant="preference"
             value={draft.model}
             disabled={checking || !data}
             groups={[
@@ -526,7 +535,10 @@ export function createTabs(
           />
           <Select
             label="Default thinking"
-            variant="field"
+            valueLabel={
+              draft.effort ? undefined : codexDefaultEffortLabel("", selected)
+            }
+            variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
             disabled={checking || !selected}
@@ -537,9 +549,19 @@ export function createTabs(
               {saveError}
             </p>
           )}
-          <div>
+        </form>
+        <ProviderDialogActions>
+          <Button
+            onClick={() =>
+              installing.running ? void setup.cancel() : onClose()
+            }
+          >
+            Cancel
+          </Button>
+          {state.readiness === "ready" ? (
             <Button
               type="submit"
+              form={defaultsForm}
               variant="prominent"
               disabled={
                 JSON.stringify(draft) === JSON.stringify(state.defaults)
@@ -548,8 +570,16 @@ export function createTabs(
             >
               Save defaults
             </Button>
-          </div>
-        </form>
+          ) : action && !installing.running && !checking ? (
+            <Button
+              autoFocus
+              variant="prominent"
+              onClick={() => void setup.run(action.step)}
+            >
+              {action.label}
+            </Button>
+          ) : null}
+        </ProviderDialogActions>
       </div>
     );
   }
@@ -757,11 +787,22 @@ export function createTabs(
   }
 
   /** What the agent runs with. Saving applies to the next turn. */
-  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    settingsSection,
+    settingsContent,
+  }: AgentViewProps<Config>) {
+    const form = useId();
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
     const {
       data,
       error: catalogError,
@@ -779,7 +820,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: codexDefaultEffortLabel(effective.effort, selected),
+        label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
       },
       ...(draft.effort &&
       !supported.some((effort) => effort.reasoningEffort === draft.effort)
@@ -828,11 +869,18 @@ export function createTabs(
             </Button>
           </div>
         )}
-        <div className="grid gap-4 [@container(min-width:36rem)]:grid-cols-2">
+        <>
           <ModelPicker
             allowCustomModel={false}
             models={choices(data)}
             value={draft.model}
+            defaultModel={
+              data?.models.find(
+                (model) => model.model === providerDefaults.model,
+              )?.model ??
+              data?.models.find((model) => model.isDefault)?.model ??
+              providerDefaults.model
+            }
             defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
             defaultDescription="Following the provider's model default"
             loading={checking}
@@ -843,73 +891,82 @@ export function createTabs(
           />
           <Select
             label="Thinking"
-            variant="field"
+            valueLabel={
+              draft.effort
+                ? undefined
+                : codexDefaultEffortLabel(effective.effort, selected)
+            }
+            variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
             disabled={checking || saving || !selected}
             onValueChange={(effort) => setDraft({ ...draft, effort })}
           />
-        </div>
+        </>
       </>
     );
     return (
       <form
+        id={form}
         className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {settingsHost?.typeControl?.(configChanged)}
-        {customization}
-        <Field
-          label="Workspace"
-          description="Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
-        >
-          <Input
-            value={draft.workspace}
-            placeholder="~/.buzz"
-            disabled={saving}
-            onValueChange={(workspace) => setDraft({ ...draft, workspace })}
-          />
-        </Field>
-        <Select
-          label="Sessions"
-          variant="field"
-          value={draft.scope}
-          groups={SCOPES}
-          disabled={saving}
-          description="DMs always share one conversation."
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={saving}
-          description="Buzz guidance supplements Codex’s native instructions. Saved changes apply to the next turn. A workspace change starts a fresh session."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
-          <p role="alert" className="buzz-field-error">
+          <p
+            ref={saveErrorRef}
+            tabIndex={-1}
+            role="alert"
+            className="buzz-field-error"
+          >
             {error}
           </p>
         )}
-        <div>
-          {/* Stays focusable while saving and once there is nothing to save. */}
-          <Button
-            type="submit"
-            variant="prominent"
-            loading={saving}
-            disabled={!changed}
-            focusableWhenDisabled
-          >
-            {saving ? "Saving…" : "Save"}
-          </Button>
-        </div>
+        {settingsSection !== "runtime" && (
+          <>
+            <SettingsGroup>
+              {settingsHost?.typeControl?.(configChanged)}
+              {customization}
+            </SettingsGroup>
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={saving}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <Field
+              label="Workspace"
+              description="Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+            >
+              <Input
+                value={draft.workspace}
+                placeholder="~/.buzz"
+                disabled={saving}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </Field>
+            <Select
+              label="Sessions"
+              variant="preference"
+              value={draft.scope}
+              groups={SCOPES}
+              disabled={saving}
+              onValueChange={(value) =>
+                setDraft({
+                  ...draft,
+                  scope: value === "channel" ? "channel" : "thread",
+                })
+              }
+            />
+          </>
+        )}
+        <AgentSaveButton form={form} saving={saving} disabled={!changed} />
+        {settingsSection !== "identity" && settingsContent}
       </form>
     );
   }

@@ -128,6 +128,10 @@ gaps rather than each plugin inventing its own rhythm. Dependent preferences ret
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
+Use `Accordion variant="settings"` for disclosures alongside preference rows.
+Its full-row trigger uses the settings container shape and spacing; the chevron
+is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
+label and compact choice control without adding a group container.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
 [`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
 preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
@@ -519,7 +523,9 @@ border-prominent stroke fading over 150ms ease for pointer interaction. The
 field-scoped --border variable selects transparent, active, or error color for
 the reserved 1px border, so state changes do not shift the layout. Keyboard
 focus and reduced motion change immediately. Composite fields own one stroke
-around the input and actions; error strokes retain priority. Placeholders use
+around the input and actions; error strokes retain priority. Borderless title and
+heading inputs keep their perimeter transparent on pointer/autofocus entry and
+show the focus border during keyboard navigation. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
 and no-container-ring recipes for these fields.
@@ -708,6 +714,9 @@ text-body (14px / 20px), and the 16px control inset. Derive vertical padding fro
 size, text line height, and boundary; do not force a fixed height that clips
 larger text or wrapped Select values. Textarea uses the control inset on all four
 sides (16px at the default scale), with manual vertical resizing and a code variant.
+Agent instructions intentionally use `appearance="outlined"`: one container-radius
+border over a transparent background, with no inset fill or nested SettingsGroup.
+Focus strengthens that same border. Preserve this choice in creation and profiles.
 Use `surface="panel"` when a standalone textarea needs an opaque surface over a
 floating dialog; the default inset surface remains for fields on panels.
 In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px
@@ -1056,8 +1065,10 @@ from the trigger reaches the action; Shift+Tab returns to the trigger; forward T
 continues after the trigger. Escape dismisses the preview before restoring focus,
 but never pulls focus back if the user moved it during exit. Closing previews
 are no longer Tab destinations or pointer targets.
-Scrolling anything that contains the trigger dismisses a hover-opened preview: a
-still pointer cannot report that its trigger moved away. A keyboard-focused
+Scrolling anything that contains the trigger dismisses a hover-opened preview when
+the trigger moves: a still pointer cannot report that its trigger moved away. A
+scroll that leaves the trigger in place, such as scroll anchoring, keeps the
+preview. A keyboard-focused
 trigger keeps its preview, hidden while the trigger is scrolled out of view
 unless focus is inside it.
 The positioned portal owns its layer above dialogs. An optional content anchor

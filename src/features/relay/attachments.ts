@@ -8,6 +8,7 @@ import { safeAttachmentName } from "./message-content.ts";
 
 import {
   mediaByteLimit,
+  relayRejection,
   UPLOAD_MAX_BYTES,
   UPLOAD_TIMEOUT_MS,
 } from "./attachment-limits.ts";
@@ -39,6 +40,12 @@ export const UPLOAD_FAILURES = {
   capacity: "Uploads are busy. Retry this file shortly.",
   metadata:
     "This file needs metadata cleanup before it can be uploaded. Choose an exported copy without metadata, or remove it for now.",
+  resolution:
+    "This video is larger than 4K (3840×2160). Export it at a smaller size, then retry.",
+  duration:
+    "Videos can be at most 10 minutes long. Trim this recording, then retry.",
+  codec:
+    "This file’s codec isn’t supported. Use H.264 video and AAC audio, then retry.",
   rejected:
     "The server could not accept this file. Its format or metadata may not be supported.",
   denied: "You don’t have permission to upload here.",
@@ -265,9 +272,7 @@ export async function readUploadResponse(response: Response): Promise<unknown> {
         ? (code as UploadCode)
         : // The relay's own content rejections (the broker maps these the same way).
           [400, 415, 422].includes(response.status)
-          ? /metadata/i.test(text)
-            ? "metadata"
-            : "rejected"
+          ? relayRejection(text)
           : "failed",
     );
   }

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -452,12 +452,22 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     const threadRoot = history
       .getByText("First root", { exact: true })
       .locator("xpath=ancestor::*[@data-message-id][1]");
-    await expect(threadRoot.locator("[data-layout]")).toHaveAttribute(
+    // The divider ends the original's bubble group; it retains its avatar,
+    // and the first reply starts a separate group even with the same author.
+    await expect(threadRoot.locator("[data-layout]")).not.toHaveAttribute(
       "data-stack-next",
-      "true",
     );
-    await expect(threadRoot.locator("[data-avatar-shape]")).toHaveCount(0);
-    // The human avatar belongs to the final row of the same-author group.
+    await expect(threadRoot.locator("[data-avatar-shape]")).toHaveAttribute(
+      "data-avatar-shape",
+      "circle",
+    );
+    const firstReply = history
+      .getByText("Reply with image", { exact: true })
+      .locator("xpath=ancestor::*[@data-message-id][1]");
+    await expect(firstReply.locator("[data-layout]")).not.toHaveAttribute(
+      "data-stack-previous",
+    );
+    // Replies still group together, with the avatar on their final human row.
     const threadHumanAvatar = history
       .getByRole("heading", { name: "Markdown reply", level: 2 })
       .locator("xpath=ancestor::*[@data-message-id][1]")

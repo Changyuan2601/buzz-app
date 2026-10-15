@@ -8,3 +8,9 @@ export const LinkContentContext = createContext<ReactNode>(undefined);
 
 /** Host-resolved visibility for channel links rendered by a shared link renderer. */
 export const LinkChannelPrivateContext = createContext(false);
+
+/** Host workspace opener for a message link's thread tab; false when it cannot. */
+export const LinkThreadTabContext = createContext<
+  | ((channelId: string, messageId: string, rootId: string) => boolean)
+  | undefined
+>(undefined);

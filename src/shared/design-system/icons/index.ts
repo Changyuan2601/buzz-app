@@ -464,3 +464,9 @@ export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);
 
 import TablerStorefrontIcon from "@tabler/icons-react/dist/esm/icons/IconBuildingStore.mjs";
 export const StorefrontIcon = defineIcon("tabler", TablerStorefrontIcon);
+
+import TablerBrainIcon from "@tabler/icons-react/dist/esm/icons/IconBrain.mjs";
+export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
+
+import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
+export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);

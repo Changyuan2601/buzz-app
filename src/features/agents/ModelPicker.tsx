@@ -108,6 +108,7 @@ export function ModelPicker({
   allowCustomModel = false,
   value,
   defaultLabel,
+  defaultModel,
   defaultDescription,
   onChange,
   loading = false,
@@ -125,6 +126,7 @@ export function ModelPicker({
   includeDefault?: boolean;
   value: string;
   defaultLabel: string;
+  defaultModel?: string | undefined;
   defaultDescription?: string;
   onChange(value: string): void;
   loading?: boolean;
@@ -133,13 +135,19 @@ export function ModelPicker({
 }) {
   const [customModel, setCustomModel] = useState<string | null>(null);
   const control = useRef<HTMLDivElement>(null);
+  const defaultChoice = models.find((model) => model.id === defaultModel);
   const fallback: ModelChoice = {
     id: "",
-    label: defaultLabel,
-    description: defaultDescription,
+    label: defaultChoice?.label ?? defaultLabel,
+    description: defaultChoice?.description ?? defaultDescription,
   };
   const items: ModelChoice[] = includeDefault
-    ? [fallback, ...models]
+    ? [
+        fallback,
+        ...models.filter(
+          (model) => model.id !== defaultModel || model.id === value,
+        ),
+      ]
     : [...models];
   if (value && !items.some((model) => model.id === value))
     items.push({
@@ -164,7 +172,7 @@ export function ModelPicker({
           valueLabel={selected.label}
           valueTitle={selected.label}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
-          variant={compact ? "compact" : "field"}
+          variant={compact ? "compact" : "preference"}
           appearance={appearance}
           align={compact ? "end" : "start"}
           groups={[
@@ -172,7 +180,10 @@ export function ModelPicker({
               label: "",
               options: choices.map((model) => ({
                 value: model.id,
-                label: model.label,
+                label:
+                  includeDefault && model.id === ""
+                    ? `${model.label} · Default`
+                    : model.label,
                 description: model.description,
                 leading: <ModelIcon model={`${model.id} ${model.label}`} />,
               })),

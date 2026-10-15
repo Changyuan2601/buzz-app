@@ -47,6 +47,10 @@ export type SidebarSectionRemovalMutator = (
   sectionId: string,
   signal: AbortSignal,
 ) => Promise<SidebarGroups>;
+export type SidebarSectionOrderMutator = (
+  sectionIds: readonly string[],
+  signal: AbortSignal,
+) => Promise<SidebarGroups>;
 export type SidebarStarMutator = (
   intent: Readonly<{ channelId: string; starred: boolean }>,
   signal: AbortSignal,

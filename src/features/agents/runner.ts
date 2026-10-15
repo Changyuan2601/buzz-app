@@ -292,13 +292,18 @@ export class AgentRunners {
     const answering = () =>
       new Error(`${name} is answering; change its type when it finishes`);
     if (runner?.working) throw answering();
-    if (!runner) throw new Error("Change its type on the device that runs it");
+    if (!runner)
+      throw new Error(
+        "This agent is not running in this copy of Buzz. Change its provider in the Buzz app that runs it.",
+      );
     if (runner.transitioning)
       throw new Error(`${name}'s provider is already changing`);
     runner.transitioning = true;
     try {
       if (!(await this.claimForRetype(runner)))
-        throw new Error("Change its type on the device that runs it");
+        throw new Error(
+          "Another copy of Buzz is running this agent. Change its provider there, or quit that copy of Buzz and try again.",
+        );
       if (runner.working) throw answering();
       return await change();
     } finally {

@@ -13,6 +13,10 @@ static SLOTS: OnceLock<Semaphore> = OnceLock::new();
 const MAX_INPUT: usize = 500 * 1024 * 1024;
 const MAX_IMAGE: u64 = 50 * 1024 * 1024;
 const MAX_VIDEO: u64 = 500 * 1024 * 1024;
+// Fit the relay's 3840x2160 envelope in either orientation (Retina screen
+// recordings exceed it) at even dimensions, never upscale, then pad the odd
+// edges of unscaled input for yuv420p.
+const VIDEO_FILTER: &str = "scale=w='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(iw*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,iw)':h='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(ih*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,ih)',pad=ceil(iw/2)*2:ceil(ih/2)*2";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PreparationError {
@@ -328,7 +332,7 @@ async fn prepare_file_with_program(
             "-pix_fmt",
             "yuv420p",
             "-vf",
-            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            VIDEO_FILTER,
             "-c:a",
             "aac",
             "-b:a",
@@ -486,6 +490,67 @@ mod tests {
         let (prepared, mime) = prepare(bytes, "video:mov", &mut cancelled).await.unwrap();
         assert_eq!(mime, "video/mp4");
         assert!(prepared.windows(4).any(|chunk| chunk == b"ftyp"));
+    }
+
+    #[tokio::test]
+    async fn shrinks_retina_screen_recording_into_relay_envelope() {
+        let _guard = CONVERSIONS.lock().await;
+        if media_tool_version("ffmpeg").is_none() || media_tool_version("ffprobe").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("recording.mov");
+        let ffmpeg =
+            crate::host_command::resolve_program("ffmpeg", &crate::host_command::effective_path());
+        // A full-screen Retina capture: short edge 2234 > 2160, and a naive
+        // scale would give an odd 3341 width that padding blackens.
+        let generated = std::process::Command::new(&ffmpeg)
+            .args([
+                "-y",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=3456x2234:r=1",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+            ])
+            .arg(&input)
+            .status();
+        assert!(generated
+            .expect("conversion tests require ffmpeg on PATH")
+            .success());
+        let bytes = std::fs::read(input).unwrap();
+        let (_sender, mut cancelled) = oneshot::channel();
+        let (prepared, _) = prepare(bytes, "video:mov", &mut cancelled).await.unwrap();
+        let output = dir.path().join("prepared.mp4");
+        std::fs::write(&output, prepared).unwrap();
+        let dimensions = std::process::Command::new(crate::host_command::resolve_program(
+            "ffprobe",
+            &crate::host_command::effective_path(),
+        ))
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(output)
+        .output()
+        .expect("conversion tests require ffprobe");
+        assert!(dimensions.status.success());
+        assert_eq!(
+            String::from_utf8(dimensions.stdout).unwrap().trim(),
+            "3342,2160"
+        );
     }
 
     #[tokio::test]

@@ -36,6 +36,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
+  type SidebarSectionOrderMutator,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -149,6 +150,7 @@ export interface ReadTransport {
   /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
   readonly removeSidebarSection?: SidebarSectionRemovalMutator;
+  readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -424,6 +426,7 @@ export async function connectBrokerTransport(
     channelIdentity?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
+    sidebarSectionOrder?: boolean;
     sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -984,6 +987,34 @@ export async function connectBrokerTransport(
                 signal,
               },
             );
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            const value = await response.json();
+            const { sections, assignments } = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return { sections, assignments };
+          },
+        }
+      : {}),
+    ...(session.sidebarSectionOrder
+      ? {
+          async writeSidebarSectionOrder(
+            sectionIds: readonly string[],
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/sidebar-section-order`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sectionIds }),
+              signal,
+            });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
             const value = await response.json();

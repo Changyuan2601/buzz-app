@@ -1,3 +1,4 @@
+import type { Agents } from "../features/agents/service";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -34,6 +35,7 @@ import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { developerMode, settingsSections } from "./settings-sections";
 
 export function Settings({
+  agents,
   cards,
   plugins,
   communities,
@@ -47,6 +49,7 @@ export function Settings({
   onSection,
   navigationPane = false,
 }: {
+  agents?: Agents | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
   communities: Communities;
@@ -160,6 +163,7 @@ export function Settings({
             </div>
             <div hidden={selected !== "agents"}>
               <AgentSettings
+                agents={agents}
                 archive={
                   <ArchiveSettings
                     relay={communities.relay}

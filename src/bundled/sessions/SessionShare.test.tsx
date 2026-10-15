@@ -56,7 +56,11 @@ function fixture(direct = false) {
       metadata(relay, source, "Work", clock, [
         ["t", "stream"],
         ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
+        // Direct share promotes a Me chat, which carries the personal line.
+        [
+          "about",
+          `Buzz session (buzz.sessions/v1)${direct ? "\npersonal" : ""}`,
+        ],
       ]),
     ],
     [

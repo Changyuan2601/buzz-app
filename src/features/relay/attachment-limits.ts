@@ -19,3 +19,16 @@ export function imageType(bytes: Uint8Array): string | undefined {
   if (text(0, 4) === "RIFF" && text(8, 12) === "WEBP") return "image/webp";
   return undefined;
 }
+// Relay content rejections carry only error text (block/buzz
+// crates/buzz-media/src/error.rs); name the rule instead of a generic failure.
+const RELAY_REJECTIONS = [
+  [/metadata/i, "metadata"],
+  [/resolution too high/i, "resolution"],
+  [/video too long/i, "duration"],
+  [/unsupported media codec/i, "codec"],
+] as const;
+export function relayRejection(text: string) {
+  return (
+    RELAY_REJECTIONS.find(([pattern]) => pattern.test(text))?.[1] ?? "rejected"
+  );
+}

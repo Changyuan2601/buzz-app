@@ -273,7 +273,7 @@ html[data-keyboard-navigation] .panelViewport {
   grid-template-columns: minmax(0, 1fr) minmax(0, 22.5rem);
   align-items: center;
   justify-items: center;
-  gap: var(--space-6);
+  gap: var(--space-6) var(--space-3);
   width: 100%;
 }
 .inlineEditor .dottedTrigger {
@@ -294,6 +294,9 @@ html[data-keyboard-navigation] .panelViewport {
   grid-template-columns: minmax(0, 1fr);
   max-width: 30rem;
   margin-inline: auto;
+}
+.imagePanel[data-surface="panel"] {
+  --surface-panel: var(--interaction-row-hover);
 }
 .imagePanel[data-surface="panel"] .dropzone {
   background: var(--surface-panel);

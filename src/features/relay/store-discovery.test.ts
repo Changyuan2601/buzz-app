@@ -737,6 +737,60 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });
 
+it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
+  let clock = 1_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string, at: number) =>
+    metadata(relay, id(n), name, at, [["public"], ["t", "stream"]]);
+  // A full first page of newer channels, as the relay orders it.
+  const recent = Array.from({ length: 500 }, (_, n) =>
+    open(n, `recent-${n}`, 1_700_000_100),
+  ).sort((a, b) => a.id.localeCompare(b.id));
+  const older = open(500, "buzz-community", 1_700_000_000);
+  const gaveUp = new AbortController();
+  const first = h.channels.searchPublic?.("buzz-c", { signal: gaveUp.signal });
+  assert.exists(first);
+  const page = await h.next(39000);
+  expect(page.filters).toEqual([
+    { kinds: [39000], authors: [relay.pubkey], limit: 500 },
+  ]);
+  gaveUp.abort();
+  await expect(first).rejects.toThrow();
+  expect(page.signal?.aborted).toBe(false);
+  // A read still running is reused however long it takes.
+  clock += 60_000;
+  const second = h.channels.searchPublic?.("buzz-com");
+  assert.exists(second);
+  page.respond(recent);
+  const last = recent.at(-1);
+  assert.exists(last);
+  const next = await h.next(39000);
+  expect(next.filters).toEqual([
+    {
+      kinds: [39000],
+      authors: [relay.pubkey],
+      limit: 500,
+      until: last.created_at,
+      before_id: last.id,
+    },
+  ]);
+  next.respond([older]);
+  const resolve = await h.next(39000);
+  expect(resolve.filters[0]?.["#d"]).toEqual([id(500)]);
+  resolve.respond([older]);
+  const result = await second;
+  expect(result.channels.map((channel) => channel.name)).toEqual([
+    "buzz-community",
+  ]);
+  expect(result.partial).toBe(false);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("refuses a label lookup without sending it when the relay does not advertise NIP-CL", async () => {
   const h = setup();
   h.channels.ensureList();

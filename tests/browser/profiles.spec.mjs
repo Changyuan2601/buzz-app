@@ -58,7 +58,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   ).toBe(true);
   expect(
     await page.evaluate(() => window.profilesFixture.report.media),
-  ).toContainEqual(["https://images.test/avatar.png", undefined]);
+  ).toContainEqual(["https://images.test/avatar.png", "small"]);
   await expect(panel.getByText("Human profile", { exact: true })).toBeVisible();
   // Stub clipboard at the browser boundary: test the UI's exact key and
   // recovery, without relying on OS permission/pasteboard behavior in CI.

@@ -1,3 +1,8 @@
+import { AgentTabs } from "../agents/AgentTabs";
+import type {
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -499,12 +504,10 @@ it("applies provider precedence without rewriting records and falls back for inc
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Provider default · Model B",
+      "Model B",
     ),
   );
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Codex default (Medium)",
-  );
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Medium");
   cleanup();
 
   localStorage.setItem("buzz.codex.provider-defaults.v1", "invalid");
@@ -574,7 +577,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent("High");
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
-    await screen.findByRole("option", { name: "Codex default (Low)" }),
+    await screen.findByRole("option", { name: "Low · Default" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
@@ -591,9 +594,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   await waitFor(() =>
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
-  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Codex default (Low)",
-  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
@@ -602,14 +603,15 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Codex default (Low)",
-  );
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
-  ).toHaveAccessibleDescription("Following the provider's model default");
+    await screen.findByRole("option", {
+      name: "Model A · Default",
+      description: "Model A description.",
+    }),
+  ).toHaveAccessibleDescription("Model A description.");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
   await user.click(model);
@@ -683,11 +685,12 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
   expect(thinkingControl).toHaveTextContent("Medium");
   await user.click(modelControl);
   await user.click(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
+    await screen.findByRole("option", {
+      name: "Model A · Default",
+      description: "Model A description.",
+    }),
   );
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Codex default (Low)",
-  );
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith({ ...saved, model: "", effort: "" });
 });
@@ -797,7 +800,7 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
     model: "model-b",
     effort: "medium",
   });
-  fireEvent.change(screen.getByLabelText("Describe what I should do"), {
+  fireEvent.change(screen.getByLabelText("Instructions"), {
     target: { value: "Triage." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
@@ -807,7 +810,8 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   await user.click(await screen.findByRole("combobox", { name: "Model" }));
   await user.click(
     await screen.findByRole("option", {
-      name: "Codex default (Model A)",
+      name: "Model A · Default",
+      description: "Model A description.",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({
@@ -1044,6 +1048,29 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   provider.dispose();
 });
 
+it("separates identity fields from runtime settings without changing the stored config", () => {
+  const f = fixture();
+  const Settings = f.tabs.SettingsTab;
+  const props = f.props();
+  const view = render(<Settings {...props} settingsSection="identity" />);
+  const instructions = screen.getByLabelText("Instructions");
+  const model = screen.getByLabelText("Model");
+  expect(
+    model.compareDocumentPosition(instructions) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
+  view.rerender(<Settings {...props} settingsSection="runtime" />);
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+  expect(props.save).not.toHaveBeenCalled();
+});
+
 it("cancels a Codex login from its card and kills the process", async () => {
   const f = fixture({ signedIn: false });
   render(
@@ -1063,3 +1090,66 @@ it("cancels a Codex login from its card and kills the process", async () => {
   await waitFor(() => expect(process.kill).toHaveBeenCalledOnce());
   expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
 });
+
+it.each(["Identity", "Settings"])(
+  "preserves both settings drafts and retries a failed save from %s",
+  async (saveFrom) => {
+    const f = fixture();
+    const Settings = f.tabs.SettingsTab;
+    const source = f.props().agent;
+    const user = userEvent.setup();
+    const savedAgent = { ...source, place: "here" as const };
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Save failed"))
+      .mockResolvedValue(undefined);
+    const agents = { save } as unknown as Agents;
+    const type = {
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: Settings,
+        },
+      ],
+    } as unknown as RegisteredAgentType;
+    render(
+      <AgentTabs
+        agents={agents}
+        agent={savedAgent}
+        type={type}
+        settingsHost={{}}
+        channels={[]}
+        memories={undefined}
+        settingsContent={<p>Agent details</p>}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Instructions"));
+    await user.type(
+      screen.getByLabelText("Instructions"),
+      "Keep this identity draft.",
+    );
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.clear(screen.getByLabelText("Workspace"));
+    await user.type(screen.getByLabelText("Workspace"), "/tmp/combined-draft");
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    expect(screen.getByLabelText("Instructions")).toHaveValue(
+      "Keep this identity draft.",
+    );
+    if (saveFrom === "Settings")
+      await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenLastCalledWith(savedAgent.pubkey, {
+      config: expect.objectContaining({
+        instructions: "Keep this identity draft.",
+        workspace: "/tmp/combined-draft",
+      }),
+    });
+  },
+);

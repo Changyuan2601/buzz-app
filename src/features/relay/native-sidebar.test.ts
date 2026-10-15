@@ -650,3 +650,135 @@ it("removes a section through native signing and readback without touching other
   expect(saved.meta.a.alpha[2]).toBeNull();
   expect(saved.preserved).toBe("value");
 });
+
+it("reorders sections through native signing and readback, never rewriting a satisfied order", async () => {
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id: "later", name: "Later", order: 1 },
+      ],
+      assignments: { alpha: "work" },
+      preserved: "value",
+    }),
+  );
+  const transport = await connectNativeTransport(community);
+  if (!transport.writeSidebarSectionOrder)
+    throw new Error("Missing section order writer");
+  await expect(
+    transport.writeSidebarSectionOrder(["work", "work"], signal),
+  ).rejects.toThrow("Invalid sidebar section order intent");
+  expect(await transport.writeSidebarSectionOrder(["later"], signal)).toEqual({
+    sections: [
+      { id: "later", name: "Later", order: 0 },
+      { id: "work", name: "Work", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+  });
+  const head = records.get("channel-sections");
+  if (!head) throw new Error("Missing sections head");
+  expect(
+    (decode([head])["channel-sections"] as { preserved: string }).preserved,
+  ).toBe("value");
+  vi.mocked(invoke).mockClear();
+  await transport.writeSidebarSectionOrder(["later", "work"], signal);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_sign_sidebar"),
+  ).toEqual([]);
+  expect(records.get("channel-sections")).toBe(head);
+});
+
+it("does not report a section order overwritten before readback as saved", async () => {
+  const transport = await connectNativeTransport(community);
+  await transport.writeSidebarAssignment?.(
+    {
+      channelId: "c1",
+      createSection: { id: "11111111-1111-1111-1111-111111111111", name: "A" },
+    },
+    signal,
+  );
+  await transport.writeSidebarAssignment?.(
+    {
+      channelId: "c2",
+      createSection: { id: "22222222-2222-2222-2222-222222222222", name: "B" },
+    },
+    signal,
+  );
+  const stale = records.get("channel-sections");
+  const original = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    const result = await original?.(command, args);
+    // Another device restores the previous order right after this publication.
+    if (
+      command === "relay_http" &&
+      (args as { path?: string }).path === "/events" &&
+      stale
+    )
+      records.set("channel-sections", stale);
+    return result;
+  });
+  await expect(
+    transport.writeSidebarSectionOrder?.(
+      [
+        "22222222-2222-2222-2222-222222222222",
+        "11111111-1111-1111-1111-111111111111",
+      ],
+      signal,
+    ),
+  ).rejects.toThrow("Sidebar groups changed on another device");
+});
+
+it.each([
+  { live: ["c", "b", "a"], conflict: true },
+  { live: ["b", "c", "a"], conflict: true },
+  { live: ["b", "a", "c"], conflict: false },
+  { live: ["b", "c"], conflict: false },
+])(
+  "confirms the full live order after concurrent changes: $live",
+  async ({ live, conflict }) => {
+    const sections = (ids: string[]) =>
+      ids.map((id, order) => ({ id, name: id.toUpperCase(), order }));
+    records.set(
+      "channel-sections",
+      signedRecord("channel-sections", {
+        version: 1,
+        sections: sections(["a", "b"]),
+        assignments: {},
+      }),
+    );
+    const transport = await connectNativeTransport(community);
+    const original = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const result = await original?.(command, args);
+      if (
+        command === "relay_http" &&
+        (args as { path?: string }).path === "/events"
+      )
+        records.set(
+          "channel-sections",
+          signedRecord("channel-sections", {
+            version: 1,
+            sections: sections(live),
+            assignments: {},
+          }),
+        );
+      return result;
+    });
+    if (!transport.writeSidebarSectionOrder)
+      throw new Error("Missing section order writer");
+    const write = transport.writeSidebarSectionOrder(["b", "a"], signal);
+    if (conflict)
+      await expect(write).rejects.toThrow(
+        "Sidebar groups changed on another device",
+      );
+    else
+      await expect(write).resolves.toEqual({
+        sections: sections(live),
+        assignments: {},
+      });
+  },
+);

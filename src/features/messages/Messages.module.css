@@ -106,6 +106,34 @@
   flex: 1;
   background: var(--border-standard);
 }
+.replyDivider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  /* Reserve a fixed label row. Ordinary message clearance accounts for half
+     its height and the neighbouring .message padding; compact agent-addressed
+     rows keep their own tighter spacing. */
+  min-block-size: var(--space-5);
+  color: var(--text-subtle);
+  @apply text-caption;
+  margin: calc(var(--space-6) - var(--space-5) / 2 - var(--space-half)) 0
+    calc(
+      var(--space-6) -
+      var(--space-5) /
+      2 -
+      var(--space-3) -
+      var(--space-half)
+    );
+}
+.replyDivider::before,
+.replyDivider::after {
+  content: "";
+  height: 1px;
+  min-width: 0;
+  flex: 1;
+  background: var(--border-standard);
+}
 .dayLabel {
   display: inline-flex;
   align-items: center;
@@ -722,7 +750,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-panel-inset);
+  /* Narrower than the channel feed's panel inset; aligns with the composer. */
+  padding: 0 var(--space-4);
+  /* The original starts space-4 below the header, less its .message padding. */
+  padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
   /* Include the join preview lane while keeping the approved message inset. */
   --history-bottom-inset: calc(
     var(--space-8) +

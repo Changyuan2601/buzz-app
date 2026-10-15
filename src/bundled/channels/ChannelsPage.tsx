@@ -9,7 +9,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
-import { useChannelTabState } from "./useChannelTabState";
+import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -37,6 +37,7 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import {
   useCallback,
   useEffect,
@@ -73,12 +74,16 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
-import type { Attachment } from "../../features/relay/contracts";
+import type {
+  Attachment,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function ChannelsPage({
   extensions,
@@ -639,20 +644,13 @@ function ChannelWorkspace({
     ],
   );
   const conversationIcon = (item: (typeof channels)[number]) => {
-    const Icon = channelIcon(item);
     const person = item.participants?.[0];
-    const picture = person ? profiles.get(person)?.picture : undefined;
-    return item.channelType === "dm" ? (
-      <span className={tabStyles.icon}>
-        <Avatar
-          alt=""
-          fallback={item.name}
-          size="fill"
-          src={picture ? queries.media(picture) : null}
-        />
-      </span>
-    ) : (
-      <Icon size="1rem" />
+    return (
+      <ConversationIcon
+        item={item}
+        picture={person ? profiles.get(person)?.picture : undefined}
+        media={queries.media}
+      />
     );
   };
   const channelConversation = useRef<HTMLDivElement>(null);
@@ -674,16 +672,32 @@ function ChannelWorkspace({
     threadId: routedThread?.messageId,
     mainPane: true,
     routed: routedThread,
-    onCloseThread: (tab, active) => {
+    onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a
       // later Back/Forward visit is the only way to reopen it.
+      // That channel visit keeps the tab selected in place of the closed one.
       if (
         routedThread?.channelId === tab.channelId &&
         routedThread.messageId === tab.messageId
-      )
+      ) {
         select(tab.channelId);
+        const entry = navigator?.snapshot().entry.id;
+        if (entry) tabState.enterVisit(`${entry}:channel`, undefined, true);
+      }
       const trigger = threadTrigger.current;
-      if (trigger) returnFocus.current = { trigger, channelId: currentId };
+      // While tabs remain, the opener takes focus only from within their pane.
+      if (
+        trigger &&
+        (last ||
+          trigger
+            .closest("[data-panel-workspace], [data-main-workspace]")
+            ?.hasAttribute(
+              tabPane(tab) === "main"
+                ? "data-main-workspace"
+                : "data-panel-workspace",
+            ))
+      )
+        returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),
@@ -846,6 +860,20 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
@@ -1609,7 +1637,9 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
+      <LinkThreadTabContext value={openLinkedThread}>
+        {workspace}
+      </LinkThreadTabContext>
     </MessageManagement>
   );
 }
@@ -1626,4 +1656,30 @@ export function mediaReviewForDestination<
     (review.entryId === undefined || review.entryId === entryId)
     ? review
     : undefined;
+}
+
+/** A DM tab shows the other participant in a 1rem slot, so it asks for the
+ * relay thumbnail message rows already loaded rather than the original. */
+export function ConversationIcon({
+  item,
+  picture,
+  media,
+}: {
+  item: Pick<ChannelSummary, "name" | "channelType" | "private">;
+  picture: string | undefined;
+  media: RelaySession["media"];
+}) {
+  const Icon = channelIcon(item);
+  return item.channelType === "dm" ? (
+    <span className={tabStyles.icon}>
+      <Avatar
+        alt=""
+        fallback={item.name}
+        size="fill"
+        src={avatarMedia(picture, media)}
+      />
+    </span>
+  ) : (
+    <Icon size="1rem" />
+  );
 }
