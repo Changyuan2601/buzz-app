@@ -2,8 +2,6 @@
 // Origin, adaptation details and licence: PROVENANCE.md and LICENSE.
 //! Selected Goose Developer implementation, not a new tool implementation.
 //! See PROVENANCE.md. App integration supplies the workspace explicitly.
-pub mod edit;
-
 pub mod shell;
 mod shell_output_streaming;
 

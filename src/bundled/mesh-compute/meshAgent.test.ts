@@ -294,14 +294,13 @@ describe("Mesh agent runtime", () => {
   it("defaults to an agent with Buzz access, thread sessions and a ~/.buzz workspace", () => {
     expect(meshAgentConfig({})).toMatchObject({
       mode: "agent",
-      buzz: true,
       scope: "thread",
       workspace: "~/.buzz",
     });
     expect(meshAgentConfig({ workspace: "relative" }).workspace).toBe(
       "~/.buzz",
     );
-    expect(meshAgentConfig({ buzz: false }).buzz).toBe(false);
+    expect(meshAgentConfig({ buzz: false })).not.toHaveProperty("buzz");
     expect(meshAgentConfig({ mode: "chat" }).mode).toBe("chat");
     expect(meshAgentConfig({ preset: "nope" }).preset).toBeUndefined();
   });
@@ -317,7 +316,7 @@ describe("Mesh agent runtime", () => {
       "<agent-instructions>\nbe brief\n</agent-instructions>",
     );
     expect(
-      instructions(meshAgentConfig({ prompt: "be brief", buzz: false })),
+      instructions(meshAgentConfig({ prompt: "be brief", mode: "chat" })),
     ).toBe("be brief");
   });
 
@@ -475,14 +474,12 @@ describe("Mesh agent runtime", () => {
     },
   );
 
-  it("refreshes core memory and drops Buzz guidance when access changes", async () => {
+  it("refreshes core memory and ignores the retired Buzz-access flag", async () => {
     const coreMemory = vi
       .fn()
       .mockResolvedValueOnce("first memory")
-      .mockResolvedValueOnce("updated memory");
-    const { runtime, delivery, inline } = setup({ coreMemory }, OWNER, {
-      buzz: true,
-    });
+      .mockResolvedValue("updated memory");
+    const { runtime, delivery, inline } = setup({ coreMemory }, OWNER, {});
     await runtime.run(delivery());
     await runtime.run(delivery());
     await runtime.run({
@@ -491,8 +488,8 @@ describe("Mesh agent runtime", () => {
     });
     expect(inline.run.mock.calls[0]?.[0].system).toContain("first memory");
     expect(inline.run.mock.calls[1]?.[0].system).toContain("updated memory");
-    expect(inline.run.mock.calls[2]?.[0].system).not.toContain("core-memory");
-    expect(coreMemory).toHaveBeenCalledTimes(2);
+    expect(inline.run.mock.calls[2]?.[0].system).toContain("updated memory");
+    expect(coreMemory).toHaveBeenCalledTimes(3);
   });
 
   it("queues follow-ups while other conversations proceed independently", async () => {
@@ -567,9 +564,7 @@ describe("Mesh agent runtime", () => {
     async (stage) => {
       const gate = deferred<void>();
       const started = deferred<void>();
-      const { runtime, delivery, inline, deps, publish } = setup({}, OWNER, {
-        buzz: true,
-      });
+      const { runtime, delivery, inline, deps, publish } = setup({}, OWNER, {});
       const prepare = deps.prepare;
       if (stage === "prepare")
         vi.spyOn(deps, "prepare").mockImplementationOnce(async (origin) => {

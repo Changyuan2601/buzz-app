@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { AgentViewProps } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -24,7 +23,7 @@ const MODES = options([
 ]);
 const MODE_DESCRIPTIONS: Record<MeshMode, string> = {
   chat: "Answers from the conversation alone, with no tools. Suits small models.",
-  agent: "goose with shell, file and skill tools in its workspace.",
+  agent: "Works with shell, project skills and Buzz tools.",
 };
 const SCOPES = options([
   ["thread", "One session per thread"],
@@ -48,7 +47,6 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
     draft.prompt !== saved.prompt ||
     draft.workspace.trim() !== saved.workspace ||
     draft.mode !== saved.mode ||
-    draft.buzz !== saved.buzz ||
     draft.scope !== saved.scope ||
     draft.preset !== saved.preset;
   const preset = MESH_AGENT_PRESETS.find((item) => item.id === draft.preset);
@@ -93,7 +91,6 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
             preset: picked.id,
             prompt: picked.prompt,
             mode: picked.mode,
-            buzz: picked.buzz ?? true,
           });
         }}
       />
@@ -122,13 +119,6 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
           })
         }
       />
-      {draft.mode === "agent" && (
-        <Checkbox
-          label="Buzz access: read Buzz and post as it works, as Codex and Claude Code agents do. Off posts only its final answer."
-          checked={draft.buzz}
-          onCheckedChange={(buzz) => setDraft({ ...draft, buzz })}
-        />
-      )}
       <Select
         label="Sessions"
         variant="field"
@@ -144,7 +134,7 @@ export function MeshAgentTab({ agent, save }: AgentViewProps<MeshAgentConfig>) {
       {draft.mode !== "chat" && (
         <Field
           label="Workspace"
-          description={`Where its shell and file tools run, and where it finds project skills. An absolute path, or ${DEFAULT_WORKSPACE}.`}
+          description={`Where its shell runs, and where it finds project skills. An absolute path, or ${DEFAULT_WORKSPACE}.`}
           error={workspaceValid ? undefined : "Use an absolute path."}
         >
           <Input

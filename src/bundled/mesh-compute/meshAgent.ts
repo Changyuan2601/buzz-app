@@ -20,9 +20,6 @@ export type MeshAgentConfig = Readonly<{
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   mode: MeshMode;
-  /** Agent mode only: whether the inline agent gets Buzz tools (read Buzz, post as
-   * it works) or just has its final answer posted. */
-  buzz: boolean;
   /** Whether each thread is its own conversation, or the whole channel is one. */
   scope: MeshScope;
   /** The preset it started from, if any; informational. */
@@ -35,16 +32,12 @@ export const DEFAULT_MESH_AGENT_CONFIG: MeshAgentConfig = Object.freeze({
   prompt: DEFAULT_PROMPT,
   workspace: DEFAULT_WORKSPACE,
   mode: "agent",
-  buzz: true,
   scope: "thread",
 });
 export const absoluteWorkspace = (path: string) =>
   path.trim().startsWith("/") || /^[A-Za-z]:[\\/]/.test(path.trim());
 export const validWorkspace = (path: string) =>
   path.trim() === DEFAULT_WORKSPACE || absoluteWorkspace(path);
-/** Whether this agent has Buzz tool access. */
-export const buzzAccess = (config: MeshAgentConfig) =>
-  config.mode === "agent" && config.buzz;
 export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
   const raw =
     value && typeof value === "object"
@@ -63,7 +56,6 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
         ? raw.workspace.trim()
         : DEFAULT_WORKSPACE,
     mode,
-    buzz: raw.buzz !== false,
     scope: raw.scope === "channel" ? "channel" : "thread",
     ...(preset ? { preset } : {}),
   };
@@ -144,7 +136,7 @@ export function instructions(
   memory?: string | null,
 ): string {
   const prompt = config.prompt.trim() || DEFAULT_PROMPT;
-  if (!buzzAccess(config)) return prompt;
+  if (config.mode !== "agent") return prompt;
   return `Your final prose response is automatically delivered to the person in the current conversation. Return the answer itself, not a report that you replied. You do not need to use Buzz send to answer. Buzz send remains available for optional updates or messages elsewhere; it does not finish your turn. When sending in the current conversation, omit channel and reply to use the host's destination.
 
 ${coreMemorySection(memory)}
@@ -315,13 +307,12 @@ export class MeshAgentRuntime {
           resolveWorkspace(this.deps, config.workspace),
           signal,
         );
-        const memory =
-          buzzAccess(config) && this.deps.coreMemory
-            ? await untilAborted(
-                this.deps.coreMemory(agent.pubkey, signal),
-                signal,
-              )
-            : undefined;
+        const memory = this.deps.coreMemory
+          ? await untilAborted(
+              this.deps.coreMemory(agent.pubkey, signal),
+              signal,
+            )
+          : undefined;
         const earlier = await untilAborted(read(), signal);
         signal.throwIfAborted();
         if (this.disposed || (delivery.current && !delivery.current())) return;

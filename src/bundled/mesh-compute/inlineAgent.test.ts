@@ -22,7 +22,7 @@ function input() {
     },
     signal: abort.signal,
     current: () => true,
-    config: { buzz: true },
+    config: { mode: "agent" },
   } as unknown as InlineTurn["delivery"];
   const turn: InlineTurn = {
     delivery,
@@ -143,30 +143,26 @@ it("resends cancellation on ready if cancellation beat native registration", asy
   expect(publish).not.toHaveBeenCalled();
 });
 
-it("honors Buzz access off and rejects callbacks for unadvertised tools", async () => {
+it("always advertises Buzz tools and rejects callbacks for unknown tools", async () => {
   const { runtime, turn, publish } = input();
-  turn.delivery = {
-    ...turn.delivery,
-    config: { ...turn.delivery.config, buzz: false },
-  };
   let resolve!: () => void;
   const response = new Promise<void>((r) => {
     resolve = r;
   });
   ipc.invoke.mockImplementation(async (command, args) => {
     if (command === "mesh_compute_agent_run") {
-      expect(args.request.tools).toEqual([]);
+      expect(args.request.tools).toEqual(INLINE_TOOLS);
       args.events.onmessage({
         type: "tool",
         run: args.request.id,
         id: 1,
         call: {
-          name: "buzz_send",
+          name: "buzz_unknown",
           arguments: { text: "not permitted", audience: "everyone" },
         },
       });
       await response;
-      return "Answer without Buzz tools";
+      return "Answer";
     }
     if (command === "mesh_compute_agent_result") {
       expect(args.result.isError).toBe(true);
@@ -174,7 +170,7 @@ it("honors Buzz access off and rejects callbacks for unadvertised tools", async 
     }
   });
   expect(await runtime.run(turn)).toEqual({
-    text: "Answer without Buzz tools",
+    text: "Answer",
   });
   expect(publish).not.toHaveBeenCalled();
 });

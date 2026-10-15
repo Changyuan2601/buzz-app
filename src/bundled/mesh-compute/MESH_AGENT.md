@@ -11,16 +11,16 @@ there is no ACP helper, process-backed session store or MCP bridge. See the
   delivery applies, without a sibling-watch exception. Matched Interest
   instructions apply only to the owner's watched turn; direct mentions do not
   inherit watch instructions.
-- **Agent (default):** the inline runtime provides local shell, write, edit and
+- **Agent (default):** the inline runtime provides local shell and
   skill-loading tools in the configured workspace (default `~/.buzz`). Local
   tools have the user’s filesystem authority, not a sandbox. This trial does not
   provide tree/image tools, extension installation or delegation.
-- **Buzz access (default on):** Agent mode offers the full shared Buzz catalog
+- **Buzz tools:** Agent mode always offers the full shared Buzz catalog
   with `buzz_` names: send, edit-message, react, read, channels, members,
   users, dm, mem_get, mem_set, canvas and media_get. Calls use the
   existing TypeScript handlers and captured agent handle/native signer. No key
-  enters the model. Turning Buzz access off removes these tools and core-memory
-  guidance, not local tools or automatic final-response delivery.
+  enters the model. Agent mode includes core-memory guidance; Chat remains tool-free.
+  The retired `buzz` config flag is ignored.
 
 Both modes remain owner-only. Watches and non-owner mentions do not grant
 permission to trigger Mesh. No mode triggers itself.

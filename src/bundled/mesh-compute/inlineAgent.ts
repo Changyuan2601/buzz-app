@@ -174,8 +174,7 @@ export class InlineAgent {
           const name = frame.call.name.startsWith("buzz_")
             ? frame.call.name.slice(5)
             : "";
-          if (!delivery.config.buzz || !ALLOWED.has(name))
-            throw new Error("Tool is not permitted");
+          if (!ALLOWED.has(name)) throw new Error("Tool is not permitted");
           result = {
             content: content(
               await callTool(client, context, name, frame.call.arguments ?? {}),
@@ -222,16 +221,14 @@ export class InlineAgent {
           lease: inference.lease,
           model: inference.model,
           workspace: cwd,
-          system: delivery.config.buzz
-            ? `${system}
+          system: `${system}
 
-All shared Buzz tools are available with a buzz_ prefix. Instructions referring to mem_set mean buzz_mem_set. Use buzz_read with a small limit, explicit channel and before for older channel pages, or a narrower search, to retrieve exact context when needed.`
-            : system,
+All shared Buzz tools are available with a buzz_ prefix. Instructions referring to mem_set mean buzz_mem_set. Use buzz_read with a small limit, explicit channel and before for older channel pages, or a narrower search, to retrieve exact context when needed.`,
           messages: messages.map((message) => ({
             ...message,
             metadata: { userVisible: true, agentVisible: true },
           })),
-          tools: delivery.config.buzz ? INLINE_TOOLS : [],
+          tools: INLINE_TOOLS,
         },
         events,
       });

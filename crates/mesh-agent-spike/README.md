@@ -34,7 +34,7 @@ then the existing captured AgentHandle/native signer. No keys enter the model or
 callback. This preserves Buzz's trusted-main-WebView model, not a hostile-plugin
 sandbox.
 
-Local catalog: shell, load_skill. Separate write/edit tools are not exposed. No tree/image/installer/delegation.
+Local catalog: shell, load_skill. No tree/image/installer/delegation.
 Filesystem skills use explicit workspace and home roots. Local tools have the
 user's filesystem authority, not a sandbox. Shell capture is bounded to 256 KiB,
 execution to 120 seconds, and Unix process-group/collector drop cleanup stops

@@ -9,8 +9,6 @@ export type MeshAgentPreset = Readonly<{
   name: string;
   summary: string;
   mode: MeshMode;
-  /** Agent mode: whether it gets the Buzz tools. */
-  buzz?: boolean;
   /** The smallest model class the preset suits. Room for recommending a
    * preset (or warning) from the community's models; not used yet. */
   fits: "small" | "medium" | "large";

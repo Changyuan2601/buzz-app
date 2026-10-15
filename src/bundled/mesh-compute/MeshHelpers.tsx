@@ -50,7 +50,6 @@ export function MeshHelpers({ agents }: { agents: Agents }) {
                 preset: preset.id,
                 prompt: preset.prompt,
                 mode: preset.mode,
-                buzz: preset.buzz ?? true,
               }
             : {}),
         },

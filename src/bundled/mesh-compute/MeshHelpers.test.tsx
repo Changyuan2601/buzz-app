@@ -81,7 +81,6 @@ it.each(MESH_AGENT_PRESETS)(
         preset: preset.id,
         prompt: preset.prompt,
         mode: preset.mode,
-        buzz: preset.buzz ?? true,
       },
     });
     expect(await screen.findByRole("status")).toHaveTextContent(
