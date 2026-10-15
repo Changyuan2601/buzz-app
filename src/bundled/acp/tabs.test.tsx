@@ -17,11 +17,11 @@ const start: Config = {
   env: { CURSOR_API_KEY: "hunter2", PATH: "/opt/bin" },
 };
 
-function mount(check = vi.fn(async () => "Ready.")) {
+function mount(check = vi.fn(async () => "Ready."), initial = start) {
   const { SettingsTab } = createTabs({ check });
   const saves: Config[] = [];
   function Host() {
-    const [config, setConfig] = useState(start);
+    const [config, setConfig] = useState(initial);
     return (
       <SettingsTab
         agent={{ config } as Agent<Config>}
@@ -107,3 +107,22 @@ it("needs a new confirmation after switching preset away and back", async () => 
   await waitFor(() => expect(saves).toHaveLength(2));
   expect(saves[1]).toMatchObject({ preset: "cursor", approval: "" });
 });
+
+it.each([[["a\nb"]], [[""]]])(
+  "won't silently rewrite stored args %j the box can't show",
+  async (stored) => {
+    const { saves } = mount(undefined, { ...start, args: stored });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(screen.getByRole("alert")).toHaveTextContent("can't be empty");
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(save);
+    expect(saves).toHaveLength(0);
+    const args = screen.getByRole("textbox", { name: "Arguments" });
+    await userEvent.clear(args);
+    await userEvent.type(args, "acp");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await userEvent.click(save);
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]).toMatchObject({ args: ["acp"] });
+  },
+);
