@@ -107,11 +107,13 @@ export function createTabs({
     const [error, setError] = useState("");
     const [confirming, setConfirming] = useState(false);
     const [checked, setChecked] = useState("");
-    const current = useApproved(saved);
+    // A preset switch needs a new confirmation, even back to the same command.
+    const [reset, setReset] = useState(false);
+    const current = useApproved(saved) && !reset;
     const edited: Config = {
       ...draft,
-      approval: saved.approval,
-      args: args.split("\n").filter((arg) => arg !== ""),
+      approval: reset ? "" : saved.approval,
+      args: args === "" ? [] : args.split("\n"),
       env: envOf(rows),
     };
     const configChanged = JSON.stringify(edited) !== JSON.stringify(saved);
@@ -135,6 +137,7 @@ export function createTabs({
           (await approved(edited)) ? edited : { ...edited, approval: "" },
         );
         setChecked("");
+        setReset(false);
       });
     const confirm = () =>
       run(async () => {
@@ -159,6 +162,7 @@ export function createTabs({
             const next = withPreset(edited, id);
             setDraft(next);
             setArgs(next.args.join("\n"));
+            setReset(true);
           }}
         />
         <Field
