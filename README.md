@@ -254,7 +254,8 @@ to exercise component reuse and contribution lifecycle.
 ## Plugin contract
 
 `src/bundled/channels` is a bundled example. External projects have `manifest.json`
-(`id`, `name`, `apiVersion: 1`) and an entry point exporting
+(`id`, `name`, `apiVersion: 1`, and optional `description`/`discovery`) and an entry
+point exporting
 `apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
 `inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
 `ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register

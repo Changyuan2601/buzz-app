@@ -24,9 +24,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     name: "Toggle tab pane",
     exact: true,
   });
-  await expect(split).toHaveAttribute("aria-disabled", "true");
-  await split.focus();
-  await split.press("Enter");
+  await expect(split).toHaveCount(0);
   await expect(workspace).toHaveCount(0);
   const fullWidth = (await main.boundingBox()).width;
   const link = app.append(
@@ -198,7 +196,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(workspace).toHaveCount(0);
-  await expect(split).toHaveAttribute("aria-disabled", "true");
+  await expect(split).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();
@@ -334,7 +332,7 @@ test.describe("crowded content tabs", () => {
     await expect(
       list.getByRole("tab", { name: "zeta", exact: true }),
     ).toBeFocused();
-    // Closing the final content tab returns focus to the empty pane toggle.
+    // Closing the final content tab returns focus to channel actions.
     for (let remaining = 5; remaining > 0; remaining--) {
       await tabs.first().focus();
       await tabs.first().press("Delete");
@@ -344,8 +342,10 @@ test.describe("crowded content tabs", () => {
       name: "Toggle tab pane",
       exact: true,
     });
-    await expect(split).toHaveAttribute("aria-disabled", "true");
-    await expect(split).toBeFocused();
+    await expect(split).toHaveCount(0);
+    await expect(
+      main.getByRole("button", { name: "Channel actions", exact: true }),
+    ).toBeFocused();
     await expect(
       workspace.getByRole("button", { name: "Add tab", exact: true }),
     ).toHaveCount(0);

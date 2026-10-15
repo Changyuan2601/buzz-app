@@ -510,7 +510,42 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
-Plugins can declare host access in `manifest.json`:
+Plugin manifests may include display-only discovery metadata:
+
+```json
+{
+  "id": "example.invoices",
+  "name": "Invoices",
+  "apiVersion": 1,
+  "description": "Reconcile invoices without leaving Buzz.",
+  "discovery": {
+    "category": "finance",
+    "tags": ["Accounting", "Invoice Management"]
+  }
+}
+```
+
+Descriptions contain 1–280 UTF-8 bytes. Category values use the same stable
+lowercase identifier syntax as plugin IDs. Tags are readable plain text, such as
+`"Programming Language"`, with 1–80 UTF-8 bytes per tag and at most 16 tags. Blank
+tags and control characters (including tabs and newlines) are rejected. Duplicate
+comparison trims and collapses Unicode whitespace to a single space, then applies
+Unicode lowercasing; `"Programming Language"` and `" programming   language "`
+are duplicates. The original spelling, casing, and spacing are preserved for
+display and serialization. This comparison does not perform Unicode canonical
+normalization or full Unicode case folding.
+Categories are open slugs: a host may give recognized categories first-class
+labels and group unrecognized values under Other, but an unrecognized category
+does not invalidate a plugin. Tags carry open-ended search terms. Neither field
+grants capabilities, asserts provenance, or describes runtime state. The
+`discovery` object accepts unknown display hints for forward compatibility;
+security-bearing manifest fields remain strict.
+
+Hosts released before these metadata fields were introduced reject `description`
+and `discovery` as unknown manifest keys. Publishers targeting those hosts must
+omit both fields; using slug tags does not make them compatible.
+
+Plugins can separately declare host access in `manifest.json`:
 
 ```json
 {

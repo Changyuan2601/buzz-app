@@ -1,5 +1,7 @@
 {
   "id": "buzz.todos",
   "name": "Todos",
-  "apiVersion": 1
+  "apiVersion": 1,
+  "description": "Track channel tasks and assignees from Canvas.",
+  "discovery": { "category": "productivity" }
 }

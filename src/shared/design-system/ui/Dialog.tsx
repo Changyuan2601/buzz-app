@@ -25,8 +25,8 @@ export type DialogProps = {
   headerGap?: "default" | "compact";
   /** Keep spacing beside scrolling content on the fixed header and footer. */
   chromeSpacing?: "default" | "padded";
-  /** Keep a final body control close to its confirmation actions. */
-  footerGap?: "default" | "compact";
+  /** Compact groups actions; none lets a footerless scrollport reach the bottom edge. */
+  footerGap?: "default" | "compact" | "none";
   /** Replace a step inside this modal; scale defines its recessed/raised position. */
   step?: { key: string; scale: number };
   leadingActions?: ReactNode;

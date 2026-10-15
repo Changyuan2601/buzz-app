@@ -2,6 +2,8 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
 import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -914,9 +916,19 @@ function Timeline({
           })}
         </Virtualizer>
       )}
-      {!rows.length && !window.hasMore && (
-        <p className={styles.empty}>No messages yet.</p>
-      )}
+      {!rows.length &&
+        !window.hasMore &&
+        window.status === "ready" &&
+        !window.error &&
+        !window.loadingOlder && (
+          <div className={styles.emptyConversation}>
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="No messages yet."
+              description="Start the conversation below."
+            />
+          </div>
+        )}
     </section>
   );
 }

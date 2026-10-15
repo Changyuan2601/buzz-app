@@ -28,7 +28,21 @@ pub struct Manifest {
     pub name: String,
     pub api_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<Discovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostGrants>,
+}
+/// Display-only metadata is deliberately forward-compatible. Unknown fields are
+/// ignored so adding a discovery hint does not make a plugin unloadable.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Discovery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -94,8 +108,40 @@ impl Manifest {
         if self.name.trim().is_empty() || self.name.len() > 80 {
             return Err("Name must contain 1–80 bytes of text".into());
         }
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|description| description.trim().is_empty() || description.len() > 280)
+        {
+            return Err("Description must contain 1–280 bytes of text".into());
+        }
         if self.api_version != 1 {
             return Err("Only page plugin API version 1 is supported".into());
+        }
+        if let Some(discovery) = &self.discovery {
+            if let Some(category) = &discovery.category {
+                valid_id(category)?;
+            }
+            if discovery.tags.len() > 16 {
+                return Err("Too many discovery tags".into());
+            }
+            let mut tags = std::collections::HashSet::new();
+            for tag in &discovery.tags {
+                if tag.trim().is_empty() || tag.len() > 80 || tag.chars().any(char::is_control) {
+                    return Err(
+                        "Discovery tags must contain 1–80 bytes of text without control characters"
+                            .into(),
+                    );
+                }
+                let key = tag
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                if !tags.insert(key) {
+                    return Err("Duplicate discovery tag".into());
+                }
+            }
         }
         if let Some(host) = &self.host {
             if host.commands.len() > 16
@@ -1300,6 +1346,123 @@ mod tests {
             },
         ] {
             assert!(publisher(&bytes, &sign(invalid)).is_err());
+        }
+    }
+
+    #[test]
+    fn validates_discovery_metadata_and_old_manifests() {
+        let old: Manifest =
+            serde_json::from_str(r#"{"id":"example.page","name":"Example","apiVersion":1}"#)
+                .unwrap();
+        assert_eq!(old.description, None);
+        assert_eq!(old.discovery, None);
+        assert!(old.validate().is_ok());
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({"id":"example.page","name":"Example","apiVersion":1})
+        );
+
+        let manifest = serde_json::json!({
+            "id": "example.page",
+            "name": "Example",
+            "apiVersion": 1,
+            "description": "Reconcile invoices without leaving Buzz.",
+            "discovery": {
+                "category": "finance",
+                "tags": ["accounting", "invoices"],
+                "futureDisplayHint": true
+            }
+        });
+        let parsed: Manifest = serde_json::from_value(manifest).unwrap();
+        assert!(parsed.validate().is_ok());
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Reconcile invoices without leaving Buzz.")
+        );
+        assert_eq!(
+            parsed.discovery.as_ref().unwrap().category.as_deref(),
+            Some("finance")
+        );
+        assert_eq!(
+            parsed.discovery.as_ref().unwrap().tags,
+            ["accounting", "invoices"]
+        );
+        assert!(!serde_json::to_string(&parsed)
+            .unwrap()
+            .contains("futureDisplayHint"));
+
+        for description in ["".into(), "   ".into(), "x".repeat(281)] {
+            let mut invalid = parsed.clone();
+            invalid.description = Some(description);
+            assert!(invalid.validate().is_err());
+        }
+        for category in ["", "Finance", "finance_tools"] {
+            let mut invalid = parsed.clone();
+            invalid.discovery.as_mut().unwrap().category = Some(category.into());
+            assert!(invalid.validate().is_err());
+        }
+        let mut duplicate = parsed.clone();
+        duplicate.discovery.as_mut().unwrap().tags = vec!["finance".into(), "finance".into()];
+        assert!(duplicate.validate().is_err());
+        let mut too_many = parsed.clone();
+        too_many.discovery.as_mut().unwrap().tags =
+            (0..17).map(|index| format!("tag-{index}")).collect();
+        assert!(too_many.validate().is_err());
+
+        let unknown_top_level = serde_json::json!({
+            "id": "example.page",
+            "name": "Example",
+            "apiVersion": 1,
+            "futureSecurityField": true
+        });
+        assert!(serde_json::from_value::<Manifest>(unknown_top_level).is_err());
+    }
+
+    #[test]
+    fn discovery_tags_accept_readable_text_and_preserve_display_spelling() {
+        let text = serde_json::json!({
+            "id": "example.page", "name": "Example", "apiVersion": 1,
+            "discovery": {
+                "category": "finance",
+                "tags": ["Programming Language", "  Café  Tools  ", "编程", "C++", "🛠️"]
+            }
+        });
+        let manifest: Manifest = serde_json::from_value(text.clone()).unwrap();
+        assert!(manifest.validate().is_ok());
+        assert_eq!(serde_json::to_value(&manifest).unwrap(), text);
+        let bytes = artifact_from_text(&text.to_string(), "export const code = 1".into()).unwrap();
+        let artifact: super::Artifact = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(artifact.manifest, manifest);
+
+        for tag in ["x".repeat(80), "é".repeat(40)] {
+            let mut valid = manifest.clone();
+            valid.discovery.as_mut().unwrap().tags = vec![tag];
+            assert!(valid.validate().is_ok());
+        }
+        for tag in [
+            "".into(),
+            "   ".into(),
+            "\u{a0}".into(),
+            "x".repeat(81),
+            "é".repeat(41),
+            "Programming\nLanguage".into(),
+            "Programming\tLanguage".into(),
+            "Bad\0Tag".into(),
+            "Bad\u{7f}Tag".into(),
+        ] {
+            let mut invalid = manifest.clone();
+            invalid.discovery.as_mut().unwrap().tags = vec![tag];
+            assert!(invalid.validate().is_err());
+        }
+        for pair in [
+            ["Programming Language", "programming language"],
+            ["Programming Language", "  Programming   Language  "],
+            ["Programming Language", "Programming\u{a0}Language"],
+            ["Café", "CAFÉ"],
+        ] {
+            let mut duplicate = manifest.clone();
+            duplicate.discovery.as_mut().unwrap().tags = pair.map(String::from).to_vec();
+            assert!(duplicate.validate().is_err());
         }
     }
 

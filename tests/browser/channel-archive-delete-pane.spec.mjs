@@ -25,7 +25,7 @@ for (const action of ["archive", "delete"]) {
           hidden: ["22222222-2222-4222-8222-222222222222"],
         },
       });
-    test("cancels to its pane trigger, locks pending, and preserves the confirmed destination on reload", async ({
+    test("cancels to its pane trigger, reports pending in a toast, and preserves the confirmed destination on reload", async ({
       page,
       app,
     }, testInfo) => {
@@ -114,7 +114,10 @@ for (const action of ["archive", "delete"]) {
       await trigger.focus();
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", {
-        name: `${label}: Lifecycle channel`,
+        name:
+          action === "delete"
+            ? "Delete Lifecycle channel?"
+            : `${label}: Lifecycle channel`,
         exact: true,
       });
       await expect(dialog).toBeVisible();
@@ -168,23 +171,15 @@ for (const action of ["archive", "delete"]) {
         await expect(dialog.getByRole("textbox")).toHaveCount(0);
         await confirm.click();
         await seen;
-        await expect(confirm).toBeDisabled();
-        await expect(confirm).toHaveAttribute("aria-busy", "true");
-        await expect(confirm.locator(".buzz-button-spinner")).toBeVisible();
-        await expect(confirm.locator(".buzz-button-label")).toHaveCSS(
-          "opacity",
-          "0",
-        );
-        await expect(dialog.getByRole("status")).toHaveClass("sr-only");
-        await dialog.screenshot({
-          path: testInfo.outputPath(`${action}-pending.png`),
+        await expect(dialog).toHaveCount(0);
+        const pending = page.getByRole("dialog", {
+          name:
+            action === "archive" ? "Archiving channel…" : "Deleting channel…",
+          exact: true,
         });
-        await expect(
-          dialog.getByRole("button", { name: "Cancel", exact: true }),
-        ).toBeDisabled();
-        await page.keyboard.press("Escape");
-        await expect(page.getByRole("dialog")).toHaveCount(1);
-        await expect(dialog).toBeVisible();
+        await expect(pending).toBeVisible();
+        await expect(pending).not.toHaveAttribute("aria-modal", "true");
+        await expect(panel).toBeVisible();
         await expect(
           page.locator(`[data-channel-id="${channelId}"]`),
         ).toBeVisible();
@@ -193,6 +188,12 @@ for (const action of ["archive", "delete"]) {
         release();
       }
       await expect(dialog).toHaveCount(0);
+      await expect(
+        page.getByRole("dialog", {
+          name: `${action === "archive" ? "Channel archived" : "Channel deleted"}: Lifecycle channel`,
+          exact: true,
+        }),
+      ).toBeVisible();
       await expect(row).toHaveCount(0);
       const destination =
         action === "archive"
@@ -423,7 +424,7 @@ test.describe("owner-role agent without direct ownership", () => {
       .getByRole("menuitem", { name: "Delete channel", exact: true })
       .click();
     const dialog = page.getByRole("dialog", {
-      name: "Delete channel: Lifecycle channel",
+      name: "Delete Lifecycle channel?",
       exact: true,
     });
     await expect(dialog).toBeVisible();
@@ -469,18 +470,17 @@ test.describe("owner-role agent without direct ownership", () => {
     await dialog
       .getByRole("button", { name: "Delete channel", exact: true })
       .click();
-    await expect(dialog.getByRole("alert")).toHaveText(
-      "Only the channel owner can delete",
-    );
+    await expect(dialog).toHaveCount(0);
+    const failure = page.getByRole("dialog", {
+      name: "Delete channel failed",
+      exact: true,
+    });
+    await expect(failure).toContainText("Only the channel owner can delete");
     await expect(
       page.locator(`[data-channel-id="${channelId}"]`),
     ).toBeVisible();
-    await expect(
-      dialog.getByRole("button", { name: "Delete channel", exact: true }),
-    ).toBeEnabled();
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(trigger).toBeFocused();
+    await failure.getByRole("button", { name: "Dismiss notification" }).click();
     await trigger.click();
     await dialog
       .getByRole("button", { name: "Delete channel", exact: true })

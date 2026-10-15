@@ -424,6 +424,14 @@ export function SelectExamples() {
           onValueChange={setInline}
           groups={workspaceGroups}
         />
+        <Select
+          label="Input-height filter"
+          variant="compact"
+          size="md"
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
         <div style={{ maxWidth: 160 }}>
           <Select
             label="Row workspace"

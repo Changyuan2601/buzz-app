@@ -4,8 +4,6 @@
   flex: 1;
   min-height: 0;
   gap: var(--space-4);
-  /* Tighten this search-led composition without changing other dialogs. */
-  margin-block-start: calc(-1 * var(--space-2));
 }
 .memberList {
   display: flex;
@@ -14,11 +12,12 @@
   min-height: 0;
   overflow: auto;
   gap: var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  /* Keep the native scrollbar and row focus rings inside the fixed border.
-     The heading owns its top inset so there is no padding to scroll away. */
-  padding: 0 var(--space-1) var(--space-2);
+  /* Align headings with the field while retaining row focus clearance. */
+  margin-inline: calc(
+    -1 *
+    min(var(--dialog-padding), var(--space-control-inset) + var(--space-1))
+  );
+  padding: 0 var(--space-1) var(--space-6);
 }
 .memberList > * {
   flex-shrink: 0;

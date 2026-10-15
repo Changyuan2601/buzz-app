@@ -1,1 +1,7 @@
-{ "id": "buzz.agent-activity", "name": "Agent Activity", "apiVersion": 1 }
+{
+  "id": "buzz.agent-activity",
+  "name": "Agent Activity",
+  "apiVersion": 1,
+  "description": "Show live and recent agent work alongside conversations.",
+  "discovery": { "category": "agents", "tags": ["Essentials"] }
+}

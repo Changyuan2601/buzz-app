@@ -111,8 +111,9 @@ export function useConversationTabs({
   const focusSplit = useRef(false);
   // The opening control remounts in the main header when the pane closes.
   useLayoutEffect(() => {
-    if (focusSplit.current && splitTrigger.current) {
-      splitTrigger.current.focus({ preventScroll: true });
+    if (focusSplit.current) {
+      const target = splitTrigger.current ?? fallbackFocus?.current;
+      target?.focus({ preventScroll: true });
       focusSplit.current = false;
     }
   });

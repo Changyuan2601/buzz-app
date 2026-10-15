@@ -276,5 +276,5 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
 .paneToggle {
   display: flex;
   border-inline-start: 1px solid var(--border-standard);
-  padding-inline-start: var(--space-2);
+  padding-inline-start: var(--space-1);
 }

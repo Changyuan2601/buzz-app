@@ -292,7 +292,11 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
                 (button) => button.getBoundingClientRect().width,
               ),
             );
-            return el.scrollWidth - Math.max(el.clientWidth, widest);
+            // Include the shared focus-ring inset around an oversized action.
+            const style = getComputedStyle(el);
+            const inset =
+              parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+            return el.scrollWidth - Math.max(el.clientWidth, widest + inset);
           }),
         )
         .toBeLessThanOrEqual(1);

@@ -636,7 +636,13 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
               (button) => button.getBoundingClientRect().width,
             ),
           );
-          return footer.scrollWidth - Math.max(footer.clientWidth, widest);
+          // Include the shared focus-ring inset around an oversized action.
+          const style = getComputedStyle(footer);
+          const inset =
+            parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+          return (
+            footer.scrollWidth - Math.max(footer.clientWidth, widest + inset)
+          );
         }),
       )
       .toBeLessThanOrEqual(1);
@@ -1254,7 +1260,8 @@ test("unified session naming and lifetime retain host focus and save only explic
               );
               return Math.abs(
                 element.getBoundingClientRect().bottom -
-                  footer.getBoundingClientRect().bottom -
+                  footer.getBoundingClientRect().bottom +
+                  Number.parseFloat(getComputedStyle(footer).paddingBottom) -
                   gutter -
                   element.clientTop,
               );

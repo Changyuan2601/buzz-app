@@ -1,5 +1,7 @@
 {
   "id": "buzz.reminders",
   "name": "Reminders",
-  "apiVersion": 1
+  "apiVersion": 1,
+  "description": "Set message reminders and review what is due.",
+  "discovery": { "category": "productivity" }
 }
