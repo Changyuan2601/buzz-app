@@ -47,6 +47,21 @@ describe("problems", () => {
     );
   });
 
+  it.each(["relative/folder", "./here", "~user/x"])(
+    "rejects the workspace %j",
+    (workspace) => {
+      expect(problems({ ...base, workspace })).toContain(
+        "The workspace must be an absolute path or start with `~/`.",
+      );
+    },
+  );
+
+  it.each([["acp", ""], ["a\nb"]])("rejects the args %j", (...args) => {
+    expect(problems({ ...base, args })).toContain(
+      "Arguments can't be empty or span lines.",
+    );
+  });
+
   it.each(["1KEY", "A-B", "", "A B"])("rejects the env name %j", (name) => {
     expect(problems({ ...base, env: { [name]: "x" } })[0]).toContain(
       "isn't a valid environment variable name",
