@@ -217,6 +217,11 @@ export type CatalogSeed = CloneSettings & {
   picture?: string;
 };
 export interface AgentControlHost {
+  moveCommunity?(
+    id: string,
+    expectedRevision: number,
+    resolution: CommunityResolution,
+  ): Promise<ControlSnapshot>;
   readLog?(target: AgentLogTarget): Promise<string>;
   configureHere?(
     id: string,
@@ -312,6 +317,7 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  moveCommunity?: AgentControlHost["moveCommunity"];
   /** Sensitive local output. Native custody and exact community are rechecked per read. */
   readLog?(target: AgentLogTarget): Promise<string>;
   configureHere?: AgentControlHost["configureHere"];
@@ -905,6 +911,26 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.moveCommunity
+      ? {
+          moveCommunity: (
+            id: string,
+            revision: number,
+            resolution: CommunityResolution,
+          ) =>
+            run(
+              (native) => {
+                if (!native.moveCommunity)
+                  throw new Error("Moving communities is unavailable.");
+                return native.moveCommunity(id, revision, resolution);
+              },
+              (data) => update({ data }),
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
     ...(host?.configureHere
       ? {
           configureHere: (id: string, resolution: CommunityResolution) =>

@@ -136,6 +136,7 @@ fn main() {
             "agent_control_local_clone_settings",
             "agent_control_clone_settings",
             "agent_control_use_here",
+            "agent_control_move_community",
             "agent_models_begin",
             "agent_models_cancel",
             "agent_models_run",

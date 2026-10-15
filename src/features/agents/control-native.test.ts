@@ -178,9 +178,14 @@ it("retained inventory actions use native custody commands", async () => {
     signature: "signed",
   };
   await host?.configureHere?.("retained", resolution);
+  await host?.moveCommunity?.("retained", 7, resolution);
   await host?.localCloneSettings?.("retained");
   expect(vi.mocked(invoke).mock.calls).toEqual([
     ["agent_control_use_here", { id: "retained", resolution }],
+    [
+      "agent_control_move_community",
+      { id: "retained", expectedRevision: 7, resolution },
+    ],
     ["agent_control_local_clone_settings", { id: "retained" }],
   ]);
 });

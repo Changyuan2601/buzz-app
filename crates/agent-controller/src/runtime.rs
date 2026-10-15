@@ -765,6 +765,20 @@ impl Controller {
         self.store.use_here(id, resolution)?;
         self.snapshot()
     }
+    pub fn move_community(
+        &mut self,
+        id: &str,
+        revision: u64,
+        resolution: crate::CommunityResolution,
+    ) -> Result<ControlSnapshot> {
+        self.snapshot()?;
+        if self.running.contains_key(id) {
+            return Err("Stop the agent before moving communities".into());
+        }
+        self.store.move_community(id, revision, resolution)?;
+        self.errors.remove(id);
+        self.snapshot()
+    }
     pub fn local_clone_settings(&self, id: &str) -> Result<crate::CloneSettings> {
         self.store.local_clone_settings(id)
     }

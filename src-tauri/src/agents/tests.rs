@@ -124,6 +124,78 @@ fn native_host_provisions_cli_skill_before_agent_controls_are_used() {
 }
 
 #[test]
+fn move_community_ipc_refuses_unsigned_owner_without_mutating_custody() {
+    let (dir, _host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let before = std::fs::read(&path).unwrap();
+    let result = invoke(
+        &view,
+        "agent_control_move_community",
+        json!({
+            "id": id, "expectedRevision": 1,
+            "resolution": { "pubkey": "ab".repeat(32), "relayUrl": "wss://other.example", "owner": "cd".repeat(32), "signature": "00".repeat(64) }
+        }),
+    );
+    assert_eq!(
+        result.unwrap_err(),
+        json!("Saved owner attestation is malformed")
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn move_community_ipc_preserves_custody_with_a_signed_destination() {
+    use secp256k1::{Keypair, Secp256k1, SecretKey};
+    use sha2::{Digest, Sha256};
+    let (dir, _host, _app, view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut document: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let key = "ab".repeat(32);
+    let mut bytes = [0; 32];
+    bytes[31] = 2;
+    let secp = Secp256k1::new();
+    let pair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(bytes).unwrap());
+    let owner = pair.x_only_public_key().0.to_string();
+    let signature = |intent: String| {
+        secp.sign_schnorr_no_aux_rand(&Sha256::digest(intent), &pair)
+            .to_string()
+    };
+    document["agents"][0]["authTag"] = json!(serde_json::to_string(&[
+        "auth",
+        &owner,
+        "",
+        &signature(format!("nostr:agent-auth:{key}:"))
+    ])
+    .unwrap());
+    document["agents"][0]["enabled"] = json!(false);
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let relay = "wss://other.example";
+    let result = invoke(&view, "agent_control_move_community", json!({
+        "id": id, "expectedRevision": 1,
+        "resolution": { "pubkey": key, "relayUrl": relay, "owner": owner, "signature": signature(format!("nostr:agent-community:{key}:{relay}")) }
+    })).unwrap();
+    assert_eq!(result["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(result["agents"][0]["pubkey"], key);
+    assert_eq!(result["agents"][0]["relayUrl"], relay);
+    assert_eq!(result["agents"][0]["enabled"], false);
+    let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        saved["agents"][0]["credentialId"],
+        document["agents"][0]["credentialId"]
+    );
+    assert_eq!(
+        saved["agents"][0]["environment"],
+        document["agents"][0]["environment"]
+    );
+    assert_eq!(
+        saved["agents"][0]["authTag"],
+        document["agents"][0]["authTag"]
+    );
+}
+
+#[test]
 fn production_acl_allows_delete_to_reach_native_credentials() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());

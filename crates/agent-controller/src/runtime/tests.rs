@@ -3263,6 +3263,135 @@ fn use_here_rejects_configured_other_community_without_writes() {
 }
 
 #[test]
+fn move_community_preserves_custody_and_settings_and_survives_reopen() {
+    let root = tempfile::tempdir().unwrap();
+    let mut original = agent(root.path());
+    original.start_on_app_launch = Some(true);
+    let id = original.id.clone();
+    let mut store = Store::open(root.path().into()).unwrap();
+    store.insert(vec![original.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        root.path().join("locks"),
+    );
+    let snapshot = controller
+        .move_community(
+            &id,
+            1,
+            crate::community::tests::resolution("wss://other.example"),
+        )
+        .unwrap();
+    assert_eq!(snapshot.agents.len(), 1);
+    assert_eq!(snapshot.agents[0].pubkey, PUB);
+    assert!(snapshot.agents[0].profile_pending);
+    assert!(!snapshot.agents[0].enabled);
+    assert!(!snapshot.agents[0].start_on_app_launch);
+    drop(controller);
+    let store = Store::open(root.path().into()).unwrap();
+    let saved = store.agents().unwrap().remove(0);
+    original.id = agent_id(PUB, "wss://other.example");
+    original.relay_url = "wss://other.example".into();
+    original.revision = 2;
+    original.start_on_app_launch = Some(false);
+    original.extra.insert("profilePending".into(), json!(true));
+    assert_eq!(
+        serde_json::to_value(saved).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+}
+
+#[test]
+fn move_community_refusals_leave_storage_unchanged() {
+    for case in [
+        "stale",
+        "enabled",
+        "signature",
+        "identity",
+        "same",
+        "duplicate",
+        "incomplete",
+        "remote",
+        "overflow",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut original = agent(root.path());
+        match case {
+            "enabled" => original.enabled = true,
+            "incomplete" => {
+                original.extra.insert("configured".into(), json!(false));
+            }
+            "remote" => {
+                original.imported["record"]["backend"] = json!({"type":"remote"});
+                original.imported["record"]["backend_agent_id"] = json!("remote-id");
+            }
+            "overflow" => original.revision = 9_007_199_254_740_991,
+            _ => {}
+        }
+        let id = original.id.clone();
+        let revision = original.revision;
+        let mut store = Store::open(root.path().into()).unwrap();
+        let mut rows = vec![original.clone()];
+        if case == "duplicate" {
+            original.relay_url = "wss://other.example".into();
+            original.id = agent_id(PUB, &original.relay_url);
+            rows.push(original);
+        }
+        store.insert(rows).unwrap();
+        let path = root.path().join("agents.json");
+        let before = fs::read(&path).unwrap();
+        let mut resolution = crate::community::tests::resolution(if case == "same" {
+            "wss://relay.example"
+        } else {
+            "wss://other.example"
+        });
+        if case == "signature" {
+            resolution.signature = "00".repeat(64);
+        }
+        if case == "identity" {
+            resolution.pubkey = "ab".repeat(32);
+        }
+        assert!(
+            store
+                .move_community(&id, if case == "stale" { 2 } else { revision }, resolution)
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before, "{case}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn move_community_refuses_a_live_listener_even_if_saved_intent_is_disabled() {
+    let root = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let original = agent(root.path());
+    let id = original.id.clone();
+    let mut store = Store::open(root.path().join("store")).unwrap();
+    store.insert(vec![original]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        root.path().join("locks"),
+    );
+    controller.action(&id, Action::Start).unwrap();
+    controller.store.enabled(&id, false).unwrap();
+    let path = root.path().join("store/agents.json");
+    let before = fs::read(&path).unwrap();
+    let moved = controller.move_community(
+        &id,
+        1,
+        crate::community::tests::resolution("wss://other.example"),
+    );
+    controller.action(&id, Action::Stop).unwrap();
+    assert!(moved.err().unwrap().contains("Stop"));
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
 fn use_here_recovers_incomplete_import_but_cannot_add_a_third_community() {
     let root = tempfile::tempdir().unwrap();
     let mut imported = agent(root.path());

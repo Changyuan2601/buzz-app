@@ -543,6 +543,7 @@ export function AgentControlPanel({
         <AgentEditor
           key={editing.id}
           agent={editing}
+          owner={createOwner}
           displayName={label(editing)}
           control={control}
           state={state}

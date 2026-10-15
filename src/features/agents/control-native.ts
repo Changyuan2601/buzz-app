@@ -74,6 +74,12 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       }),
     configureHere: (id, resolution) =>
       invoke("agent_control_use_here", { id, resolution }),
+    moveCommunity: (id, expectedRevision, resolution) =>
+      invoke("agent_control_move_community", {
+        id,
+        expectedRevision,
+        resolution,
+      }),
     localCloneSettings: (id) =>
       invoke("agent_control_local_clone_settings", { id }),
     cloneSettings: (source, pubkey) =>

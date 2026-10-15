@@ -107,6 +107,7 @@
     "allow-agent-control-local-clone-settings",
     "allow-agent-control-clone-settings",
     "allow-agent-control-use-here",
+    "allow-agent-control-move-community",
     "allow-agent-models-begin",
     "allow-agent-models-cancel",
     "allow-agent-models-run",

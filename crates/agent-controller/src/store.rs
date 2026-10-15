@@ -398,6 +398,58 @@ impl Store {
         }
         self.write(&doc)
     }
+    /// Relocate one stopped setup; preserve custody, never duplicate its identity.
+    pub fn move_community(
+        &mut self,
+        id: &str,
+        revision: u64,
+        resolution: crate::CommunityResolution,
+    ) -> Result<()> {
+        let mut doc = self.read()?;
+        let index = doc
+            .agents
+            .iter()
+            .position(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        let source = &doc.agents[index];
+        if source.revision != revision {
+            return Err("Agent settings changed. Reload before moving".into());
+        }
+        resolution.verify(source.auth_tag.as_deref().unwrap_or(""))?;
+        if resolution.pubkey != source.pubkey {
+            return Err("Moving must preserve the agent identity".into());
+        }
+        if source.deployed_remote() || !source.configured() {
+            return Err("Only configured local agents can move communities".into());
+        }
+        if source.enabled {
+            return Err("Stop the agent before moving communities".into());
+        }
+        if source.relay_url == resolution.relay_url {
+            return Err("Choose a different community".into());
+        }
+        let target = crate::config::agent_id(&source.pubkey, &resolution.relay_url);
+        if doc.agents.iter().any(|a| {
+            a.id != id && (a.id == target || (a.pubkey == source.pubkey && a.configured()))
+        }) {
+            return Err("This identity already has another setup; resolve it before moving".into());
+        }
+        let next = source
+            .revision
+            .checked_add(1)
+            .filter(|n| *n <= 9_007_199_254_740_991)
+            .ok_or("Agent revision exhausted")?;
+        let agent = &mut doc.agents[index];
+        agent.id = target;
+        agent.relay_url = resolution.relay_url;
+        agent.revision = next;
+        agent.start_on_app_launch = Some(false);
+        agent
+            .extra
+            .insert("profilePending".into(), Value::Bool(true));
+        agent.validate()?;
+        self.write(&doc)
+    }
     pub fn local_clone_settings(&self, id: &str) -> Result<crate::CloneSettings> {
         let agent = self
             .agents()?

@@ -19,6 +19,7 @@ import {
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentSettingsFields } from "./AgentSettingsFields";
+import { MoveAgentCommunity } from "./MoveAgentCommunity";
 import {
   agentDraft,
   agentEdit,
@@ -38,6 +39,7 @@ export function AgentEditor({
   notice: initialNotice,
   disabled = false,
   children,
+  owner,
 }: {
   agent: AgentView;
   onOpenHarnesses?: (() => void) | undefined;
@@ -50,6 +52,7 @@ export function AgentEditor({
   notice?: string;
   disabled?: boolean;
   children?: ReactNode;
+  owner?: string | undefined;
 }) {
   const notify = useToastNotification();
   const [uploading, setUploading] = useState(false);
@@ -217,6 +220,26 @@ export function AgentEditor({
                 <Accordion
                   variant="form"
                   items={[
+                    ...(owner &&
+                    control.moveCommunity &&
+                    !agent.deployedRemote &&
+                    agent.configured !== false
+                      ? [
+                          {
+                            value: "community",
+                            title: "Move to community",
+                            content: (
+                              <MoveAgentCommunity
+                                agent={agent}
+                                control={control}
+                                owner={owner}
+                                disabled={blocked || dirty}
+                                onMoved={onClose}
+                              />
+                            ),
+                          },
+                        ]
+                      : []),
                     {
                       value: "runtime",
                       title: "Runtime",

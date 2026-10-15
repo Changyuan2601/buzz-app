@@ -1512,6 +1512,25 @@ pub(crate) async fn agent_control_use_here(
     .await
 }
 #[tauri::command]
+pub(crate) async fn agent_control_move_community(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    expected_revision: u64,
+    resolution: buzz_agent_controller::CommunityResolution,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        if host.starts.contains_key(&id) {
+            return Err("Stop the pending start before moving communities".into());
+        }
+        host.controller
+            .move_community(&id, expected_revision, resolution)?;
+        host.queued.remove(&id);
+        host.acted.insert(id);
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
 pub(crate) async fn agent_control_local_clone_settings(
     state: tauri::State<'_, AgentHost>,
     id: String,

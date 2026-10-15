@@ -124,6 +124,17 @@ old Buzz are not synchronized. As in old Buzz, a deleted team or a directory-onl
 legacy binding without a deployment team ID contributes no team instructions.
 Remote backends and relay mesh remain unsupported.
 
+**Move to community** in Edit relocates a configured local agent with the same
+identity, credential reference, instructions and runtime settings. Stop the agent
+and save or discard other edits first, then enter the destination relay and choose
+Move. The native controller requires the source owner's signed destination proof,
+the current saved revision, no active or pending start, and no conflicting identity
+setup. It replaces the source setup atomically and leaves the destination stopped
+with Start on launch off. Start it explicitly or send an addressed mention there;
+retry profile publication if needed. Channels, membership and conversation history
+remain on their original relay. This is a move, not a second simultaneous setup;
+Use here and Import retain their existing restrictions.
+
 Older imports missing this snapshot show **Import or repair from old Buzz**.
 Choose their original source library and destination, then **Repair team import**.
 This adds only the missing team instructions and advances the saved revision;
