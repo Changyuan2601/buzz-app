@@ -47,6 +47,7 @@ async function startup(relayUrl = "", aliases = "") {
   // Neutralize the seed too: loadEnv would otherwise mix a developer's
   // .env.local into what these tests assert.
   vi.stubEnv("BUZZ_DEV_OPEN_RELAY", "");
+  vi.stubEnv("BUZZ_MAP_DATA", "0");
   readCredential.mockReturnValue(
     Buffer.from(JSON.stringify({ identity: nip19.nsecEncode(key) })),
   );

@@ -1,5 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -27,7 +29,6 @@ import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import { MapView } from "./MapView";
 import {
   MapComposerBinding,
   MapComposerTool,
@@ -48,6 +49,10 @@ import {
   wintermute,
   type MapContext,
 } from "./model";
+
+const MapView = lazy(() =>
+  import("./MapView").then(({ MapView }) => ({ default: MapView })),
+);
 
 export const inject = [
   "pages",
@@ -502,22 +507,30 @@ function Maps({
         style={split.style}
         className="buzz-map-workspace grid h-full min-h-0 min-w-0 flex-1 overflow-hidden grid-cols-1 grid-rows-2 md:grid-cols-[minmax(0,1fr)_var(--secondary-panel-width,28rem)] md:grid-rows-1"
       >
-        <MapView
-          state={map}
-          scope={session.scope}
-          channel={channel.id}
-          onSave={persist}
-          canAddToMessage={!!composer && !composer.disabled && canAct()}
-          onAddToMessage={(resource) =>
-            composer && !composer.disabled && canAct()
-              ? composer.insertResource(resource)
-              : "The map conversation is no longer editable."
+        <Suspense
+          fallback={
+            <p role="status" className="p-4 text-body-sm">
+              Loading map…
+            </p>
           }
-          onFocusComposer={() => composer?.focus()}
-          onContext={(next) => {
-            context.current = next;
-          }}
-        />
+        >
+          <MapView
+            state={map}
+            scope={session.scope}
+            channel={channel.id}
+            onSave={persist}
+            canAddToMessage={!!composer && !composer.disabled && canAct()}
+            onAddToMessage={(resource) =>
+              composer && !composer.disabled && canAct()
+                ? composer.insertResource(resource)
+                : "The map conversation is no longer editable."
+            }
+            onFocusComposer={() => composer?.focus()}
+            onContext={(next) => {
+              context.current = next;
+            }}
+          />
+        </Suspense>
         <MessageManagement session={session} channelId={channel.id}>
           <section
             aria-label="Map conversation"

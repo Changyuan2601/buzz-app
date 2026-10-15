@@ -3,7 +3,7 @@
   top: 16px;
   left: 16px;
   display: flex;
-  gap: 6px;
+  gap: var(--space-1h);
   max-width: calc(100% - 32px);
   padding: 0;
   border: 0;
@@ -13,19 +13,19 @@
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   backdrop-filter: blur(12px);
   color: var(--text-primary);
-  border-radius: 8px;
+  border-radius: var(--radius-row);
 }
 .buzz-map-preview .mapboxgl-popup-content {
   background: var(--surface);
   color: var(--text-primary);
   box-shadow: var(--elevation-surface);
   max-width: 280px;
-  padding: 14px;
-  border-radius: 8px;
+  padding: var(--space-4);
+  border-radius: var(--radius-row);
   overflow-wrap: anywhere;
 }
 .buzz-map-preview .mapboxgl-popup-content p {
-  margin: 5px 0 0;
+  margin: var(--space-1) 0 0;
   color: var(--text-secondary);
 }
 .buzz-map-preview .mapboxgl-popup-tip {
@@ -55,7 +55,7 @@
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   overflow: auto;
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-primary);
   box-shadow: var(--elevation-surface);
@@ -80,7 +80,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: text-bottom;
-  padding: 1px 6px;
+  padding: 0 var(--space-1h);
   border: 1px solid var(--border);
   border-radius: var(--radius-chip);
   background: var(--affordance-subtle);

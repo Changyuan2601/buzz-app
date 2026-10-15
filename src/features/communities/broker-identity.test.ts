@@ -77,6 +77,7 @@ beforeEach(() => {
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", "");
   vi.stubEnv("BUZZ_DEV_VIEWER", "");
   vi.stubEnv("BUZZ_DEV_OPEN_RELAY", "");
+  vi.stubEnv("BUZZ_MAP_DATA", "0");
   onPlatform("darwin");
   readCredential.mockReset();
   readCredential.mockReturnValue(Buffer.from(credential));

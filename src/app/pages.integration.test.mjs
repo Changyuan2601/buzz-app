@@ -221,43 +221,54 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await services.plugins.change("disable", "buzz.channel-templates");
 
     await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 4),
+      assert.equal(services.conversation.tools.snapshot().length, 5),
     );
     assert.equal(services.conversation.attachments.snapshot().length, 1);
     await services.plugins.change("disable", "buzz.voice-notes");
     assert.equal(services.conversation.attachments.snapshot().length, 0);
     assert.equal(services.conversation.inline.snapshot().length, 1);
     await vi.waitFor(() =>
-      assert.equal(services.conversation.links.snapshot().length, 1),
-    );
-    assert.equal(
-      services.conversation.links.snapshot()[0].pluginId,
-      "buzz.links",
+      assert.deepEqual(
+        services.conversation.links
+          .snapshot()
+          .map((link) => link.pluginId)
+          .sort(),
+        ["buzz.links", "buzz.maps"],
+      ),
     );
     await services.plugins.change("disable", "buzz.links");
-    assert.equal(services.conversation.links.snapshot().length, 0);
+    assert.deepEqual(
+      services.conversation.links.snapshot().map((link) => link.pluginId),
+      ["buzz.maps"],
+    );
     await services.plugins.change("enable", "buzz.links");
     await vi.waitFor(() =>
-      assert.equal(services.conversation.links.snapshot().length, 1),
+      assert.deepEqual(
+        services.conversation.links
+          .snapshot()
+          .map((link) => link.pluginId)
+          .sort(),
+        ["buzz.links", "buzz.maps"],
+      ),
     );
     await services.plugins.change("disable", "buzz.emoji");
     assert.deepEqual(
       services.conversation.tools.snapshot().map((tool) => tool.pluginId),
-      ["buzz.mentions", "buzz.projects"],
+      ["buzz.maps", "buzz.mentions", "buzz.projects"],
     );
     assert.equal(services.conversation.inline.snapshot().length, 0);
     await services.plugins.change("disable", "buzz.mentions");
     assert.deepEqual(
       services.conversation.tools.snapshot().map((tool) => tool.pluginId),
-      ["buzz.projects"],
+      ["buzz.maps", "buzz.projects"],
     );
     await services.plugins.change("enable", "buzz.mentions");
     await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 2),
+      assert.equal(services.conversation.tools.snapshot().length, 3),
     );
     await services.plugins.change("enable", "buzz.emoji");
     await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 3),
+      assert.equal(services.conversation.tools.snapshot().length, 4),
     );
 
     const { npubEncode } = await import("nostr-tools/nip19");

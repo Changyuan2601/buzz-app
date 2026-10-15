@@ -91,7 +91,7 @@ function source(initial) {
     },
   };
 }
-function fixture({
+async function fixture({
   name = "map",
   route,
   closeMap,
@@ -177,29 +177,31 @@ function fixture({
     navigation: { open: vi.fn() },
   };
   apply(ctx);
-  render(
-    closeMap
-      ? createElement(MapChannel, {
-          ctx,
-          session,
-          channelId: "map-channel",
-          closeMap,
-          active: () => true,
-        })
-      : createElement(
-          Page,
-          route
-            ? {
-                navigation: {
-                  target: {
-                    kind: "page",
-                    route: { version: 1, params: route },
+  await act(async () => {
+    render(
+      closeMap
+        ? createElement(MapChannel, {
+            ctx,
+            session,
+            channelId: "map-channel",
+            closeMap,
+            active: () => true,
+          })
+        : createElement(
+            Page,
+            route
+              ? {
+                  navigation: {
+                    target: {
+                      kind: "page",
+                      route: { version: 1, params: route },
+                    },
                   },
-                },
-              }
-            : {},
-        ),
-  );
+                }
+              : {},
+          ),
+    );
+  });
   const prepare = (text, recipients = []) =>
     observed.composer.prepareSend({ content: text, recipients });
   const publish = (prepared, notify = true, delivery = "accepted") => {
@@ -257,7 +259,7 @@ function fixture({
     focus,
   };
 }
-it("restores plotted markers when reopening a channel after verified history loads", () => {
+it("restores plotted markers when reopening a channel after verified history loads", async () => {
   const request = "12345678-1234-1234-1234-123456789abc";
   const map = {
     ...INITIAL_MAP,
@@ -279,7 +281,7 @@ it("restores plotted markers when reopening a channel after verified history loa
       content: JSON.stringify({ requestId: request, message: "Cities", map }),
     },
   ];
-  const f = fixture({
+  const f = await fixture({
     closeMap: vi.fn(),
     initialWindow: { rows, status: "ready", freshness: "cached" },
   });
@@ -287,9 +289,9 @@ it("restores plotted markers when reopening a channel after verified history loa
   act(() => f.window.set({ rows, status: "ready", freshness: "verified" }));
   expect(observed.map.state.markers).toEqual(map.markers);
 });
-it("embeds the map in a channel and closes locally without changing navigation", () => {
+it("embeds the map in a channel and closes locally without changing navigation", async () => {
   const closeMap = vi.fn();
-  const f = fixture({ name: "general", closeMap });
+  const f = await fixture({ name: "general", closeMap });
   expect(observed.composer.channelId).toBe("map-channel");
   expect(
     screen.getByRole("button", { name: "Close channel map" }),
@@ -298,9 +300,9 @@ it("embeds the map in a channel and closes locally without changing navigation",
   expect(closeMap).toHaveBeenCalledOnce();
   expect(f.navigation.open).not.toHaveBeenCalled();
 });
-it("routes an unselected text mention to the local channel Wintermute instead of the original identity", () => {
+it("routes an unselected text mention to the local channel Wintermute instead of the original identity", async () => {
   const local = "e".repeat(64);
-  const f = fixture({
+  const f = await fixture({
     agents: [
       { pubkey: WINTERMUTE, name: "Wintermute", managed: false },
       { pubkey: local, name: "Wintermute", managed: true },
@@ -309,8 +311,8 @@ it("routes an unselected text mention to the local channel Wintermute instead of
   const prepared = f.prepare(`@${local.slice(0, 12)} plot the salons`);
   expect(prepared.recipients.at(-1).pubkey).toBe(local);
 });
-it("uses the shared composer and timeline on #map, preserving people and adding Wintermute", () => {
-  const f = fixture();
+it("uses the shared composer and timeline on #map, preserving people and adding Wintermute", async () => {
+  const f = await fixture();
   expect(screen.getByTestId("shared-composer")).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Channel members" }),
@@ -346,9 +348,9 @@ it("uses the shared composer and timeline on #map, preserving people and adding 
   act(() => observed.map.onContext({ ...next, zoom: 14 }));
   expect(f.prepare("What is here?").content).toContain('"zoom":14');
 });
-it("addresses a mentioned local clone and only accepts that agent's map reply", () => {
+it("addresses a mentioned local clone and only accepts that agent's map reply", async () => {
   const marco = { pubkey: "b".repeat(64), name: "MarcoPolo" };
-  const f = fixture({ agents: [marco] });
+  const f = await fixture({ agents: [marco] });
   const input = f.prepare("Show Paris", [marco]);
   expect(input.recipients).toEqual([marco]);
   const pending = f.publish(input);
@@ -365,16 +367,16 @@ it("addresses a mentioned local clone and only accepts that agent's map reply", 
   expect(observed.map.state).toEqual(next);
   expect(observed.composer.disabled).toBe(false);
 });
-it("rejects ambiguous map-agent mentions", () => {
+it("rejects ambiguous map-agent mentions", async () => {
   const marco = { pubkey: "b".repeat(64), name: "MarcoPolo" };
   const winter = { pubkey: WINTERMUTE, name: "Wintermute" };
-  const f = fixture({ agents: [marco, winter] });
+  const f = await fixture({ agents: [marco, winter] });
   expect(() => f.prepare("Show Paris", [marco, winter])).toThrow(
     "Mention one agent",
   );
 });
-it("rechecks background publication and ignores a late abandoned update", () => {
-  const f = fixture();
+it("rechecks background publication and ignores a late abandoned update", async () => {
+  const f = await fixture();
   const first = f.prepare("First"),
     second = f.prepare("Second");
   const pending = f.publish(first);
@@ -391,8 +393,8 @@ it("rechecks background publication and ignores a late abandoned update", () => 
   act(() => f.window.set({ rows: [f.reply(newer.request, INITIAL_MAP)] }));
   expect(observed.composer.disabled).toBe(false);
 });
-it("unmounts private map state and blocks deferred publication when channel access is lost", () => {
-  const f = fixture();
+it("unmounts private map state and blocks deferred publication when channel access is lost", async () => {
+  const f = await fixture();
   const input = f.prepare("Show Paris");
   act(() => f.directory.set({ channels: [] }));
   expect(
@@ -402,8 +404,8 @@ it("unmounts private map state and blocks deferred publication when channel acce
   expect(() => input.beforePublish()).toThrow("no longer available");
 });
 
-it("reads threaded replies through the owned thread and releases it on completion", () => {
-  const f = fixture();
+it("reads threaded replies through the owned thread and releases it on completion", async () => {
+  const f = await fixture();
   const pending = f.publish(f.prepare("Show Paris"));
   expect(f.session.thread).toHaveBeenCalledWith("map-channel", pending.root);
   const next = { ...INITIAL_MAP, center: [2.35, 48.86] };
@@ -419,15 +421,15 @@ it("reads threaded replies through the owned thread and releases it on completio
   expect(observed.composer.disabled).toBe(false);
   expect(f.dispose).toHaveBeenCalledOnce();
 });
-it("does not wait when admission chose reference only for Wintermute", () => {
-  const f = fixture();
+it("does not wait when admission chose reference only for Wintermute", async () => {
+  const f = await fixture();
   f.publish(f.prepare("Show Paris"), false);
   expect(observed.composer.disabled).toBe(false);
   expect(f.session.thread).not.toHaveBeenCalled();
 });
 
-it("waits for publication before opening the reply reader", () => {
-  const f = fixture();
+it("waits for publication before opening the reply reader", async () => {
+  const f = await fixture();
   const pending = f.publish(f.prepare("Show Paris"), true, "sending");
   expect(f.session.thread).not.toHaveBeenCalled();
   expect(observed.composer.disabled).toBe(true);
@@ -452,8 +454,8 @@ it("waits for publication before opening the reply reader", () => {
   expect(observed.composer.disabled).toBe(false);
 });
 
-it("opens and closes an existing thread without removing or resetting the map", () => {
-  const f = fixture();
+it("opens and closes an existing thread without removing or resetting the map", async () => {
+  const f = await fixture();
   const next = { ...INITIAL_MAP, center: [2.35, 48.86] };
   const pending = f.publish(f.prepare("Show Paris"));
   act(() => f.window.set({ rows: [f.reply(pending.request, next)] }));
@@ -471,8 +473,8 @@ it("opens and closes an existing thread without removing or resetting the map", 
   expect(observed.map.state).toEqual(next);
 });
 
-it("prepares thread follow-ups with current map context and the existing thread root", () => {
-  const f = fixture();
+it("prepares thread follow-ups with current map context and the existing thread root", async () => {
+  const f = await fixture();
   const request = f.publish(f.prepare("Show Paris"));
   fireEvent.click(screen.getByRole("button", { name: "Stop waiting" }));
   act(() => observed.timeline.onOpenThread(request.root, request.root));
@@ -495,8 +497,8 @@ it("prepares thread follow-ups with current map context and the existing thread 
   expect(observed.map.state).toEqual(next);
 });
 
-it("has no redundant Maps header and reuses the keyboard-accessible split handle", () => {
-  fixture();
+it("has no redundant Maps header and reuses the keyboard-accessible split handle", async () => {
+  await fixture();
   expect(screen.queryByText("Maps", { exact: true })).not.toBeInTheDocument();
   const handle = screen.getByRole("separator", {
     name: "Resize main and secondary panels",
@@ -509,8 +511,8 @@ it("has no redundant Maps header and reuses the keyboard-accessible split handle
   ).not.toBe("");
 });
 
-it("opens the selected channel rather than silently falling back to #map", () => {
-  const f = fixture({ name: "general", route: "map-channel" });
+it("opens the selected channel rather than silently falling back to #map", async () => {
+  const f = await fixture({ name: "general", route: "map-channel" });
   expect(screen.getByText("#general")).toBeInTheDocument();
   expect(observed.composer.channelId).toBe("map-channel");
   act(() => f.directory.set({ channels: [] }));
@@ -522,8 +524,8 @@ it("opens the selected channel rather than silently falling back to #map", () =>
   ).not.toBeInTheDocument();
 });
 
-it("keeps a complete tool dataset in the app while subsequent agent prompts contain only counts", () => {
-  const f = fixture();
+it("keeps a complete tool dataset in the app while subsequent agent prompts contain only counts", async () => {
+  const f = await fixture();
   const first = f.publish(f.prepare("Plot all sellers"));
   const map = {
     ...INITIAL_MAP,
@@ -550,8 +552,8 @@ it("keeps a complete tool dataset in the app while subsequent agent prompts cont
   expect(observed.map.state.markers).toHaveLength(500);
 });
 
-it("routes a business pill through the visible shared composer and rechecks channel access", () => {
-  const f = fixture();
+it("routes a business pill through the visible shared composer and rechecks channel access", async () => {
+  const f = await fixture();
   expect(observed.map.canAddToMessage).toBe(true);
   const insert = observed.map.onAddToMessage;
   const resource = retailerResource(
@@ -564,8 +566,8 @@ it("routes a business pill through the visible shared composer and rechecks chan
   expect(insert(resource)).not.toBe(true);
   expect(f.insertResource).toHaveBeenCalledTimes(1);
 });
-it("retains the attached address in agent context and opens a sent reference on the current map", () => {
-  const f = fixture();
+it("retains the attached address in agent context and opens a sent reference on the current map", async () => {
+  const f = await fixture();
   const resource = retailerResource(
     { name: "Salon", address: "123 Example St", coordinates: [2, 3] },
     "map-channel",

@@ -1,5 +1,5 @@
-import type { AgentChoicesSnapshot } from "../../features/agents/choices";
-import type { ChannelMessage } from "../../features/relay/contracts";
+import type { AgentChoicesSnapshot } from "../../features/agents/choices.ts";
+import type { ChannelMessage } from "../../features/relay/contracts.ts";
 
 export const WINTERMUTE =
   "a00fdff03f06355c4fc6d6268f3a09ebe752c20b98df8fdab5fe81e266d6630a";
