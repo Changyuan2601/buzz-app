@@ -94,7 +94,7 @@ it("retained offline tabs can close and open threads without activating connecte
   expect(restored.result.current.tabs).toHaveLength(2);
 });
 
-it("toggles the selected link panel while preserving context changes and hidden tabs", () => {
+it("toggles the selected link panel across context changes, hidden tabs and restored history", () => {
   const channels = [{ id: "alpha", name: "Alpha" }];
   const session = {
     viewer: "viewer",
@@ -109,9 +109,11 @@ it("toggles the selected link panel while preserving context changes and hidden 
   } as unknown as Panels;
   const snapshot = { status: "ready", session };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
-  const h = renderHook(() =>
-    useConversationTabs({
-      state: useChannelTabState(session, "alpha"),
+  let state!: ReturnType<typeof useChannelTabState>;
+  const h = renderHook(() => {
+    state = useChannelTabState(session, "alpha");
+    return useConversationTabs({
+      state,
       relay,
       session,
       panels,
@@ -123,8 +125,8 @@ it("toggles the selected link panel while preserving context changes and hidden 
       continuingVisit: true,
       isLive: () => true,
       openLink: () => false,
-    }),
-  );
+    });
+  });
   const context = () => {
     const [item] = h.result.current.items;
     if (!item) throw new Error("no panel tab");
@@ -175,6 +177,22 @@ it("toggles the selected link panel while preserving context changes and hidden 
     "profile:buzz://other",
   ]);
   expect(h.result.current.selectedTab).toBe("profile:buzz://other");
+  act(() => state.enterVisit("first"));
+  act(() => state.leaveVisit());
+  act(() => state.enterVisit("second"));
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://profile");
+  });
+  act(() => state.leaveVisit());
+  act(() => state.enterVisit("first"));
+  expect(h.result.current.selectedTab).toBe("profile:buzz://other");
+  act(() => {
+    h.result.current.openConversationLink("alpha", "buzz://other");
+  });
+  expect(h.result.current.items.map((item) => item.id)).toEqual([
+    "profile:buzz://profile",
+  ]);
+  expect(h.result.current.selectedTab).toBe("profile:buzz://profile");
 });
 
 it("a keyboard move focuses the placed tab at once and never takes focus back later", async () => {

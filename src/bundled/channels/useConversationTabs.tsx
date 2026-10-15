@@ -268,11 +268,12 @@ export function useConversationTabs({
   };
   const toggleLink = (next: Opening, append = false) => {
     if (!currentVisit()) return;
-    const entry = opening.current;
+    const entry = entryList.current.find(
+      (item) => tabId(item) === tabState.getSelected(),
+    );
     if (
       tabState.paneOpen &&
       entry &&
-      tabState.getSelected() === tabId(entry) &&
       !entry.channelContext &&
       entry.panel === next.panel &&
       entry.target === next.target &&
