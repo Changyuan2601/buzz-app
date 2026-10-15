@@ -83,3 +83,27 @@ it("won't save a reserved env name", async () => {
     "true",
   );
 });
+
+it("needs a new confirmation after switching preset away and back", async () => {
+  const { saves } = mount();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Confirm command" }),
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(saves).toHaveLength(1));
+  const check = screen.getByRole("button", { name: "Check" });
+  await waitFor(() => expect(check).toBeEnabled());
+  for (const name of [/OpenCode/, /Cursor/]) {
+    await userEvent.click(screen.getByRole("combobox", { name: "Harness" }));
+    await userEvent.click(await screen.findByRole("option", { name }));
+  }
+  expect(check).toBeDisabled();
+  expect(
+    screen.getByText(
+      "This command needs your confirmation before the agent can run.",
+    ),
+  ).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(saves).toHaveLength(2));
+  expect(saves[1]).toMatchObject({ preset: "cursor", approval: "" });
+});
