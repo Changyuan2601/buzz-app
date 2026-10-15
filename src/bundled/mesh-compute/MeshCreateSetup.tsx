@@ -87,6 +87,7 @@ export function MeshCreateSetup({
                 computer.
               </p>
               <Button
+                size="sm"
                 variant="primary"
                 disabled={disabled || busy || !canShare}
                 loading={busy}
@@ -109,6 +110,7 @@ export function MeshCreateSetup({
                 community to be sharing.
               </p>
               <Button
+                size="sm"
                 disabled={disabled || busy}
                 onClick={() => setChoice("use")}
               >
