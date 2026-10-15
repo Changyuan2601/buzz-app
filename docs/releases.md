@@ -84,15 +84,17 @@ that integration are ineligible even if their updater archive and signature
 exist, as are builds without Windows/Linux signatures. The promotion gate
 downloads every updater artifact and signature, verifies the
 Minisign archive and trusted-comment signatures against the client's pinned
-key. CLI 2.11.x signs the archive and trusted comment but does not embed an
-authenticated version. The gate accepts that format and verifies both
-signatures, but cannot bind the advertised feed version to those signed bytes.
+key. The release signer signs the archive and trusted comment without passing
+`--app-version`, so signatures do not embed an authenticated version. The gate
+accepts that format and verifies both signatures, but cannot bind the advertised
+feed version to those signed bytes.
 A feed-response attacker can replay an older authentic archive/signature under
 a higher advertised version. Preview distribution must accept that residual
-risk until a coordinated CLI/updater 2.12.x bump emits `version:` and enables
-`requireSignedVersion`, then require the same version at promotion. Do not enable
-the client flag alone: 2.11.x signatures would fail. A signature mismatch
-fails before the rolling manifest is replaced.
+risk until a separate signing migration passes `--app-version`, enables
+`requireSignedVersion`, and requires the same version at promotion. The CLI
+2.12.2/updater 2.13.3 dependency upgrade leaves this migration deferred. Do not
+enable the client flag alone: existing unbound signatures would fail. A signature
+mismatch fails before the rolling manifest is replaced.
 
 The job builds the Tauri manifest with each artifact's signature from that
 release and an immutable versioned asset URL: `darwin-aarch64`, `windows-x86_64`,
@@ -160,12 +162,17 @@ publish a preview `latest.json` until its archive and signature are available
 at stable HTTPS URLs. Verify old-build → new-build installation promptly after
 the first eligible auto-promotion, before wider preview distribution.
 
-The manifest records hashes before signing. Packaged macOS apps accept changed
-hashes only after verifying their enclosing app's resource seal and Block Developer
-ID signature. The app retains the signed files' hashes in memory and checks them
-before each launch. Development builds and other platforms still require the
-manifest hashes to match. The release workflow verifies the signed seal,
-notarization, and manifest identity before publishing.
+## Bundled goose-acp
+
+Every package ships `goose-acp` in its `bin` resources, so Goose agents need no
+install. `scripts/build-goose-acp.mjs` builds it from the goose commit pinned in
+`runtime/goose-acp.json`, with only the features the Goose plugin uses, in the
+small `lean` profile (about 15 MB on macOS). `tauri build` runs the script
+through `beforeBuildCommand`; `just desktop` runs it with `--dev`, Cargo's faster
+dev profile. It skips the build when the staged binary already matches the pin.
+To move to a newer goose, change `revision` in the pin. The app's own signature
+covers the binary; nothing else checks it at launch. Each release job checks that
+its package contains it.
 
 ## Windows and Linux installers and candidate-only runs
 

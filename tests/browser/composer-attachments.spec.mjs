@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { readFile } from "node:fs/promises";
 import react from "@vitejs/plugin-react";
 import { createServer } from "./vite-server.mjs";
@@ -464,7 +464,6 @@ test("preparation preserves snapshot/animation and uses lossless WebP for pixel 
   const server = await createServer({
     configFile: false,
     envFile: false,
-    optimizeDeps: { include: ["@jsquash/webp/encode.js"] },
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0 },
   });

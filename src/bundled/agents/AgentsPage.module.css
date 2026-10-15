@@ -1,4 +1,4 @@
-/* Inventory with an optional side panel (peek or new agent). */
+/* Inventory with the selected agent’s profile and settings beside it. */
 .browse {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -6,17 +6,26 @@
   min-height: 0;
 }
 .browse[data-side] {
-  grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-columns: minmax(0, 1fr) minmax(
+      20rem,
+      var(--secondary-panel-width, 28rem)
+    );
+}
+.main {
+  container-type: inline-size;
+  min-width: 0;
+  min-height: 0;
 }
 .inventory {
+  height: 100%;
   min-height: 0;
   overflow: auto;
 }
 .side {
+  position: relative;
+  border-inline-start: 1px solid var(--border-standard);
   min-height: 0;
-  overflow: auto;
-  border-left: 1px solid var(--border-standard);
-  background: var(--surface-panel);
+  min-width: 0;
 }
 .sideBody {
   display: grid;
@@ -120,64 +129,74 @@
   background: var(--surface-inset);
 }
 
-/* Build: identity rail, then the work. */
+/* Profile-style identity and shared agent sections in one scrollport. */
 .build {
-  display: grid;
-  grid-template-columns: 15rem minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+}
+.detailsScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+}
+.saveFooter {
+  flex: none;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-standard);
+  background: var(--surface-panel);
+}
+.saveFooter:empty {
+  display: none;
 }
 .rail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6) var(--space-5);
-  border-right: 1px solid var(--border-standard);
-  overflow: auto;
-}
-.rail .portraitLarge {
-  width: 6rem;
-  height: 6rem;
-}
-.facts {
-  display: grid;
-  gap: var(--space-1);
-  margin: 0;
-  font-size: var(--text-body-sm-size, 0.8125rem);
-}
-.facts dt {
-  color: var(--text-secondary);
-}
-.facts dt:not(:first-child) {
-  margin-top: var(--space-2);
-}
-.facts dd {
+  align-items: center;
+  gap: var(--space-5);
   min-width: 0;
-  margin: 0;
+  padding: var(--space-8) var(--space-4);
+  border-radius: var(--radius-container);
+  background: var(--interaction-row-hover);
+}
+.identityActions {
+  --interaction-fill: var(--interaction-selected);
+  --interaction-hover: var(--interaction-pressed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+.identityPortrait {
+  position: relative;
+  width: 8rem;
+  height: 8rem;
 }
 .work {
   min-width: 0;
-  max-width: 44rem;
-  padding: var(--space-4) var(--space-6) var(--space-8);
-  overflow: auto;
 }
 
 @media (max-width: 52rem) {
   .browse[data-side] {
-    grid-template-columns: minmax(0, 1fr) 18rem;
-  }
-  .build {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
   }
-  .rail {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    border-right: 0;
-    border-bottom: 1px solid var(--border-standard);
+  .browse[data-side] > .main {
+    display: none;
+  }
+  .side > [data-panel-resize] {
+    display: none;
+  }
+  .side {
+    border-inline-start: 0;
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .side {
     animation: none;
@@ -215,4 +234,24 @@
   padding-inline: var(--space-2);
   color: var(--text-secondary);
   font-size: var(--text-body-sm-size, 0.8125rem);
+}
+
+.nameActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  width: 12rem;
+  max-width: 100%;
+}
+
+.identityName {
+  position: relative;
+  width: 100%;
+}
+.nameEditor {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  text-align: center;
 }

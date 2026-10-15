@@ -1,5 +1,4 @@
-import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { test, expect } from "./playwright-test.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { run } from "./run-command.mjs";
@@ -8,6 +7,7 @@ import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { watchPageErrors } from "./page-errors.mjs";
+import { createServer } from "./vite-server.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
@@ -75,7 +75,6 @@ test("independent packed author consumer and native-installed contribution survi
       root,
       configFile: false,
       envFile: false,
-      cacheDir: join(temp, "vite"),
       plugins: [
         react(),
         {

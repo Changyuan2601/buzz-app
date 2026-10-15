@@ -125,6 +125,8 @@ export function ConversationTab({
               channelId={channel.id}
               viewer={session.viewer}
               cached={!!channel.cached}
+              // The composer below mounts TypingIndicator for a live channel.
+              activityLane={!channel.cached}
               extensions={extensions}
               onOpenLink={openLink}
               canOpenLink={canOpenLink}

@@ -231,7 +231,7 @@ export async function threadSample(
     } catch (error) {
       fixtureError = error;
       response.statusCode = 500;
-      response.end(JSON.stringify({ error: String(error) }));
+      response.end(JSON.stringify({ error: "Request failed." }));
     }
   });
   server.listen(0, "127.0.0.1");

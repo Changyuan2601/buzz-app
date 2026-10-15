@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { stopRoutes } from "./playwright-test.mjs";
 import { open } from "./timeline.mjs";
 
 // The shell owns the divider; the inner aside excludes its 1px border.
@@ -25,7 +26,7 @@ test("Settings keeps the channel sidebar width across navigation and reload", as
     exact: true,
   });
   const handle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
     exact: true,
   });
   for (const [key, width] of [
@@ -51,9 +52,7 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
   app,
 }) => {
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   await page.setViewportSize({ width: 600, height: 950 });
   await expect(
     page.getByRole("complementary", { name: "Channel sidebar" }),
@@ -140,9 +139,7 @@ test("sidebar width survives route remounts when saving it fails", async ({
       return setItem.call(this, key, value);
     };
   });
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   const channels = page.getByRole("complementary", {
     name: "Channel sidebar",
     exact: true,
@@ -157,4 +154,59 @@ test("sidebar width survives route remounts when saving it fails", async ({
   await expect.poll(() => sidebarWidth(settings)).toBe(520);
   await settings.getByRole("button", { name: "Back", exact: true }).click();
   await expect.poll(() => sidebarWidth(channels)).toBe(520);
+});
+
+// Native storage delivery and rendered width across two real documents are not
+// established by the component's synthetic StorageEvent tests.
+test("sidebar width updates across open windows without losing a draft", async ({
+  page,
+  context,
+  app,
+}) => {
+  await open(page, app);
+  const channels = page.getByRole("complementary", {
+    name: "Channel sidebar",
+    exact: true,
+  });
+  const resize = page.getByRole("separator", {
+    name: "Resize sidebar",
+    exact: true,
+  });
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await composer.fill("Keep this draft while another window resizes");
+  await resize.press("End");
+  await expect.poll(() => sidebarWidth(channels)).toBe(520);
+  const other = await context.newPage();
+  app.watchPageErrors(other);
+  try {
+    await open(other, app);
+    await other
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await other
+      .getByRole("menuitem", { name: "Settings", exact: true })
+      .click();
+    const settings = other.getByRole("complementary", {
+      name: "Settings sidebar",
+      exact: true,
+    });
+    await expect.poll(() => sidebarWidth(settings)).toBe(520);
+    await other
+      .getByRole("separator", { name: "Resize sidebar", exact: true })
+      .press("Home");
+    await expect.poll(() => sidebarWidth(channels)).toBe(220);
+    await expect(composer).toHaveText(
+      "Keep this draft while another window resizes",
+    );
+    await resize.press("ArrowRight");
+    await expect.poll(() => sidebarWidth(settings)).toBe(236);
+    await other.reload();
+    await expect.poll(() => sidebarWidth(settings)).toBe(236);
+  } finally {
+    await stopRoutes(context);
+    await other.close();
+  }
 });

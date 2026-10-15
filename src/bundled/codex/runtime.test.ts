@@ -2935,6 +2935,9 @@ describe("programs", () => {
 
 /** Files the fixture's channel in its owner's Me. */
 function inMe(f: ReturnType<typeof fixture>) {
+  f.snapshot.session.channels.list = () => ({
+    channels: [{ id: "channel", name: "test", channelType: "session" }],
+  });
   f.personal.add("channel");
   return f.personal;
 }
@@ -3046,12 +3049,15 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   ]);
 });
 
-it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+it("fails a session mention it cannot place until the placement can be read", async () => {
   const f = fixture();
+  f.snapshot.session.channels.list = () => ({
+    channels: [{ id: "channel", name: "test", channelType: "session" }],
+  });
   const placement = f.snapshot.session.mePlacement;
   placement.state = { status: "error", error: "Recipe read failed" };
   await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
-    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
   );
   expect(placement.refresh).toHaveBeenCalledOnce();
   expect(f.starts()).toEqual([]);
@@ -3071,6 +3077,17 @@ it("keeps Messages routing for a channel filed in someone else's Me", async () =
   inMe(f);
   Object.assign(f.snapshot, { viewer: "9".repeat(64) });
   await f.runtime.run(f.delivery("@Codex hi"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
+  const f = fixture();
+  f.personal.add("channel");
+  await f.runtime.run(f.delivery("@Codex converted"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(inputText(f.starts()[0])).toContain("reply_to");
   await f.complete(0, "DONE");

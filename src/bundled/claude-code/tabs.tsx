@@ -1,5 +1,13 @@
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 // Claude's provider controls, New agent choices, and agent settings.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useId,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import type { Transcript } from "../../features/agents/activity-transcript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -70,15 +78,39 @@ const modelChoices = (models: readonly ClaudeModel[]) =>
 const modelName = (model: string, models: readonly ClaudeModel[]) =>
   modelChoices(models).find((choice) => choice.id === model)?.label ??
   resolvedModelName(model);
+const providerDefaultModel = (
+  model: string,
+  models: readonly ClaudeModel[],
+) => {
+  if (model)
+    return (
+      models.find(
+        (candidate) =>
+          candidate.value !== "default" &&
+          (candidate.value === model || candidate.resolvedModel === model),
+      )?.value ?? model
+    );
+  const resolved = models.find(
+    (candidate) => candidate.value === "default",
+  )?.resolvedModel;
+  return resolved
+    ? models.find(
+        (candidate) =>
+          candidate.value !== "default" &&
+          (candidate.resolvedModel === resolved ||
+            candidate.value === resolved),
+      )?.value
+    : undefined;
+};
 const providerDefaultLabel = (
   model: string,
   models: readonly ClaudeModel[],
 ) => {
-  if (model) return `Provider default · ${modelName(model, models)}`;
+  if (model) return modelName(model, models);
   const native = models.find((candidate) => candidate.value === "default");
   return native?.resolvedModel
-    ? `Claude default (${resolvedModelName(native.resolvedModel)})`
-    : "Claude default";
+    ? resolvedModelName(native.resolvedModel)
+    : "Model unavailable";
 };
 /** The effort levels of the model a run uses, `""` being Claude's default;
  * a model Claude does not list may run at any level a listed one has. */
@@ -298,6 +330,7 @@ export function createTabs({
     useEffect(() => {
       if (!state.status && !state.checking) void setup.check();
     }, [state.status, state.checking]);
+    // Once per change of readiness: a failed load waits for Try again.
     useEffect(() => {
       if (
         !state.checking &&
@@ -333,10 +366,15 @@ export function createTabs({
         {...props}
         models={modelChoices(state.models)}
         value={current.model}
+        defaultModel={providerDefaultModel(
+          providerDefaults.model,
+          state.models,
+        )}
         defaultLabel={providerDefaultLabel(
           providerDefaults.model,
           state.models,
         )}
+        defaultDescription="Following the provider's model default"
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
@@ -519,7 +557,7 @@ export function createTabs({
         >
           <Select
             label="Default model"
-            variant="field"
+            variant="preference"
             value={draftDefault}
             groups={[
               {
@@ -754,7 +792,14 @@ export function createTabs({
   }
 
   /** What the agent runs with. Saving restarts idle sessions with the change. */
-  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    settingsSection,
+    settingsContent,
+  }: AgentViewProps<Config>) {
+    const form = useId();
     const saved = readConfig(agent.config);
     const setupState = useSetupCatalog();
     const providerDefaults = useSyncExternalStore(
@@ -765,6 +810,10 @@ export function createTabs({
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -786,7 +835,7 @@ export function createTabs({
       setupState.models,
     );
     const effortOptions = [
-      { value: "", label: "Claude default" },
+      { value: "", label: "Automatic · Default" },
       // A saved level the model does not list; without Claude's list, it may.
       ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
         ? [
@@ -801,11 +850,15 @@ export function createTabs({
       ...efforts.map(({ id, label }) => ({ value: id, label })),
     ];
     const modelControl = (
-      <div className="grid gap-4 [@container(min-width:36rem)]:grid-cols-2">
+      <>
         <ModelPicker
           allowCustomModel
           models={modelChoices(setupState.models)}
           value={draft.model}
+          defaultModel={providerDefaultModel(
+            providerDefaults.model,
+            setupState.models,
+          )}
           defaultLabel={providerDefaultLabel(
             providerDefaults.model,
             setupState.models,
@@ -831,67 +884,73 @@ export function createTabs({
         />
         <Select
           label="Thinking"
-          variant="field"
+          valueLabel={draft.effort ? undefined : "Automatic"}
+          variant="preference"
           value={draft.effort}
           groups={[{ label: "", options: effortOptions }]}
           onValueChange={(effort) => setDraft({ ...draft, effort })}
         />
-      </div>
+      </>
     );
     return (
       <form
+        id={form}
         className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {settingsHost?.typeControl?.(configChanged)}
-        {modelControl}
-        <Field
-          label="Workspace"
-          description="The folder Claude works in. Use ~/ for your home folder."
-        >
-          <Input
-            value={draft.workspace}
-            onValueChange={(workspace) => setDraft({ ...draft, workspace })}
-          />
-        </Field>
-        <Select
-          label="Sessions"
-          variant="field"
-          value={draft.scope}
-          groups={SCOPES}
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={false}
-          description="Added to every session's system prompt, after Buzz's own."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
-          <p role="alert" className="buzz-field-error">
+          <p
+            ref={saveErrorRef}
+            tabIndex={-1}
+            role="alert"
+            className="buzz-field-error"
+          >
             {error}
           </p>
         )}
-        <div>
-          {/* Stays focusable while saving and once there is nothing to save. */}
-          <Button
-            type="submit"
-            variant="prominent"
-            loading={saving}
-            disabled={!changed}
-            focusableWhenDisabled
-          >
-            Save
-          </Button>
-        </div>
+        {settingsSection !== "runtime" && (
+          <>
+            <SettingsGroup>
+              {settingsHost?.typeControl?.(configChanged)}
+              {modelControl}
+            </SettingsGroup>
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={false}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <Field
+              label="Workspace"
+              description="The folder Claude works in. Use ~/ for your home folder."
+            >
+              <Input
+                value={draft.workspace}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </Field>
+            <Select
+              label="Sessions"
+              variant="preference"
+              value={draft.scope}
+              groups={SCOPES}
+              onValueChange={(value) =>
+                setDraft({
+                  ...draft,
+                  scope: value === "channel" ? "channel" : "thread",
+                })
+              }
+            />
+          </>
+        )}
+        <AgentSaveButton form={form} saving={saving} disabled={!changed} />
+        {settingsSection !== "identity" && settingsContent}
       </form>
     );
   }

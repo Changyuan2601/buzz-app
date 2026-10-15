@@ -295,7 +295,7 @@ function CommunitySearch({
                     label: "Recent activity",
                     destinations: [],
                     empty: !enabled
-                      ? "Enable Messages to see conversations."
+                      ? "Enable Multiplayer to see conversations."
                       : !client.selected
                         ? "Choose a community to see recent conversations."
                         : "Connecting to this community…",

@@ -20,6 +20,7 @@ import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { ThreadPanel } from "./ThreadPanel";
+import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 
@@ -42,6 +43,7 @@ type ReviewFixtureOptions = {
   extraRootTags?: readonly string[][];
   fromThread?: boolean;
   attachmentInReply?: boolean;
+  openThreadTab?: () => boolean;
 };
 
 function mime(kind: MediaKind) {
@@ -55,6 +57,7 @@ async function setupReview({
   extraRootTags = [],
   fromThread = false,
   attachmentInReply = false,
+  openThreadTab,
 }: ReviewFixtureOptions) {
   // The DOM emulator has no playback engine; keep native playback calls observable.
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
@@ -164,7 +167,11 @@ async function setupReview({
       />
     );
   }
-  render(<Harness />);
+  render(
+    <LinkThreadTabContext value={openThreadTab}>
+      <Harness />
+    </LinkThreadTabContext>,
+  );
   if (openComments && !fromThread)
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
   return { owner, root, sign, user, attachmentOwner, openReview };
@@ -509,6 +516,34 @@ it.each(["image", "video"] as const)(
     expect(composer).toHaveTextContent("Keep this draft");
   },
 );
+
+it("keeps comment message links inert beneath a host tab opener", async () => {
+  const openThreadTab = vi.fn(() => true);
+  const target = `buzz://message?channel=one&id=${"a".repeat(64)}`;
+  await setupReview({
+    kind: "image",
+    openComments: false,
+    openThreadTab,
+    replies: (viewer, root) => [
+      message(viewer, "one", `See <${target}>`, 2, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+  });
+  const comments = await screen.findByRole("region", {
+    name: "Media comments",
+  });
+  const link = await within(comments).findByRole("link");
+  expect(link).toHaveAttribute("href", target);
+  const event = new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+  });
+  fireEvent(link, event);
+  expect(event.defaultPrevented).toBe(false);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(openThreadTab).not.toHaveBeenCalled();
+});
 
 it("opens image comments by default when the thread contains replies", async () => {
   await setupReview({

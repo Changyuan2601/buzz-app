@@ -286,6 +286,15 @@ test("group landing edge follows list order when text size changes during a drag
     steps: 8,
   });
   await expect(missing).toHaveAttribute("data-drop-edge", "after");
+  // dnd-kit starts each group's ResizeObserver when the drag starts and ignores
+  // its first notification as the initial size. Let a rendering update deliver
+  // it, so the text change below arrives as a separate resize.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "16px";
   });

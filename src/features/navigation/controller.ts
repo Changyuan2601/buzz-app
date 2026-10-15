@@ -1,6 +1,18 @@
 import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
 import type { NavigationEntry, NavigationHistory } from "./history";
 
+/**
+ * Shared abort reason. A reason-less abort() makes Blink mint a DOMException per
+ * call, and V8 keeps its unformatted stack alive: that stack holds the start()
+ * scope (so the next attempt) and the click dispatch (so the unmounted DOM).
+ * One instance captures no per-abort stack, so its .stack points at module
+ * evaluation, not the aborting site: do not use it for diagnostics.
+ */
+export const NAVIGATION_ABORTED = new DOMException(
+  "Navigation attempt aborted",
+  "AbortError",
+);
+
 export type OpenFailure =
   | "invalid-target"
   | "unavailable"
@@ -115,7 +127,7 @@ export function createNavigationController(
       ...(result.status === "failed" ? { reason: result.reason } : {}),
     });
     if (result.status !== "opened")
-      effects.push(() => operation.controller.abort());
+      effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
     emit();
   }
   function start(focus: NavigationFocus = "content"): Promise<OpenResult> {
@@ -124,7 +136,7 @@ export function createNavigationController(
     const old = active;
     if (old) {
       settle(old, { status: "superseded" });
-      effects.push(() => old.controller.abort());
+      effects.push(() => old.controller.abort(NAVIGATION_ABORTED));
     }
     const controller = new AbortController();
     const state = history.snapshot();
@@ -311,7 +323,7 @@ export function createNavigationController(
         ingressRetry = undefined;
         const operation = active;
         finish(operation, { status: "cancelled" });
-        effects.push(() => operation.controller.abort());
+        effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
       });
     },
     /** Keep pre-navigation recovery separate from the previous history visit. */
@@ -336,7 +348,7 @@ export function createNavigationController(
         unsubscribe();
         finish(active, { status: "cancelled" });
         const operation = active;
-        effects.push(() => operation.controller.abort());
+        effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
         listeners.clear();
         history.dispose();
       });

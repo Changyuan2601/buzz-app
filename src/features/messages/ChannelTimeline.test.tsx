@@ -260,6 +260,7 @@ function setup({
   let rows = initialRows ?? [timelineMessage("first"), timelineMessage("last")];
   type Section = ReactElement<{
     ref: { current: unknown };
+    "data-jump-visible": true | undefined;
     children: unknown[];
     onScroll: (event: unknown) => void;
     onPointerDown: () => void;
@@ -452,7 +453,7 @@ function setup({
       button?.props.onClick();
     },
     hasJumpToLatest() {
-      return section.props.children.some(
+      const visible = section.props.children.some(
         (child) =>
           !!child &&
           typeof child === "object" &&
@@ -460,6 +461,9 @@ function setup({
           child.type === JumpToLatestButton &&
           (child as ReactElement<{ visible: boolean }>).props.visible,
       );
+      // The feed carries the same state for the composer-context edge.
+      expect(section.props["data-jump-visible"]).toBe(visible || undefined);
+      return visible;
     },
     unmount() {
       for (const effect of hooks.effects) effect.cleanup?.();

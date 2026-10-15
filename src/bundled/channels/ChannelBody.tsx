@@ -25,8 +25,11 @@ export const ChannelBody = memo(function ChannelBody({
   onOpenMediaReview,
   navigation,
   onContentReady,
+  activityLane,
 }: {
   onContentReady?(channelId: string): void;
+  /** The channel composer follows this body and shows conversation activity. */
+  activityLane?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
@@ -135,6 +138,7 @@ export const ChannelBody = memo(function ChannelBody({
       onOpenMediaReview={onOpenMediaReview}
       revealMessageId={revealMessageId}
       navigation={navigation}
+      activityLane={activityLane}
     />
   );
 });

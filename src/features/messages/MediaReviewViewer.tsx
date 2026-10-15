@@ -40,6 +40,7 @@ import { VideoReviewReactions } from "./VideoReviewReactions";
 import styles from "./Messages.module.css";
 import { MediaReviewFrame } from "./MediaReviewFrame";
 import { avatarMedia } from "../../shared/avatar-source";
+import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
 type MediaReviewViewerProps = {
   attachment: Attachment;
@@ -499,51 +500,55 @@ function ReviewComments({
         .ensure(authors.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, authors]);
+  // Comment links stay inert: no host tab opener reaches them behind the review.
   return (
-    <section
-      ref={comments}
-      data-message-scroller
-      className={styles.mediaReviewThread}
-      aria-label="Media comments"
-    >
-      {replies.map((row, index) => (
-        <div
-          key={row.id}
-          data-review-comment={row.id}
-          data-selected={selectedComment === row.id || undefined}
-          className={styles.mediaReviewComment}
-        >
-          <MessageRow
-            row={row}
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            profile={profiles.get(row.authorId)}
-            agentPubkeys={agentPubkeys}
-            media={session.media}
-            onOpenLink={() => false}
-            day={
-              index === 0 ||
-              new Date(
-                (replies[index - 1]?.createdAt ?? 0) * 1000,
-              ).toDateString() !== new Date(row.createdAt * 1000).toDateString()
-            }
-            retry={session.messages.retry}
-            onOpenMediaReview={(_rowId, attachment, seconds) =>
-              selectAttachment(attachment, seconds)
-            }
-            {...(seek ? { onMediaTime: seek } : {})}
-          />
-        </div>
-      ))}
-      {!replies.length && (
-        <p className={styles.threadNote}>
-          No comments yet. Add the first below.
-        </p>
-      )}
-      {limited && (
-        <p className={styles.threadNote}>Thread history limit reached.</p>
-      )}
-    </section>
+    <LinkThreadTabContext value={undefined}>
+      <section
+        ref={comments}
+        data-message-scroller
+        className={styles.mediaReviewThread}
+        aria-label="Media comments"
+      >
+        {replies.map((row, index) => (
+          <div
+            key={row.id}
+            data-review-comment={row.id}
+            data-selected={selectedComment === row.id || undefined}
+            className={styles.mediaReviewComment}
+          >
+            <MessageRow
+              row={row}
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              profile={profiles.get(row.authorId)}
+              agentPubkeys={agentPubkeys}
+              media={session.media}
+              onOpenLink={() => false}
+              day={
+                index === 0 ||
+                new Date(
+                  (replies[index - 1]?.createdAt ?? 0) * 1000,
+                ).toDateString() !==
+                  new Date(row.createdAt * 1000).toDateString()
+              }
+              retry={session.messages.retry}
+              onOpenMediaReview={(_rowId, attachment, seconds) =>
+                selectAttachment(attachment, seconds)
+              }
+              {...(seek ? { onMediaTime: seek } : {})}
+            />
+          </div>
+        ))}
+        {!replies.length && (
+          <p className={styles.threadNote}>
+            No comments yet. Add the first below.
+          </p>
+        )}
+        {limited && (
+          <p className={styles.threadNote}>Thread history limit reached.</p>
+        )}
+      </section>
+    </LinkThreadTabContext>
   );
 }

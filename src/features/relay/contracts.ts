@@ -173,7 +173,7 @@ export type ChannelWindow = Readonly<{
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
 export type PublicChannelSearch = Readonly<{
   channels: readonly ChannelSummary[];
-  /** The relay returned a full metadata page, so some channels were not checked. */
+  /** The metadata read stopped at its bound, so some channels were not checked. */
   partial: boolean;
 }>;
 /** What a channel-only link may show about a channel the reader may not have

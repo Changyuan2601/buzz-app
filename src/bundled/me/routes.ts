@@ -33,7 +33,8 @@ export function meTarget(
 ): OpenTarget {
   if (sectionId) selected = `new:${sectionId}`;
   const parts = splitPartition(scope);
-  if (!parts || !isMeRoute(selected)) throw new Error("Invalid Me destination");
+  if (!parts || !isMeRoute(selected))
+    throw new Error("Invalid Solo destination");
   return {
     version: 1,
     kind: "page",

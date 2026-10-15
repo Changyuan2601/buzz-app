@@ -124,6 +124,12 @@ for (const action of ["archive", "delete"]) {
         "data-variant",
         action === "delete" ? "destructive" : "prominent",
       );
+      await expect(
+        dialog.getByRole("button", {
+          name: action === "delete" ? "Cancel" : label,
+          exact: true,
+        }),
+      ).toBeFocused();
       await dialog.screenshot({
         path: testInfo.outputPath(`${action}-confirmation.png`),
       });
@@ -312,7 +318,10 @@ for (const action of ["archive", "delete"]) {
         await expect(restore).toBeFocused();
         await restore.click();
         await expect(
-          unarchive.getByRole("button", { name: "Cancel", exact: true }),
+          unarchive.getByRole("button", {
+            name: "Unarchive channel",
+            exact: true,
+          }),
         ).toBeFocused();
         await page.mouse.click(8, 8);
         await expect(unarchive).toHaveCount(0);

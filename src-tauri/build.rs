@@ -16,6 +16,9 @@ fn main() {
     if configured("BUZZ_UPDATER_PUBLIC_KEY") && configured("BUZZ_UPDATER_ENDPOINT") {
         println!("cargo:rustc-cfg=buzz_updater_enabled");
     }
+    // tauri-build watches only the resource files present when it ran, so watch
+    // the directory too: goose-acp is staged after a first `cargo check`.
+    println!("cargo:rerun-if-changed=resources/bin");
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -96,6 +99,9 @@ fn main() {
             "plugin_host_process_spawn",
             "plugin_host_process_write",
             "plugin_host_process_kill",
+            "plugin_host_mcp_serve",
+            "plugin_host_mcp_reply",
+            "plugin_host_mcp_close",
             "oauth_callback_begin",
             "oauth_callback_wait",
             "oauth_callback_cancel",

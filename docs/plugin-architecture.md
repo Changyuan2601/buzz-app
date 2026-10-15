@@ -577,7 +577,9 @@ stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
 `cwd` is absolute or `~/…` and is created if missing. `env` adds to the app's
 environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
 are never inherited. The program is found on the same search path as commands,
-which on macOS also includes `~/.local/bin`.
+which on macOS also includes `~/.local/bin`. A process declared with
+`"bundled": true` instead runs the copy the app ships in its `bin` resources and
+never searches PATH; the Goose plugin runs `goose-acp` this way.
 
 `agent` names an agent whose type the calling plugin registered. The
 process then runs as that agent, as harness agents do: native puts its key in

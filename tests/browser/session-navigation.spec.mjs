@@ -315,7 +315,7 @@ test.describe("Me layout", () => {
     await openPage(page, "Me");
     const workspace = page;
     const sidebar = page.getByRole("navigation", {
-      name: "Me conversations",
+      name: "Solo conversations",
     });
     const composer = workspace.getByRole("textbox", {
       name: "Message your agents",

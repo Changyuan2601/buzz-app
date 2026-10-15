@@ -41,6 +41,10 @@ pub struct HostGrants {
     /// a process takes stdin and the caller appends its own arguments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub processes: Vec<HostProcess>,
+    /// The plugin may serve MCP servers on loopback HTTP to the agents it
+    /// runs, answering their messages itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +73,9 @@ pub struct HostProcess {
     /// Fixed leading arguments; the caller's arguments follow them.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Run the copy the app ships in its `bin` resources, never one on PATH.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bundled: bool,
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -222,6 +229,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("claude manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/codex/manifest.json"))
             .expect("codex manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/goose/manifest.json"))
+            .expect("goose manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -263,6 +272,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
+            | "buzz.goose"
             | "buzz.workflows"
             | "buzz.sessions"
             | "block.hosted-communities"
@@ -1377,6 +1387,11 @@ mod tests {
             parsed.host.as_ref().unwrap().processes[0].args,
             Vec::<String>::new()
         );
+        assert!(!parsed.host.as_ref().unwrap().processes[0].bundled);
+        let mut bundled = processes.clone();
+        bundled["host"]["processes"][0]["bundled"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(bundled).unwrap();
+        assert!(parsed.host.as_ref().unwrap().processes[0].bundled);
         for (field, value) in [
             ("program", serde_json::json!("/bin/sh")),
             ("program", serde_json::json!("")),

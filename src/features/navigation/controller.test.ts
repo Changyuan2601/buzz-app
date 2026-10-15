@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNavigationController } from "./controller";
+import { createNavigationController, NAVIGATION_ABORTED } from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
 import type { OpenTarget } from "./targets";
 const settings: OpenTarget = {
@@ -69,6 +69,11 @@ describe("navigation attempts over one history driver", () => {
     await expect(second).resolves.toEqual({ status: "opened" });
     void nav.retry();
     expect(current.signal.aborted).toBe(true);
+    // One shared reason: a fresh DOMException per abort would carry a stack
+    // that pins the next attempt and the opening click's target DOM.
+    expect(old.signal.reason).toBeInstanceOf(DOMException);
+    expect(old.signal.reason.name).toBe("AbortError");
+    expect(current.signal.reason).toBe(old.signal.reason);
     expect(nav.snapshot().attempt.id).not.toBe(current.id);
   });
   it("reports truthful failure, timeout and cancellation and keeps the original target retryable", async () => {
@@ -85,6 +90,7 @@ describe("navigation attempts over one history driver", () => {
     });
     expect(nav.snapshot().entry.target).toEqual(settings);
     expect(nav.snapshot().attempt.signal.aborted).toBe(true);
+    expect(nav.snapshot().attempt.signal.reason).toBe(NAVIGATION_ABORTED);
     const retry = nav.retry();
     expect(nav.snapshot().reason).toBeUndefined();
     await vi.advanceTimersByTimeAsync(15_000);
@@ -93,7 +99,9 @@ describe("navigation attempts over one history driver", () => {
       reason: "timeout",
     });
     const cancelled = nav.retry();
+    const attempt = nav.snapshot().attempt;
     host.cancel();
+    expect(attempt.signal.reason).toBe(NAVIGATION_ABORTED);
     await expect(cancelled).resolves.toEqual({ status: "cancelled" });
     expect(nav.snapshot().entry.target).toEqual(settings);
   });

@@ -194,6 +194,25 @@ test.each([
 );
 
 test.each([
+  [
+    422,
+    "video resolution too high: maximum is 2160 on the short edge and 3840 on the long edge",
+    "resolution",
+  ],
+  [422, "video too long: duration exceeds 600 seconds", "duration"],
+  [415, "unsupported container: only MP4 is accepted", "rejected"],
+])("names the relay's %i video rule: %s", async (status, error, code) => {
+  const h = await harness(() => Response.json({ error }, { status }));
+  try {
+    const response = await h.post();
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ code });
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
   [413, "size", 413],
   [401, "denied", 403],
   [403, "denied", 403],

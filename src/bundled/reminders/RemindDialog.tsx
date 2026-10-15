@@ -4,6 +4,8 @@ import type { RelaySession } from "../../features/relay/session";
 import { messagePreview } from "../../features/notifications/content";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import {
@@ -25,12 +27,14 @@ export function RemindDialog({
   session: RelaySession;
   close(): void;
 }) {
+  const [when, setWhen] = useState(TIME_PRESETS[0]?.label ?? "custom");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayDateString);
   const [time, setTime] = useState("09:00");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const custom = parseCustomDateTime(date, time);
+  const preset = TIME_PRESETS.find((item) => item.label === when);
   const submit = async (notBefore: number) => {
     const reminders = session.reminders;
     if (!reminders || pending) return;
@@ -67,8 +71,12 @@ export function RemindDialog({
           </Button>
           <Button
             variant="prominent"
-            disabled={pending || custom === null}
-            onClick={() => custom !== null && void submit(custom)}
+            loading={pending}
+            disabled={pending || (!preset && custom === null)}
+            onClick={() => {
+              const at = preset ? preset.at() : parseCustomDateTime(date, time);
+              if (at !== null) void submit(at);
+            }}
           >
             Set reminder
           </Button>
@@ -76,44 +84,69 @@ export function RemindDialog({
       }
     >
       <div className={styles.form}>
-        {TIME_PRESETS.map((preset) => (
-          <Button
-            key={preset.label}
-            disabled={pending}
-            onClick={() => void submit(preset.at())}
-          >
-            {preset.label}
-          </Button>
-        ))}
-        <div className={styles.custom}>
-          <Input
-            aria-label="Reminder date"
-            type="date"
-            min={todayDateString()}
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-          />
-          <Input
-            aria-label="Reminder time"
-            type="time"
-            value={time}
-            onChange={(event) => setTime(event.target.value)}
-          />
-        </div>
-        {custom !== null && shiftedFrom(time, custom) && (
-          <p role="status" className="text-body text-subtle">
-            That time is skipped by daylight saving. The reminder will be set
-            for {formatDue(custom)}.
-          </p>
-        )}
-        <Textarea
-          aria-label="Note"
-          placeholder="Add a note (optional)"
-          rows={2}
-          maxLength={4096}
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
+        <Select
+          label="When"
+          variant="field"
+          value={when}
+          disabled={pending}
+          onValueChange={setWhen}
+          groups={[
+            {
+              label: "",
+              options: [
+                ...TIME_PRESETS.map((item) => ({
+                  value: item.label,
+                  label: item.label,
+                })),
+                { value: "custom", label: "Custom date & time" },
+              ],
+            },
+          ]}
         />
+        {when === "custom" && (
+          <>
+            <div className={styles.custom}>
+              <Field label="Reminder date">
+                <Input
+                  type="date"
+                  min={todayDateString()}
+                  value={date}
+                  disabled={pending}
+                  onChange={(event) => setDate(event.target.value)}
+                />
+              </Field>
+              <Field label="Reminder time">
+                <Input
+                  type="time"
+                  value={time}
+                  disabled={pending}
+                  onChange={(event) => setTime(event.target.value)}
+                />
+              </Field>
+            </div>
+            {custom === null && (
+              <p role="status" className="text-body-sm text-subtle">
+                Choose a date and time in the future.
+              </p>
+            )}
+            {custom !== null && shiftedFrom(time, custom) && (
+              <p role="status" className="text-body-sm text-subtle">
+                That time is skipped by daylight saving. The reminder will be
+                set for {formatDue(custom)}.
+              </p>
+            )}
+          </>
+        )}
+        <Field label="Note (optional)">
+          <Textarea
+            placeholder="What do you want to follow up on?"
+            rows={2}
+            maxLength={4096}
+            value={note}
+            disabled={pending}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </Field>
         {error && (
           <p role="alert" className="text-body text-subtle">
             {error}

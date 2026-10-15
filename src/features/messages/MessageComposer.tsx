@@ -1030,7 +1030,9 @@ function Composer({
               .selectable.some((agent) => agent.pubkey === key),
         )
       )
-        throw new Error("Only your available agents can be mentioned in Me.");
+        throw new Error(
+          "Only your available agents can be mentioned in Solo chats.",
+        );
       await session.workSessions.addAgents(
         channelId,
         missing,
@@ -1044,7 +1046,7 @@ function Composer({
   function requireCompletedSessionStart() {
     if (pendingSessionDraft(scope, channelId))
       throw new Error(
-        "Finish setting up this conversation in Me before sending messages.",
+        "Finish setting up this conversation in Solo before sending messages.",
       );
   }
   async function send() {
@@ -1125,7 +1127,7 @@ function Composer({
         )
       )
         throw new Error(
-          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
+          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
         submission.submit(captured);
@@ -1357,6 +1359,17 @@ function Composer({
     }
   }
   const readingOnly = !outbox?.supports(9) && !cached;
+  // The attachments section animates out over 180 ms; the form's gap and
+  // padding (data-attachments) collapse when it has, not when the list empties.
+  // An edit unmounts the section at once, so no exit completes during one.
+  const hasAttachments = attachments.items.length > 0;
+  const [attachmentsExiting, setAttachmentsExiting] = useState(false);
+  const [hadAttachments, setHadAttachments] = useState(hasAttachments);
+  if (hadAttachments !== hasAttachments) {
+    setHadAttachments(hasAttachments);
+    setAttachmentsExiting(!hasAttachments);
+  }
+  if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
   const context = (
     <div className={styles.composerContext}>
       {!cached && !submission && (
@@ -1384,7 +1397,10 @@ function Composer({
   );
   const renderLeadingTools = (tools: ReactNode) => (
     <>
-      <div className={styles.composerLeadingTools}>
+      <div
+        className={styles.composerLeadingTools}
+        data-recipients={!!value.recipients.length || undefined}
+      >
         {tools}
         {!!value.recipients.length && (
           <RecipientAvatars
@@ -1440,6 +1456,13 @@ function Composer({
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
+        data-conversation-controls={
+          (active && !editing.target && !!trailingTool) || undefined
+        }
+        data-attachments={
+          (!editing.target && (hasAttachments || attachmentsExiting)) ||
+          undefined
+        }
         onKeyDown={(event) => {
           if (
             editing.target &&
@@ -1523,6 +1546,7 @@ function Composer({
               renderers={extensions?.attachments}
               items={attachments.items}
               disabled={editingDisabled}
+              onExitComplete={() => setAttachmentsExiting(false)}
               remove={(id) => {
                 const item = attachments.items.find(
                   (candidate) => candidate.id === id,
@@ -1619,7 +1643,6 @@ function Composer({
                   !event.shiftKey &&
                   !event.altKey &&
                   !event.ctrlKey &&
-                  !event.metaKey &&
                   !event.repeat &&
                   !event.defaultPrevented &&
                   !editingDisabled &&

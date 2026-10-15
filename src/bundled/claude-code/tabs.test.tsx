@@ -1,3 +1,8 @@
+import { AgentTabs } from "../agents/AgentTabs";
+import type {
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -510,7 +515,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Provider default · Fable 5.1",
+      "Fable 5.1",
     ),
   );
   expect(save).not.toHaveBeenCalled();
@@ -646,10 +651,9 @@ it("saves settings as one config", async () => {
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   const user = userEvent.setup();
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   const sonnet = await screen.findByRole("option", { name: "Sonnet 5.5" });
   expect(sonnet).toHaveAccessibleDescription("Efficient for routine tasks");
@@ -676,12 +680,12 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Thinking" }));
   expect(
     (await screen.findAllByRole("option")).map((option) => option.textContent),
-  ).toEqual(["Claude default", "Low", "Medium", "High", "Extra high"]);
+  ).toEqual(["Automatic · Default", "Low", "Medium", "High", "Extra high"]);
   await user.click(screen.getByRole("option", { name: "Extra high" }));
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Claude default");
+  expect(thinking).toHaveTextContent("Automatic");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -707,7 +711,7 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   expect(thinking).not.toHaveTextContent("unavailable");
   await user.click(thinking);
   await user.click(
-    await screen.findByRole("option", { name: "Claude default" }),
+    await screen.findByRole("option", { name: "Automatic · Default" }),
   );
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
@@ -734,7 +738,7 @@ it("keeps Save focused while saving, and lets a failed save be retried", async (
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Relay rejected the change",
   );
-  expect(saveButton).toHaveFocus();
+  expect(screen.getByRole("alert")).toHaveFocus();
   await user.click(saveButton);
   expect(save).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
@@ -765,12 +769,15 @@ it("starts a new agent with finite model choices and preserves its other setting
   expect(
     screen.queryByRole("option", { name: "Custom model" }),
   ).not.toBeInTheDocument();
-  await user.click(await screen.findByRole("option", { name: "Opus 5.5" }));
-  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
-  expect(screen.getByLabelText("Describe what I should do")).toHaveValue(
-    "Triage.",
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Opus 5.5 · Default",
+      description: "Best for everyday, complex tasks",
+    }),
   );
-  fireEvent.change(screen.getByLabelText("Describe what I should do"), {
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
+  fireEvent.change(screen.getByLabelText("Instructions"), {
     target: { value: "Plan." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
@@ -783,7 +790,7 @@ it("disables a new agent's controls while it is being created", () => {
   const Create = installed().type.Create;
   if (!Create) throw new Error("no create choices");
   render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
-  expect(screen.getByLabelText("Describe what I should do")).toBeDisabled();
+  expect(screen.getByLabelText("Instructions")).toBeDisabled();
 });
 
 it("edits a custom model and instructions in settings", async () => {
@@ -804,9 +811,9 @@ it("edits a custom model and instructions in settings", async () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(modelControl).toHaveTextContent("claude-opus-4-1");
-  expect(screen.getByLabelText("Instructions")).toHaveAccessibleDescription(
-    "Added to every session's system prompt, after Buzz's own.",
-  );
+  expect(
+    screen.getByLabelText("Instructions"),
+  ).not.toHaveAccessibleDescription();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Custom model" }));
   const modelId = await screen.findByRole("textbox", { name: "Model ID" });
@@ -937,6 +944,28 @@ it("offers an update before discovering models on a pre-safe-mode Claude copy", 
   ).toHaveLength(0);
 });
 
+it("separates identity fields from runtime settings without changing the stored config", () => {
+  const Settings = tab(installed().type, 0);
+  const props = { agent: agent(), save: vi.fn(async () => undefined) };
+  const view = render(<Settings {...props} settingsSection="identity" />);
+  const instructions = screen.getByLabelText("Instructions");
+  const model = screen.getByLabelText("Model");
+  expect(
+    model.compareDocumentPosition(instructions) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
+  view.rerender(<Settings {...props} settingsSection="runtime" />);
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
+  expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+  expect(props.save).not.toHaveBeenCalled();
+});
+
 it.each([
   { available: true, action: "Sign in", title: "Sign in to Claude" },
   { available: false, action: "Install Claude", title: "Set up Claude" },
@@ -997,3 +1026,66 @@ it("keeps the shared Claude catalog across repeated provider checks", async () =
   ).toHaveLength(1);
   expect(screen.getAllByRole("combobox", { name: "Model" })).toHaveLength(2);
 });
+
+it.each(["Identity", "Settings"])(
+  "preserves both settings drafts and retries a failed save from %s",
+  async (saveFrom) => {
+    const f = installed();
+    const Settings = tab(f.type, 0);
+    const source = agent();
+    const user = userEvent.setup();
+    const savedAgent = { ...source, place: "here" as const };
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Save failed"))
+      .mockResolvedValue(undefined);
+    const agents = { save } as unknown as Agents;
+    const type = {
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: Settings,
+        },
+      ],
+    } as unknown as RegisteredAgentType;
+    render(
+      <AgentTabs
+        agents={agents}
+        agent={savedAgent}
+        type={type}
+        settingsHost={{}}
+        channels={[]}
+        memories={undefined}
+        settingsContent={<p>Agent details</p>}
+      />,
+    );
+    await user.clear(screen.getByLabelText("Instructions"));
+    await user.type(
+      screen.getByLabelText("Instructions"),
+      "Keep this identity draft.",
+    );
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.clear(screen.getByLabelText("Workspace"));
+    await user.type(screen.getByLabelText("Workspace"), "/tmp/combined-draft");
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    expect(screen.getByLabelText("Instructions")).toHaveValue(
+      "Keep this identity draft.",
+    );
+    if (saveFrom === "Settings")
+      await user.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenLastCalledWith(savedAgent.pubkey, {
+      config: expect.objectContaining({
+        instructions: "Keep this identity draft.",
+        workspace: "/tmp/combined-draft",
+      }),
+    });
+  },
+);

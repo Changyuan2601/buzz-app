@@ -1,6 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
   createNavigationController,
+  NAVIGATION_ABORTED,
   type Navigation,
   type OpenAttempt,
   type OpenResult,
@@ -104,7 +105,7 @@ function bindPresentation(
   function dispose() {
     if (lifetime.signal.aborted) return;
     // Commit revocation before invoking abort listeners or other external code.
-    lifetime.abort();
+    lifetime.abort(parent.signal.reason ?? NAVIGATION_ABORTED);
     stop();
     parent.signal.removeEventListener("abort", dispose);
   }

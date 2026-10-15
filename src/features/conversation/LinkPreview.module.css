@@ -1,9 +1,9 @@
 .sessionLink {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   max-width: 100%;
-  padding: var(--space-half) var(--space-1);
-  border-radius: var(--radius-chip);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-row);
   background: var(--affordance-subtle);
   color: var(--text-standard);
   text-decoration: none;
@@ -19,7 +19,7 @@ html[data-keyboard-navigation] .sessionLink:focus-visible {
 .sessionChip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-half);
+  gap: var(--space-1);
   white-space: nowrap;
   font-size: var(--text-body-sm);
 }

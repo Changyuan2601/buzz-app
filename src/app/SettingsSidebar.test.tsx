@@ -14,6 +14,16 @@ import {
 
 afterEach(cleanup);
 
+// The shared sidebar's resize handle measures its panel.
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
+
 it("keeps Administration separate and uses each card's navigation icon", () => {
   const client = {
     selected: "primary",
@@ -131,5 +141,14 @@ it.each([null, "primary"])(
     );
     await userEvent.setup().click(profile);
     expect(onSection).toHaveBeenCalledWith("profile");
+    if (selected) {
+      const leave = screen.getByRole("button", { name: "Leave or remove" });
+      expect(leave.closest("section")).toHaveTextContent("Primary");
+      expect(leave.querySelector("svg")).toHaveClass("tabler-icon-logout");
+    } else {
+      expect(
+        screen.queryByRole("button", { name: "Leave or remove" }),
+      ).toBeNull();
+    }
   },
 );

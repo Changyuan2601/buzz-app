@@ -47,10 +47,13 @@ note that it is off when it is off. `callSessionTool` dispatches each call and
 refuses attention calls while attention is off. A new shared tool needs no
 harness change.
 
-The Agents runner owns watches and timers. `src/features/agent-harness/wakes.ts`
-queues each wake in its Interest's lane (`lanes.ts`), checks that it is still
-current before and while its prompt is built, and passes it to the type's
-optional `runOnce`. That runs one turn with no saved conversation (Claude: a
+The Agents runner starts a mention run from a `p` tag, or from any new message
+by the other member of a one-to-one DM the agent is in; group DMs still need
+the mention. It also owns watches and timers.
+`src/features/agent-harness/wakes.ts` queues each wake in its Interest's lane
+(`lanes.ts`), checks that it is still current before and while its prompt is
+built, and passes it to the type's optional `runOnce`. That runs one turn with
+no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
 be ready. The prompt text lives in `attention-prompt.ts`.
@@ -228,7 +231,9 @@ You can always mention yourself. If archive state is unknown, the mention is
 allowed.
 
 A mention notifies a member. It does not promise that an agent will answer, and
-choosing someone does not give them access or start an agent.
+choosing someone does not give them access or start an agent. In a one-to-one
+DM with your own agent, it answers every message you send, mention or not; a
+group DM still requires a mention.
 
 Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
 group, matches against the visible resolved label come first: whole-name exact,

@@ -56,12 +56,16 @@ it("keeps section actions independent of disclosure and supports menu keyboard d
   expect(
     screen.getByLabelText("Channels").closest("details"),
   ).not.toHaveAttribute("open");
+  const section = trigger.closest("[data-sidebar-section]");
+  expect(section).not.toHaveAttribute("data-menu-open");
   await user.click(trigger);
   await waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
+  expect(section).toHaveAttribute("data-menu-open");
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
+  expect(section).not.toHaveAttribute("data-menu-open");
   expect(trigger).toHaveFocus();
   await user.click(screen.getByLabelText("Channels"));
   expect(screen.getByRole("button", { name: "General" })).toBeVisible();

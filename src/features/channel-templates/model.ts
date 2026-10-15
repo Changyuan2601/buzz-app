@@ -130,7 +130,7 @@ export function kitRecordFits(record: KitRecord) {
   );
 }
 export const meCapacityMessage =
-  "Me storage is full. Move a conversation from Me to Messages, then try again.";
+  "Solo storage is full. Move a conversation from Solo to Multiplayer, then try again.";
 
 export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),
@@ -160,7 +160,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
     };
   else if (v.type === "groups" && v.id === "me") {
     if (!Array.isArray(v.groups) || v.groups.length > 100)
-      throw new Error("Too many Me groups");
+      throw new Error("Too many Solo groups");
     const groups = v.groups.map((raw) => {
       const g = object(raw);
       return {
@@ -171,7 +171,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       };
     });
     if (new Set(groups.map((g) => g.id)).size !== groups.length)
-      throw new Error("Duplicate Me group");
+      throw new Error("Duplicate Solo group");
     const assignments = Object.entries(object(v.assignments));
     if (
       assignments.length > 1000 ||
@@ -181,7 +181,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
           !groups.some((g) => g.id === group),
       )
     )
-      throw new Error("Invalid Me group placement");
+      throw new Error("Invalid Solo group placement");
     value = {
       type: "groups",
       id: v.id,

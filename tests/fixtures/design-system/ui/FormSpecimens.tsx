@@ -176,6 +176,13 @@ export function TextareaExamples() {
   />
 </Field>`}
       >
+        <Field label="Outlined instructions">
+          <Textarea
+            appearance="outlined"
+            rows={3}
+            placeholder="Describe what I should do"
+          />
+        </Field>
         <Field label="On a floating surface">
           <Textarea
             surface="panel"

@@ -59,6 +59,7 @@ test("ordinary session links cannot bypass a pending start receipt", async ({
     await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key),
   ).toEqual({
     ...JSON.parse(receipt),
+    name: "Original first message",
     draft: { text: "Original first message", recipients: [] },
   });
   expect(

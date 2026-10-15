@@ -1,5 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
+import { NAVIGATION_ABORTED } from "./controller";
 import { provideNavigation, type PresentationOwner } from "./service";
 import { provideRelay } from "../relay/service";
 const target = {
@@ -63,6 +64,8 @@ it.each(["complete", "resolve"] as const)(
         : request.resolve(settings),
     ).toBe(false);
     expect(request.signal.aborted).toBe(true);
+    // The visit is still live, so revocation falls back to the shared reason.
+    expect(request.signal.reason).toBe(NAVIGATION_ABORTED);
     t.change(true);
     expect(request.complete({ status: "opened" })).toBe(false);
     expect(request.resolve(settings)).toBe(false);
@@ -90,6 +93,8 @@ it("revocation is synchronous, irreversible through ABA, and preserves the origi
   await vi.advanceTimersByTimeAsync(1);
   expect(await t.promise).toEqual({ status: "failed", reason: "timeout" });
   expect(next.signal.aborted).toBe(true);
+  // Revocation forwards the visit's shared reason rather than minting its own.
+  expect(next.signal.reason).toBe(t.attempt.signal.reason);
   expect(next.complete({ status: "opened" })).toBe(false);
 });
 it("session replacement revokes only bound authority, not static pages or the visit", async () => {

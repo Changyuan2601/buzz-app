@@ -109,14 +109,18 @@ export function validateDetailsDraft(
 ): void {
   const metadata = sessionMetadata(base?.description);
   if (metadata && !metadata.parentId && draft.description !== "") {
+    const next = sessionMetadata(draft.description);
     if (
+      !next ||
+      next.parentId ||
+      draft.visibility !== base?.visibility ||
       draft.description !== base?.description ||
       (draft.labels !== undefined &&
-        !sameLabels(draft.labels, base.labels ?? [])) ||
-      draft.visibility !== base.visibility ||
-      draft.ttlSeconds !== base.ttlSeconds
+        !sameLabels(draft.labels, base.labels ?? []))
     )
-      throw new Error("Only the name of a session can be changed here.");
+      throw new Error(
+        "Only the name and lifetime of a session can be changed here.",
+      );
     draft = { ...draft, description: "" };
   }
   const errors = detailsDraftErrors(draft);
@@ -174,10 +178,7 @@ export function detailsTemplate(
   base: ChannelDetailsDraft,
 ): EventTemplate {
   validateDetailsDraft(draft, base);
-  if (
-    sessionMetadata(base.description) &&
-    draft.description === base.description
-  )
+  if (sessionMetadata(base.description) && sessionMetadata(draft.description))
     return {
       kind: 9002,
       created_at: Math.floor(Date.now() / 1000),
@@ -185,6 +186,14 @@ export function detailsTemplate(
       tags: [
         ["h", lifecycleChannelId(id)],
         ["name", draft.name],
+        ...(draft.ttlSeconds !== base.ttlSeconds
+          ? [
+              [
+                "ttl",
+                draft.ttlSeconds === undefined ? "" : String(draft.ttlSeconds),
+              ],
+            ]
+          : []),
       ],
     };
   return {
@@ -236,7 +245,11 @@ function detailsLabels(tags: readonly (readonly string[])[]): string[] {
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */
 function parseDetailsTtl(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
-  if (!/^[1-9]\d*$/.test(value) || Number(value) > 2_147_483_647)
+  if (
+    !/^[1-9]\d*$/.test(value) ||
+    Number(value) > 2_147_483_647 ||
+    String(Number(value)) !== value
+  )
     throw new Error("Channel duration could not be verified.");
   return Number(value);
 }
@@ -249,12 +262,12 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     Number.isSafeInteger(event.created_at) &&
     event.created_at >= 0 &&
     Array.isArray(event.tags) &&
-    event.tags.length === 2 &&
+    [2, 3].includes(event.tags.length) &&
     event.tags.every(
       (tag, index) =>
         Array.isArray(tag) &&
         tag.length === 2 &&
-        tag[0] === ["h", "name"][index] &&
+        tag[0] === ["h", "name", "ttl"][index] &&
         typeof tag[1] === "string",
     )
   ) {
@@ -263,6 +276,10 @@ export function validateDetailsTemplate(event: EventTemplate): void {
       name: event.tags[1]?.[1] ?? "",
       description: "",
       visibility: "private",
+      ttlSeconds:
+        event.tags[2]?.[1] === ""
+          ? undefined
+          : parseDetailsTtl(event.tags[2]?.[1]),
     });
     return;
   }

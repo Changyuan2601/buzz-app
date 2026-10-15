@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { ProviderDialog } from "./ProviderDialog";
+import { useRef, useState } from "react";
 import type {
   Agent,
   AgentSettingsHost,
@@ -10,8 +11,8 @@ import { ArrowRightIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Field } from "../../shared/design-system/ui/Field";
-import { FieldButton } from "../../shared/design-system/ui/FieldButton";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { CaretDownIcon } from "../../shared/design-system/icons";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -137,6 +138,9 @@ function TypeField({
   const selectedType = available.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
+  const providerButton = useRef<HTMLButtonElement>(null);
+  const [checking, setChecking] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
   const [migration, setMigration] = useState<{
     target: RegisteredAgentType;
     preview: ReturnType<Agents["previewRetype"]>;
@@ -165,6 +169,23 @@ function TypeField({
     onSelect({ key: migration.target.key, config: migration.preview.config });
     setMigration(undefined);
   };
+  const prepare = async () => {
+    if (!migration || checking) return;
+    const provider = migration.target.provider;
+    if (!provider) return stage();
+    setChecking(true);
+    setError("");
+    try {
+      await provider.check();
+      if (provider.snapshot().readiness === "ready") stage();
+      else setConfiguring(true);
+    } catch {
+      // The provider owns install/auth recovery, including failed checks.
+      setConfiguring(true);
+    } finally {
+      setChecking(false);
+    }
+  };
   const value = (
     <span className="flex min-w-0 items-center gap-2">
       {TypeIcon && <TypeIcon size={20} aria-hidden="true" />}
@@ -173,48 +194,64 @@ function TypeField({
   );
   return (
     <>
-      <Field label="Provider">
-        {others.length > 0 ? (
-          <MenuRoot onOpenChange={(open) => open && setError("")}>
-            <MenuTrigger
-              aria-label={`Change provider from ${selectedType?.title ?? "unavailable provider"}`}
-              render={<FieldButton>{value}</FieldButton>}
-            />
-            <MenuPopup>
-              <MenuRadioGroup
-                value={selected}
-                onValueChange={(next) => choose(String(next))}
-              >
-                {available.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <MenuRadioItem
-                      key={item.key}
-                      value={item.key}
-                      selection="highlight"
-                      closeOnClick
+      <PreferenceRow
+        title="Provider"
+        trailing={
+          others.length > 0 ? (
+            <div className="buzz-select" data-variant="compact">
+              <MenuRoot onOpenChange={(open) => open && setError("")}>
+                <MenuTrigger
+                  aria-label={`Change provider from ${selectedType?.title ?? "unavailable provider"}`}
+                  render={
+                    <Button
+                      ref={providerButton}
+                      variant="outline"
+                      shape="control"
+                      size="sm"
                     >
-                      <ChoiceRow
-                        label={item.title}
-                        leading={Icon ? <Icon size={20} /> : undefined}
-                      />
-                    </MenuRadioItem>
-                  );
-                })}
-              </MenuRadioGroup>
-            </MenuPopup>
-          </MenuRoot>
-        ) : (
-          value
-        )}
-      </Field>
+                      {value}
+                      <CaretDownIcon size={14} aria-hidden="true" />
+                    </Button>
+                  }
+                />
+                <MenuPopup>
+                  <MenuRadioGroup
+                    value={selected}
+                    onValueChange={(next) => choose(String(next))}
+                  >
+                    {available.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <MenuRadioItem
+                          key={item.key}
+                          value={item.key}
+                          selection="highlight"
+                          closeOnClick
+                        >
+                          <ChoiceRow
+                            label={item.title}
+                            leading={Icon ? <Icon size={20} /> : undefined}
+                          />
+                        </MenuRadioItem>
+                      );
+                    })}
+                  </MenuRadioGroup>
+                </MenuPopup>
+              </MenuRoot>
+            </div>
+          ) : (
+            value
+          )
+        }
+      />
       {error && !migration && (
         <p role="alert" className="m-0 mt-1 text-body-sm text-danger">
           {error}
         </p>
       )}
       <Dialog
-        open={Boolean(migration)}
+        open={Boolean(migration) && !configuring}
+        preventClose={checking}
         onOpenChange={(open) => {
           if (!open) {
             setMigration(undefined);
@@ -229,8 +266,14 @@ function TypeField({
         headerGap="compact"
         actions={
           <>
-            <Button onClick={() => setMigration(undefined)}>Cancel</Button>
-            <Button variant="primary" onClick={stage}>
+            <Button disabled={checking} onClick={() => setMigration(undefined)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={checking}
+              onClick={() => void prepare()}
+            >
               Continue
             </Button>
           </>
@@ -245,6 +288,18 @@ function TypeField({
           />
         )}
       </Dialog>
+      {configuring && migration && (
+        <ProviderDialog
+          type={migration.target}
+          finalFocus={providerButton}
+          onClose={() => {
+            setConfiguring(false);
+            if (migration.target.provider?.snapshot().readiness === "ready")
+              stage();
+            else setMigration(undefined);
+          }}
+        />
+      )}
     </>
   );
 }

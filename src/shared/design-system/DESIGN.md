@@ -128,6 +128,10 @@ gaps rather than each plugin inventing its own rhythm. Dependent preferences ret
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
+Use `Accordion variant="settings"` for disclosures alongside preference rows.
+Its full-row trigger uses the settings container shape and spacing; the chevron
+is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
+label and compact choice control without adding a group container.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
 [`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
 preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
@@ -150,7 +154,7 @@ close button, body padding, or footer with feature-specific markup.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
-| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Shared bounded body; keep actions reachable |
+| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
 | Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
 | Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
 | Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
@@ -195,9 +199,13 @@ Choose by interaction before choosing size. They share a material, not semantics
 
 Do not put a form in an action-menu item or simulate selectable values with a set
 of unrelated buttons. Use `MenuNote` for non-action explanatory text and `tone="danger"`
-for a destructive menu action. Select an existing compact/default/wide recipe for
+for a destructive menu action; its icon inherits the danger color and highlighted/pressed
+rows use the matching danger affordance. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
+For choices that must stay within a modal, pass its element to
+`Combobox.Popup collisionBoundary` when the picker opens. Base UI positions it
+and the shared popup scrolls within the resulting available height; keep the portal.
 Use their supported `padding`/alignment props; do not add another padded card inside
 the popup or cancel its styles. Keep long lists scrollable and all actions reachable.
 
@@ -519,7 +527,9 @@ border-prominent stroke fading over 150ms ease for pointer interaction. The
 field-scoped --border variable selects transparent, active, or error color for
 the reserved 1px border, so state changes do not shift the layout. Keyboard
 focus and reduced motion change immediately. Composite fields own one stroke
-around the input and actions; error strokes retain priority. Placeholders use
+around the input and actions; error strokes retain priority. Borderless title and
+heading inputs keep their perimeter transparent on pointer/autofocus entry and
+show the focus border during keyboard navigation. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
 and no-container-ring recipes for these fields.
@@ -650,6 +660,15 @@ colors while blocking activation; never swap in a differently sized loading labe
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
+The proposed `attention` variant is used by overdue reminder snooze actions.
+It reuses the outline button's 1px inset stroke and capsule geometry, tinting
+the stroke with `border-danger` at 45% opacity. Dashes travel slowly around the
+perimeter, advancing one 8px dash-and-gap cycle every 3s with linear timing.
+The capsule and label stay still. Reduced motion and disabled/loading states
+keep the dashed border static. This is a status cue, so retain an
+explicit status label or group heading and the scheduled time. Danger hover
+and pressed fills, disabled boundaries, and keyboard focus remain shared.
+
 IconButton's `bare` variant is for toggles whose glyph supplies the state:
 no resting, hover, pressed or selected background. The small control keeps its
 32px hit area with 20px artwork. The caller supplies outline/filled artwork,
@@ -708,6 +727,9 @@ text-body (14px / 20px), and the 16px control inset. Derive vertical padding fro
 size, text line height, and boundary; do not force a fixed height that clips
 larger text or wrapped Select values. Textarea uses the control inset on all four
 sides (16px at the default scale), with manual vertical resizing and a code variant.
+Agent instructions intentionally use `appearance="outlined"`: one container-radius
+border over a transparent background, with no inset fill or nested SettingsGroup.
+Focus strengthens that same border. Preserve this choice in creation and profiles.
 Use `surface="panel"` when a standalone textarea needs an opaque surface over a
 floating dialog; the default inset surface remains for fields on panels.
 In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px
@@ -919,7 +941,13 @@ layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="wide"` for two-column catalogs such as Add harness. It caps the width
 at 56rem and preserves viewport gutters; `height="stable"` can reserve the body
-while changing catalog selection.
+while changing catalog selection. Content-sized dialogs also scroll only their
+body when viewport-capped, without reserving extra height; their title and
+actions stay outside that scrollport. If enlarged title/actions alone cannot fit
+the viewport, the outer dialog scrolls as a fallback so pointer access does not
+depend on focusing an offscreen control. Flow bodies retain at least one control
+height plus their padding, with scroll padding to reveal complete focused fields
+rather than only their text selection; bounded flex/expanded bodies keep their own sizing.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
@@ -933,6 +961,8 @@ on top of that body padding. Create/Edit channel forms opt into
 other dialog compositions retain their default spacing. Their privacy confirmation
 steps also opt into `footerGap="compact"` for 8px between the final checkbox row
 and the actions; returning to the form restores the normal body-bottom padding.
+Session settings uses content height and the default footer spacing, with one
+body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
@@ -965,6 +995,10 @@ collapsing them preserves local input state; leave the default for static conten
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows
 form one stack; avoid inserting form-section gaps between individual rows.
+Use the proposed `section` variant for a disclosure alongside InlineHeader
+groups, such as completed reminders. It shares the heading type treatment,
+extends the hit area around the aligned label, and leaves panel content flush
+with adjacent lists. Render counts with the same caption role as those groups.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
@@ -1056,8 +1090,10 @@ from the trigger reaches the action; Shift+Tab returns to the trigger; forward T
 continues after the trigger. Escape dismisses the preview before restoring focus,
 but never pulls focus back if the user moved it during exit. Closing previews
 are no longer Tab destinations or pointer targets.
-Scrolling anything that contains the trigger dismisses a hover-opened preview: a
-still pointer cannot report that its trigger moved away. A keyboard-focused
+Scrolling anything that contains the trigger dismisses a hover-opened preview when
+the trigger moves: a still pointer cannot report that its trigger moved away. A
+scroll that leaves the trigger in place, such as scroll anchoring, keeps the
+preview. A keyboard-focused
 trigger keeps its preview, hidden while the trigger is scrolled out of view
 unless focus is inside it.
 The positioned portal owns its layer above dialogs. An optional content anchor
@@ -1106,6 +1142,7 @@ they apply. Keep the same control recognizable across those states.
 
 - Pressed changes the fill without moving the control.
 - Loading preserves the label’s space and blocks repeated activation in behavior, not just CSS.
+- For non-blocking background checks, delay progress feedback for about one second to avoid flicker. User-triggered actions such as Save still show immediate loading feedback.
 - Hover adds contrast appropriate to the surface: a light row darkens, while a dark chip may lighten.
 - Selection remains visible after the pointer leaves. A selected toggle-group item does nothing when selected again and has no hover treatment.
 - Disabled means unavailable. Do not use it as a quieter text-emphasis level.
@@ -1339,6 +1376,10 @@ the timeline measures its rem-sized leading region for Virtua's pixel start marg
 Use direct, familiar language and remove words that do not help someone decide or act.
 
 - Labels describe the action or destination in the reader’s terms.
+- Name the app destinations Solo and Multiplayer, matching navigation. Use “Solo chats”
+  or “threads in Multiplayer” when context helps. Ordinary messages and message
+  settings still refer to content, not the Multiplayer destination. These labels
+  do not rename internal routes, plugin IDs or saved preference keys.
 - Empty states explain what belongs there and provide a useful next step.
 - Errors explain what happened and how to recover, beside the affected control.
 - Keep names and capitalization consistent across the flow.
@@ -1478,17 +1519,17 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
-The wide shell topbar is the deliberate exception: Me and Messages use
+The wide shell topbar is the deliberate exception: Solo and Multiplayer use
 `Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
 move focus without selecting; Enter, Space or pointer selection changes the page
 while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
-Messages represents the containing area for registered sidebar/default-placement
+Multiplayer represents the containing area for registered sidebar/default-placement
 pages, while their sidebar selection and route remain exact. Its tab stays linked
 to the active child panel. The shell opts into Tabs' `onReselect` to return from a
-child to Messages without changing ordinary active-tab behavior elsewhere. More
+child to Multiplayer without changing ordinary active-tab behavior elsewhere. More
 pages marks that containing area with `aria-current="true"`, reserving `page` for
 an exact destination. Settings and independent header pages stay separate.
 

@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/aaif-goose/goose.git",
+  "revision": "9686d674000a5fbb8139214863289e4820714771",
+  "features": "rustls-tls,system-keyring,online-model-meta",
+  "profile": "lean",
+  "devProfile": "dev"
+}

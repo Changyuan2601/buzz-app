@@ -42,6 +42,8 @@ if (
 export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.mjs",
+  // Prepares the dependency cache that every Vite fixture server starts from.
+  globalSetup: "./vite-server.mjs",
   outputDir: "../../test-results/browser",
   // Functional journeys share two workers; measurements run first and alone.
   // Never hide failures with retries or measure opening under another browser's load.

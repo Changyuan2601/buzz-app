@@ -99,6 +99,60 @@
   .buzz-button[data-variant="outline"] {
     box-shadow: inset 0 0 0 1px var(--interaction-border);
   }
+
+  /* Only the dashes travel around the overdue outline; its geometry stays still. */
+  .buzz-button[data-variant="attention"] {
+    color: var(--text-danger);
+  }
+  .buzz-button-attention {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    opacity: 0.45;
+  }
+  .buzz-button-attention rect {
+    width: calc(100% - 1px);
+    height: calc(100% - 1px);
+    /* rx adopts ry's resolved height, keeping round capsule ends at any width. */
+    ry: 50%;
+    fill: none;
+    stroke: var(--border-danger);
+    stroke-width: 1px;
+    stroke-dasharray: 4 4;
+    stroke-linecap: round;
+    animation: buzz-button-attention 3s linear infinite;
+  }
+  .buzz-button[data-button-shape="control"] .buzz-button-attention rect {
+    ry: var(--radius-control);
+  }
+  .buzz-button[data-icon-variant] .buzz-button-attention rect {
+    ry: var(--radius-icon-button);
+  }
+  .buzz-button[data-icon-shape="round"] .buzz-button-attention rect {
+    ry: 50%;
+  }
+  @keyframes buzz-button-attention {
+    to {
+      stroke-dashoffset: -8;
+    }
+  }
+  .buzz-button[data-disabled] .buzz-button-attention rect {
+    animation: none;
+  }
+  .buzz-button[data-variant="attention"][data-disabled]:not([data-loading])
+    .buzz-button-attention {
+    opacity: 1;
+  }
+  .buzz-button[data-disabled]:not([data-loading]) .buzz-button-attention rect {
+    stroke: var(--border-standard);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-button-attention rect {
+      animation: none;
+    }
+  }
   .buzz-button[data-variant="destructive"] {
     background: var(--affordance-danger);
     color: var(--text-danger);
@@ -127,7 +181,10 @@
       ) {
       background: var(--interaction-hover);
     }
-    .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
+    .buzz-button:is(
+        [data-variant="destructive"],
+        [data-variant="attention"]
+      ):hover:not([data-disabled]) {
       background: var(--affordance-danger-hover);
     }
     .buzz-button[data-variant="link"]:hover:not([data-disabled]) {
@@ -156,7 +213,7 @@
   ) {
     background: var(--interaction-pressed);
   }
-  .buzz-button[data-variant="destructive"]:is(
+  .buzz-button:is([data-variant="destructive"], [data-variant="attention"]):is(
     :active,
     [aria-expanded="true"]
   ):not([data-disabled]) {
@@ -221,6 +278,33 @@
   }
   .buzz-button[data-icon-shape="round"] {
     border-radius: var(--radius-pill);
+  }
+
+  /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
+     interactive wrapper's keyboard focus indicator remains visible. */
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]:hover:not(
+    [data-disabled]
+  ) {
+    isolation: isolate;
+    background: transparent;
+  }
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--affordance-prominent);
+    mask: url("./avatar-squircle.svg") center / 100% 100% no-repeat;
+    transition: background-color var(--duration-state) var(--easing-state);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]:hover:not(
+        [data-disabled]
+      )::before {
+      background: var(--affordance-prominent-hover);
+    }
   }
 
   /* Trailing row actions keep their size-selected width and fill the row height. */
@@ -312,6 +396,7 @@
   .buzz-button:is(
     [data-variant="ghost"],
     [data-variant="outline"],
+    [data-variant="attention"],
     [data-variant="link"]
   )[data-disabled]:not(
     [data-loading],
@@ -1180,6 +1265,15 @@
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
   }
+  .buzz-menu-item[data-tone="danger"]:is(
+    [data-highlighted],
+    [data-popup-open]
+  ):not([data-disabled]) {
+    background: var(--affordance-danger-hover);
+  }
+  .buzz-menu-item[data-tone="danger"]:active:not([data-disabled]) {
+    background: var(--affordance-danger-pressed);
+  }
   .buzz-menu-item[data-disabled] {
     color: var(--text-unavailable);
   }
@@ -1191,6 +1285,9 @@
     flex: 0 0 auto;
     place-items: center;
     color: var(--text-subtle);
+  }
+  .buzz-menu-item:is([data-tone="danger"], [data-disabled]) .buzz-menu-icon {
+    color: inherit;
   }
   .buzz-menu-choice-label {
     display: flex;
@@ -1508,9 +1605,59 @@
   .buzz-accordion-trigger[aria-expanded="true"] > svg {
     transform: rotate(180deg);
   }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-item {
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-container);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger {
+    border-radius: var(--radius-container);
+    padding: var(--space-3) var(--space-4);
+    gap: var(--space-4);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > span {
+    flex: 1;
+    min-width: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
+    flex-shrink: 0;
+  }
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-variant="settings"]
+    .buzz-accordion-trigger[aria-expanded="true"] {
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-content {
+    border-block-start: 1px solid var(--border-standard);
+    padding: var(--space-4);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-panel {
+    padding: 0;
+    height: var(--accordion-panel-height);
+    overflow: clip;
+    transition: height var(--duration-settle) var(--easing-settle);
+  }
+  .buzz-accordion[data-variant="settings"]
+    .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
+    height: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
+    transition: transform var(--duration-settle) var(--easing-settle);
+  }
+  html[data-keyboard-navigation]
+    .buzz-accordion[data-variant="settings"]
+    :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-accordion[data-variant="settings"]
+      :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+      transition: none;
+    }
+  }
+  .buzz-accordion[data-variant="settings"],
   .buzz-accordion[data-variant="form"],
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;
@@ -1520,6 +1667,23 @@
   }
   .buzz-accordion[data-variant="navigation"] .buzz-accordion-panel {
     padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  }
+  /* Section disclosures align their text and content with InlineHeader groups.
+     The hit area extends around the heading without indenting its content. */
+  .buzz-accordion[data-variant="section"] {
+    margin: 0;
+  }
+  .buzz-accordion[data-variant="section"] .buzz-accordion-trigger {
+    width: calc(100% + var(--space-4));
+    margin: calc(-1 * var(--space-2));
+  }
+  .buzz-accordion[data-variant="section"] .buzz-accordion-trigger > svg {
+    /* Match the center of a trailing small IconButton. */
+    flex-shrink: 0;
+    margin-inline-end: calc((var(--size-control-sm) - 14px) / 2);
+  }
+  .buzz-accordion[data-variant="section"] .buzz-accordion-panel {
+    padding: var(--space-4) 0 0;
   }
 }
 

@@ -34,6 +34,7 @@ export function AgentCreateHeader({
   avatarActionTarget,
   onAvatarActiveChange,
   nameRef,
+  initialAvatarPicker = false,
 }: {
   name: string;
   picture?: string | undefined;
@@ -47,20 +48,27 @@ export function AgentCreateHeader({
   editing: boolean;
   avatarNavigationRef?: Ref<{ back(): void }>;
   avatarActionTarget?: HTMLElement | null;
-  onAvatarActiveChange?: (active: boolean) => void;
+  onAvatarActiveChange?: (active: boolean, view: string) => void;
   nameRef?: Ref<HTMLInputElement>;
+  initialAvatarPicker?: boolean;
 }) {
   // The header shares AvatarEditor's full-size frame, so it requests the
   // original rather than the thumbnail (see avatar-source.grit).
   const preview = useAvatarPreview(picture ?? "", community);
-  const [view, setView] = useState("selected");
+  const [view, setView] = useState(
+    initialAvatarPicker ? "collections" : "selected",
+  );
   const [movingAvatar, setMovingAvatar] = useState<string>();
   useEffect(() => {
-    onAvatarActiveChange?.(view !== "selected");
+    onAvatarActiveChange?.(view !== "selected", view);
   }, [view, onAvatarActiveChange]);
   useImperativeHandle(avatarNavigationRef, () => ({
     back() {
-      setView(view === "collections" ? "selected" : "collections");
+      setView(
+        view === "collections" && !initialAvatarPicker
+          ? "selected"
+          : "collections",
+      );
     },
   }));
   const [keyboard, setKeyboard] = useState(false);
@@ -243,9 +251,9 @@ export function AgentCreateHeader({
                   disabled={disabled}
                   onBusyChange={onBusyChange}
                   onChange={(value) => {
-                    // Done with no image keeps the avatar it had.
-                    if (value) onChange({ picture: value });
-                    setView("selected");
+                    if (value || initialAvatarPicker)
+                      onChange({ picture: value });
+                    setView(initialAvatarPicker ? "collections" : "selected");
                   }}
                 />
               </div>
@@ -269,7 +277,7 @@ export function AgentCreateHeader({
                     onClick={() => {
                       setMovingAvatar(avatar.id);
                       onChange({ picture: avatar.url });
-                      setView("selected");
+                      if (!initialAvatarPicker) setView("selected");
                     }}
                   >
                     {artwork(avatar)}

@@ -46,6 +46,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
@@ -4590,7 +4591,9 @@ it.each([
   { shiftKey: true },
   { altKey: true },
   { ctrlKey: true },
-  { metaKey: true },
+  { metaKey: true, shiftKey: true },
+  { metaKey: true, altKey: true },
+  { metaKey: true, ctrlKey: true },
   { repeat: true },
   { isComposing: true },
   { keyCode: 229 },
@@ -4699,7 +4702,7 @@ it("inserts readable literal mention links without new notification recipients d
     );
   });
   const labels = ["@Honey", ...names.map((name) => `@${name}`)].map((label) =>
-    label.replace("\n", " "),
+    label.replace(/[\r\n]+/g, " "),
   );
   // Each selection stays one literal label on its own exact identity link.
   const readable = (body: string) => {
@@ -6879,4 +6882,100 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("marks the composer for conversation controls only while they render", () => {
+  const h = mount(
+    { trailingTool: <button type="button">Tool</button> },
+    undefined,
+    first.pubkey,
+  );
+  const form = () => h.container.querySelector("form");
+  expect(form()).toHaveAttribute("data-conversation-controls");
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(form()).toHaveAttribute("data-editing");
+  expect(form()).not.toHaveAttribute("data-conversation-controls");
+  h.unmount();
+});
+
+it("marks the leading tools while explicit recipients are shown", async () => {
+  const h = mount();
+  expect(h.container.querySelector("[data-recipients]")).toBeNull();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const region = screen.getByRole("region", { name: "Explicit mentions" });
+  const tools = region.parentElement;
+  expect(tools).toHaveAttribute("data-recipients");
+  await h.user.click(
+    within(region).getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  expect(tools).not.toHaveAttribute("data-recipients");
+  h.unmount();
+});
+
+it("marks the composer with attachments until the emptied section has animated out", async () => {
+  // jsdom applies no CSS module styles, so the gap/padding this attribute
+  // drives cannot be measured here; the attribute's timeline is asserted.
+  const h = await mountUploadComposer();
+  expect(h.form()).not.toHaveAttribute("data-attachments");
+  attachByPaste(h.input(), attachmentFile("notes.txt"));
+  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
+  const section = screen.getByRole("region", { name: "Attachments" });
+  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+  // The list is empty but the section is still exiting: keep the mark.
+  expect(section).toBeInTheDocument();
+  expect(h.form()).toHaveAttribute("data-attachments");
+  await waitFor(() => expect(section).not.toBeInTheDocument());
+  expect(h.form()).not.toHaveAttribute("data-attachments");
+  attachByPaste(h.input(), attachmentFile("again.txt"));
+  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
+});
+
+it("drops the attachments mark while a row-requested edit holds pending items", async () => {
+  // Arrow-up refuses to edit over pending items; the row's Edit action does not.
+  const h = await mountUploadComposer({ editable: true });
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  h.unmount();
+  let scope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    scope = useMessageEditScope();
+    return null;
+  }
+  const row = editableMessage({ authorId: viewer });
+  const view = render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  const form = within(view.container).getByRole("form");
+  attachByPaste(
+    within(view.container).getByRole("textbox"),
+    attachmentFile("pending.txt"),
+  );
+  await waitFor(() => expect(form).toHaveAttribute("data-attachments"));
+  act(() => scope?.current?.(row));
+  expect(form).toHaveAttribute("data-editing");
+  expect(form).not.toHaveAttribute("data-attachments");
+  fireEvent.click(
+    within(view.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  expect(form).not.toHaveAttribute("data-editing");
+  expect(form).toHaveAttribute("data-attachments");
+  expect(within(view.container).getByText("pending.txt")).toBeVisible();
 });

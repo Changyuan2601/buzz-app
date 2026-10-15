@@ -1,38 +1,54 @@
-import type {
-  ChannelDetails,
-  ChannelDetailsDraft,
-} from "../relay/channel-details-protocol";
+import { useCallback, useSyncExternalStore } from "react";
 import { trackMemberAdditionReceipts } from "../channel-members/operations";
 import type { RelaySession } from "../relay/session";
 import type { MemberAdditionIntent } from "../channel-members/members";
 
 export type ShareIntent = Readonly<{
   destination: string;
-  audience: "everyone" | "selected";
-  name?: string;
-  visibility?: "private" | "open";
-  details?: ChannelDetailsDraft;
-  detailsBase?: ChannelDetails;
-  channelPeople: readonly string[];
   sessionPeople: readonly string[];
 }>;
 export type ShareAttempt = {
   intent: ShareIntent;
-  /** A created channel stays the same destination on every retry. */
-  created?: string;
-  detailsApplied?: boolean;
   messageId?: string;
   grants: Map<string, MemberAdditionIntent>;
   /** Frozen after a fresh destination roster read, before any session grants. */
   audienceKeys?: readonly string[];
+  /** Original destination evidence for device-local display, never retry authority. */
+  channelSnapshot?: { id: string; name: string; members: readonly string[] };
   /** Two mounted entry points must never enqueue competing link operations. */
   running?: boolean;
   stopReceipts?: (() => void) | undefined;
 };
 
 // A submitted attempt is owned by this relay session, not its dialog. The
-// Outbox/channelCreation/memberAdditions remain the durable operation owners.
+// Outbox/memberAdditions remain the durable operation owners.
 const attempts = new WeakMap<RelaySession, Map<string, ShareAttempt>>();
+const listeners = new WeakMap<RelaySession, Set<() => void>>();
+const empty: ReadonlyMap<string, ShareAttempt> = new Map();
+
+/** Observe presence only; receipts and frozen intent remain owned by the attempt. */
+export function useSessionShareAttempts(session: RelaySession) {
+  return useSyncExternalStore(
+    useCallback(
+      (notify: () => void) => {
+        let callbacks = listeners.get(session);
+        if (!callbacks) {
+          callbacks = new Set();
+          listeners.set(session, callbacks);
+        }
+        callbacks.add(notify);
+        return () => {
+          callbacks.delete(notify);
+        };
+      },
+      [session],
+    ),
+    () => attempts.get(session) ?? empty,
+  );
+}
+function changed(session: RelaySession) {
+  for (const notify of listeners.get(session) ?? []) notify();
+}
 export function sessionShareAttempt(session: RelaySession, sourceId: string) {
   return attempts.get(session)?.get(sourceId);
 }
@@ -55,10 +71,15 @@ export function beginSessionShare(
   attempt.stopReceipts = trackMemberAdditionReceipts(session.outbox, () =>
     attempt.grants.values(),
   );
-  bySource.set(sourceId, attempt);
+  attempts.set(session, new Map(bySource).set(sourceId, attempt));
+  changed(session);
   return attempt;
 }
 export function finishSessionShare(session: RelaySession, sourceId: string) {
   sessionShareAttempt(session, sourceId)?.stopReceipts?.();
-  attempts.get(session)?.delete(sourceId);
+  const next = new Map(attempts.get(session));
+  if (next.delete(sourceId)) {
+    attempts.set(session, next);
+    changed(session);
+  }
 }

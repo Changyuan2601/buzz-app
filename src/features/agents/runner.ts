@@ -171,6 +171,8 @@ export type RunnerHost = {
   find(pubkey: string): Agent | undefined;
   /** Whether the agent is in the event's channel. */
   member(agent: Agent, event: RelayEvent): boolean;
+  /** Whether the event's channel is a DM between the agent and one other. */
+  dm(agent: Agent, event: RelayEvent): boolean;
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
@@ -292,13 +294,18 @@ export class AgentRunners {
     const answering = () =>
       new Error(`${name} is answering; change its type when it finishes`);
     if (runner?.working) throw answering();
-    if (!runner) throw new Error("Change its type on the device that runs it");
+    if (!runner)
+      throw new Error(
+        "This agent is not running in this copy of Buzz. Change its provider in the Buzz app that runs it.",
+      );
     if (runner.transitioning)
       throw new Error(`${name}'s provider is already changing`);
     runner.transitioning = true;
     try {
       if (!(await this.claimForRetype(runner)))
-        throw new Error("Change its type on the device that runs it");
+        throw new Error(
+          "Another copy of Buzz is running this agent. Change its provider there, or quit that copy of Buzz and try again.",
+        );
       if (runner.working) throw answering();
       return await change();
     } finally {
@@ -403,8 +410,18 @@ export class AgentRunners {
       return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
         ? [{ type: "mention", event }]
         : [];
-    // Addressed events never reach a watch. Only conversation starts a run: not a
-    // DM it cannot read yet, nor a reaction to its message.
+    // A one-to-one DM is always addressed to the other member, whoever else it
+    // names, so no mention is needed. Only new messages: an edit is not a new
+    // turn, and a reaction is not conversation. A group DM still needs the
+    // mention.
+    if (
+      event.kind === 9 &&
+      event.pubkey !== agent.pubkey &&
+      this.host.dm(agent, event)
+    )
+      return [{ type: "mention", event }];
+    // Addressed events never reach a watch. Only conversation starts a run: not
+    // an encrypted DM (kind 4) it cannot read yet, nor a reaction to its message.
     if (addressedTo(event, agent.pubkey, wrote))
       return CHAT_KINDS.includes(event.kind)
         ? [{ type: "mention", event }]

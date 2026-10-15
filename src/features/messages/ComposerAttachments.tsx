@@ -32,6 +32,7 @@ export function ComposerAttachments({
   remove,
   retry,
   media,
+  onExitComplete,
 }: {
   renderers?: ContributionReader<AttachmentRenderer> | undefined;
   media(url: string): string | undefined;
@@ -39,6 +40,8 @@ export function ComposerAttachments({
   disabled: boolean;
   remove(id: string): void;
   retry(id: string): void;
+  /** The section finished animating out after the last item was removed. */
+  onExitComplete?: (() => void) | undefined;
 }) {
   const active = useConversationPresentation();
   const [selected, setSelected] = useState<string>();
@@ -48,7 +51,10 @@ export function ComposerAttachments({
     setSelected(undefined);
   return (
     <>
-      <AnimatePresence initial={false}>
+      <AnimatePresence
+        initial={false}
+        {...(onExitComplete ? { onExitComplete } : {})}
+      >
         {items.length > 0 && (
           <motion.section
             key="attachments"
@@ -222,10 +228,14 @@ function AttachmentItem({
               onError={() => setFailedSource(source)}
             />
           ) : (
+            // Not `muted`: this still preview never plays. WebKitGTK stops a
+            // muted video's pipeline whenever it leaves the viewport and
+            // reloads it on return. A stop during that reload can deadlock
+            // the page (MediaPlayerPrivateGStreamer::managePlayerSuspend).
+            // biome-ignore lint/a11y/useMediaCaption: silent still preview that never plays.
             <video
               key={source}
               src={videoSource}
-              muted
               playsInline
               preload="metadata"
               onError={() => setFailedSource(source)}

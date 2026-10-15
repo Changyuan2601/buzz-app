@@ -37,7 +37,7 @@ const removeDm = async (page, id) => {
   await dm.click({ button: "right" });
   const menu = page.getByRole("menu", { name: /Actions for / });
   const remove = menu.getByRole("menuitem", {
-    name: "Remove from Messages",
+    name: "Remove from Multiplayer",
     exact: true,
   });
   await expect(remove).toBeVisible();
@@ -121,6 +121,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   page,
   app,
 }) => {
+  await holdReadingFocus(page);
   const alphaHeads = () =>
     app.report.queries.filter(
       ({ community, filter }) =>
@@ -141,19 +142,21 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     );
   app.relay.holdEose("alpha");
   app.relay.holdUnread();
+  const opening = open(page, app);
   try {
-    await open(page, app);
     await expect.poll(() => app.report.unreadHolds.length).toBe(1);
     expect(evidence()[0].filter["#h"]).toContain("alpha");
     expect(evidence()[0].filter["#h"]).toContain("dm-090");
-    expect(alphaHeads()).toHaveLength(1);
-    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
+    await expect.poll(() => alphaHeads().length).toBe(1);
 
     // Establish only after unread is in flight; observe the real finite catch-up
     // before releasing evidence. No sleep or scheduler luck creates the overlap.
     app.relay.releaseEose("alpha");
     await expect.poll(() => alphaHeads().length).toBe(2);
     expect(app.report.unreadHolds).toEqual([{ pending: true, aborted: false }]);
+    await opening;
+    await expect(row(page, "dm-090")).toHaveCount(1);
+    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
     app.relay.releaseUnread();
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
@@ -174,6 +177,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   } finally {
     app.relay.releaseEose("alpha");
     app.relay.releaseUnread();
+    await opening;
   }
 });
 

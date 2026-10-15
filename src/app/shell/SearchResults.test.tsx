@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
 import { npubEncode } from "nostr-tools/nip19";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { eventDto } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
@@ -2607,7 +2607,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       ["t", "stream"],
     ]),
   );
-  // A full first page means an exact-name miss outside it cannot be declared exhaustive.
+  // A partial directory means an exact-name miss outside it cannot be declared exhaustive.
   for (let i = 0; i < 491; i++)
     discovery.push(
       metadata(relay, `extra-${i}`, `extra-${i}`, 1700000000, [
@@ -2623,15 +2623,30 @@ it("resolves an exact public name beyond eight preceding substring matches and r
         reads.push(filters as Filter[]);
         return [message(viewer, "dev", "deploy found", 1700000001)];
       }
+      // The directory is one full page: nothing is older than its cursor.
+      if (filters.some((filter) => filter.before_id !== undefined)) return [];
       return discovery.filter((event) =>
         filters.some((filter) => matchFilter(filter as Filter, event)),
       );
     },
   });
+  // Reaching the store's read bound takes 20,000 signed events; report it here.
+  const searchPublic = owner.session.channels.searchPublic;
+  assert.exists(searchPublic);
+  const session = {
+    ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      searchPublic: async (...args: Parameters<typeof searchPublic>) => ({
+        ...(await searchPublic(...args)),
+        partial: true,
+      }),
+    },
+  };
   try {
     render(
       <SearchResults
-        session={owner.session}
+        session={session}
         query="deploy in:#dev"
         onQueryChange={() => {}}
         input={createRef()}
@@ -2646,9 +2661,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       expect.objectContaining({ "#h": ["dev"], search: "deploy" }),
     ]);
     expect(
-      screen.getByText(
-        "Public channel results include only the first page of channels.",
-      ),
+      screen.getByText("Only the newest open channels were searched."),
     ).toBeVisible();
   } finally {
     cleanup();

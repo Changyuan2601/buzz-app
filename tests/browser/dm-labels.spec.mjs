@@ -46,7 +46,7 @@ test("keyboard removal of the final DM moves focus to a surviving section", asyn
     await dm.focus();
     await dm.press("Shift+F10");
     await page
-      .getByRole("menuitem", { name: "Remove from Messages", exact: true })
+      .getByRole("menuitem", { name: "Remove from Multiplayer", exact: true })
       .click();
     await expect(dms).toHaveCount(remaining - 1);
   }

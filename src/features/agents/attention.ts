@@ -349,9 +349,10 @@ const isReply: Predicate = (event) =>
 export const CHAT_KINDS: readonly number[] = [9, 40003, 40007, 46010];
 
 /** Directly addressed events take the runtime's built-in mention path, never a
- * watch: a DM to the agent, a chat event that p-tags it, or a non-chat event with
- * an `e` tag naming something it wrote. A chat reply that does not mention it,
- * even in its own thread, is not addressed: only a watch can wake it for one.
+ * watch: an encrypted DM (kind 4) to the agent, a chat event that p-tags it, or
+ * a non-chat event with an `e` tag naming something it wrote. A chat reply that
+ * does not mention it, even in its own thread, is not addressed: only a watch
+ * can wake it for one.
  * Its own events are the caller's to skip. */
 export function addressedTo(
   event: EventData,

@@ -28,7 +28,11 @@ HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
 on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
 **Open in browser** uses the same `_blank` fallback above without consulting pane
 handlers; both actions retain the original URL, including query and fragment.
-Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+Normal and modified clicks are unchanged. In Messages, `buzz://` message links
+expose **Open link** and **Copy link** the same ways. **Open link** opens the
+linked thread as a tab in the current channel's workspace without navigating;
+another channel's thread uses the side pane. When that channel isn't readable
+there, it opens as a click would. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 
@@ -461,13 +465,16 @@ When upgrading an already-running development server, restart the **Node process
 before trying Unarchive: Vite's in-process restart can retain the broker's imported
 archive-only validator even while the browser has the new action. A page reload
 alone does not update that host module.
-Archive, Unarchive and Leave use the default button style in Settings. Archive,
-Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
-keeps the default secondary style. Every shared confirmation shows its pending
+Archive, Unarchive and Leave use the default button style in Settings. As in macOS,
+the prominent confirmation button is the one Enter presses: reversible Archive, Unarchive
+and Hide initially focus their prominent action beside a default-style Cancel, while
+Leave and Delete initially focus a prominent Cancel beside a default-style Leave or
+destructive Delete. Every shared confirmation shows its pending
 state inside the primary button using the standard loading spinner (with an
 accessible status), without adding a visible status paragraph. Duplicate submission
 and Cancel/Escape remain blocked until the operation settles; rejection restores
-the action, while an uncertain outcome still blocks blind resubmission.
+the action, while an uncertain outcome still blocks blind resubmission and moves
+focus to Cancel.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
 separate.
@@ -521,7 +528,8 @@ The non-modal Settings panel is unchanged; the shared Dialog default stays opt-i
 Canvas reload uses a nested shared Dialog rather than a host-owned confirmation
 prompt. Cancel, Close, Escape or a backdrop click dismisses only that confirmation, keeps the parent draft,
 and never executes the action. Confirmations initially focus Cancel and return
-focus to their initiating control; lifecycle focus remains sidebar-owned.
+focus to their initiating control; lifecycle confirmations choose their initial
+focus as described above, and their final focus remains sidebar-owned.
 
 Existing pending operations continue to block dismissal. Members remains closable
 while session-owned invitations/recovery continue. Canvas keeps its local draft;
@@ -585,10 +593,15 @@ The dialogs share `ChannelTextField` for Name and Description: the same code-poi
 input caps, middle-edit preservation, label-row counters and connected errors.
 Both forms canonicalize names with `canonicalDetailsName` before handing off the
 draft. `ChannelDurationField` shares the Ongoing/Temporary cards and draft-only
-subtle minus/plus controls beside the selected Temporary card. Unselected copy is
-“Cleans up without activity.”; selected copy is “Cleans up **after [duration]** without
+subtle minus/plus controls beside the selected Temporary card when space permits,
+or on a trailing row when its intrinsic content needs the full width. The duration
+phrase and feature-owned label wrap at enlarged text sizes; shared Radio styling
+and focus space are unchanged. Unselected copy is
+“Archives without activity.”; selected copy is “Archives **after [duration]** without
 activity.” `motion/react` expands/collapses the middle phrase and the adjustment
-space together over 200ms, without scaling text. The middle phrase uses Medium
+space together over 200ms, without scaling text. The interval remains single-line
+while animating or hidden and wraps only after expansion, so Ongoing reserves no
+hidden multiline height. The middle phrase uses Medium
 weight and standard text color against muted surrounding copy. Reduced motion and
 keyboard navigation switch immediately; hidden controls are inert and excluded
 from accessibility, with one complete accessible description per state.

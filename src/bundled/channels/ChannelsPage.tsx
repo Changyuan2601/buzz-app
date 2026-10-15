@@ -9,7 +9,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
-import { useChannelTabState } from "./useChannelTabState";
+import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -30,6 +30,8 @@ import {
   parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { useSessionConversions } from "../../features/sessions/conversion";
+import { ConvertSession } from "../../features/sessions/ConvertSession";
 import { SessionShare } from "../sessions/SessionShare";
 import {
   SessionColumn,
@@ -37,6 +39,7 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import {
   useCallback,
   useEffect,
@@ -512,13 +515,18 @@ function ChannelWorkspace({
   const committedVisit = useRef<{
     currentId: string | undefined;
     queries: RelaySession;
+    channelType: string | undefined;
   }>(undefined);
   const continuingVisit =
     committedVisit.current?.currentId === currentId &&
     committedVisit.current?.queries === queries;
   useLayoutEffect(() => {
-    committedVisit.current = { currentId, queries };
-  }, [currentId, queries]);
+    committedVisit.current = {
+      currentId,
+      queries,
+      channelType: current?.channelType,
+    };
+  }, [currentId, queries, current?.channelType]);
   const tabState = useChannelTabState(queries, currentId);
   const { settings, setSettings, retireMenuEntries } = tabState;
   useEffect(() => {
@@ -531,7 +539,22 @@ function ChannelWorkspace({
     };
   }, [currentId, composingMessage, draftParent]);
 
+  const conversions = useSessionConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const [conversion, setConversion] = useState<{
+    channelId: string;
+    navigation: PageNavigation | undefined;
+    trigger: HTMLElement | null;
+  }>();
+  // Type changes are the result, not a new visit. Actual navigation retires the form.
+  useEffect(() => {
+    setConversion((previous) =>
+      previous &&
+      (previous.channelId !== currentId || previous.navigation !== navigation)
+        ? undefined
+        : previous,
+    );
+  }, [currentId, navigation]);
   const [settingsFocus, requestSettingsFocus] = useState(0);
   const showingSettings =
     tabState.paneOpen &&
@@ -671,16 +694,32 @@ function ChannelWorkspace({
     threadId: routedThread?.messageId,
     mainPane: true,
     routed: routedThread,
-    onCloseThread: (tab, active) => {
+    onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a
       // later Back/Forward visit is the only way to reopen it.
+      // That channel visit keeps the tab selected in place of the closed one.
       if (
         routedThread?.channelId === tab.channelId &&
         routedThread.messageId === tab.messageId
-      )
+      ) {
         select(tab.channelId);
+        const entry = navigator?.snapshot().entry.id;
+        if (entry) tabState.enterVisit(`${entry}:channel`, undefined, true);
+      }
       const trigger = threadTrigger.current;
-      if (trigger) returnFocus.current = { trigger, channelId: currentId };
+      // While tabs remain, the opener takes focus only from within their pane.
+      if (
+        trigger &&
+        (last ||
+          trigger
+            .closest("[data-panel-workspace], [data-main-workspace]")
+            ?.hasAttribute(
+              tabPane(tab) === "main"
+                ? "data-main-workspace"
+                : "data-panel-workspace",
+            ))
+      )
+        returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),
@@ -843,6 +882,20 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
@@ -1151,6 +1204,8 @@ function ChannelWorkspace({
             scope={scope}
             channelId={current.id}
             cached={cached}
+            // The composer below mounts TypingIndicator for members of a live channel.
+            activityLane={!current.readOnly && !current.cached}
             navigation={
               flatSession || !requestedMessage || exact?.inTimeline
                 ? navigation
@@ -1228,6 +1283,13 @@ function ChannelWorkspace({
           channelId={current.id}
           channelName={current.name}
           autoFocus={
+            // Conversion remounts the body, but isn't a new conversation opening.
+            // Let its dialog restore focus instead of the replacement composer.
+            !(
+              continuingVisit &&
+              committedVisit.current?.channelType === "session" &&
+              current.channelType !== "session"
+            ) &&
             // The bound request arrives after the composer's first render.
             (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
               "preserve" &&
@@ -1336,7 +1398,7 @@ function ChannelWorkspace({
             />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new conversations from Me. Channel-nested sessions are no
+              Start new conversations from Solo. Channel-nested sessions are no
               longer available.
             </p>
           ) : (
@@ -1365,6 +1427,13 @@ function ChannelWorkspace({
                     session={queries}
                     channel={current}
                     signal={navigation?.signal}
+                    onConvert={(trigger) =>
+                      setConversion({
+                        channelId: current.id,
+                        navigation,
+                        trigger,
+                      })
+                    }
                   />
                 </SessionHeading>
               ) : null}
@@ -1407,6 +1476,16 @@ function ChannelWorkspace({
                           session={queries}
                           origin={navigation?.signal}
                           trigger={settingsTrigger}
+                          finishConversion={
+                            current && conversions.has(current.id)
+                              ? () =>
+                                  setConversion({
+                                    channelId: current.id,
+                                    navigation,
+                                    trigger: settingsTrigger.current,
+                                  })
+                              : undefined
+                          }
                           openDetails={() => {
                             drawer.close();
                             requestSettingsFocus((value) => value + 1);
@@ -1512,6 +1591,23 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
+      {conversion &&
+        conversion.channelId === currentId &&
+        conversion.navigation === navigation && (
+          <ConvertSession
+            session={queries}
+            id={conversion.channelId}
+            signal={conversion.navigation?.signal}
+            close={() => setConversion(undefined)}
+            finalFocus={() =>
+              conversion.navigation?.signal.aborted
+                ? false
+                : conversion.trigger?.isConnected
+                  ? conversion.trigger
+                  : (settingsTrigger.current ?? false)
+            }
+          />
+        )}
       {showingMediaReview && (
         <MediaReviewViewer
           extensions={extensions}
@@ -1606,7 +1702,9 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
+      <LinkThreadTabContext value={openLinkedThread}>
+        {workspace}
+      </LinkThreadTabContext>
     </MessageManagement>
   );
 }
