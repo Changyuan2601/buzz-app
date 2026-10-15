@@ -20,6 +20,7 @@ import styles from "./Compute.module.css";
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
 import { MeshHelpers } from "./MeshHelpers";
+import { MeshCreateSetup } from "./MeshCreateSetup";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
   type MeshAgentConfig,
@@ -27,7 +28,7 @@ import {
   type PreparedInference,
 } from "./meshAgent";
 
-type MeshStatus = {
+export type MeshStatus = {
   activity?: ComputeActivityData | null;
   available: boolean;
   modelReady?: boolean;
@@ -240,6 +241,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
       defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
       summary: () => "Shared compute",
+      Create: ({ disabled }) => (
+        <CommunityComputePage setupOnly disabled={disabled} />
+      ),
       tabs: [
         { id: "prompt", title: "Settings", component: MeshAgentTab },
         {
@@ -261,8 +265,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   function CommunityComputePage({
     community,
+    setupOnly = false,
+    disabled = false,
   }: {
     community?: { id: string; name: string };
+    setupOnly?: boolean;
+    disabled?: boolean;
   }) {
     const snapshot = useSyncExternalStore(
       ctx.relay.subscribe,
@@ -410,12 +418,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         if (!disposed) setBusy(false);
       }
     };
-    const share = (clearSaved = false) => {
-      const action = runShare(clearSaved);
+    const share = (clearSaved = false, startAuto = false) => {
+      const action = runShare(clearSaved, startAuto);
       lastShareAction = action;
       return action;
     };
-    const runShare = async (clearSaved: boolean) => {
+    const runShare = async (clearSaved: boolean, startAuto: boolean) => {
       setBusy(true);
       setError(null);
       try {
@@ -446,18 +454,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
           return;
         }
         if (!id) throw new Error("Mesh native runtime is unavailable");
-        if (disposed || selected !== lease)
+        if (!current() || selected !== lease)
           throw new Error("Community changed");
+        if (startAuto) {
+          const latest = await invoke<MeshStatus>("mesh_compute_status");
+          if (!current() || selected !== lease)
+            throw new Error("Community changed");
+          if (latest.boundCommunity !== viewedCommunity)
+            throw new Error(
+              "Open Shared compute settings to switch communities first",
+            );
+          // A second creation view must not replace sharing started elsewhere.
+          if (latest.sharing) {
+            setStatus(latest);
+            return;
+          }
+        }
         await invoke("mesh_compute_share", {
           lease: id,
-          model:
-            clearSaved || status?.sharing
+          model: startAuto
+            ? "auto"
+            : clearSaved || status?.sharing
               ? null
               : auto
                 ? (recommended ?? model)
                 : model,
           maxVramGb: null,
-          auto,
+          auto: startAuto || auto,
         });
         const result = await invoke<MeshStatus>("mesh_compute_status");
         if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
@@ -522,6 +545,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
         clearTimeout(timer);
       };
     }, [status, busy, error, snapshot]);
+    if (setupOnly)
+      return (
+        <MeshCreateSetup
+          status={status}
+          busy={busy}
+          disabled={disabled || snapshot.status !== "ready"}
+          leaseReady={leaseReady}
+          otherCommunity={otherCommunity}
+          error={error}
+          share={() => void share(false, true)}
+          refresh={() => void refresh()}
+        />
+      );
     return (
       <ConsumerComputeView
         headerControl={

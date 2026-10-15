@@ -1675,3 +1675,210 @@ it("releases the host queue while retaining Agent work for mid-turn delivery", a
     for (const cleanup of cleanups.reverse()) cleanup();
   }
 });
+
+function creationSetup(sharing: string | null = null) {
+  const owner = "a".repeat(64);
+  let snapshot = {
+    status: "ready",
+    origin: "https://setup.example",
+    viewer: owner,
+    scope: `https://setup.example:${owner}`,
+  };
+  let status = {
+    available: true,
+    boundCommunity: snapshot.origin,
+    sharing,
+    lifecycle: { state: "ready" },
+  };
+  let Create!: React.ComponentType<{ disabled: boolean }>;
+  const cleanups: (() => void)[] = [];
+  const listeners = new Set<() => void>();
+  native.invoke.mockImplementation(async (command) => {
+    if (command === "mesh_compute_select") return "setup-lease";
+    if (command === "mesh_compute_share") {
+      status = { ...status, sharing: "auto-model" };
+      return;
+    }
+    return status;
+  });
+  apply({
+    relay: {
+      snapshot: () => snapshot,
+      subscribe: (fn: () => void) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+    },
+    communityReader: {
+      snapshot: () => ({ viewer: snapshot.viewer }),
+      subscribe: () => () => {},
+    },
+    host: { spawn: vi.fn() },
+    agents: {
+      register: (type: { Create: typeof Create }) => {
+        Create = type.Create;
+      },
+    },
+    settingsCards: { register: () => {} },
+    effect: (fn: () => () => void) => {
+      cleanups.push(fn());
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  const view = render(<Create disabled={false} />);
+  return {
+    dispose: () => {
+      view.unmount();
+      for (const fn of cleanups.reverse()) fn();
+    },
+    setStatus: (next: typeof status) => {
+      status = next;
+    },
+    status: () => status,
+    switchCommunity: () => {
+      snapshot = {
+        ...snapshot,
+        origin: "https://other.example",
+        scope: `https://other.example:${owner}`,
+      };
+      for (const fn of listeners) fn();
+    },
+  };
+}
+
+it("hosts setup in the existing Create slot; only explicit sharing uses Auto with no budget", async () => {
+  const fixture = creationSetup();
+  try {
+    const local = await screen.findByRole("radio", {
+      name: "Use this computer",
+    });
+    await waitFor(() => expect(local).toBeEnabled());
+    expect(
+      screen.getByRole("radio", { name: "Use community compute" }),
+    ).toBeChecked();
+    expect(
+      native.invoke.mock.calls.some(([cmd]) => cmd === "mesh_compute_share"),
+    ).toBe(false);
+    await userEvent.setup().click(local);
+    expect(
+      native.invoke.mock.calls.some(([cmd]) => cmd === "mesh_compute_share"),
+    ).toBe(false);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Start sharing with Auto" }));
+    await shareActionSettled();
+    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+      lease: "setup-lease",
+      model: "auto",
+      auto: true,
+      maxVramGb: null,
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Set up shared compute" }),
+      ).not.toBeInTheDocument(),
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+it("does not show setup or restart already-shared compute", async () => {
+  const fixture = creationSetup("existing-model");
+  try {
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Set up shared compute" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      native.invoke.mock.calls.some(([cmd]) => cmd === "mesh_compute_share"),
+    ).toBe(false);
+  } finally {
+    fixture.dispose();
+  }
+});
+
+it("rechecks sharing before starting so a concurrent settings action is preserved", async () => {
+  const fixture = creationSetup();
+  try {
+    const radio = await screen.findByRole("radio", {
+      name: "Use this computer",
+    });
+    await waitFor(() => expect(radio).toBeEnabled());
+    await userEvent.setup().click(radio);
+    fixture.setStatus({ ...fixture.status(), sharing: "started-elsewhere" });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Start sharing with Auto" }));
+    await shareActionSettled();
+    expect(
+      native.invoke.mock.calls.some(([cmd]) => cmd === "mesh_compute_share"),
+    ).toBe(false);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Set up shared compute" }),
+      ).not.toBeInTheDocument(),
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+it("keeps setup failure visible and allows retry without changing the Auto policy", async () => {
+  const fixture = creationSetup();
+  try {
+    const original = native.invoke.getMockImplementation();
+    if (!original) throw new Error("Missing fixture invoke");
+    let fail = true;
+    native.invoke.mockImplementation(async (...args) => {
+      if (args[0] === "mesh_compute_share" && fail)
+        throw new Error("Start failed");
+      return original(...args);
+    });
+    const radio = await screen.findByRole("radio", {
+      name: "Use this computer",
+    });
+    await waitFor(() => expect(radio).toBeEnabled());
+    await userEvent.setup().click(radio);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Start sharing with Auto" }));
+    await shareActionSettled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Start failed");
+    fail = false;
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Start sharing with Auto" }));
+    await shareActionSettled();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Set up shared compute" }),
+      ).not.toBeInTheDocument(),
+    );
+  } finally {
+    fixture.dispose();
+  }
+});
+
+it("never offers to replace another community's sharing from creation", async () => {
+  const fixture = creationSetup();
+  try {
+    await waitFor(() =>
+      expect(
+        screen.getByRole("radio", { name: "Use this computer" }),
+      ).toBeEnabled(),
+    );
+    act(() => fixture.switchCommunity());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("radio", { name: "Use this computer" }),
+      ).toHaveAttribute("aria-disabled", "true"),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("another community");
+    expect(
+      native.invoke.mock.calls.some(([cmd]) => cmd === "mesh_compute_share"),
+    ).toBe(false);
+  } finally {
+    fixture.dispose();
+  }
+});
