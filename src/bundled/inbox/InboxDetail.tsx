@@ -33,6 +33,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import type { ArchiveShortcut } from "./InboxPage";
 
 export function InboxDetail({
   item,
@@ -45,6 +46,7 @@ export function InboxDetail({
   channelName,
   previewIncomplete,
   archiveAction,
+  archiveShortcut,
   onBack,
   entryFocus = true,
   resizeHandle,
@@ -60,8 +62,14 @@ export function InboxDetail({
   channelName: string;
   previewIncomplete?: "loading" | "error" | undefined;
   archiveAction?:
-    | { archived: boolean; disabled: boolean; run(): void }
+    | {
+        archived: boolean;
+        disabled: boolean;
+        /** `focusNext` moves keyboard focus to the conversation it advances to. */
+        run(focusNext?: boolean): void;
+      }
     | undefined;
+  archiveShortcut?: ArchiveShortcut | undefined;
   onBack(): void;
   /** Off when list keyboard navigation opened the visit and keeps focus there. */
   entryFocus?: boolean | undefined;
@@ -186,6 +194,22 @@ export function InboxDetail({
     if (result.status === "failed")
       setError("This conversation could not be opened. Try again.");
   };
+  const archiveEnabled =
+    !!archiveAction &&
+    !archiveAction.disabled &&
+    available &&
+    !previewIncomplete;
+  // The Archive shortcut is this visible header's button, under its enablement.
+  useLayoutEffect(() => {
+    if (!archiveShortcut || !archiveAction || !archiveEnabled) return;
+    // Focus follows to the next conversation, ready for Up/Down.
+    const current = () => archiveAction.run(true);
+    archiveShortcut.current = current;
+    return () => {
+      if (archiveShortcut.current === current)
+        archiveShortcut.current = undefined;
+    };
+  });
   const openAction = (
     <IconButton
       size="sm"
@@ -246,10 +270,8 @@ export function InboxDetail({
               <IconButton
                 size="sm"
                 variant="ghost"
-                disabled={
-                  archiveAction.disabled || !available || !!previewIncomplete
-                }
-                onClick={archiveAction.run}
+                disabled={!archiveEnabled}
+                onClick={() => archiveAction.run()}
                 aria-label={archiveLabel}
                 title={archiveLabel}
                 icon={

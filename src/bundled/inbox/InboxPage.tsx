@@ -472,20 +472,6 @@ export function InboxView({
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected };
   });
-  // The header's Archive/Restore, so the shortcut follows the same rules.
-  useLayoutEffect(() => {
-    if (!archiveShortcut || !selected) return;
-    const current = () => {
-      const value = !archived(selected);
-      // Focus follows to the next conversation, ready for Up/Down.
-      if (!pending) archive(selected, value, value, true);
-    };
-    archiveShortcut.current = current;
-    return () => {
-      if (archiveShortcut.current === current)
-        archiveShortcut.current = undefined;
-    };
-  });
   const profileKey = [
     ...new Set([
       ...authorIds,
@@ -1176,8 +1162,12 @@ export function InboxView({
               archiveAction={{
                 archived: archived(selected),
                 disabled: pending,
-                run: () => archive(selected, !archived(selected)),
+                run: (focusNext) => {
+                  const value = !archived(selected);
+                  archive(selected, value, value, focusNext);
+                },
               }}
+              archiveShortcut={archiveShortcut}
               onBack={() => {
                 setRestoringFocus(true);
                 cancelRetry();
