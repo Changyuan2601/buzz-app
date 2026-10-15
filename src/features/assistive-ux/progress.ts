@@ -48,6 +48,7 @@ export function createAssistiveProgress({
   community: string;
   signal: AbortSignal;
 }) {
+  const page = typeof window === "undefined" ? undefined : window;
   const prefix = `${PREFIX}${JSON.stringify([community, viewer])}:`;
   const entries = new Map<string, Stored>();
   const unsaved = new Set<string>();
@@ -269,8 +270,7 @@ export function createAssistiveProgress({
       notify("error", "Saved assistive progress could not be restored");
     }
   };
-  if (typeof window !== "undefined")
-    window.addEventListener("storage", changed);
+  page?.addEventListener("storage", changed);
   const capability = Object.freeze({
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -373,8 +373,7 @@ export function createAssistiveProgress({
       epoch++;
       cycle.abort();
       listeners.clear();
-      if (typeof window !== "undefined")
-        window.removeEventListener("storage", changed);
+      page?.removeEventListener("storage", changed);
     },
   };
 }
