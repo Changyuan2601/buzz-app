@@ -18,6 +18,12 @@ existing model and setup controls, and approve **Create agent**. Conversation
 text alone cannot install software or create an agent. Codex and Claude retain
 their provider-owned installation/sign-in dialogs. Goose retains its provider,
 key, model and connection-test controls; account credentials never enter chat.
+Claude's dialog runs Buzz's managed `claude auth login` locally and stays pending
+while the person approves in their browser. A fallback code goes only in that
+dialog. **Sign in again** remains available when cached credentials report ready,
+and the review card keeps **Manage Claude** after creation for recovery. Sign-in
+output remains visible after the process ends, including failures. Creation waits
+while provider setup is running; successful creation is not proof of inference.
 Shared Compute creates a tool-free Chat agent. Other local harnesses retain
 their existing tool/account behavior and configuration ownership.
 

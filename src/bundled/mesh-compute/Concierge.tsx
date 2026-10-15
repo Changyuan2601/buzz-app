@@ -223,7 +223,8 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
         if (
           !agent &&
           type.provider &&
-          type.provider.snapshot().readiness !== "ready"
+          (type.provider.snapshot().readiness !== "ready" ||
+            type.provider.snapshot().blocking)
         )
           throw new Error(
             `Finish ${type.title} setup before creating this agent.`,
@@ -546,26 +547,28 @@ function ConciergeReview({
           {Create && type?.key !== MESH_TYPE && (
             <Create config={config} disabled={pending} onChange={setConfig} />
           )}
-          {type?.provider && (
-            <Button
-              ref={setupButton}
-              size="sm"
-              disabled={pending}
-              onClick={() => setSetupOpen(true)}
-            >
-              {providerState?.readiness === "ready"
-                ? `Manage ${type.title}`
-                : `Set up ${type.title}`}
-            </Button>
-          )}
-          {setupOpen && (
-            <ProviderDialog
-              type={type}
-              finalFocus={setupButton}
-              onClose={() => setSetupOpen(false)}
-            />
-          )}
         </>
+      )}
+      {type?.provider && (
+        <div>
+          <Button
+            ref={setupButton}
+            size="sm"
+            disabled={pending}
+            onClick={() => setSetupOpen(true)}
+          >
+            {providerState?.readiness === "ready"
+              ? `Manage ${type.title}`
+              : `Set up ${type.title}`}
+          </Button>
+        </div>
+      )}
+      {setupOpen && (
+        <ProviderDialog
+          type={type}
+          finalFocus={setupButton}
+          onClose={() => setSetupOpen(false)}
+        />
       )}
       <p className="m-0 text-body-sm text-secondary">
         {type?.key === MESH_TYPE
@@ -588,8 +591,9 @@ function ConciergeReview({
         </p>
       ) : joined ? (
         <p role="status" className="m-0 text-body-sm">
-          {made.name} is ready. Send the first test in Solo, or mention it here.
-          To revise its instructions, open Agents → Settings.
+          {made.name} has been created. Send the first test in Solo, or mention
+          it here. If it needs sign-in, use its setup controls above. To revise
+          its instructions, open Agents → Settings.
         </p>
       ) : (
         <div>
@@ -600,7 +604,10 @@ function ConciergeReview({
             disabled={
               !creation.available(message) ||
               !type ||
-              (!made && !!type.provider && providerState?.readiness !== "ready")
+              (!made &&
+                !!type.provider &&
+                (providerState?.readiness !== "ready" ||
+                  !!providerState.blocking))
             }
             onClick={() => void create()}
           >

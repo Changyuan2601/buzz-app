@@ -185,7 +185,7 @@ it("requires a click, creates a tool-free agent, confirms membership, and surviv
   expect(f.add).toHaveBeenCalledExactlyOnceWith(message.channelId, created);
   expect(f.agents.find(author)?.attentionEnabled).toBe(false);
   expect(await screen.findByRole("status")).toHaveTextContent(
-    "Idea Buddy is ready",
+    "Idea Buddy has been created",
   );
   view.unmount();
   f.mount();
@@ -422,6 +422,53 @@ it("keeps provider setup with the harness and refuses creation while sign-in is 
     f.creation.create(message, { type: type.key, config: {} }),
   ).rejects.toThrow("Finish Claude setup");
   expect(f.create).not.toHaveBeenCalled();
+});
+
+it("keeps local provider setup on the created card without creating another agent", async () => {
+  const f = fixture();
+  const state = { readiness: "ready" as const, blocking: true };
+  const mesh = f.agents.types()[0];
+  if (!mesh) throw new Error("Missing Mesh fixture");
+  const type = {
+    key: "buzz.claude-code/claude",
+    title: "Claude",
+    defaults: () => ({ config: {} }),
+    adopt: (_carry: unknown, config: unknown) => config,
+    provider: {
+      snapshot: () => state,
+      subscribe: () => () => {},
+      check: vi.fn(),
+      DialogBody: () => <p>Local Claude sign-in</p>,
+    },
+  } as unknown as import("../../features/agents/service").RegisteredAgentType;
+  vi.spyOn(f.agents, "types").mockReturnValue([mesh, type]);
+  const view = f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Claude" }));
+  expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
+  await expect(
+    f.creation.create(message, { type: type.key, config: {} }),
+  ).rejects.toThrow("Finish Claude setup");
+  expect(f.create).not.toHaveBeenCalled();
+  state.blocking = false;
+  view.rerender(
+    <ConciergeDraft
+      message={message}
+      agents={f.agents}
+      relay={f.relay}
+      creation={f.creation}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "has been created",
+  );
+  view.unmount();
+  f.mount();
+  await user.click(screen.getByRole("button", { name: "Manage Claude" }));
+  expect(await screen.findByText("Local Claude sign-in")).toBeVisible();
+  expect(f.create).toHaveBeenCalledTimes(1);
 });
 
 it("does not overwrite a saved harness edit when Concierge's completion receipt failed", async () => {

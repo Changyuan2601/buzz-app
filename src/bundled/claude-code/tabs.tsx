@@ -408,7 +408,8 @@ export function createTabs({
     const [defaultError, setDefaultError] = useState("");
     const [code, setCode] = useState("");
     const status = state.status;
-    const ready = status?.state === "ready" && !state.checking;
+    const ready =
+      status?.state === "ready" && !state.checking && !state.running;
     const line =
       !status || state.checking
         ? "Checking Claude…"
@@ -428,7 +429,9 @@ export function createTabs({
           ? ({ step: "install", label: "Update Claude" } as const)
           : status?.state === "signed-out"
             ? ({ step: "login", label: "Sign in" } as const)
-            : undefined;
+            : status?.state === "ready"
+              ? ({ step: "login", label: "Sign in again" } as const)
+              : undefined;
     const nativeModel = state.models.find(
       (candidate) => candidate.value === "default",
     );
@@ -457,8 +460,8 @@ export function createTabs({
             {state.notice}
           </p>
         )}
-        <div className="grid gap-2" hidden={ready}>
-          {!state.running && (
+        <div className="grid gap-2">
+          {!state.running && line && (
             <p
               role={status?.state === "error" ? "alert" : "status"}
               className="m-0 text-body-sm text-primary"
@@ -486,14 +489,32 @@ export function createTabs({
           ) : action ? (
             <div className="flex flex-wrap gap-2">
               <Button
-                autoFocus
-                variant="prominent"
+                autoFocus={!ready}
+                variant={ready ? "subtle" : "prominent"}
+                disabled={state.checking}
                 onClick={() => void setup.run(action.step)}
               >
                 {action.label}
               </Button>
             </div>
           ) : null}
+          {state.running === "login" && (
+            <p className="m-0 text-body-sm text-secondary">
+              Finish signing in in your browser, then return here. Buzz keeps
+              this step open until Claude Code confirms it has finished.
+            </p>
+          )}
+          {!state.running && (
+            <div>
+              <Button
+                variant="ghost"
+                disabled={state.checking}
+                onClick={() => void setup.check(true)}
+              >
+                Check again
+              </Button>
+            </div>
+          )}
           {status?.state === "missing" && !state.running && (
             <p className="m-0 text-body-sm text-subtle">
               Downloads Buzz's own copy of Claude (about 250 MB) from

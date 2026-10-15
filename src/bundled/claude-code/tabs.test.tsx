@@ -462,9 +462,9 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
   await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Claude default (Opus 5.5)"),
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -487,9 +487,9 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   const onClose = vi.fn();
   render(<Provider onClose={onClose} />);
   await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Claude default (Opus 5.5)"),
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
@@ -593,6 +593,67 @@ it("can cancel sign-in and try again", async () => {
   await user.click(retry);
   expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
 });
+
+it.each([0, 1])(
+  "keeps sign-in reachable with existing credentials and shows its completion (%s)",
+  async (exitCode) => {
+    const { type, spawn } = installed();
+    const Setup = providerSetup(type);
+    const user = userEvent.setup();
+    render(<Setup onClose={vi.fn()} />);
+    await screen.findByRole("combobox", { name: "Default model" });
+    let finish!: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      finish = resolve;
+    });
+    const original = spawn.getMockImplementation();
+    if (!original) throw new Error("Missing spawn implementation");
+    const write = vi.fn(async (_text: string) => undefined);
+    let output: HostProcessOptions["onStdout"];
+    spawn.mockImplementation(async (id, options = {}) => {
+      if (options.args?.slice(-2).join(" ") !== "auth login")
+        return original(id, options);
+      output = options.onStdout;
+      output?.("Opening browser…\n");
+      return {
+        write,
+        end: async () => undefined,
+        kill: async () => finish(null),
+        exited,
+      };
+    });
+    try {
+      await user.click(screen.getByRole("button", { name: "Sign in again" }));
+      await waitFor(() =>
+        expect(type.provider?.snapshot()).toHaveProperty("blocking", true),
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Waiting for Claude Code sign-in…",
+      );
+      expect(
+        screen.queryByRole("combobox", { name: "Default model" }),
+      ).toBeNull();
+      expect(screen.getByRole("log")).toHaveTextContent("Opening browser…");
+      await user.type(screen.getByLabelText("Sign-in code"), "fixture-code");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(write).toHaveBeenCalledExactlyOnceWith("fixture-code\n");
+      act(() => {
+        if (exitCode === 0) output?.("Login successful\n");
+        finish(exitCode);
+      });
+      await screen.findByRole("combobox", { name: "Default model" });
+      expect(type.provider?.snapshot()).not.toHaveProperty("blocking");
+      expect(screen.getByRole("log")).toHaveTextContent(
+        exitCode === 0 ? "Login successful" : "Sign-in ended (1).",
+      );
+      expect(
+        screen.getByRole("button", { name: "Sign in again" }),
+      ).toBeEnabled();
+    } finally {
+      finish(null);
+    }
+  },
+);
 
 it("replaces generic installation copy with the latest installer state", async () => {
   const installedType = installed({ available: false }).type;
