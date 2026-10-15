@@ -1,9 +1,6 @@
 //! Small explicit catalog around the extracted upstream tools.
 use crate::{
-    developer::{
-        edit::{EditTools, FileEditParams, FileWriteParams},
-        shell::{ShellParams, ShellTool},
-    },
+    developer::shell::{ShellParams, ShellTool},
     skills::Skills,
     Tools,
 };
@@ -51,7 +48,7 @@ impl LocalTools {
         })
     }
     pub fn instructions(&self) -> String {
-        format!("Developer tools run in {} with the user's filesystem access, not a sandbox. Use shell for reading/searching, write/edit for changes. Shell jobs end with their tool call; do not start background services. Read applicable AGENTS.md before editing. Do not load relay-backed skills.\n{}", self.cwd.display(), self.skills.instructions())
+        format!("Developer tools run in {} with the user's filesystem access, not a sandbox. Use shell for reading, searching, writing and editing files. Shell jobs end with their tool call; do not start background services. Read applicable AGENTS.md before editing. Do not load relay-backed skills.\n{}", self.cwd.display(), self.skills.instructions())
     }
 }
 #[async_trait]
@@ -59,8 +56,6 @@ impl Tools for LocalTools {
     fn definitions(&self) -> Vec<Tool> {
         vec![
             definition::<ShellParams>("shell", "Run a shell command in the agent workspace. Bounded to 120 seconds; background jobs are not retained."),
-            definition::<FileWriteParams>("write", "Create or overwrite a file; relative paths start in the workspace."),
-            definition::<FileEditParams>("edit", "Replace one exact unique text match in a file."),
             definition::<LoadSkill>("load_skill", "Load an available filesystem skill, optionally with arguments, or skill-name/supporting-file."),
         ]
     }
@@ -78,14 +73,6 @@ impl Tools for LocalTools {
                     .shell_with_cwd(params, Some(&self.cwd), None, self.cancel.clone())
                     .await
             }
-            "write" => EditTools::new().file_write_with_cwd(
-                serde_json::from_value(args).map_err(parse)?,
-                Some(&self.cwd),
-            ),
-            "edit" => EditTools::new().file_edit_with_cwd(
-                serde_json::from_value(args).map_err(parse)?,
-                Some(&self.cwd),
-            ),
             "load_skill" => {
                 let params: LoadSkill = serde_json::from_value(args).map_err(parse)?;
                 match self.skills.load(&params.name, params.args.as_deref()) {

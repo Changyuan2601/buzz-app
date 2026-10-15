@@ -5,7 +5,7 @@ Source: https://github.com/aaif-goose/goose at
 
 Developer source comes from `crates/goose/src/agents/platform_extensions/developer/`:
 `edit.rs`, `shell.rs`, and `shell_output_streaming.rs`, including upstream tests.
-Tree is deliberately omitted. Local catalog: shell, write, edit, load_skill.
+Tree is deliberately omitted. Local catalog: shell, load_skill. Separate write/edit tools are not exposed.
 
 Adaptations: local module imports; explicit timeout instead of Goose global config;
 Unix process group/drop cleanup; authentication-environment scrubbing; bounded

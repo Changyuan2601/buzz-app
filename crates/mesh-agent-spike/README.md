@@ -34,7 +34,7 @@ then the existing captured AgentHandle/native signer. No keys enter the model or
 callback. This preserves Buzz's trusted-main-WebView model, not a hostile-plugin
 sandbox.
 
-Local catalog: shell, write, edit, load_skill. No tree/image/installer/delegation.
+Local catalog: shell, load_skill. Separate write/edit tools are not exposed. No tree/image/installer/delegation.
 Filesystem skills use explicit workspace and home roots. Local tools have the
 user's filesystem authority, not a sandbox. Shell capture is bounded to 256 KiB,
 execution to 120 seconds, and Unix process-group/collector drop cleanup stops
@@ -74,7 +74,7 @@ response rather than token-rendered in the UI.
 ## Validation scope
 
 Experimental crate: 96 passing tests, including real HTTP SSE provider, local
-write/edit/shell/skill execution, chunk equivalence, large-result bounds,
+shell file-change/skill execution, chunk equivalence, large-result bounds,
 compaction continuation/failure/cancellation, capability separation and callback
 correlation. Native suite: 424 passed, 3 ignored with `--test-threads=1`, including
 real leased Gateway → GDK → local filesystem tool → next completion and request

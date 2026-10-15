@@ -462,7 +462,7 @@ async fn response_limit_is_independent_of_token_chunking() {
 }
 
 #[tokio::test]
-async fn real_local_tools_write_edit_shell_and_skill_results_are_bounded() {
+async fn real_local_shell_file_changes_and_skill_results_are_bounded() {
     let dir = tempfile::tempdir().unwrap();
     let skill = dir.path().join("skills/example");
     std::fs::create_dir_all(&skill).unwrap();
@@ -485,13 +485,16 @@ async fn real_local_tools_write_edit_shell_and_skill_results_are_bounded() {
         .iter()
         .map(|t| t.name.to_string())
         .collect();
-    assert_eq!(names, ["shell", "write", "edit", "load_skill"]);
+    assert_eq!(names, ["shell", "load_skill"]);
+    for name in ["write", "edit"] {
+        assert!(tools.call(CallToolRequestParams::new(name)).await.is_err());
+    }
     let p = Script(Mutex::new(vec![
-        call("w", "write", json!({"path":"trial.txt","content":"before"})),
+        call("w", "shell", json!({"command":"printf before > trial.txt"})),
         call(
             "e",
-            "edit",
-            json!({"path":"trial.txt","before":"before","after":"after"}),
+            "shell",
+            json!({"command":"sed 's/before/after/' trial.txt > trial.tmp && mv trial.tmp trial.txt"}),
         ),
         call(
             "s",
