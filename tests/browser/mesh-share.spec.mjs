@@ -61,7 +61,7 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
         page.getByRole("switch", { name: "Share compute", exact: true }),
       ).toBeInViewport();
       // Assert the page's layout boundary and actual controls, not scrollWidth
-      // of shared Select internals (WebKit includes its offscreen hidden input).
+      // of shared Select internals (WebKit reports overflow despite contained controls).
       await expect
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
         .toBe(width);
