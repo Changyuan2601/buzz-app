@@ -502,3 +502,74 @@ test("activity avatar stack stays one height with overflow at every supported wi
     }
   }
 });
+
+// Real layout boundary: activity follows its triggering message in both hosts.
+for (const own of [true, false]) {
+  test.describe(`Activity alignment for ${own ? "outgoing" : "incoming"} messages`, () => {
+    test.use({ threadUnreadOwnedRoot: own });
+    test("activity follows the bubble edge in channels and threads", async ({
+      page,
+      app,
+    }) => {
+      const key = generateSecretKey();
+      await open(page, app);
+      await expect
+        .poll(() => app.relay.hasRoute("primary", "observer"))
+        .toBe(true);
+      const root = app.histories
+        .get("primary/alpha")
+        .find((row) => row.content.startsWith("Thread root"));
+      const row = page.locator(
+        `[data-channel-timeline] [data-message-id="${root.id}"]`,
+      );
+      await row.hover();
+      await row.getByRole("button", { name: /^View thread:/ }).click();
+      const thread = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      await expect(
+        thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      ).toBeVisible();
+      app.serveProfile(key, { name: "Working agent", is_agent: true });
+      app.observer(
+        {
+          kind: "turn_started",
+          seq: 1,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: "alignment",
+          turnId: "working",
+          payload: { triggeringEventIds: [root.id] },
+        },
+        key,
+      );
+      for (const target of [
+        row,
+        thread.locator(`[data-message-id="${root.id}"]`),
+      ]) {
+        const activity = target.getByRole("region", {
+          name: "Agent activity on this message",
+          exact: true,
+        });
+        const chip = activity.getByRole("button").first();
+        await expect(chip).toBeVisible();
+        await expect
+          .poll(async () => {
+            const bubbleBox = await target
+              .locator("[data-message-action-anchor]")
+              .first()
+              .boundingBox();
+            const chipBox = await chip.boundingBox();
+            if (!bubbleBox || !chipBox) return Infinity;
+            return Math.abs(
+              own
+                ? bubbleBox.x + bubbleBox.width - (chipBox.x + chipBox.width)
+                : bubbleBox.x - chipBox.x,
+            );
+          })
+          .toBeLessThan(1);
+      }
+    });
+  });
+}

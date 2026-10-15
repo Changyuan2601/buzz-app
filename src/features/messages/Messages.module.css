@@ -2793,6 +2793,9 @@ html[data-keyboard-navigation] .channelJoinSurface {
   align-self: flex-end;
   margin-inline: 0 var(--space-2);
 }
+.message[data-viewer-message] > .messageBody > [data-message-activity] {
+  align-self: flex-end;
+}
 .message[data-viewer-message] > .messageBody > [data-thread-summary] {
   align-self: flex-end;
   margin-inline: 0 var(--space-3);

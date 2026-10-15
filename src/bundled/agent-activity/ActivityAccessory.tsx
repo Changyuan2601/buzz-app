@@ -158,6 +158,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
     <section
       ref={section}
       className={`${styles.root} buzz-arrive`}
+      data-message-activity=""
       data-arrive="grow"
       data-leaving={shown.length ? undefined : ""}
       data-buzz-ui=""
