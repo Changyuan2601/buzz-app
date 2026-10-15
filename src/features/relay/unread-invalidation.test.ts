@@ -2,7 +2,8 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import { createReadState } from "./read-state";
 import { readJournal, type ReadJournal } from "./read-state-storage";
-import { keypair, message, signed } from "./testing";
+import type { RelayEvent } from "./events";
+import { flush, keypair, message, signed } from "./testing";
 import { createUnread } from "./unread";
 
 const owners: ReturnType<typeof createUnread>[] = [];
@@ -301,3 +302,193 @@ it("reconnect retains background marker and evidence priority", async () => {
     expect.objectContaining({ priority: "background" }),
   );
 });
+
+/** Seeded PRNG (mulberry32); the repo has no property-testing dependency. */
+function prng(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const channelOf = (event: RelayEvent) =>
+  event.tags.find(([name]) => name === "h")?.[1] ?? "";
+/** Every public projection the evidence index feeds. */
+function projections(
+  h: Awaited<ReturnType<typeof setup>>,
+  emitted: readonly RelayEvent[],
+  roots: readonly RelayEvent[],
+) {
+  return {
+    channels: h.targets.map((target) => h.unread.snapshot(target)),
+    threads: roots.map((root) =>
+      h.unread.snapshot({
+        kind: "thread",
+        channelId: channelOf(root),
+        rootId: root.id,
+      }),
+    ),
+    attention: emitted.map((event) =>
+      h.unread.attention(channelOf(event), event.id),
+    ),
+    activity: h.targets.map(({ channelId }) => h.unread.activity(channelId)),
+    following: roots.map((root) =>
+      h.unread.following(channelOf(root), root.id),
+    ),
+    inbox: h.unread.inbox(),
+  };
+}
+/** With every channel still allowed, `purge` deletes nothing and only forces
+ * the evidence index to rebuild, so it is the rescan oracle for the per-event
+ * append path in `accept`. */
+function expectRebuiltToMatch(
+  h: Awaited<ReturnType<typeof setup>>,
+  emitted: readonly RelayEvent[],
+  roots: readonly RelayEvent[],
+  label: string,
+) {
+  const incremental = projections(h, emitted, roots);
+  h.owner.purge();
+  expect(projections(h, emitted, roots), label).toEqual(incremental);
+}
+
+it("resolves replies that arrive before their root, and the root's deletion, like a rescan", async () => {
+  const h = await setup(1);
+  h.changeList((channel) => ({ ...channel, channelType: "dm" }));
+  const root = message(h.peer, "c0", "root", 12);
+  const replies = Array.from({ length: 20 }, (_, i) =>
+    message(i % 3 === 0 ? h.viewer : h.peer, "c0", `reply ${i}`, 13 + i, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ...(i === 5 ? [["p", h.viewer.pubkey]] : []),
+    ]),
+  );
+  h.owner.accept(replies);
+  expectRebuiltToMatch(h, replies, [], "replies before root");
+  h.owner.accept([root]);
+  expectRebuiltToMatch(h, [...replies, root], [root], "root after replies");
+  expect(h.unread.attention("c0", at(replies, 1).id)).toMatchObject({
+    status: "eligible",
+    rootId: root.id,
+  });
+  h.owner.accept([
+    signed(h.peer, {
+      kind: 5,
+      content: "",
+      created_at: 40,
+      tags: [["e", root.id]],
+    }),
+  ]);
+  expectRebuiltToMatch(h, [...replies, root], [root], "root deleted");
+  expect(h.unread.attention("c0", root.id)).toMatchObject({
+    status: "ineligible",
+  });
+  expect(h.unread.attention("c0", at(replies, 1).id)).toMatchObject({
+    rootId: root.id,
+  });
+});
+
+it.each(Array.from({ length: 12 }, (_, i) => i + 1))(
+  "appends live evidence identically to a full rescan (seed %i)",
+  async (seed) => {
+    const h = await setup();
+    h.changeList((channel) =>
+      channel.id === "c2" ? { ...channel, channelType: "dm" } : channel,
+    );
+    const random = prng(seed);
+    const pick = <T>(values: readonly T[]) =>
+      at(values, Math.floor(random() * values.length));
+    const chance = (p: number) => random() < p;
+    const third = keypair();
+    const authors = [h.viewer, h.peer, third];
+    const authorOf = (event: RelayEvent) =>
+      authors.find((key) => key.pubkey === event.pubkey) ?? h.peer;
+    const channels = h.targets.map(({ channelId }) => channelId);
+    const emitted: RelayEvent[] = [];
+    const roots: RelayEvent[] = [];
+    let held: { event: RelayEvent; due: number }[] = [];
+    let clock = 12;
+    const content = (
+      author: ReturnType<typeof keypair>,
+      channelId: string,
+      tags: string[][],
+    ) => message(author, channelId, `m${clock}`, clock++, tags);
+    const viewerTags = () => [
+      ...(chance(0.2) ? [["p", h.viewer.pubkey]] : []),
+      ...(chance(0.1) ? [["broadcast", "1"]] : []),
+    ];
+    const replyTo = (parent: RelayEvent, rootId: string) =>
+      content(pick(authors), channelOf(parent), [
+        ["e", rootId, "", "root"],
+        ["e", parent.id, "", "reply"],
+        ...viewerTags(),
+      ]);
+    for (let step = 0; step < 100; step++) {
+      const batch: RelayEvent[] = [];
+      // Messages whose replies already arrived in earlier batches.
+      for (const { event } of held.filter((item) => item.due <= step)) {
+        batch.push(event);
+        roots.push(event);
+        emitted.push(event);
+      }
+      held = held.filter((item) => item.due > step);
+      const size = 1 + Math.floor(random() * 4);
+      for (let i = 0; i < size; i++) {
+        const op = random();
+        if (op < 0.25 || !emitted.length) {
+          const event = content(pick(authors), pick(channels), viewerTags());
+          batch.push(event);
+          roots.push(event);
+          emitted.push(event);
+        } else if (op < 0.45) {
+          const root = pick(roots);
+          const event = replyTo(root, root.id);
+          batch.push(event);
+          emitted.push(event);
+        } else if (op < 0.6) {
+          // A reply naming another reply as its root: the chain walk resolves it.
+          const parent = pick(emitted);
+          const event = replyTo(parent, parent.id);
+          batch.push(event);
+          emitted.push(event);
+        } else if (op < 0.7) {
+          // A reply to a message that arrives 1–6 batches later.
+          const future = content(pick(authors), pick(channels), viewerTags());
+          held.push({ event: future, due: step + Math.floor(random() * 6) });
+          const event = replyTo(future, future.id);
+          batch.push(event);
+          emitted.push(event);
+        } else if (op < 0.85) {
+          // A deletion by the author, the viewer, or a third party (forged).
+          const target = pick(emitted);
+          batch.push(
+            signed(pick([authorOf(target), h.viewer, third]), {
+              kind: chance(0.5) ? 5 : 9005,
+              content: "",
+              created_at: clock++,
+              tags: [["e", target.id]],
+            }),
+          );
+        } else if (op < 0.93) {
+          const target = pick(emitted);
+          batch.push(
+            signed(authorOf(target), {
+              kind: 40003,
+              content: "edited",
+              created_at: clock++,
+              tags: [["e", target.id]],
+            }),
+          );
+        } else {
+          batch.push(pick(emitted)); // duplicate re-delivery
+        }
+      }
+      h.owner.accept(batch);
+      expectRebuiltToMatch(h, emitted, roots, `seed ${seed} step ${step}`);
+      // Let the conversation lookups this step queued resolve, as between live pushes.
+      await flush();
+    }
+  },
+);
