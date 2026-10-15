@@ -124,6 +124,26 @@ for (const submitted of [false, true])
     page,
     app,
   }) => {
+    // Track from startup so no earlier publication escapes the disconnect barrier.
+    // Let admitted read-state requests settle before interrupting the socket;
+    // queue new ones until closure proves the connection is established again.
+    let publicationGate;
+    const publishing = new Set();
+    await page.route(
+      "**/api/relay/primary/read-state-publish",
+      async (route) => {
+        if (publicationGate) await publicationGate.promise;
+        const done = Promise.withResolvers();
+        publishing.add(done.promise);
+        try {
+          const response = await route.fetch();
+          await route.fulfill({ response });
+        } finally {
+          publishing.delete(done.promise);
+          done.resolve();
+        }
+      },
+    );
     await page.goto(app.origin);
     await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });
@@ -181,25 +201,6 @@ for (const submitted of [false, true])
     }
     const closure = Promise.withResolvers();
     let started = false;
-    // Let admitted read-state requests settle before interrupting the socket;
-    // queue new ones until closure proves the connection is established again.
-    let publicationGate;
-    const publishing = new Set();
-    await page.route(
-      "**/api/relay/primary/read-state-publish",
-      async (route) => {
-        if (publicationGate) await publicationGate.promise;
-        const done = Promise.withResolvers();
-        publishing.add(done.promise);
-        try {
-          const response = await route.fetch();
-          await route.fulfill({ response });
-        } finally {
-          publishing.delete(done.promise);
-          done.resolve();
-        }
-      },
-    );
     await page.route("**/api/relay/**/query", async (route) => {
       if (
         !route
