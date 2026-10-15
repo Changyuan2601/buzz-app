@@ -582,7 +582,7 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
-it("separates the original from replies with the relay's reply total", () => {
+it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };
   h.snapshot.status = "loading";
@@ -636,32 +636,33 @@ it("separates the original from replies with the relay's reply total", () => {
   // A just-sent reply can arrive before the relay's summary counts it.
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
   h.render();
-  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
 
-  // The total comes from the summary, not from the replies loaded so far.
+  // Replies follow the root without a divider, regardless of the relay total.
   h.snapshot.root = { ...row, replyCount: 11 };
   h.render();
-  const divider = screen.getByText("11 replies");
+  expect(screen.queryByText("11 replies")).not.toBeInTheDocument();
   const root = screen.getByText("root");
   const reply = screen.getByText("first reply");
   expect(
-    root.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  expect(
-    divider.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+    root.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
 
   h.snapshot.root = { ...row, replyCount: 1 };
   h.render();
-  expect(screen.getByText("1 reply")).toBeVisible();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.getByText("first reply")).toBeVisible();
 
   h.snapshot.replies = [];
   h.render();
   expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
   h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
   h.render();
-  expect(screen.getByText("1 reply")).toBeVisible();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  expect(screen.getByText("first reply")).toBeVisible();
 
   h.snapshot.root = undefined;
   h.render();

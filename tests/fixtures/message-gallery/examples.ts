@@ -320,6 +320,24 @@ export const groups: Group[] = [
           "long-unbroken-reference-".repeat(8),
       ),
       single(
+        "wrapping-short-last-line",
+        "Short last line",
+        "The bubble and its prose share a compact width without forced line balancing.",
+        "im glad shes going to deepmind. one of the places that im curious about going next",
+      ),
+      single(
+        "wrapping-two-sentences",
+        "Two conversational sentences",
+        "Short paragraphs wrap naturally inside a compact bubble.",
+        "man i got my new mac mini yesterday. old one i bought was base level with very little storage space",
+      ),
+      single(
+        "wrapping",
+        "Conversational wrapping",
+        "Long prose wraps within the compact message measure while retaining pretty wrapping.",
+        "and no one seems to have complained about the max character length on messages that results in the right half of the screen being unused",
+      ),
+      single(
         "markdown",
         "Rich text",
         "Headings, emphasis, quotes, lists, links, and inline code.",
@@ -353,6 +371,17 @@ export const groups: Group[] = [
         "Unavailable custom emoji",
         "The shortcode remains readable when the image cannot resolve.",
         "Thanks :missing:!",
+        {
+          emoji: [
+            { shortcode: "missing", url: "https://fixture.test/missing-emoji" },
+          ],
+        },
+      ),
+      single(
+        "custom-emoji-only-missing",
+        "Unavailable emoji-only message",
+        "A transparent message keeps its shortcode readable with colored bubble preferences.",
+        ":missing:",
         {
           emoji: [
             { shortcode: "missing", url: "https://fixture.test/missing-emoji" },

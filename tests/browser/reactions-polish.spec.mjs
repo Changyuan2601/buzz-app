@@ -325,7 +325,10 @@ test.describe("reaction control rendering", () => {
       el.style.translate = "0 0.25px";
     });
     const bounds = await plus.boundingBox();
-    const original = await plus.screenshot();
+    // Compare the icon itself: the surrounding capsule edge can repaint when
+    // the neighboring hover layer appears without moving the icon.
+    const icon = plus.locator("svg");
+    const original = await icon.screenshot();
     await emoji.locator("[data-reaction-glyph]").evaluate((el) => {
       el.addEventListener(
         "transitionrun",
@@ -353,7 +356,7 @@ test.describe("reaction control rendering", () => {
         )
         .toBe(true);
       expect(await plus.boundingBox()).toEqual(bounds);
-      expect((await plus.screenshot()).equals(original)).toBe(true);
+      expect((await icon.screenshot()).equals(original)).toBe(true);
     } finally {
       await emoji.locator("[data-reaction-glyph]").evaluate((el) => {
         for (const animation of el.getAnimations()) animation.finish();
@@ -365,7 +368,7 @@ test.describe("reaction control rendering", () => {
       "none",
     );
     expect(await plus.boundingBox()).toEqual(bounds);
-    expect((await plus.screenshot()).equals(original)).toBe(true);
+    expect((await icon.screenshot()).equals(original)).toBe(true);
     await plus.hover();
     await expect(
       page.getByRole("tooltip", { name: "Add reaction", exact: true }),

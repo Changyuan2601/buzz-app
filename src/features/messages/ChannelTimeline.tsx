@@ -127,7 +127,7 @@ export type ChannelTimelineProps = {
   launchPending?: boolean | undefined;
   /** Sessions page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
-  /** Me's quieter centered transcript and viewer-message alignment. */
+  /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
@@ -880,7 +880,6 @@ function Timeline({
                   <MessageRow
                     stackPrevious={continuesMessageGroup(rows[index - 1], row)}
                     stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
-                    alignViewer={chatPresentation}
                     session={queries}
                     scope={scope}
                     row={row}

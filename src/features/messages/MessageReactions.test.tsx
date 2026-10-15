@@ -109,7 +109,9 @@ function harness(
   function Controls({
     disabled = false,
     onFocusedRemoval,
+    audience,
   }: {
+    audience?: "agents";
     disabled?: boolean;
     onFocusedRemoval?: () => void;
   }) {
@@ -122,7 +124,7 @@ function harness(
       row && (
         <>
           <MessageReactionControls
-            row={row}
+            row={audience ? { ...row, audience } : row}
             session={owner.session}
             scope="test"
             disabled={disabled}
@@ -131,7 +133,7 @@ function harness(
           />
           <MessageReactions
             {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
-            row={row}
+            row={audience ? { ...row, audience } : row}
             session={owner.session}
             scope="test"
             disabled={disabled}
@@ -548,7 +550,7 @@ it("hands focus back when my emoji is removed while another person's remains", a
   });
 });
 
-it("chooses a new bounded tilt on each pointer entry", () => {
+it("shares a new bounded tilt with the preview on each pointer entry", async () => {
   const h = harness([react(other)]);
   render(<h.Controls />);
   const emoji = screen.getByRole("button", {
@@ -559,11 +561,60 @@ it("chooses a new bounded tilt on each pointer entry", () => {
     random.mockReturnValue(0);
     fireEvent.mouseEnter(emoji);
     expect(emoji.style.getPropertyValue("--reaction-tilt")).toBe("-10deg");
+    await screen.findByRole("tooltip");
+    const artwork = () =>
+      screen
+        .getByRole("tooltip")
+        .querySelector<HTMLElement>("[style*=reaction-preview-tilt]");
+    expect(artwork()?.style.getPropertyValue("--reaction-preview-tilt")).toBe(
+      "-10deg",
+    );
     fireEvent.mouseLeave(emoji);
     random.mockReturnValue(0.75);
     fireEvent.mouseEnter(emoji);
     expect(emoji.style.getPropertyValue("--reaction-tilt")).toBe("5deg");
+    await waitFor(() =>
+      expect(artwork()?.style.getPropertyValue("--reaction-preview-tilt")).toBe(
+        "5deg",
+      ),
+    );
   } finally {
     random.mockRestore();
   }
+});
+
+it("offers the first reaction inline for coordination messages and respects disabled state", () => {
+  const pickerTools = registry<ComposerTool>([
+    {
+      key: "picker",
+      pluginId: "picker",
+      revision: "one",
+      id: "picker",
+      title: "Picker",
+      component: () => null,
+      reactionComponent: ({ select }: ReactionToolProps) => (
+        <button type="button" onClick={() => select("👍")}>
+          Choose reaction
+        </button>
+      ),
+    },
+  ]);
+  const h = harness([], undefined, pickerTools);
+  const view = render(<h.Controls audience="agents" />);
+  expect(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  ).toBeTruthy();
+  view.rerender(<h.Controls audience="agents" disabled />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls audience="agents" />);
+  fireEvent.click(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
+  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(7);
 });

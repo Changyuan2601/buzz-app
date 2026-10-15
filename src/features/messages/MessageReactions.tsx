@@ -1,5 +1,6 @@
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import {
+  type CSSProperties,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -255,6 +256,7 @@ function ReactionEmoji({
   onPreviewChange(open: boolean): void;
 }) {
   const [name, setName] = useState(reaction.content);
+  const [previewTilt, setPreviewTilt] = useState("0deg");
   const reactorProfiles = useMemo(
     () => selectProfiles(session.profiles, [authorId]),
     [session.profiles, authorId],
@@ -305,10 +307,9 @@ function ReactionEmoji({
             aria-disabled={unavailable}
             disabled={disabled}
             onMouseEnter={(event) => {
-              event.currentTarget.style.setProperty(
-                "--reaction-tilt",
-                `${Math.random() * 20 - 10}deg`,
-              );
+              const tilt = `${Math.random() * 20 - 10}deg`;
+              event.currentTarget.style.setProperty("--reaction-tilt", tilt);
+              setPreviewTilt(tilt);
               revealName();
             }}
             onFocus={revealName}
@@ -328,7 +329,10 @@ function ReactionEmoji({
         }
       >
         <div className={styles.reactionPreviewContent}>
-          <span className={styles.reactionPreviewEmoji}>
+          <span
+            className={styles.reactionPreviewEmoji}
+            style={{ "--reaction-preview-tilt": previewTilt } as CSSProperties}
+          >
             <ReactionGlyph reaction={reaction} session={session} />
           </span>
           <span className={styles.reactionPreviewNames}>{user}</span>
@@ -434,22 +438,24 @@ export function MessageReactions(
             />
           );
         })}
-      {active && reactions.length > 0 && !props.disabled && (
-        <span
-          className={styles.inlineReactionTool}
-          data-testid="inline-add-reaction"
-        >
-          <ReactionTool
-            registry={tools}
-            session={session}
-            scope={scope}
-            messageId={row.id}
-            disabled={action.disabled}
-            select={select}
-            showDelivery={false}
-          />
-        </span>
-      )}
+      {active &&
+        (reactions.length > 0 || row.audience === "agents") &&
+        !props.disabled && (
+          <span
+            className={styles.inlineReactionTool}
+            data-testid="inline-add-reaction"
+          >
+            <ReactionTool
+              registry={tools}
+              session={session}
+              scope={scope}
+              messageId={row.id}
+              disabled={action.disabled}
+              select={select}
+              showDelivery={false}
+            />
+          </span>
+        )}
       {action.error && <span role="alert">{action.error}</span>}
       <ReactionDelivery session={session} messageId={row.id} />
     </div>

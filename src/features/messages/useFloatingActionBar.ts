@@ -230,6 +230,8 @@ export function useFloatingActionBar(
       const style = getComputedStyle(bar);
       const overlap = Number.parseFloat(style.scrollMarginBlockStart) || 0;
       const rtl = getComputedStyle(row).direction === "rtl";
+      // Own messages sit at the trailing edge; keep actions toward the conversation.
+      const towardLeft = rtl !== row.hasAttribute("data-viewer-message");
       const gap = Number.parseFloat(style.scrollMarginInlineEnd) || 0;
       const rowBounds = row.getBoundingClientRect();
       const start =
@@ -241,8 +243,9 @@ export function useFloatingActionBar(
         ) - (viewport ? gap : 0);
       bar.style.maxWidth = `${Math.max(0, end - start)}px`;
       bar.showPopover?.();
-      const width = bar.getBoundingClientRect().width;
-      const besideLeft = rtl
+      // Entrance motion must not change the layout used for placement.
+      const width = bar.offsetWidth;
+      const besideLeft = towardLeft
         ? anchor.left - overlap - width
         : anchor.right + overlap;
       const center = anchor.top + anchor.height / 2;
@@ -253,6 +256,13 @@ export function useFloatingActionBar(
           (center - bar.offsetHeight / 2 >= viewport.top &&
             center + bar.offsetHeight / 2 <= viewport.bottom));
       bar.dataset.placement = beside ? "beside" : "above";
+      bar.style.transformOrigin = beside
+        ? towardLeft
+          ? "right center"
+          : "left center"
+        : rtl
+          ? "left bottom"
+          : "right bottom";
       const top = beside ? center : anchor.top + overlap;
       const paintedTop = top - bar.offsetHeight / (beside ? 2 : 1);
       if (

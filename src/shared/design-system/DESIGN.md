@@ -1160,7 +1160,8 @@ Values scale with the host interface-size preference.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
 - Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
   default), matching Berd’s relaxed reply rhythm for both sent and received
-  messages. The message renderer uses `space-4` between prose blocks; labels,
+  messages. The message renderer uses `space-4` between prose blocks, with
+  `space-2` between an introductory paragraph and its following list. Labels,
   controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
@@ -1180,13 +1181,17 @@ need their own values in each mode.
 - Check text with its actual fill and backdrop, including interactive states.
 - The original design exploration was light-only. Buzz’s dark values are authored choices and should be revised when rendered evidence shows a problem.
 
-Default own message bubbles use the received fill mixed with 5% black in light
-mode or 5% white in dark mode, with standard text and link colors. The five accent
+Received message bubbles use `bubble-received`, slightly stronger than quiet
+control fills. Reply connectors and thread spines use `border-message-thread`
+to remain visible on conversation surfaces in both modes. Default own message
+bubbles retain `bubble-neutral`, with standard text and link colors. The five accent
 choices—blue, green, orange, pink and lilac—pair with white ink. They retain the
 reference hue and as much chroma as sRGB permits; lightness is lowered only to
 reach the 4.5:1 WCAG floor (also meeting the Lc 60 target). Reactions and
 ThemePicker previews follow the selected bubble pair. Default send controls use
-the neutral prominent pair; accent choices use their message pair.
+the neutral prominent pair; accent choices use their message pair. The temporary
+return-to-message highlight uses a 20% tint of the selected bubble color mixed
+with the panel surface, including neutral, in both themes.
 
 ## Density and rhythm
 
