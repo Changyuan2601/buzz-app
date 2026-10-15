@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { MeshStatus } from "./index";
 
@@ -51,7 +51,7 @@ export function MeshCreateSetup({
     phase !== "failed" &&
     phase !== "stopping";
   return (
-    <section aria-label="Set up shared compute" className="grid gap-4">
+    <section aria-label="Set up shared compute" className="grid gap-2">
       {confirmed ? (
         <div className="grid gap-2">
           <p
@@ -78,57 +78,54 @@ export function MeshCreateSetup({
         </div>
       ) : (
         <>
-          <InlineHeader title="How will your agent run?" />
-          <div className="grid items-start gap-3 sm:grid-cols-2">
-            <SettingsGroup layout="form">
-              <InlineHeader title="Use this computer" level={4} />
-              <p className="m-0 text-body-sm text-secondary">
-                Share compute with your community. Auto chooses a model for this
-                computer.
-              </p>
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={disabled || busy || !canShare}
-                loading={busy}
-                onClick={() => {
-                  setChoice("share");
-                  share();
-                }}
-              >
-                Start sharing with Auto
-              </Button>
-              <p className="m-0 text-body-sm text-secondary">
-                Downloads a model if needed, in the background. You can create
-                your agent while it starts.
-              </p>
-            </SettingsGroup>
-            <SettingsGroup layout="form">
-              <InlineHeader title="Use community compute" level={4} />
-              <p className="m-0 text-body-sm text-secondary">
-                No local model download. Your agent needs someone in the
-                community to be sharing.
-              </p>
-              <Button
-                size="sm"
-                disabled={disabled || busy}
-                onClick={() => setChoice("use")}
-              >
-                Continue without sharing
-              </Button>
-            </SettingsGroup>
-          </div>
-          <p role="status" className="m-0 text-body-sm text-secondary">
-            {busy
-              ? "Starting shared compute. You can create your agent while setup continues."
-              : !status
-                ? "Checking shared compute…"
-                : !status.available
-                  ? "Shared compute is unavailable in this build."
-                  : otherCommunity
-                    ? "This computer is connected to another community. Switch communities in Settings → Shared compute to share here."
-                    : "You can change sharing in Settings → Shared compute."}
-          </p>
+          <SettingsGroup>
+            <PreferenceRow
+              title="Use this computer"
+              subtitle="Auto picks and downloads a model in the background. Create your agent while it starts."
+              trailing={
+                <Button
+                  size="sm"
+                  variant="primary"
+                  aria-label="Start sharing with Auto"
+                  disabled={disabled || busy || !canShare}
+                  loading={busy}
+                  onClick={() => {
+                    setChoice("share");
+                    share();
+                  }}
+                >
+                  Start sharing
+                </Button>
+              }
+            />
+            <PreferenceRow
+              title="Use community compute"
+              subtitle="No download. Needs someone in your community to be sharing."
+              trailing={
+                <Button
+                  size="sm"
+                  aria-label="Continue without sharing"
+                  disabled={disabled || busy}
+                  onClick={() => setChoice("use")}
+                >
+                  Continue
+                </Button>
+              }
+            />
+          </SettingsGroup>
+          {(busy || !status || !status.available || otherCommunity) && (
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              {busy
+                ? "Starting shared compute. You can create your agent while setup continues."
+                : !status
+                  ? "Checking shared compute…"
+                  : !status.available
+                    ? "Shared compute is unavailable in this build."
+                    : otherCommunity
+                      ? "This computer is connected to another community. Switch communities in Settings → Shared compute to share here."
+                      : "You can change sharing in Settings → Shared compute."}
+            </p>
+          )}
         </>
       )}
       {failure && (
