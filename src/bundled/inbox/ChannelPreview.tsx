@@ -118,6 +118,7 @@ export function ChannelPreview({
                 <EmptyState
                   icon={<ChatCircleIcon />}
                   title="No messages yet."
+                  description={null}
                 />
               </div>
             )}
