@@ -210,6 +210,9 @@ type Runner = {
   /** Replayed events waiting, oldest first, until the agent has room for the
    * jobs each makes. */
   readonly backlog: { event: RelayEvent; channelId?: string }[];
+  /** A missed event catch-up is still giving out, and the watches that have
+   * it: it makes more watch jobs than the agent has room for at once. */
+  fanning?: { id: string; done: ReadonlySet<string> };
   readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
@@ -870,9 +873,10 @@ export class AgentRunners {
       console.warn(`Agent ${name()} could not catch up`, error);
     }
   }
-  /** Gives the agent the first of `events` it has room for, at least one,
-   * once the rosters their watches need are confirmed: a checkpoint saved
-   * past an event never drops or evicts it. Each watch they match gets one
+  /** Gives the agent the first of `events` it has room for, once the rosters
+   * their watches need are confirmed: a checkpoint saved past an event never
+   * drops or evicts it. One that makes more jobs than the agent has room for
+   * goes to its watches a few at a time. Each watch they match gets one
    * job with all of its events, oldest first, so a long absence does not
    * cost a turn per message. One from before the listener started wakes only
    * watches, so a mention from before the app listened is not answered late.
@@ -906,7 +910,8 @@ export class AgentRunners {
     }
   }
   /** Delivers the longest run of `events`, oldest first, whose jobs the agent
-   * has room for now; returns how many it took, or 0 for none. */
+   * has room for now; returns how many it took, or 0 for none. With no room
+   * for all of the first one's, what room there is goes to some of them. */
   private batch(
     runner: Runner,
     agent: Agent,
@@ -921,16 +926,21 @@ export class AgentRunners {
     let bytes = 0;
     for (const event of events) {
       const channel = channelOf(event);
+      // Seen once its first watches have it; the rest still get it.
+      const fanning =
+        runner.fanning?.id === event.id ? runner.fanning : undefined;
       const heard =
-        this.hasSeen(runner, event.id, channel) || event.pubkey === agent.pubkey
+        (!fanning && this.hasSeen(runner, event.id, channel)) ||
+        event.pubkey === agent.pubkey
           ? []
           : this.heard(runner, agent, event);
       if (heard === "held") break;
       const listened = event.created_at >= pass.community.connection.start;
       const triggers = heard.filter((trigger) =>
         trigger.type === "watch"
-          ? this.missed(runner, trigger, listened)
-          : listened,
+          ? !fanning?.done.has(trigger.slug) &&
+            this.missed(runner, trigger, listened)
+          : !fanning && listened,
       );
       const nextMentions = [...mentions];
       const nextWatches = new Map(
@@ -948,20 +958,13 @@ export class AgentRunners {
         0,
       );
       const size = sizeOf(event);
-      // The first goes once an idle agent could take it, and loses any
-      // excess as live delivery would.
-      const cap = (count: number, limit: number) =>
-        taken ? count : Math.min(count, limit);
+      if (taken && bytes + size > CATCH_UP_BATCH_CHARS) break;
       if (
-        (taken && bytes + size > CATCH_UP_BATCH_CHARS) ||
-        !this.fits(
-          runner,
-          cap(nextMentions.length, QUEUE_LIMIT),
-          cap(nextWatches.size, this.watchLimit(runner)),
-          cap(classified, CLASSIFY_LIMIT),
-        )
-      )
+        !this.fits(runner, nextMentions.length, nextWatches.size, classified)
+      ) {
+        if (!taken) this.fanOut(runner, agent, event, triggers, slug, skipped);
         break;
+      }
       mentions.splice(0, mentions.length, ...nextMentions);
       watches.clear();
       for (const [key, list] of nextWatches) watches.set(key, list);
@@ -970,11 +973,63 @@ export class AgentRunners {
     }
     if (!taken) return 0;
     for (const event of events.slice(0, taken)) {
+      if (runner.fanning?.id === event.id) delete runner.fanning;
       const channel = channelOf(event);
       if (this.hasSeen(runner, event.id, channel)) continue;
       this.markSeen(runner, event.id, channel);
       this.isOwn(runner, agent, event);
     }
+    this.give(runner, agent, mentions, watches, slug, skipped);
+    return taken;
+  }
+  /** Gives a missed event that makes more jobs than the agent has room for
+   * to as many of its watches as there is room for now; later tries give it
+   * to the rest, and only then is it taken, so its checkpoint never passes a
+   * watch that did not get it. It is seen from the first, so a replay does
+   * not give it again. */
+  private fanOut(
+    runner: Runner,
+    agent: Agent,
+    event: RelayEvent,
+    triggers: readonly Trigger[],
+    slug: string,
+    skipped: boolean,
+  ) {
+    const channel = channelOf(event);
+    const mentions = triggers
+      .filter((trigger) => trigger.type !== "watch")
+      .map((trigger) => ({ trigger, ...(channel ? { channel } : {}) }));
+    const watches = new Map<string, WatchTrigger[]>();
+    let classified = 0;
+    for (const trigger of triggers) {
+      if (trigger.type !== "watch") continue;
+      const more = trigger.watch.classifier ? 1 : 0;
+      if (
+        !this.fits(runner, mentions.length, watches.size + 1, classified + more)
+      )
+        break;
+      watches.set(trigger.slug, [trigger]);
+      classified += more;
+    }
+    if (!watches.size) return;
+    if (!this.hasSeen(runner, event.id, channel))
+      this.markSeen(runner, event.id, channel);
+    const done = runner.fanning?.id === event.id ? runner.fanning.done : [];
+    runner.fanning = {
+      id: event.id,
+      done: new Set([...done, ...watches.keys()]),
+    };
+    this.give(runner, agent, mentions, watches, slug, skipped);
+  }
+  /** Queues catch-up's mentions, and one job per watch with its events. */
+  private give(
+    runner: Runner,
+    agent: Agent,
+    mentions: readonly { trigger: Trigger; channel?: string }[],
+    watches: ReadonlyMap<string, readonly WatchTrigger[]>,
+    slug: string,
+    skipped: boolean,
+  ) {
     for (const { trigger, channel } of mentions)
       this.enqueue(runner, {
         trigger,
@@ -997,7 +1052,6 @@ export class AgentRunners {
         },
       });
     }
-    return taken;
   }
   /** Whether a catch-up event read for one watch is also one `trigger`'s
    * watch missed. One with its own stream missed it while it is past that

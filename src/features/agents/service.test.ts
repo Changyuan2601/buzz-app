@@ -3748,6 +3748,50 @@ it("catches up no faster than its Interest's lane takes turns, so none is droppe
   }
 });
 
+it("gives a missed event to more of one Interest's watches than its lane holds, as room comes", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const caught: string[] = [];
+    const { service, history, recover } = await setup({
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        if (trigger.type === "catch-up") caught.push(trigger.slug);
+        if (caught.length === 1) await blocked;
+        return { ok: true };
+      },
+    });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    // Ten watches in one Interest: one turn runs, and its lane keeps eight.
+    const slugs = Array.from({ length: 10 }, (_, i) => `watch/chat${i}`);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        ...Object.fromEntries(slugs.map((slug) => [slug, chat["watch/chat"]])),
+      },
+    });
+    await settle();
+    vi.setSystemTime((now + 60) * 1000);
+    history.push(posted("missed", now + 30));
+    recover();
+    await vi.waitFor(() => expect(caught).toHaveLength(1));
+    await settle();
+    release();
+    await vi.waitFor(() => expect(caught).toHaveLength(10), {
+      timeout: 5_000,
+    });
+    expect(caught.sort()).toEqual(slugs);
+  } finally {
+    vi.useRealTimers();
+  }
+}, 10_000);
+
 it("waits for a confirmed roster before catching up, saving no progress past what it has not heard", async () => {
   vi.useFakeTimers({ now: 1_000_000_000 });
   try {
