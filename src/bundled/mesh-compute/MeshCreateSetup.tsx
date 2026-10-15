@@ -54,13 +54,31 @@ export function MeshCreateSetup({
           disabled={disabled || busy}
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <Radio
-              variant="card"
-              value="share"
-              label="Use this computer"
-              description="Share compute with your community. Auto chooses a model for this computer."
-              disabled={!canShare}
-            />
+            <div className="grid content-start gap-3">
+              <Radio
+                variant="card"
+                value="share"
+                label="Use this computer"
+                description="Share compute with your community. Auto chooses a model for this computer."
+                disabled={!canShare}
+              />
+              {choice === "share" && (
+                <>
+                  <Button
+                    variant="primary"
+                    disabled={disabled || busy || !canShare}
+                    loading={busy}
+                    onClick={share}
+                  >
+                    Start sharing with Auto
+                  </Button>
+                  <p className="m-0 text-body-sm text-secondary">
+                    Downloads a model if needed, in the background. You can
+                    create your agent while it starts.
+                  </p>
+                </>
+              )}
+            </div>
             <Radio
               variant="card"
               value="use"
@@ -70,15 +88,6 @@ export function MeshCreateSetup({
           </div>
         </RadioGroup>
       </Field>
-      {choice === "share" && (
-        <Button
-          disabled={disabled || busy || !canShare}
-          loading={busy}
-          onClick={share}
-        >
-          Start sharing with Auto
-        </Button>
-      )}
       <p role="status" className="m-0 text-body-sm text-secondary">
         {busy
           ? "Starting shared compute. You can create your agent while setup continues."
