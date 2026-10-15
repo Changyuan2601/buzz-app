@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -72,6 +73,15 @@ export function PageSearch({
     if (next) setContentPresent(true);
     setOpen(next);
   }, []);
+  // The palette's backdrop rules key off this instead of body:has(.search-palette),
+  // which made <body> a document-wide :has() anchor (every popup open restyled the tree).
+  useLayoutEffect(() => {
+    if (!contentPresent) return;
+    document.body.dataset.searchPalette = "";
+    return () => {
+      delete document.body.dataset.searchPalette;
+    };
+  }, [contentPresent]);
   const begin = useCallback(() => {
     returnFocus.current =
       document.activeElement instanceof HTMLElement

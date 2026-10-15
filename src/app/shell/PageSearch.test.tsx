@@ -143,6 +143,22 @@ it("closes search when the backdrop is clicked", async () => {
   );
 });
 
+it("flags <body> while the palette is mounted so its backdrop rules apply", async () => {
+  const user = userEvent.setup();
+  render(<PageSearch pages={[]} onSelect={vi.fn()} />);
+  expect(document.body).not.toHaveAttribute("data-search-palette");
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
+  expect(document.body).toHaveAttribute("data-search-palette");
+  await user.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+  );
+  await vi.waitFor(() =>
+    expect(document.body).not.toHaveAttribute("data-search-palette"),
+  );
+});
+
 it("keeps result shortcuts without badges and follows the hovered row", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,

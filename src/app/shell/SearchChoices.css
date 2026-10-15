@@ -8,7 +8,11 @@
     max-height: calc(100dvh - var(--search-palette-top) - 1rem);
   }
 
-  body:has(.search-palette) .buzz-dialog-backdrop {
+  /* PageSearch sets data-search-palette on <body> while the palette is mounted.
+     The backdrop is a sibling of the popup, so the only shared ancestor is
+     <body>; anchoring :has(.search-palette) there instead made every class
+     change in the document re-evaluate it over the whole tree. */
+  body[data-search-palette] .buzz-dialog-backdrop {
     backdrop-filter: blur(1px);
   }
 
@@ -31,9 +35,9 @@
     transition-duration: 200ms;
   }
 
-  body:has(.search-palette) .buzz-dialog-backdrop[data-motion="default"],
+  body[data-search-palette] .buzz-dialog-backdrop[data-motion="default"],
   html[data-keyboard-navigation]
-    body:has(.search-palette)
+    body[data-search-palette]
     .buzz-dialog-backdrop[data-motion="default"] {
     transition: opacity 200ms cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -138,9 +142,9 @@
     .buzz-dialog:has(.search-palette)[data-motion="default"],
     html[data-keyboard-navigation]
       .buzz-dialog:has(.search-palette)[data-motion="default"],
-    body:has(.search-palette) .buzz-dialog-backdrop[data-motion="default"],
+    body[data-search-palette] .buzz-dialog-backdrop[data-motion="default"],
     html[data-keyboard-navigation]
-      body:has(.search-palette)
+      body[data-search-palette]
       .buzz-dialog-backdrop[data-motion="default"] {
       transition: none;
     }
