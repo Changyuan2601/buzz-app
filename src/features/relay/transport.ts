@@ -1,3 +1,4 @@
+import type { AssistiveHost, ProgressFact } from "../assistive-ux/protocol";
 import type { ReminderHost } from "./reminders";
 import { archiveClient } from "../archive/client";
 import type { ArchiveHost } from "../archive/types";
@@ -121,6 +122,7 @@ export interface ReadTransport {
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
+  readonly assistive?: AssistiveHost;
   /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
    * it keeps channel labels and answers label lookups. */
   readonly channelIdentity?: true;
@@ -780,6 +782,51 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    assistive: {
+      async addresses(signal) {
+        const response = await fetch(`${endpoint}/assistive-addresses`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          signal,
+        });
+        if (!response.ok) throw new Error("Assistive addresses unavailable");
+        return response.json();
+      },
+      async decode(events, signal) {
+        const response = await fetch(`${endpoint}/assistive-decode`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(events),
+          signal,
+        });
+        if (!response.ok) throw new Error("Assistive decode failed");
+        return response.json();
+      },
+      async sign(fact: ProgressFact, signal) {
+        const response = await fetch(`${endpoint}/assistive-sign`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fact),
+          signal,
+        });
+        if (!response.ok) throw new Error("Assistive signing failed");
+        return eventDto(await response.json());
+      },
+      async publish(event, signal) {
+        const response = await fetch(`${endpoint}/assistive-publish`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: publicationHeaders(),
+          body: JSON.stringify(event),
+          signal,
+        });
+        await acceptReadStatePublish(response, event.id);
+      },
+    },
     ...(session.readState
       ? {
           readState: {

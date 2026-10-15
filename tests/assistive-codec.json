@@ -1,0 +1,21 @@
+{
+  "secret": "0101010101010101010101010101010101010101010101010101010101010101",
+  "community": "https://community.test",
+  "addresses": [
+    {
+      "id": "threads.new-thread-placement",
+      "outcome": "seen",
+      "coordinate": "buzz-assistive-v1:00a3c45d069a3f40c67822e626099a8d393b18f85e96eecc731441680e947ec5"
+    },
+    {
+      "id": "threads.new-thread-placement",
+      "outcome": "dismissed",
+      "coordinate": "buzz-assistive-v1:b150a495e6387ee414424bf7acb7749995122b0d04e3e4afddda4dcfdd6b7cc6"
+    },
+    {
+      "id": "threads.new-thread-placement",
+      "outcome": "completed",
+      "coordinate": "buzz-assistive-v1:76e70c593e63f2cdc117712aab0a7636fc20f8d6486ad3aa8800bda5351d8f15"
+    }
+  ]
+}

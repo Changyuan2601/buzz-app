@@ -19,7 +19,7 @@ const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep 
 
 // Batch-local conversation keys avoid repeating ECDH for every self-encrypted slot.
 // Callers enforce their encoded-payload budget before reaching this helper.
-fn decrypt_with_conversation(
+pub(crate) fn decrypt_with_conversation(
     conversation: &nip44::v2::ConversationKey,
     content: &str,
 ) -> Result<String> {

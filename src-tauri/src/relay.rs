@@ -16,6 +16,11 @@ use std::{
 use tokio::sync::oneshot;
 use url::Url;
 
+mod assistive;
+pub(crate) use assistive::{
+    relay_assistive_addresses, relay_assistive_decode, relay_assistive_publish,
+    relay_assistive_sign,
+};
 mod catalog;
 mod channel_writes;
 mod kit;

@@ -3649,3 +3649,124 @@ test("inventory rejects foreign pages, ignores invalid heads and follows exact-k
     await h.close();
   }
 });
+
+test("assistive host routes are community-bound and cannot expand generic signing", async () => {
+  const h = await harness(
+    async () =>
+      new Response("[]", { headers: { "Content-Type": "application/json" } }),
+  );
+  try {
+    await h.post("register", { url: fixtureRelayUrl });
+    for (const route of [
+      "assistive-addresses",
+      "assistive-sign",
+      "assistive-decode",
+      "assistive-publish",
+    ])
+      expect(
+        (await h.post(route, route.includes("decode") ? [] : {})).status,
+      ).toBe(400);
+    const addresses = await (
+      await h.post("primary/assistive-addresses", {})
+    ).json();
+    expect(addresses).toHaveLength(3);
+    const fact = { id: "threads.new-thread-placement", outcome: "completed" };
+    const response = await h.post("primary/assistive-sign", fact);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    const decoded = await h.post("primary/assistive-decode", [event]);
+    expect(decoded.status).toBe(200);
+    expect(await decoded.json()).toEqual([{ eventId: event.id, fact }]);
+    expect((await h.post("primary/sign", event)).status).toBe(400);
+    expect((await h.post("primary/publish", event)).status).toBe(400);
+    expect(
+      (
+        await h.post("primary/assistive-decode", [
+          { ...event, content: "changed" },
+        ])
+      ).status,
+    ).toBe(400);
+  } finally {
+    await h.close();
+  }
+});
+
+test("assistive progress publishes through the real session and broker and restores on a fresh client", async () => {
+  let h;
+  let owner;
+  const storage = new Map();
+  vi.stubGlobal("localStorage", {
+    getItem: (key) => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value),
+  });
+  h = await harness(async (call) => {
+    const filters = call.body;
+    const events = Array.isArray(filters)
+      ? h.publications.filter((event) =>
+          filters.some(
+            (filter) =>
+              (!filter.authors || filter.authors.includes(event.pubkey)) &&
+              (!filter.kinds || filter.kinds.includes(event.kind)) &&
+              (!filter["#d"] || filter["#d"].includes(event.tags[0]?.[1])),
+          ),
+        )
+      : [];
+    return new Response(JSON.stringify(events), {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+  const create = async () => {
+    const transport = await connectBrokerTransport(
+      h.base,
+      undefined,
+      "primary",
+    );
+    owner = createRelaySession(transport, {
+      outboxStorage: { load: () => [], save() {} },
+    });
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().status).toBe("connected"),
+    );
+    return owner.session.assistiveProgress;
+  };
+  try {
+    const progress = await create();
+    const context = {
+      surface: "new-channel-thread",
+      channelType: "stream",
+      isMe: false,
+    };
+    await progress.refresh();
+    expect(progress.eligibility("threads.new-thread-placement", context)).toBe(
+      "eligible",
+    );
+    expect(
+      await progress.record("threads.new-thread-placement", "completed"),
+    ).toBe("saved");
+    await progress.refresh();
+    expect(progress.snapshot()).toMatchObject({ status: "ready", pending: 0 });
+    expect(h.publications).toHaveLength(1);
+    expect(h.publications[0].kind).toBe(30078);
+    expect(h.publications[0].content).not.toContain("completed");
+    owner.dispose();
+    owner = undefined;
+    storage.clear();
+    const restored = await create();
+    expect(restored.eligibility("threads.new-thread-placement", context)).toBe(
+      "unknown",
+    );
+    await restored.refresh();
+    expect(restored.eligibility("threads.new-thread-placement", context)).toBe(
+      "ineligible",
+    );
+    expect(restored.snapshot().facts).toEqual([
+      { id: "threads.new-thread-placement", outcome: "completed" },
+    ]);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    owner?.dispose();
+    await h.close();
+    vi.unstubAllGlobals();
+  }
+});

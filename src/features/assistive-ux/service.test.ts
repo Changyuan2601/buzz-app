@@ -1,155 +1,288 @@
 // @vitest-environment jsdom
-import { Context } from "@deepseek-ai/cordis";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { AssistiveUxService } from "./service";
-import type { AssistiveFacts } from "./catalog";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { generateSecretKey, getPublicKey } from "nostr-tools";
+import {
+  assistiveAddresses,
+  decodeAssistive,
+  signAssistive,
+} from "../../../browser-host/assistive-ux.mjs";
+import { createAssistiveProgress } from "./progress";
+import type { RelayEvent, ReadFilter } from "../relay/events";
+import type { AssistiveHost } from "./protocol";
 
 const id = "threads.new-thread-placement";
-const viewer = "a".repeat(64);
-const facts: AssistiveFacts[typeof id] = {
-  surface: "new-channel-thread",
-  channelType: "stream",
+const facts = {
+  surface: "new-channel-thread" as const,
+  channelType: "stream" as const,
   isMe: false,
 };
-const roots: Context[] = [];
-function fixture() {
-  const root = new Context();
-  roots.push(root);
-  return { root, service: new AssistiveUxService(root) };
+const secret = generateSecretKey();
+const relay = new Map<string, RelayEvent>();
+const owners: ReturnType<typeof createAssistiveProgress>[] = [];
+function device(community = "https://community.test", key = secret) {
+  const lifetime = new AbortController();
+  let offline = false;
+  const host: AssistiveHost = {
+    addresses: async () => assistiveAddresses(key, community),
+    decode: async (events) => decodeAssistive(events, key, community),
+    sign: async (fact) => signAssistive(fact, key, community),
+    publish: async (event) => {
+      if (offline) throw new Error("Offline");
+      relay.set(event.tags[0]?.[1] ?? "", event);
+    },
+  };
+  const read = vi.fn(async (filters: readonly ReadFilter[]) => {
+    if (offline) throw new Error("Offline");
+    return [...relay.values()].filter((event) =>
+      filters.some(
+        (filter) =>
+          (!filter.ids || filter.ids.includes(event.id)) &&
+          (!filter.authors || filter.authors.includes(event.pubkey)) &&
+          (!filter["#d"] || filter["#d"].includes(event.tags[0]?.[1] ?? "")),
+      ),
+    );
+  });
+  const owner = createAssistiveProgress({
+    host,
+    reader: { read },
+    viewer: getPublicKey(key),
+    community,
+    signal: lifetime.signal,
+  });
+  owners.push(owner);
+  return {
+    ...owner,
+    read,
+    lifetime,
+    offline(value: boolean) {
+      offline = value;
+    },
+  };
 }
-beforeEach(() => localStorage.clear());
-afterEach(async () => {
-  for (const root of roots.splice(0)) await root.fiber.dispose();
+beforeEach(() => {
+  localStorage.clear();
+  relay.clear();
+});
+afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
 });
 
-it("stays eligible until explicit dismissal, then remembers across instances but not accounts", () => {
-  const { service } = fixture();
-  const write = vi.spyOn(Storage.prototype, "setItem");
-  expect(service.snapshot(viewer, id, facts)).toBe(true);
-  expect(service.snapshot(viewer, id, { ...facts, channelType: "forum" })).toBe(
-    true,
+it("loads unknown before remote evidence and remembers completion on another device", async () => {
+  const a = device();
+  expect(a.capability.eligibility(id, facts)).toBe("unknown");
+  await a.capability.refresh();
+  expect(a.capability.eligibility(id, facts)).toBe("eligible");
+  await expect(a.capability.record(id, "seen")).resolves.toBe("saved");
+  await a.capability.refresh();
+  expect(a.capability.eligibility(id, facts)).toBe("eligible");
+  await a.capability.record(id, "completed");
+  await a.capability.refresh();
+  expect(a.capability.snapshot().pending).toBe(0);
+  a.dispose();
+  localStorage.clear();
+  const b = device();
+  await b.capability.refresh();
+  expect(b.capability.snapshot().facts).toContainEqual({
+    id,
+    outcome: "completed",
+  });
+  expect(b.capability.eligibility(id, facts)).toBe("ineligible");
+});
+
+it("retains offline intent across restart and publishes on reconnect without a new action", async () => {
+  const a = device();
+  a.offline(true);
+  await expect(a.capability.record(id, "dismissed")).resolves.toBe("saved");
+  await a.capability.refresh();
+  expect(a.capability.snapshot()).toMatchObject({
+    status: "error",
+    pending: 1,
+  });
+  expect(a.capability.eligibility(id, facts)).toBe("ineligible");
+  a.dispose();
+  const b = device();
+  await b.capability.refresh();
+  expect(b.capability.snapshot()).toMatchObject({
+    status: "ready",
+    pending: 0,
+  });
+  b.dispose();
+  localStorage.clear();
+  const c = device();
+  await c.capability.refresh();
+  expect(c.capability.eligibility(id, facts)).toBe("ineligible");
+});
+
+it("keeps concurrent outcomes independent and updates a live subscriber", async () => {
+  const a = device();
+  const b = device();
+  await Promise.all([a.capability.refresh(), b.capability.refresh()]);
+  const changed = vi.fn();
+  b.capability.subscribe(changed);
+  await Promise.all([
+    a.capability.record(id, "completed"),
+    b.capability.record(id, "seen"),
+  ]);
+  await Promise.all([a.capability.refresh(), b.capability.refresh()]);
+  expect(relay.size).toBe(2);
+  await b.capability.refresh();
+  expect(b.capability.snapshot().facts).toContainEqual({
+    id,
+    outcome: "completed",
+  });
+  expect(b.capability.eligibility(id, facts)).toBe("ineligible");
+  expect(changed).toHaveBeenCalled();
+});
+
+it("isolates identity and community and keeps failures unknown instead of first-run", async () => {
+  const a = device();
+  await a.capability.record(id, "dismissed");
+  await a.capability.refresh();
+  for (const other of [
+    device("https://other.test"),
+    device("https://community.test", generateSecretKey()),
+  ]) {
+    await other.capability.refresh();
+    expect(other.capability.eligibility(id, facts)).toBe("eligible");
+    other.offline(true);
+    await other.capability.refresh();
+    expect(other.capability.eligibility(id, facts)).toBe("unknown");
+  }
+});
+
+it("reports unsaved intent, honors it in memory, and fences retired handles", async () => {
+  const a = device();
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Full");
+  });
+  await expect(a.capability.record(id, "dismissed")).resolves.toBe("unsaved");
+  expect(a.capability.eligibility(id, facts)).toBe("ineligible");
+  expect(relay.size).toBe(0);
+  a.dispose();
+  await expect(a.capability.record(id, "completed")).resolves.toBe(
+    "unavailable",
   );
-  expect(write).not.toHaveBeenCalled();
-  expect(service.dismiss(viewer, id)).toBe("saved");
-  expect(service.snapshot(viewer, id, facts)).toBe(false);
-  const reopened = fixture().service;
-  expect(
-    reopened.snapshot(viewer, id, { ...facts, channelType: "forum" }),
-  ).toBe(false);
-  expect(reopened.snapshot("b".repeat(64), id, facts)).toBe(true);
 });
 
 it.each([
-  { channelType: undefined },
-  { channelType: "dm" as const },
-  { channelType: "session" as const },
-  { surface: "other" as const },
   { isMe: true },
   { isMe: undefined },
-])("keeps assistance ineligible outside its product rule: %o", (patch) => {
-  expect(fixture().service.snapshot(viewer, id, { ...facts, ...patch })).toBe(
-    false,
-  );
-});
+  { channelType: "dm" as const },
+  { surface: "other" as const },
+])(
+  "retains product eligibility separately from progress: %o",
+  async (patch) => {
+    const a = device();
+    await a.capability.refresh();
+    expect(a.capability.eligibility(id, { ...facts, ...patch })).toBe(
+      "ineligible",
+    );
+  },
+);
 
-it("notifies subscribers on local dismissal and another window's storage change", () => {
-  const { service } = fixture();
-  const changed = vi.fn();
-  const stop = service.subscribe(changed);
-  service.dismiss(viewer, id);
-  expect(changed).toHaveBeenCalledTimes(1);
-  // Emulate a browser-delivered deletion, not an actual cross-window journey.
-  const key = localStorage.key(0);
-  localStorage.removeItem(key ?? "missing");
+it("retries after a synchronous storage failure and merges another window's pending intent", async () => {
+  const a = device();
+  const blocked = vi
+    .spyOn(Storage.prototype, "getItem")
+    .mockImplementation(() => {
+      throw new Error("Blocked");
+    });
+  await a.capability.refresh();
+  expect(a.capability.snapshot().status).toBe("error");
+  blocked.mockRestore();
+  await a.capability.refresh();
+  expect(a.capability.eligibility(id, facts)).toBe("eligible");
+  const writer = device();
+  writer.offline(true);
+  await writer.capability.record(id, "dismissed");
+  await writer.capability.refresh();
+  const key = Array.from({ length: localStorage.length }, (_, index) =>
+    localStorage.key(index),
+  ).find((key) => key?.endsWith(":dismissed"));
+  if (!key) throw new Error("Missing durable fact");
   window.dispatchEvent(
     new StorageEvent("storage", { key, storageArea: localStorage }),
   );
-  expect(changed).toHaveBeenCalledTimes(2);
-  expect(service.snapshot(viewer, id, facts)).toBe(true);
-  window.dispatchEvent(
-    new StorageEvent("storage", { key: "other", storageArea: localStorage }),
-  );
-  window.dispatchEvent(
-    new StorageEvent("storage", { key, storageArea: sessionStorage }),
-  );
-  expect(changed).toHaveBeenCalledTimes(2);
-  stop();
-  service.dismiss(viewer, id);
-  expect(changed).toHaveBeenCalledTimes(2);
+  expect(a.capability.eligibility(id, facts)).toBe("ineligible");
+  await a.capability.refresh();
+  expect(a.capability.snapshot().pending).toBe(0);
 });
 
-it("updates an eligible subscriber when another window creates a dismissal", () => {
-  const { service } = fixture();
-  const changed = vi.fn();
-  expect(service.snapshot(viewer, id, facts)).toBe(true);
-  service.subscribe(changed);
-  const writer = fixture().service;
-  expect(writer.dismiss(viewer, id)).toBe("saved");
-  expect(changed).not.toHaveBeenCalled();
-  const key = localStorage.key(0);
-  if (!key) throw new Error("Missing dismissal marker");
-  window.dispatchEvent(
-    new StorageEvent("storage", {
-      key,
-      newValue: "dismissed",
-      storageArea: localStorage,
-    }),
-  );
-  expect(changed).toHaveBeenCalledOnce();
-  expect(service.snapshot(viewer, id, facts)).toBe(false);
-});
-
-it("honors an unsaved dismissal for this run and reports that it wasn't remembered", () => {
-  const { service } = fixture();
-  const write = vi
+it("a failed save never becomes a false saved result on repeated actions", async () => {
+  const a = device();
+  const blocked = vi
     .spyOn(Storage.prototype, "setItem")
     .mockImplementation(() => {
-      throw new Error("Storage blocked");
+      throw new Error("Full");
     });
-  expect(service.dismiss(viewer, id)).toBe("unsaved");
-  expect(service.snapshot(viewer, id, facts)).toBe(false);
-  expect(service.snapshot("b".repeat(64), id, facts)).toBe(true);
-  expect(fixture().service.snapshot(viewer, id, facts)).toBe(true);
-  window.dispatchEvent(
-    new StorageEvent("storage", { key: null, storageArea: localStorage }),
-  );
-  expect(service.snapshot(viewer, id, facts)).toBe(false);
-  write.mockRestore();
-  expect(service.dismiss(viewer, id)).toBe("saved");
-  expect(fixture().service.snapshot(viewer, id, facts)).toBe(false);
+  await expect(a.capability.record(id, "completed")).resolves.toBe("unsaved");
+  await expect(a.capability.record(id, "completed")).resolves.toBe("unsaved");
+  expect(a.capability.eligibility(id, facts)).toBe("ineligible");
+  blocked.mockRestore();
+  await expect(a.capability.record(id, "completed")).resolves.toBe("saved");
+  await a.capability.refresh();
+  expect(a.capability.snapshot().pending).toBe(0);
 });
 
-it("leaves assistance eligible on unreadable or malformed dismissal evidence", () => {
-  const { service } = fixture();
-  service.dismiss(viewer, id);
-  const key = localStorage.key(0);
-  if (!key) throw new Error("Missing dismissal");
-  localStorage.setItem(key, "corrupt");
-  const restored = fixture().service;
-  expect(restored.snapshot(viewer, id, facts)).toBe(true);
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-    throw new Error("Storage blocked");
+it("fences a read that ignores cancellation and settles new facts recorded during catch-up", async () => {
+  const a = device();
+  let release: (events: RelayEvent[]) => void = () => {};
+  let started: () => void = () => {};
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
   });
-  expect(restored.snapshot(viewer, id, facts)).toBe(true);
-  expect(service.dismiss(viewer, id)).toBe("unsaved");
-  expect(service.snapshot(viewer, id, facts)).toBe(false);
+  a.read.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent[]>((resolve) => {
+        release = resolve;
+        started();
+      }),
+  );
+  const read = a.capability.refresh();
+  await began;
+  await expect(a.capability.record(id, "completed")).resolves.toBe("saved");
+  a.clear();
+  release([]);
+  await read;
+  await a.capability.refresh();
+  expect(a.capability.snapshot().pending).toBe(0);
+  expect(a.capability.eligibility(id, facts)).toBe("ineligible");
+  expect(relay.size).toBe(1);
 });
 
-it("rejects missing or invalid accounts and fences retained handles after root disposal", async () => {
-  const { root, service } = fixture();
-  const changed = vi.fn();
-  service.subscribe(changed);
-  const write = vi.spyOn(Storage.prototype, "setItem");
-  expect(service.snapshot(undefined, id, facts)).toBe(false);
-  expect(service.snapshot("invalid", id, facts)).toBe(false);
-  expect(service.dismiss("invalid", id)).toBe("unavailable");
-  await root.fiber.dispose();
-  expect(service.snapshot(viewer, id, facts)).toBe(false);
-  expect(service.dismiss(viewer, id)).toBe("unavailable");
-  window.dispatchEvent(
-    new StorageEvent("storage", { key: null, storageArea: localStorage }),
-  );
-  expect(changed).not.toHaveBeenCalled();
-  expect(write).not.toHaveBeenCalled();
+it("retains unknown evidence on disconnect and restores pending facts after reconnect", async () => {
+  const a = device();
+  await a.capability.refresh();
+  a.disconnected();
+  a.offline(true);
+  expect(a.capability.eligibility(id, facts)).toBe("unknown");
+  await a.capability.record(id, "seen");
+  await a.capability.refresh();
+  expect(a.capability.snapshot().pending).toBe(1);
+  a.offline(false);
+  a.connected();
+  await a.capability.refresh();
+  expect(a.capability.snapshot()).toMatchObject({
+    status: "ready",
+    pending: 0,
+  });
+});
+
+it("automatically revalidates demanded progress after a settled cache clear", async () => {
+  const a = device();
+  await a.capability.refresh();
+  const reads = a.read.mock.calls.length;
+  const ready = new Promise<void>((resolve) => {
+    const stop = a.capability.subscribe(() => {
+      if (a.capability.snapshot().status === "ready") {
+        stop();
+        resolve();
+      }
+    });
+  });
+  a.clear();
+  await ready;
+  expect(a.read.mock.calls.length).toBeGreaterThan(reads);
+  expect(a.capability.eligibility(id, facts)).toBe("eligible");
 });

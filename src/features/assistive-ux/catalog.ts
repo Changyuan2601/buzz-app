@@ -16,10 +16,15 @@ export const ASSISTIVE_EXPERIENCES: {
   readonly [Id in AssistiveExperienceId]: Readonly<{
     purpose: string;
     eligible(facts: AssistiveFacts[Id]): boolean;
+    retired(
+      outcomes: ReadonlySet<import("./protocol").AssistiveOutcome>,
+    ): boolean;
   }>;
 } = {
   "threads.new-thread-placement": {
     purpose: "Explain where a new channel thread appears and who can read it.",
+    retired: (outcomes) =>
+      outcomes.has("dismissed") || outcomes.has("completed"),
     eligible: (facts) =>
       facts.surface === "new-channel-thread" &&
       facts.isMe === false &&

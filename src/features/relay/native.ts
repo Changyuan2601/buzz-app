@@ -733,6 +733,55 @@ export async function connectNativeTransport(
         return event;
       },
     },
+    assistive: {
+      async addresses(signal) {
+        signal.throwIfAborted();
+        const result = await nativeReadInvoke<
+          import("../assistive-ux/protocol").ProgressAddress[]
+        >("relay_assistive_addresses", { community: origin });
+        signal.throwIfAborted();
+        return result;
+      },
+      async decode(events, signal) {
+        signal.throwIfAborted();
+        const result = await nativeReadInvoke<
+          {
+            eventId: string;
+            fact: import("../assistive-ux/protocol").ProgressFact;
+          }[]
+        >("relay_assistive_decode", { community: origin, events });
+        signal.throwIfAborted();
+        return result;
+      },
+      async sign(fact, signal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await nativeReadInvoke("relay_assistive_sign", {
+            community: origin,
+            fact,
+          }),
+        );
+        signal.throwIfAborted();
+        return event;
+      },
+      async publish(event, signal) {
+        const response = await admitSignedRequest(
+          origin,
+          transport.viewer,
+          async () => {
+            const result = await nativeReadInvoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_assistive_publish", { community: origin, event });
+            return nativeResponse(result);
+          },
+          signal,
+          "foreground",
+        );
+        await acceptReadStatePublish(response, event.id);
+      },
+    },
     readState: {
       ...(readCommunity ? { communityId: readCommunity } : {}),
       async decode(events: readonly RelayEvent[], signal: AbortSignal) {

@@ -68,6 +68,7 @@ import { objectBody } from "./body";
 import { agentAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
+import { createAssistiveProgress } from "../assistive-ux/progress";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
@@ -1196,6 +1197,13 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
+  const assistiveProgress = createAssistiveProgress({
+    host: transport?.assistive,
+    reader: preferenceReader,
+    viewer: transport?.viewer ?? "",
+    community: transport?.scope ?? "",
+    signal: lifetime.signal,
+  });
   const mePreferences = createMePreferences(
     channelKit.capability,
     lifetime.signal,
@@ -1756,6 +1764,7 @@ export function createRelaySession(
     sidebarPreferences: sidebarPreferences.queries,
     mePreferences: mePreferences.queries,
     mePlacement: mePreferences.placement,
+    assistiveProgress: assistiveProgress.capability,
     reminders: reminders?.capability,
     live,
     /** The one automatic retry owner for background reads. Undefined offline. */
@@ -2389,6 +2398,7 @@ export function createRelaySession(
     receive(events, provenance) {
       if (closed) return;
       reminders?.receive(events);
+      assistiveProgress.receive(events);
       const candidates = new Set(
         provenance?.phase === "live" && provenance.channelId
           ? events
@@ -2512,6 +2522,11 @@ export function createRelaySession(
     },
     state(snapshot) {
       if (closed) return;
+      if (
+        snapshot.status === "connected" &&
+        liveSnapshot.status !== "connected"
+      )
+        assistiveProgress.connected();
       memoryConnected = snapshot.status === "connected";
       activity.state(snapshot);
       presence.connected(snapshot.status === "connected");
@@ -2526,6 +2541,7 @@ export function createRelaySession(
         liveGeneration++;
         // Reminder catch-up waits for the recovery read after re-establishment.
         reminders?.stale();
+        assistiveProgress.disconnected();
         channelActivity.cancel();
         activityRosterKey = undefined;
         catchups.clear();
@@ -2684,6 +2700,7 @@ export function createRelaySession(
         typing.clear();
         sidebarPreferences.clear();
         mePreferences.clear();
+        assistiveProgress.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2730,6 +2747,7 @@ export function createRelaySession(
       stopActivityPreferences();
       sidebarPreferences.dispose();
       mePreferences.dispose();
+      assistiveProgress.dispose();
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();

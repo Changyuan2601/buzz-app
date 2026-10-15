@@ -2181,3 +2181,49 @@ it("cancellation during ingress prevents further chunks and final upload", async
   ).toHaveLength(1);
   expect(uploads).toHaveLength(0);
 });
+
+it("routes assistive progress through its own community-bound host codec", async () => {
+  const transport = await connectNativeTransport(community);
+  const host = transport.assistive;
+  assert.exists(host);
+  const fact = {
+    id: "threads.new-thread-placement" as const,
+    outcome: "seen" as const,
+  };
+  const event = signed(viewer, {
+    kind: 30078,
+    content: "opaque",
+    tags: [
+      ["d", `buzz-assistive-v1:${"a".repeat(64)}`],
+      ["t", "buzz-assistive-v1"],
+    ],
+  });
+  const fallback = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+    if (command === "relay_assistive_addresses")
+      return [{ ...fact, coordinate: event.tags[0]?.[1] }];
+    if (command === "relay_assistive_sign") return event;
+    if (command === "relay_assistive_decode")
+      return [{ eventId: event.id, fact }];
+    if (command === "relay_assistive_publish")
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ accepted: true, event_id: event.id }),
+      };
+    return fallback?.(command, args, options);
+  });
+  const signal = new AbortController().signal;
+  expect(await host.addresses(signal)).toHaveLength(1);
+  expect(await host.sign(fact, signal)).toMatchObject({ id: event.id });
+  expect(await host.decode([event], signal)).toEqual([
+    { eventId: event.id, fact },
+  ]);
+  await host.publish(event, signal);
+  for (const [command, args] of vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command.startsWith("relay_assistive_"))) {
+    expect(args).toMatchObject({ community });
+    expect(command).not.toBe("relay_sign");
+  }
+});

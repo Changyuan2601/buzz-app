@@ -615,6 +615,13 @@ export function subscribeRelayTraffic(
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#t": ["buzz-assistive-v1"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
               // Edits from another device; history and due times come from the reader.
               {
                 kinds: [30300],

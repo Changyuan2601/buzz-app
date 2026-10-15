@@ -161,25 +161,20 @@ function expectHostStopped() {
   expect(services.pages.snapshot()).toHaveLength(0);
 }
 
-it("provides assistive UX independently of plugin enablement and fences it on shutdown", async () => {
-  await vi.advanceTimersByTimeAsync(0);
-  const facts = {
-    surface: "new-channel-thread" as const,
-    channelType: "stream" as const,
-    isMe: false,
-  };
-  expect(
-    plugin.assistiveUx?.snapshot(viewer, "threads.new-thread-placement", facts),
-  ).toBe(true);
+it("provides session-scoped assistive UX independently of plugin enablement", async () => {
+  await openCommunities();
+  const session = services.relay.snapshot().session;
+  expect(plugin.assistiveUx?.forSession(session)).toBe(
+    session.assistiveProgress,
+  );
   await services.plugins.change("disable", "test.page");
   await vi.advanceTimersByTimeAsync(0);
-  expect(
-    services.assistiveUx.dismiss(viewer, "threads.new-thread-placement"),
-  ).not.toBe("unavailable");
+  const progress = services.assistiveUx.forSession(session);
+  expect(progress).toBe(session.assistiveProgress);
   await services.dispose();
-  expect(
-    services.assistiveUx.dismiss(viewer, "threads.new-thread-placement"),
-  ).toBe("unavailable");
+  await expect(
+    progress.record("threads.new-thread-placement", "dismissed"),
+  ).resolves.toBe("unavailable");
 });
 
 it("provides the host command service to plugins", async () => {
