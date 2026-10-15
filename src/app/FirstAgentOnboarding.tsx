@@ -3,6 +3,7 @@ import type { AppServices } from "./services";
 import { CommunityDialog } from "../features/communities/CommunityDialog";
 import { communityDestination } from "../features/communities/destination";
 import { Button } from "../shared/design-system/ui/Button";
+import { Dialog } from "../shared/design-system/ui/Dialog";
 import { meTarget } from "../bundled/me/routes";
 import {
   ONBOARDING_COMMUNITY,
@@ -80,79 +81,85 @@ export function FirstAgentOnboarding({
     }
   };
   return (
-    <main
-      className="mx-auto grid w-full max-w-xl content-center gap-4 p-8"
-      aria-label="Buzz Concierge onboarding"
+    <Dialog
+      open
+      title="Hi, I'm Buzz Concierge."
+      onOpenChange={(open) => {
+        if (!open) finish();
+      }}
+      preventClose={busy}
+      dismissOnOutsideClick={false}
     >
-      <h1 className="m-0 text-heading">Hi, I'm Buzz Concierge.</h1>
-      <p className="m-0 text-body-md">
-        Let's make your first agent together. We'll choose its job, name and
-        harness in a private Solo conversation.
-      </p>
-      <p className="m-0 text-body-sm text-secondary">
-        This prototype uses the MeshLLM community's shared compute. Join it to
-        continue; your onboarding messages are sent to that community and its
-        compute provider.
-      </p>
-      {!saved && (
-        <>
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            Your identity is ready, but onboarding progress could not be saved.
-            Retry saving before continuing.
-          </p>
-          <Button
-            onClick={() => {
-              if (writeView(viewer, "first-agent:onboarding", true))
-                setSaved(true);
-            }}
-          >
-            Retry saving onboarding
-          </Button>
-        </>
-      )}
-      {!membership ? (
-        <Button
-          disabled={!saved || client.status !== "ready" || busy}
-          onClick={() => setJoining(true)}
-        >
-          Connect to MeshLLM
-        </Button>
-      ) : !connected ? (
-        <Button
-          disabled={!saved || busy}
-          onClick={() => services.communities.select(membership.id)}
-        >
-          Open MeshLLM
-        </Button>
-      ) : (
-        <Button
-          loading={busy}
-          disabled={!saved || busy}
-          onClick={() => void start()}
-        >
-          Start in Solo
-        </Button>
-      )}
-      {error && (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {error}
+      <main className="grid gap-4" aria-label="Buzz Concierge onboarding">
+        <p className="m-0 text-body-md">
+          Let's make your first agent together. We'll choose its job, name and
+          harness in a private Solo conversation.
         </p>
-      )}
-      <Button disabled={busy} onClick={finish}>
-        I'll do this later
-      </Button>
-      {joining && (
-        <CommunityDialog
-          communities={services.communities}
-          mode="join"
-          invite={{ community: ONBOARDING_COMMUNITY, code: "" }}
-          close={() => setJoining(false)}
-          onJoined={(id) => {
-            services.communities.select(id);
-            setJoining(false);
-          }}
-        />
-      )}
-    </main>
+        <p className="m-0 text-body-sm text-secondary">
+          This prototype uses the MeshLLM community's shared compute. Join it to
+          continue; your onboarding messages are sent to that community and its
+          compute provider.
+        </p>
+        {!saved && (
+          <>
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              Your identity is ready, but onboarding progress could not be
+              saved. Retry saving before continuing.
+            </p>
+            <Button
+              onClick={() => {
+                if (writeView(viewer, "first-agent:onboarding", true))
+                  setSaved(true);
+              }}
+            >
+              Retry saving onboarding
+            </Button>
+          </>
+        )}
+        {!membership ? (
+          <Button
+            disabled={!saved || client.status !== "ready" || busy}
+            onClick={() => setJoining(true)}
+          >
+            Connect to MeshLLM
+          </Button>
+        ) : !connected ? (
+          <Button
+            disabled={!saved || busy}
+            onClick={() => services.communities.select(membership.id)}
+          >
+            Open MeshLLM
+          </Button>
+        ) : (
+          <Button
+            loading={busy}
+            disabled={!saved || busy}
+            onClick={() => void start()}
+          >
+            Start in Solo
+          </Button>
+        )}
+        {error && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+        <Button disabled={busy} onClick={finish}>
+          I'll do this later
+        </Button>
+        {joining && (
+          <CommunityDialog
+            communities={services.communities}
+            mode="join"
+            invite={{ community: ONBOARDING_COMMUNITY, code: "" }}
+            close={() => setJoining(false)}
+            onJoined={(id) => {
+              services.communities.select(id);
+              setJoining(false);
+            }}
+          />
+        )}
+      </main>
+    </Dialog>
   );
 }

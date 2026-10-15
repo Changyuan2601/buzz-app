@@ -175,22 +175,12 @@ function ConnectedApp({
   const ownProfile =
     client.selected && client.viewer ? profileTarget(client.viewer) : undefined;
   const pageOwnsCompanion = !!route.page?.companion;
-  if (
+  const showOnboarding =
     (onboarding || firstSignup?.viewer === client.viewer) &&
     client.viewer &&
     startup === "ready" &&
     !settings &&
-    !route.state.ingress
-  )
-    return (
-      <FirstAgentOnboarding
-        key={client.viewer}
-        services={services}
-        viewer={client.viewer}
-        intentSaved={firstSignup?.saved ?? true}
-        done={() => onOnboarded?.()}
-      />
-    );
+    !route.state.ingress;
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -209,6 +199,15 @@ function ConnectedApp({
     <ToastProvider
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
+      {showOnboarding && client.viewer && (
+        <FirstAgentOnboarding
+          key={client.viewer}
+          services={services}
+          viewer={client.viewer}
+          intentSaved={firstSignup?.saved ?? true}
+          done={() => onOnboarded?.()}
+        />
+      )}
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell

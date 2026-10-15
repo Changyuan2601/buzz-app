@@ -334,6 +334,7 @@ it("keeps a newly created identity in onboarding when its marker cannot be saved
     create,
   } as unknown as import("../features/identity/service").Identity;
   render(<App services={services} />);
+  const reopening = services.navigation.retry();
   const original = Storage.prototype.setItem;
   const storage = vi
     .spyOn(Storage.prototype, "setItem")
@@ -349,6 +350,10 @@ it("keeps a newly created identity in onboarding when its marker cannot be saved
     expect(
       await screen.findByRole("main", { name: "Buzz Concierge onboarding" }),
     ).toBeVisible();
+    await waitFor(() =>
+      expect(services?.navigation.snapshot().status).toBe("opened"),
+    );
+    await expect(reopening).resolves.toEqual({ status: "opened" });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Your identity is ready, but onboarding progress could not be saved",
     );
