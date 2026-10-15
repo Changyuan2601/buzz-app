@@ -338,11 +338,11 @@ function SessionWork({
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
-  const [selectedAgent, setSelectedAgent] = useState(() =>
-    readSelectedAssistant(scope, channel.id),
+  const selectedAgent = useSyncExternalStore(
+    useCallback((notify) => subscribeView(scope, notify), [scope]),
+    () => readSelectedAssistant(scope, channel.id),
   );
   const selectAgent = (agent: string) => {
-    setSelectedAgent(agent);
     writeSelectedAssistant(scope, channel.id, agent);
   };
   const placement = useMePlacement(session);

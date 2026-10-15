@@ -441,3 +441,43 @@ it("shows a native refusal's message and offers a retry", async () => {
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   identity.dispose();
 });
+
+it.each(["create", "restore", "import", "denied"] as const)(
+  "signals onboarding only for a successful explicit identity creation: %s",
+  async (flow) => {
+    const created = vi.fn();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "identity_restore") {
+        if (flow === "denied") throw new Error("Keychain denied");
+        return flow === "restore" ? viewer : null;
+      }
+      if (command === "identity_create" || command === "identity_import")
+        return viewer;
+      throw new Error(`Unexpected command ${command}`);
+    });
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <IdentitySetup identity={identity} onCreated={created}>
+        <p>Identity ready</p>
+      </IdentitySetup>,
+    );
+    if (flow === "create")
+      await user.click(
+        await screen.findByRole("button", { name: "Create a new identity" }),
+      );
+    if (flow === "import") {
+      await user.click(
+        await screen.findByRole("button", { name: "Use an existing key" }),
+      );
+      await user.type(screen.getByLabelText("Private key (nsec)"), key);
+      await user.click(screen.getByRole("button", { name: "Use this key" }));
+    }
+    if (flow === "denied") await screen.findByRole("alert");
+    else await screen.findByText("Identity ready");
+    if (flow === "create")
+      expect(created).toHaveBeenCalledExactlyOnceWith(viewer);
+    else expect(created).not.toHaveBeenCalled();
+    identity.dispose();
+  },
+);

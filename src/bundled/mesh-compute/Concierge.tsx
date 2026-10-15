@@ -1,15 +1,59 @@
-import { useState, useSyncExternalStore } from "react";
-import type { Agents } from "../../features/agents/service";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type {
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
-import { canAddMembers } from "../../features/channel-members/members";
+import {
+  canAddMembers,
+  canShareSession,
+} from "../../features/channel-members/members";
+import { writeSelectedAssistant } from "../../features/sessions/selected-assistant";
+import { Select } from "../../shared/design-system/ui/Select";
+import { ProviderDialog } from "../agents/ProviderDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { DEFAULT_MESH_AGENT_CONFIG, meshAgentConfig } from "./meshAgent";
 
 export const CONCIERGE_PRESET = "buzz-concierge";
 export const MESH_TYPE = "buzz.mesh-compute/mesh";
-type Draft = Readonly<{ name: string; instructions: string; test: string }>;
+type Draft = Readonly<{
+  name: string;
+  instructions: string;
+  test: string;
+  harness?: string;
+}>;
+
+/** Only registered local harnesses that can adopt the conversational brief. */
+export const conciergeHarnesses = (agents: Agents) =>
+  agents
+    .types()
+    .filter((type) => !type.remote && (type.key === MESH_TYPE || type.adopt));
+export function conciergeConfig(type: RegisteredAgentType, draft: Draft) {
+  if (type.key === MESH_TYPE)
+    return {
+      ...DEFAULT_MESH_AGENT_CONFIG,
+      mode: "chat" as const,
+      scope: "channel" as const,
+      prompt: draft.instructions,
+    };
+  if (!type.adopt)
+    throw new Error("This harness cannot use the agent's instructions.");
+  return type.adopt(
+    { instructions: draft.instructions },
+    type.defaults().config,
+  );
+}
+async function fingerprint(config: unknown) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(config)),
+  );
+  return Array.from(new Uint8Array(bytes), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
 
 /** Model output is a bounded proposal, never an executable command. */
 export function conciergeDraft(content: string): Draft | undefined {
@@ -22,9 +66,21 @@ export function conciergeDraft(content: string): Draft | undefined {
   try {
     const value = JSON.parse(json);
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
-    if (Object.keys(value).sort().join() !== "instructions,name,test") return;
+    if (
+      !["instructions,name,test", "harness,instructions,name,test"].includes(
+        Object.keys(value).sort().join(),
+      )
+    )
+      return;
+    if (
+      value.harness !== undefined &&
+      (typeof value.harness !== "string" ||
+        !value.harness.trim() ||
+        value.harness.length > 200)
+    )
+      return;
     const limits = { name: 60, instructions: 4000, test: 400 };
-    for (const key of Object.keys(limits) as (keyof Draft)[]) {
+    for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
       if (
         typeof value[key] !== "string" ||
         !value[key].trim() ||
@@ -40,6 +96,7 @@ export function conciergeDraft(content: string): Draft | undefined {
       name: value.name.trim(),
       instructions: value.instructions.trim(),
       test: value.test.trim(),
+      ...(value.harness ? { harness: value.harness.trim() } : {}),
     };
   } catch {
     return;
@@ -51,6 +108,10 @@ export function conciergeDraft(content: string): Draft | undefined {
 export function conciergeCreation(agents: Agents, relay: RelayData) {
   const pending = new Map<string, Promise<void>>();
   const identities = new Map<string, string>();
+  const configurations = new Map<
+    string,
+    { type: string; config: unknown; observed: string | undefined }
+  >();
   let active = true;
   const source = (message: ChannelMessage) => {
     const snapshot = relay.snapshot();
@@ -78,20 +139,29 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
       channel.archived ||
       channel.cached ||
       channel.readOnly ||
-      !canAddMembers(snapshot.session, channel) ||
+      !(
+        canAddMembers(snapshot.session, channel) ||
+        (canShareSession(snapshot.session, channel) && !channel.parentChannelId)
+      ) ||
       !channel.members?.includes(snapshot.viewer)
     )
       return;
     return snapshot;
   };
+  const receipt = (id: string) =>
+    agents
+      .snapshot()
+      .agents.map((agent) => meshAgentConfig(agent.config).onboardingCreated)
+      .find((item) => item?.source === id);
   const made = (id: string) =>
     agents
       .snapshot()
       .agents.find(
         (agent) =>
-          agent.type === MESH_TYPE &&
-          (meshAgentConfig(agent.config).onboardingSource === id ||
-            agent.pubkey === identities.get(id)),
+          (agent.type === MESH_TYPE &&
+            meshAgentConfig(agent.config).onboardingSource === id) ||
+          agent.pubkey === identities.get(id) ||
+          agent.pubkey === receipt(id)?.pubkey,
       );
   const unresolved = (message: ChannelMessage) => {
     const attempt = meshAgentConfig(
@@ -106,7 +176,10 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
     available: (message: ChannelMessage) => !!source(message),
     made,
     unresolved,
-    create(message: ChannelMessage) {
+    create(
+      message: ChannelMessage,
+      choice?: { type: string; config: unknown },
+    ) {
       const existing = pending.get(message.id);
       if (existing) return existing;
       if (pending.size)
@@ -132,18 +205,47 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
             );
         };
         let agent = made(message.id);
-        const config = {
-          ...DEFAULT_MESH_AGENT_CONFIG,
-          mode: "chat" as const,
-          prompt: draft.instructions,
-          onboardingSource: message.id,
-        };
+        const chosen = configurations.get(message.id) ??
+          choice ?? {
+            type: MESH_TYPE,
+            config: {
+              ...DEFAULT_MESH_AGENT_CONFIG,
+              mode: "chat" as const,
+              prompt: draft.instructions,
+              onboardingSource: message.id,
+            },
+          };
+        const type = agents
+          .types()
+          .find((item) => item.key === (agent?.type ?? chosen.type));
+        if (!type || type.remote || (type.key !== MESH_TYPE && !type.adopt))
+          throw new Error("Choose an available local harness.");
+        if (
+          !agent &&
+          type.provider &&
+          type.provider.snapshot().readiness !== "ready"
+        )
+          throw new Error(
+            `Finish ${type.title} setup before creating this agent.`,
+          );
+        const config =
+          type.key === MESH_TYPE
+            ? {
+                ...meshAgentConfig(chosen.config),
+                onboardingSource: message.id,
+              }
+            : chosen.config;
+        const previous = receipt(message.id);
         if (!agent) {
           if (unresolved(message))
             throw new Error(
               "An earlier creation did not finish. Recover the existing agent in Agents before creating another.",
             );
           const concierge = agents.find(message.authorId);
+          if (meshAgentConfig(concierge?.config).onboardingCreated)
+            throw new Error(
+              "Your first agent is already created. Open Agents to manage it.",
+            );
           await agents.save(message.authorId, {
             config: {
               ...meshAgentConfig(concierge?.config),
@@ -152,12 +254,16 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
           });
           check();
           agent = await agents.create({
-            type: MESH_TYPE,
+            type: type.key,
             name: draft.name,
             picture: randomAgentAvatar().url,
             config,
           });
           identities.set(message.id, agent.pubkey);
+          configurations.set(message.id, {
+            ...chosen,
+            observed: JSON.stringify(agents.find(agent.pubkey)?.config),
+          });
         }
         check();
         const live = agents.find(agent.pubkey);
@@ -165,22 +271,56 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
           !live ||
           live.owner !== snapshot.viewer ||
           live.place !== "here" ||
-          live.type !== MESH_TYPE
+          live.type !== type.key
         )
           throw new Error(
             "The created agent is unavailable. Check it in Agents before continuing.",
           );
-        const saved = meshAgentConfig(live.config);
         // create() can return optimistic config after a storage failure. Inspect
-        // the service's actual snapshot and use its throwing save path to recover.
-        if (saved.onboardingSource !== message.id)
-          await agents.save(live.pubkey, { config });
-        check();
-        const verified = meshAgentConfig(agents.find(live.pubkey)?.config);
+        // the actual snapshot. Only repair a known failed initial write while
+        // its observed fallback remains unchanged; never overwrite later edits.
         if (
-          verified.mode !== "chat" ||
-          verified.prompt !== draft.instructions ||
-          verified.onboardingSource !== message.id
+          !previous &&
+          JSON.stringify(live.config) !== JSON.stringify(config)
+        ) {
+          const initial = configurations.get(message.id);
+          if (
+            !initial ||
+            initial.observed === JSON.stringify(config) ||
+            initial.observed !== JSON.stringify(live.config)
+          )
+            throw new Error(
+              "The agent's settings differ from this draft. Review them in Agents before continuing.",
+            );
+          await agents.save(live.pubkey, { config });
+          configurations.set(message.id, {
+            ...initial,
+            observed: JSON.stringify(config),
+          });
+        }
+        check();
+        const verified = agents.find(live.pubkey)?.config;
+        const reviewed = JSON.stringify(verified);
+        const checkChild = () => {
+          check();
+          const current = agents.find(live.pubkey);
+          if (
+            !current ||
+            current.type !== live.type ||
+            current.place !== "here" ||
+            current.owner !== snapshot.viewer ||
+            JSON.stringify(current.config) !== reviewed
+          )
+            throw new Error(
+              "The agent's settings differ from this draft. Review them in Agents before continuing.",
+            );
+        };
+        const hash = await fingerprint(verified);
+        checkChild();
+        if (
+          previous
+            ? previous.type !== live.type || previous.hash !== hash
+            : JSON.stringify(verified) !== JSON.stringify(config)
         )
           throw new Error(
             "The agent's settings differ from this draft. Review them in Agents before continuing.",
@@ -192,17 +332,55 @@ export function conciergeCreation(agents: Agents, relay: RelayData) {
         // Once the draft is created, let the new agent answer its own test.
         // Explicit Concierge mentions still work with Attention switched off.
         await agents.save(message.authorId, {
-          config: resolved,
+          config: {
+            ...resolved,
+            onboardingCreated: {
+              source: message.id,
+              pubkey: live.pubkey,
+              type: live.type,
+              hash,
+            },
+          },
           attentionEnabled: false,
         });
-        check();
+        checkChild();
         // The session owns signed membership, confirmation and retries. If this
         // fails, the saved agent is reused when the person chooses Continue.
-        await snapshot.session.memberAdditions.add(
-          message.channelId,
-          agent.pubkey,
-        );
+        const channel = snapshot.session.channels
+          .list()
+          .channels.find((item) => item.id === message.channelId);
+        if (channel?.channelType === "session") {
+          await snapshot.session.agentChoices.refresh();
+          checkChild();
+          await snapshot.session.workSessions.addAgents(
+            message.channelId,
+            [agent.pubkey],
+            () => {
+              try {
+                checkChild();
+                return true;
+              } catch {
+                return false;
+              }
+            },
+          );
+        } else
+          await snapshot.session.memberAdditions.add(
+            message.channelId,
+            agent.pubkey,
+          );
         check();
+        if (
+          snapshot.session.mePlacement?.has(message.channelId) &&
+          !writeSelectedAssistant(
+            snapshot.scope ?? "",
+            message.channelId,
+            agent.pubkey,
+          )
+        )
+          throw new Error(
+            "The agent was added, but the follow-up assistant could not be saved. Choose it in the composer.",
+          );
       })().finally(() => pending.delete(message.id));
       pending.set(message.id, operation);
       return operation;
@@ -235,7 +413,69 @@ export function ConciergeDraft({
     return (
       <p className="whitespace-pre-wrap text-body-md">{message.content}</p>
     );
+  return (
+    <ConciergeReview
+      key={message.id}
+      {...{
+        message,
+        agents,
+        relay,
+        creation,
+        draft,
+        pending,
+        setPending,
+        error,
+        setError,
+      }}
+    />
+  );
+}
+
+function ConciergeReview({
+  message,
+  agents,
+  relay,
+  creation,
+  draft,
+  pending,
+  setPending,
+  error,
+  setError,
+}: {
+  message: ChannelMessage;
+  agents: Agents;
+  relay: RelayData;
+  creation: ReturnType<typeof conciergeCreation>;
+  draft: Draft;
+  pending: boolean;
+  setPending(value: boolean): void;
+  error: string;
+  setError(value: string): void;
+}) {
+  const snapshot = relay.snapshot();
   const made = creation.made(message.id);
+  const types = conciergeHarnesses(agents);
+  const proposed = types.find(
+    (type) =>
+      type.key === draft.harness ||
+      type.title.toLowerCase() === draft.harness?.toLowerCase(),
+  );
+  const [key, setKey] = useState(proposed?.key ?? MESH_TYPE);
+  const type = types.find((item) => item.key === (made?.type ?? key));
+  const [config, setConfig] = useState(
+    () => type && conciergeConfig(type, draft),
+  );
+  const [setupOpen, setSetupOpen] = useState(false);
+  const setupButton = useRef<HTMLButtonElement>(null);
+  const providerState = useSyncExternalStore(
+    type?.provider?.subscribe ?? (() => () => {}),
+    type?.provider?.snapshot ?? (() => undefined),
+  );
+  useEffect(() => {
+    void type?.provider?.check();
+  }, [type]);
+  const Model = type?.CreateModel;
+  const Create = type?.Create;
   const saved = made && meshAgentConfig(made.config);
   const changed =
     saved?.onboardingSource === message.id &&
@@ -251,7 +491,11 @@ export function ConciergeDraft({
     setPending(true);
     setError("");
     try {
-      await creation.create(message);
+      if (!type) throw new Error("Choose an available harness.");
+      await creation.create(message, {
+        type: type.key,
+        config: made?.config ?? config,
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -267,10 +511,69 @@ export function ConciergeDraft({
       <p className="m-0 whitespace-pre-wrap break-words text-body-md">
         {draft.instructions}
       </p>
+      {!made && (
+        <>
+          <Select
+            label="Harness"
+            value={key}
+            disabled={pending}
+            groups={[
+              {
+                label: "On this computer",
+                options: types.map((item) => ({
+                  value: item.key,
+                  label: item.title,
+                })),
+              },
+            ]}
+            onValueChange={(next) => {
+              const selected = types.find((item) => item.key === next);
+              if (!selected) return;
+              setKey(next);
+              setConfig(conciergeConfig(selected, draft));
+              setError("");
+            }}
+          />
+          {draft.harness && !proposed && (
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              {draft.harness} is unavailable. Choose one of the harnesses shown
+              here.
+            </p>
+          )}
+          {Model && (
+            <Model config={config} disabled={pending} onChange={setConfig} />
+          )}
+          {Create && type?.key !== MESH_TYPE && (
+            <Create config={config} disabled={pending} onChange={setConfig} />
+          )}
+          {type?.provider && (
+            <Button
+              ref={setupButton}
+              size="sm"
+              disabled={pending}
+              onClick={() => setSetupOpen(true)}
+            >
+              {providerState?.readiness === "ready"
+                ? `Manage ${type.title}`
+                : `Set up ${type.title}`}
+            </Button>
+          )}
+          {setupOpen && (
+            <ProviderDialog
+              type={type}
+              finalFocus={setupButton}
+              onClose={() => setSetupOpen(false)}
+            />
+          )}
+        </>
+      )}
       <p className="m-0 text-body-sm text-secondary">
-        Uses shared compute. Chat only, with no tools. Responds when mentioned.
-        Creating it also adds it to this channel so it can read the
-        conversation.
+        {type?.key === MESH_TYPE
+          ? "Uses shared compute. Chat only, with no tools."
+          : type?.description}{" "}
+        Creating it adds it to this conversation. In Solo, it becomes your
+        follow-up assistant. Other harnesses can use their account and tools on
+        this computer; review their settings before creating.
       </p>
       <p className="m-0 text-body-sm">First test: {draft.test}</p>
       {changed ? (
@@ -285,8 +588,8 @@ export function ConciergeDraft({
         </p>
       ) : joined ? (
         <p role="status" className="m-0 text-body-sm">
-          {made.name} is ready. Mention it here and send the first test. To
-          revise its instructions, open Agents → Settings.
+          {made.name} is ready. Send the first test in Solo, or mention it here.
+          To revise its instructions, open Agents → Settings.
         </p>
       ) : (
         <div>
@@ -294,7 +597,11 @@ export function ConciergeDraft({
             size="sm"
             variant="prominent"
             loading={pending}
-            disabled={!creation.available(message)}
+            disabled={
+              !creation.available(message) ||
+              !type ||
+              (!made && !!type.provider && providerState?.readiness !== "ready")
+            }
             onClick={() => void create()}
           >
             {made ? "Continue setup" : "Create agent"}

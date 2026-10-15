@@ -13,6 +13,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { StrictMode } from "react";
 import { App } from "./App";
+import { writeView } from "../shared/view-state";
 import { createServices, type AppServices } from "./services";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
@@ -282,4 +283,95 @@ it("opens the viewer's profile from New message without discarding recipients or
   });
   await user.keyboard(" and keep editing");
   expect(editor).toHaveTextContent("Keep this unsent draft and keep editing");
+});
+
+it("offers first-agent onboarding only for an explicit signup intent, without joining a community automatically", async () => {
+  await setup();
+  if (!services) throw new Error("Missing app fixture");
+  expect(
+    screen.queryByRole("main", { name: "Buzz Concierge onboarding" }),
+  ).not.toBeInTheDocument();
+  act(() => {
+    writeView(viewer, "first-agent:onboarding", true);
+  });
+  expect(
+    await screen.findByRole("main", { name: "Buzz Concierge onboarding" }),
+  ).toBeVisible();
+  expect(screen.getByText("Hi, I'm Buzz Concierge.")).toBeVisible();
+  expect(services.communities.snapshot().memberships).toHaveLength(1);
+  await userEvent.click(
+    screen.getByRole("button", { name: "I'll do this later" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("main", { name: "Buzz Concierge onboarding" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(services.communities.snapshot().memberships).toHaveLength(1);
+});
+
+it("keeps a newly created identity in onboarding when its marker cannot be saved, then recovers without recreating it", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing app fixture");
+  cleanup();
+  let state: import("../features/identity/service").IdentitySnapshot = {
+    status: "missing",
+    busy: false,
+  };
+  const listeners = new Set<() => void>();
+  const create = vi.fn(async () => {
+    state = { status: "ready", viewer };
+    for (const notify of listeners) notify();
+  });
+  services.identity = {
+    snapshot: () => state,
+    subscribe: (notify: () => void) => {
+      listeners.add(notify);
+      return () => {
+        listeners.delete(notify);
+      };
+    },
+    create,
+  } as unknown as import("../features/identity/service").Identity;
+  render(<App services={services} />);
+  const original = Storage.prototype.setItem;
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.includes("first-agent:onboarding"))
+        throw new Error("Storage full");
+      return original.call(this, key, value);
+    });
+  try {
+    await user.click(
+      screen.getByRole("button", { name: "Create a new identity" }),
+    );
+    expect(
+      await screen.findByRole("main", { name: "Buzz Concierge onboarding" }),
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your identity is ready, but onboarding progress could not be saved",
+    );
+    expect(
+      screen.getByRole("button", { name: "Connect to MeshLLM" }),
+    ).toBeDisabled();
+    storage.mockRestore();
+    await user.click(
+      screen.getByRole("button", { name: "Retry saving onboarding" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Connect to MeshLLM" }),
+    ).toBeEnabled();
+    await user.click(
+      screen.getByRole("button", { name: "I'll do this later" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("main", { name: "Buzz Concierge onboarding" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(create).toHaveBeenCalledTimes(1);
+  } finally {
+    storage.mockRestore();
+  }
 });

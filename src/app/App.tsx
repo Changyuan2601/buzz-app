@@ -1,5 +1,7 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
 import { IdentitySetup } from "../features/identity/IdentitySetup";
+import { FirstAgentOnboarding } from "./FirstAgentOnboarding";
+import { readView, subscribeView, writeView } from "../shared/view-state";
 import { MeSidebar } from "../bundled/me/MeSidebar";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
@@ -7,7 +9,7 @@ import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
@@ -32,6 +34,10 @@ import { setLaunchReady } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
+  const [firstSignup, setFirstSignup] = useState<{
+    viewer: string;
+    saved: boolean;
+  }>();
   useEffect(() => {
     if (!identity) return;
     const update = () => {
@@ -46,8 +52,20 @@ export function App({ services }: { services: AppServices }) {
     <>
       <LaunchWindowControls />
       {services.identity ? (
-        <IdentitySetup identity={services.identity}>
-          <ConnectedApp services={services} />
+        <IdentitySetup
+          identity={services.identity}
+          onCreated={(viewer) => {
+            setFirstSignup({
+              viewer,
+              saved: writeView(viewer, "first-agent:onboarding", true),
+            });
+          }}
+        >
+          <ConnectedApp
+            services={services}
+            firstSignup={firstSignup}
+            onOnboarded={() => setFirstSignup(undefined)}
+          />
         </IdentitySetup>
       ) : (
         <ConnectedApp services={services} />
@@ -56,7 +74,15 @@ export function App({ services }: { services: AppServices }) {
   );
 }
 
-function ConnectedApp({ services }: { services: AppServices }) {
+function ConnectedApp({
+  services,
+  firstSignup,
+  onOnboarded,
+}: {
+  services: AppServices;
+  firstSignup?: { viewer: string; saved: boolean } | undefined;
+  onOnboarded?: (() => void) | undefined;
+}) {
   const { plugins } = services;
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const route = useAppNavigation(services);
@@ -64,6 +90,14 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const client = useSyncExternalStore(
     services.communities.subscribe,
     services.communities.snapshot,
+  );
+  const onboarding = useSyncExternalStore(
+    (notify) => subscribeView(client.viewer ?? "", notify),
+    () =>
+      client.viewer
+        ? readView<boolean>(client.viewer, "first-agent:onboarding", false) ===
+          true
+        : false,
   );
   const invite = useSyncExternalStore(
     services.invites.subscribe,
@@ -141,6 +175,22 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const ownProfile =
     client.selected && client.viewer ? profileTarget(client.viewer) : undefined;
   const pageOwnsCompanion = !!route.page?.companion;
+  if (
+    (onboarding || firstSignup?.viewer === client.viewer) &&
+    client.viewer &&
+    startup === "ready" &&
+    !settings &&
+    !route.state.ingress
+  )
+    return (
+      <FirstAgentOnboarding
+        key={client.viewer}
+        services={services}
+        viewer={client.viewer}
+        intentSaved={firstSignup?.saved ?? true}
+        done={() => onOnboarded?.()}
+      />
+    );
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (

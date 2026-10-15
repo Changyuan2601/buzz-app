@@ -33,6 +33,13 @@ export type MeshAgentConfig = Readonly<{
   onboardingSource?: string;
   /** Concierge's one unresolved creation, saved before generating an identity. */
   onboardingAttempt?: string;
+  /** Completed first-agent setup; a fingerprint detects later settings edits. */
+  onboardingCreated?: Readonly<{
+    source: string;
+    pubkey: string;
+    type: string;
+    hash: string;
+  }>;
 }>;
 export const DEFAULT_PROMPT =
   "You are a helpful assistant in a Buzz community. Answer the latest message directly and concisely. Use your tools when the request needs them, and never claim to have run something you did not.";
@@ -75,8 +82,27 @@ export const meshAgentConfig = (value: unknown): MeshAgentConfig => {
     /^[0-9a-f]{64}$/.test(raw.onboardingAttempt)
       ? { onboardingAttempt: raw.onboardingAttempt }
       : {}),
+    ...readOnboardingCreated(raw.onboardingCreated),
   };
 };
+
+function readOnboardingCreated(
+  value: unknown,
+): Pick<MeshAgentConfig, "onboardingCreated"> {
+  if (!value || typeof value !== "object") return {};
+  const row = value as Record<string, unknown>;
+  if (
+    ![row.source, row.pubkey, row.hash].every(
+      (item) => typeof item === "string" && /^[0-9a-f]{64}$/.test(item),
+    ) ||
+    typeof row.type !== "string" ||
+    row.type.length > 200
+  )
+    return {};
+  return {
+    onboardingCreated: row as NonNullable<MeshAgentConfig["onboardingCreated"]>,
+  };
+}
 
 export type PreparedInference = Readonly<{
   baseUrl: string;
@@ -104,6 +130,14 @@ export type MeshAgentDeps = Readonly<{
   origin(agent: string): string | undefined;
   /** Whether the channel is a DM, so the whole DM is one conversation. */
   dm?(agent: string, channelId: string): boolean;
+  /** Owner's Solo placement, read through the agent's bound community. */
+  solo?(
+    agent: string,
+    owner: string,
+    channelId: string,
+    signal: AbortSignal,
+  ): Promise<boolean>;
+  harnesses?(): readonly Readonly<{ key: string; title: string }>[];
   memories?(agent: string, signal: AbortSignal): Promise<readonly Memory[]>;
   coreMemory?(
     agent: string,
@@ -228,7 +262,7 @@ export class MeshAgentRuntime {
 
   constructor(private readonly deps: MeshAgentDeps) {}
 
-  run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
+  async run(delivery: Delivery<MeshAgentConfig>): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const { trigger, agent, channelId } = delivery;
     if (trigger.type === "timer" || !channelId) return Promise.resolve();
@@ -245,7 +279,27 @@ export class MeshAgentRuntime {
     )
       return Promise.resolve();
     const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
-    const conversation = conversationKey(channelId, event, dm, config.scope);
+    const solo =
+      !dm &&
+      (await this.deps.solo?.(
+        agent.pubkey,
+        agent.owner,
+        channelId,
+        delivery.signal,
+      )) === true;
+    if (
+      delivery.signal.aborted ||
+      this.disposed ||
+      (delivery.current && !delivery.current())
+    )
+      return;
+    const topLevel = dm || solo;
+    const conversation = conversationKey(
+      channelId,
+      event,
+      topLevel,
+      config.scope,
+    );
     const lane = `${agent.pubkey}\n${conversation}`;
     return this.enqueue(
       lane,
@@ -253,7 +307,7 @@ export class MeshAgentRuntime {
       event,
       channelId,
       config,
-      dm,
+      topLevel,
       conversation,
     );
   }
@@ -264,14 +318,14 @@ export class MeshAgentRuntime {
     event: EventData,
     channelId: string,
     config: MeshAgentConfig,
-    dm: boolean,
+    topLevel: boolean,
     conversation: string,
   ) {
     const previous = this.lanes.get(lane) ?? Promise.resolve();
     const next = previous
       .catch(() => {})
       .then(() =>
-        this.turn(delivery, event, channelId, config, dm, conversation),
+        this.turn(delivery, event, channelId, config, topLevel, conversation),
       );
     this.lanes.set(lane, next);
     void next.then(
@@ -296,14 +350,14 @@ export class MeshAgentRuntime {
     event: EventData,
     channelId: string,
     config: MeshAgentConfig,
-    dm: boolean,
+    topLevel: boolean,
     conversation: string,
   ) {
     const { agent, signal } = delivery;
     const root = threadReference(event)?.rootId ?? event.id;
     const tags = [
       ["h", channelId],
-      ...(dm
+      ...(topLevel
         ? []
         : [
             ...(root === event.id ? [] : [["e", root, "", "root"]]),
@@ -322,7 +376,7 @@ export class MeshAgentRuntime {
       const origin = this.deps.origin(agent.pubkey);
       if (!origin) throw new Error("No community is connected");
       const inference = await untilAborted(this.deps.prepare(origin), signal);
-      const wholeChannel = dm || config.scope === "channel";
+      const wholeChannel = topLevel || config.scope === "channel";
       const read = () =>
         conversationMessages(delivery, event, channelId, wholeChannel).catch(
           () => [] as EventData[],
@@ -336,7 +390,12 @@ export class MeshAgentRuntime {
           this.deps.chat(
             inference,
             chatMessages(
-              config,
+              config.preset === "buzz-concierge"
+                ? {
+                    ...config,
+                    prompt: `${config.prompt}\n\nAvailable local harnesses (use the exact key in the draft's harness field):\n${(this.deps.harnesses?.() ?? []).map((type) => `${type.key}: ${type.title}`).join("\n")}`,
+                  }
+                : config,
               agent.pubkey,
               earlier,
               event,
@@ -363,7 +422,7 @@ export class MeshAgentRuntime {
           delivery,
           inference,
           cwd,
-          context: { channel: channelId, ...(dm ? {} : { root }) },
+          context: { channel: channelId, ...(topLevel ? {} : { root }) },
           sessionKey: `${agent.pubkey}\n${config.mode}\n${conversation}`,
           system: instructions(config, memory),
           prompt: turnText(event, earlier),

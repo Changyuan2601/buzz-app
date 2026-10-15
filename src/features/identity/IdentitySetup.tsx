@@ -12,9 +12,11 @@ import type { Identity } from "./service";
 export function IdentitySetup({
   identity,
   children,
+  onCreated,
 }: {
   identity: Identity;
   children: ReactNode;
+  onCreated?(viewer: string): void;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [importing, setImporting] = useState(false);
@@ -110,7 +112,12 @@ export function IdentitySetup({
               </Button>
               <Button
                 disabled={state.busy}
-                onClick={() => void identity.create()}
+                onClick={() =>
+                  void identity.create().then(() => {
+                    const next = identity.snapshot();
+                    if (next.status === "ready") onCreated?.(next.viewer);
+                  })
+                }
               >
                 Create a new identity
               </Button>

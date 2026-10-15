@@ -1,4 +1,5 @@
 import { ownerReads } from "../../features/agents/reads";
+import { meChat } from "../../features/agents/me-chat";
 import { InlineAgent } from "./inlineAgent";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
@@ -21,8 +22,15 @@ import styles from "./Compute.module.css";
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
 import { MeshHelpers } from "./MeshHelpers";
+import { meTarget } from "../me/routes";
+import { startConcierge } from "./startConcierge";
 import { MeshCreateSetup } from "./MeshCreateSetup";
-import { conciergeCreation, conciergeDraft, ConciergeDraft } from "./Concierge";
+import {
+  conciergeCreation,
+  conciergeDraft,
+  conciergeHarnesses,
+  ConciergeDraft,
+} from "./Concierge";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
   type MeshAgentConfig,
@@ -61,6 +69,7 @@ export const inject = [
   "agents",
   "host",
   "conversation",
+  "navigation",
 ];
 
 // Settles when the most recent Share action has fully finished, so tests can
@@ -235,6 +244,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
             .channels.find((row) => row.id === channelId)?.channelType === "dm"
         );
       },
+      solo: (agent, owner, channel, signal) =>
+        meChat(() => agents.relay(agent), owner, channel, signal),
+      harnesses: () => conciergeHarnesses(agents),
       memories: async (agent, signal) =>
         (await readMemory(agent, signal)).entries,
       coreMemory: async (agent, signal) => {
@@ -747,6 +759,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
           snapshot.status === "ready" &&
           snapshot.origin && (
             <MeshHelpers
+              onStart={async (signal) => {
+                const target = await startConcierge(
+                  ctx.agents,
+                  ctx.relay,
+                  signal,
+                );
+                void ctx.navigation.open(
+                  meTarget(target.scope, target.channelId),
+                );
+              }}
               key={`${snapshot.origin}:${snapshot.viewer}`}
               agents={ctx.agents}
             />

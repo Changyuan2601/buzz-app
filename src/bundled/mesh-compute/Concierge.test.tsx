@@ -16,7 +16,7 @@ import {
   MESH_TYPE,
   CONCIERGE_PRESET,
 } from "./Concierge";
-import { meshAgentConfig } from "./meshAgent";
+import { meshAgentConfig, DEFAULT_MESH_AGENT_CONFIG } from "./meshAgent";
 
 afterEach(cleanup);
 const owner = "a".repeat(64),
@@ -91,6 +91,13 @@ function fixture() {
   const agents = {
     snapshot: () => state,
     subscribe,
+    types: () => [
+      {
+        key: MESH_TYPE,
+        title: "Shared Compute",
+        defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
+      },
+    ],
     create,
     save: vi.fn(async (pubkey, change) => {
       state = {
@@ -169,7 +176,7 @@ it("requires a click, creates a tool-free agent, confirms membership, and surviv
       name: draft.name,
       config: expect.objectContaining({
         mode: "chat",
-        scope: "thread",
+        scope: "channel",
         prompt: draft.instructions,
         onboardingSource: message.id,
       }),
@@ -308,4 +315,212 @@ it("preserves the creation source through normal Mesh settings normalization", (
   expect(
     meshAgentConfig({ onboardingSource: "not-a-message" }).onboardingSource,
   ).toBeUndefined();
+});
+
+it("uses the registered harness's adoption and model controls without inventing Pi support", async () => {
+  const f = fixture();
+  const mesh = f.agents.types()[0];
+  if (!mesh) throw new Error("Missing Mesh fixture");
+  const codex = {
+    key: "buzz.codex/codex",
+    title: "Codex",
+    defaults: () => ({
+      config: { instructions: "default", model: "existing-default" },
+    }),
+    adopt: (carry: { instructions?: string }, config: object) => ({
+      ...config,
+      instructions: carry.instructions,
+    }),
+    CreateModel: ({
+      config,
+      onChange,
+    }: {
+      config: { model: string };
+      onChange(config: object): void;
+    }) => (
+      <button
+        type="button"
+        onClick={() => onChange({ ...config, model: "chosen-model" })}
+      >
+        Choose existing model
+      </button>
+    ),
+  } as unknown as import("../../features/agents/service").RegisteredAgentType;
+  vi.spyOn(f.agents, "types").mockReturnValue([mesh, codex]);
+  f.channel({ channelType: "session", private: true });
+  const session = f.relay.snapshot().session;
+  Object.assign(session, {
+    agentChoices: {
+      refresh: vi.fn(async () => {}),
+      snapshot: () => ({ selectable: [{ pubkey: created }] }),
+    },
+    workSessions: {
+      addAgents: vi.fn(async () => f.add(message.channelId, created)),
+    },
+    mePlacement: { has: () => true },
+  });
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  expect(screen.queryByRole("option", { name: "Pi" })).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("option", { name: "Codex" }));
+  await user.click(
+    screen.getByRole("button", { name: "Choose existing model" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Create agent" }));
+  await screen.findByRole("status");
+  expect(f.create).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      type: codex.key,
+      config: { instructions: draft.instructions, model: "chosen-model" },
+    }),
+  );
+  expect(session.workSessions.addAgents).toHaveBeenCalledWith(
+    message.channelId,
+    [created],
+    expect.any(Function),
+  );
+  expect(f.agents.find(author)?.config).toMatchObject({
+    onboardingCreated: { source: message.id, pubkey: created, type: codex.key },
+  });
+  await conciergeCreation(f.agents, f.relay).create(message);
+  expect(f.create).toHaveBeenCalledTimes(1);
+  await f.agents.save(created, {
+    config: { instructions: "changed", model: "chosen-model" },
+  });
+  await expect(
+    conciergeCreation(f.agents, f.relay).create(message),
+  ).rejects.toThrow("settings differ");
+});
+
+it("keeps provider setup with the harness and refuses creation while sign-in is needed", async () => {
+  const f = fixture();
+  const providerState = { readiness: "attention" as const };
+  const mesh = f.agents.types()[0];
+  if (!mesh) throw new Error("Missing Mesh fixture");
+  const type = {
+    key: "buzz.claude-code/claude",
+    title: "Claude",
+    defaults: () => ({ config: {} }),
+    adopt: (_carry: unknown, config: unknown) => config,
+    provider: {
+      snapshot: () => providerState,
+      subscribe: () => () => {},
+      check: vi.fn(),
+      DialogBody: () => <p>Complete Claude sign-in here</p>,
+    },
+  } as unknown as import("../../features/agents/service").RegisteredAgentType;
+  vi.spyOn(f.agents, "types").mockReturnValue([mesh, type]);
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Claude" }));
+  expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Set up Claude" }));
+  expect(await screen.findByText("Complete Claude sign-in here")).toBeVisible();
+  await expect(
+    f.creation.create(message, { type: type.key, config: {} }),
+  ).rejects.toThrow("Finish Claude setup");
+  expect(f.create).not.toHaveBeenCalled();
+});
+
+it("does not overwrite a saved harness edit when Concierge's completion receipt failed", async () => {
+  const f = fixture();
+  const type = {
+    key: "example/coding",
+    title: "Coding",
+    defaults: () => ({ config: {} }),
+    adopt: (_carry: unknown, config: unknown) => config,
+  } as unknown as import("../../features/agents/service").RegisteredAgentType;
+  vi.spyOn(f.agents, "types").mockReturnValue([type]);
+  const originalSave = vi.mocked(f.agents.save).getMockImplementation();
+  if (!originalSave) throw new Error("Missing save fixture");
+  vi.spyOn(f.agents, "save").mockImplementation(async (pubkey, change) => {
+    if (pubkey === author && meshAgentConfig(change.config).onboardingCreated)
+      throw new Error("Receipt storage unavailable");
+    return originalSave(pubkey, change);
+  });
+  const config = { instructions: draft.instructions, model: "first" };
+  await expect(
+    f.creation.create(message, { type: type.key, config }),
+  ).rejects.toThrow("Receipt storage unavailable");
+  await f.agents.save(created, {
+    config: { ...config, model: "person-edited" },
+  });
+  await expect(
+    f.creation.create(message, { type: type.key, config }),
+  ).rejects.toThrow("settings differ");
+  expect(f.agents.find(created)?.config).toMatchObject({
+    model: "person-edited",
+  });
+  expect(f.add).not.toHaveBeenCalled();
+});
+
+it("rechecks reviewed settings after Solo agent-choice refresh before granting conversation access", async () => {
+  const f = fixture();
+  f.channel({ channelType: "session", private: true });
+  let release!: () => void, started!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const addAgents = vi.fn();
+  Object.assign(f.relay.snapshot().session, {
+    agentChoices: {
+      refresh: async () => {
+        started();
+        await gate;
+      },
+    },
+    workSessions: { addAgents },
+  });
+  const operation = f.creation.create(message);
+  await entered;
+  try {
+    await f.agents.save(created, {
+      config: { mode: "agent", prompt: "Changed by person" },
+    });
+  } finally {
+    release();
+  }
+  await expect(operation).rejects.toThrow("settings differ");
+  expect(addAgents).not.toHaveBeenCalled();
+});
+
+it("consumes initial-config repair permission before a later receipt failure", async () => {
+  const f = fixture();
+  const fallback = { model: "default" };
+  const config = { instructions: draft.instructions, model: "chosen" };
+  const type = {
+    key: "example/coding",
+    title: "Coding",
+    defaults: () => ({ config: fallback }),
+    adopt: (_carry: unknown, next: unknown) => next,
+  } as unknown as import("../../features/agents/service").RegisteredAgentType;
+  vi.spyOn(f.agents, "types").mockReturnValue([type]);
+  const create = f.create.getMockImplementation();
+  const save = vi.mocked(f.agents.save).getMockImplementation();
+  if (!create || !save) throw new Error("Missing service fixture");
+  f.create.mockImplementationOnce(async (input) => {
+    const optimistic = await create(input);
+    await save(created, { config: fallback });
+    return optimistic;
+  });
+  vi.mocked(f.agents.save).mockImplementation(async (pubkey, change) => {
+    if (pubkey === author && meshAgentConfig(change.config).onboardingCreated)
+      throw new Error("Receipt failed");
+    return save(pubkey, change);
+  });
+  await expect(
+    f.creation.create(message, { type: type.key, config }),
+  ).rejects.toThrow("Receipt failed");
+  expect(f.agents.find(created)?.config).toEqual(config);
+  await f.agents.save(created, { config: fallback });
+  await expect(
+    f.creation.create(message, { type: type.key, config }),
+  ).rejects.toThrow("settings differ");
+  expect(f.agents.find(created)?.config).toEqual(fallback);
+  expect(f.add).not.toHaveBeenCalled();
 });

@@ -614,3 +614,91 @@ describe("Mesh agent runtime", () => {
     });
   });
 });
+
+it.each(["chat", "agent"] as const)(
+  "keeps %s replies and context at Solo top level without changing Multiplayer routing",
+  async (mode) => {
+    const solo = vi.fn(async () => true);
+    const f = setup({ solo }, OWNER, {
+      mode,
+      scope: "thread",
+      prompt: "Welcome briefly",
+    });
+    await f.runtime.run(f.delivery(inThread("1".repeat(64), 4)));
+    expect(solo).toHaveBeenCalledWith(
+      AGENT,
+      OWNER,
+      "chan",
+      expect.any(AbortSignal),
+    );
+    expect(f.query).toHaveBeenCalledWith([
+      { kinds: [9], "#h": ["chan"], until: 4, limit: 50 },
+    ]);
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: [
+        ["h", "chan"],
+        ["p", OWNER],
+      ],
+    });
+    if (mode === "agent")
+      expect(f.inline.run.mock.calls[0]?.[0]).toMatchObject({
+        context: { channel: "chan" },
+        sessionKey: `${AGENT}\nagent\nchan`,
+      });
+    solo.mockResolvedValue(false);
+    await f.runtime.run(f.delivery(inThread("2".repeat(64), 5)));
+    expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+      tags: expect.arrayContaining([
+        ["e", "9".repeat(64), "", "root"],
+        ["e", "2".repeat(64), "", "reply"],
+      ]),
+    });
+  },
+);
+
+it("does not infer or publish when Solo placement cannot be read", async () => {
+  const f = setup(
+    {
+      solo: async () => {
+        throw new Error("Solo placement unavailable");
+      },
+    },
+    OWNER,
+    { mode: "chat" },
+  );
+  await expect(f.runtime.run(f.delivery())).rejects.toThrow(
+    "Solo placement unavailable",
+  );
+  expect(f.deps.chat).not.toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("queues new top-level Solo follow-ups in one conversation", async () => {
+  const first = deferred<string>();
+  const started = deferred<void>();
+  const chat = vi.fn(async () => {
+    started.resolve();
+    return first.promise;
+  });
+  const f = setup({ solo: async () => true, chat }, OWNER, {
+    mode: "chat",
+    scope: "thread",
+  });
+  const one = f.runtime.run(f.delivery({ id: "1".repeat(64) }));
+  await started.promise;
+  const two = f.runtime.run(f.delivery({ id: "2".repeat(64) }));
+  // A different conversation completing proves the second admission has had
+  // its chance to start, while the first Solo completion remains held.
+  const other = f.runtime.run({
+    ...f.delivery({ id: "3".repeat(64) }),
+    channelId: "other",
+  });
+  await vi.waitFor(() => expect(chat).toHaveBeenCalledTimes(2));
+  try {
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    first.resolve("A brief reply");
+  }
+  await Promise.all([one, two, other]);
+  expect(f.publish).toHaveBeenCalledTimes(3);
+});

@@ -1,4 +1,10 @@
-import { useId, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type { Agents } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -9,13 +15,25 @@ import { DEFAULT_MESH_AGENT_CONFIG, meshAgentConfig } from "./meshAgent";
 import { MESH_AGENT_PRESETS, type MeshAgentPreset } from "./meshAgentPresets";
 
 /** Presets use the same creation service as Agents; editing stays in Settings. */
-export function MeshHelpers({ agents }: { agents: Agents }) {
+export function MeshHelpers({
+  agents,
+  onStart,
+}: {
+  agents: Agents;
+  onStart?(signal: AbortSignal): Promise<void>;
+}) {
   const state = useSyncExternalStore(agents.subscribe, agents.snapshot);
   const title = useId();
   const busy = useRef(false);
   const [pending, setPending] = useState<string>();
   const [created, setCreated] = useState("");
   const [error, setError] = useState("");
+  const lifetime = useRef(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
   const type = agents
     .types()
     .find(
@@ -69,6 +87,31 @@ export function MeshHelpers({ agents }: { agents: Agents }) {
         title="Helpers"
         subtitle="Create a helper, then add it to a conversation. Find your helpers in Agents."
       />
+      {onStart && (
+        <Button
+          disabled={pending !== undefined || state.status !== "ready"}
+          loading={pending === "onboarding"}
+          onClick={() => {
+            if (busy.current) return;
+            busy.current = true;
+            setPending("onboarding");
+            setError("");
+            void onStart(lifetime.current.signal)
+              .catch((cause) => {
+                if (!lifetime.current.signal.aborted)
+                  setError(
+                    cause instanceof Error ? cause.message : String(cause),
+                  );
+              })
+              .finally(() => {
+                busy.current = false;
+                if (!lifetime.current.signal.aborted) setPending(undefined);
+              });
+          }}
+        >
+          Start onboarding in Solo
+        </Button>
+      )}
       <SettingsGroup>
         {[...MESH_AGENT_PRESETS, null].map((preset) => {
           const name = preset?.name ?? "Custom agent";
