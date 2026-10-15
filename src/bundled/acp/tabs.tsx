@@ -102,7 +102,8 @@ export function createTabs({
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [rows, setRows] = useState(() => rowsOf(saved.env));
-    const [args, setArgs] = useState(saved.args.join("\n"));
+    // Untouched, the stored argv stays exact, so one the box can't show is refused.
+    const [args, setArgs] = useState<string>();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [confirming, setConfirming] = useState(false);
@@ -113,7 +114,8 @@ export function createTabs({
     const edited: Config = {
       ...draft,
       approval: reset ? "" : saved.approval,
-      args: args === "" ? [] : args.split("\n"),
+      args:
+        args === undefined ? saved.args : args === "" ? [] : args.split("\n"),
       env: envOf(rows),
     };
     const configChanged = JSON.stringify(edited) !== JSON.stringify(saved);
@@ -178,7 +180,7 @@ export function createTabs({
         </Field>
         <Field label="Arguments" description="One argument per line.">
           <Textarea
-            value={args}
+            value={args ?? saved.args.join("\n")}
             onChange={(event) => {
               setArgs(event.target.value);
               setDraft({ ...draft, preset: CUSTOM });
