@@ -1072,57 +1072,59 @@ export function InboxView({
                                 if (unread && canRead) mutate(item, false);
                               }}
                             />
-                            <time
-                              className={`text-caption text-subtle ${styles.timestamp}`}
-                              dateTime={new Date(
-                                item.createdAt * 1000,
-                              ).toISOString()}
-                            >
-                              {relativeTimestamp(item.createdAt)}
-                            </time>
-                            <span className={styles.rowActions}>
-                              <Tooltip
-                                content={unread ? "Mark read" : "Mark unread"}
+                            <span className={styles.rowMetadata}>
+                              <time
+                                className={`text-caption text-subtle ${styles.timestamp}`}
+                                dateTime={new Date(
+                                  item.createdAt * 1000,
+                                ).toISOString()}
                               >
-                                <IconButton
-                                  size="sm"
-                                  disabled={pending || !canRead}
-                                  aria-label={`${unread ? "Mark read" : "Mark unread"} ${sender} in ${context}`}
-                                  onClick={(event) =>
-                                    mutate(item, !unread, event.currentTarget)
-                                  }
-                                  icon={
-                                    unread ? (
-                                      <EnvelopeOpenIcon size={16} />
-                                    ) : (
-                                      <EnvelopeIcon size={16} />
-                                    )
-                                  }
-                                />
-                              </Tooltip>
-                              <Tooltip
-                                content={rowArchived ? "Restore" : "Archive"}
-                              >
-                                <IconButton
-                                  size="sm"
-                                  disabled={pending}
-                                  aria-label={`${rowArchived ? "Restore" : "Archive"} ${sender} in ${context}`}
-                                  onClick={() => archive(item, !rowArchived)}
-                                  icon={
-                                    rowArchived ? (
-                                      <ArchiveOffIcon
-                                        size={16}
-                                        aria-hidden="true"
-                                      />
-                                    ) : (
-                                      <ArchiveIcon
-                                        size={16}
-                                        aria-hidden="true"
-                                      />
-                                    )
-                                  }
-                                />
-                              </Tooltip>
+                                {relativeTimestamp(item.createdAt)}
+                              </time>
+                              <span className={styles.rowActions}>
+                                <Tooltip
+                                  content={unread ? "Mark read" : "Mark unread"}
+                                >
+                                  <IconButton
+                                    size="sm"
+                                    disabled={pending || !canRead}
+                                    aria-label={`${unread ? "Mark read" : "Mark unread"} ${sender} in ${context}`}
+                                    onClick={(event) =>
+                                      mutate(item, !unread, event.currentTarget)
+                                    }
+                                    icon={
+                                      unread ? (
+                                        <EnvelopeOpenIcon size={16} />
+                                      ) : (
+                                        <EnvelopeIcon size={16} />
+                                      )
+                                    }
+                                  />
+                                </Tooltip>
+                                <Tooltip
+                                  content={rowArchived ? "Restore" : "Archive"}
+                                >
+                                  <IconButton
+                                    size="sm"
+                                    disabled={pending}
+                                    aria-label={`${rowArchived ? "Restore" : "Archive"} ${sender} in ${context}`}
+                                    onClick={() => archive(item, !rowArchived)}
+                                    icon={
+                                      rowArchived ? (
+                                        <ArchiveOffIcon
+                                          size={16}
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <ArchiveIcon
+                                          size={16}
+                                          aria-hidden="true"
+                                        />
+                                      )
+                                    }
+                                  />
+                                </Tooltip>
+                              </span>
                             </span>
                           </ContextMenuTrigger>
                           <MenuPopup

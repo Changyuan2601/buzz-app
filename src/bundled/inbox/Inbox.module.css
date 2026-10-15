@@ -218,9 +218,11 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   visibility: visible;
 }
 
-.row:hover .timestamp,
-.row:focus-within .timestamp {
-  visibility: hidden;
+@media (hover: hover) {
+  .row:hover .timestamp,
+  .row:focus-within .timestamp {
+    visibility: hidden;
+  }
 }
 
 .unreadSlot {
@@ -324,24 +326,34 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   }
 }
 
-/* Touch keeps recency visible while exposing actions without hover. */
+/* Touch metadata wraps independently of the primary row label. */
+.rowMetadata {
+  display: contents;
+}
+
 @media (hover: none) {
   .content {
-    padding-block-end: var(--size-control-sm);
+    padding-block-end: var(--space-row-gap);
   }
   .heading {
     padding-inline-end: 0;
   }
+  .rowMetadata {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-4) var(--space-2);
+  }
   .row .timestamp {
+    position: static;
     visibility: visible;
-    top: auto;
-    bottom: var(--space-4);
-    inset-inline-start: var(--space-4);
-    inset-inline-end: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .rowActions {
+    position: static;
     visibility: visible;
-    top: auto;
-    bottom: var(--space-2);
+    margin-inline-start: auto;
   }
 }

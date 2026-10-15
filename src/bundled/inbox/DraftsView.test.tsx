@@ -66,6 +66,7 @@ afterEach(() => {
 function fixture(
   options: {
     withDm?: boolean;
+    groupDm?: boolean;
     holdProfiles?: boolean;
     withWriter?: boolean;
     connected?: boolean;
@@ -78,6 +79,7 @@ function fixture(
   const viewer = keypair(),
     alice = keypair(),
     relayKey = keypair();
+  const peers = options.groupDm ? [keypair(), keypair(), keypair()] : [];
   let releaseProfiles = () => {};
   const profilesGate = options.holdProfiles
     ? new Promise<void>((resolve) => {
@@ -155,12 +157,18 @@ function fixture(
     roster(relayKey, "room", [viewer.pubkey, alice.pubkey], 10),
     metadata(relayKey, "room", "Design", 10, [["t", "stream"]]),
     profile(alice, { name: "Alice" }),
+    ...peers.map((peer, index) => profile(peer, { name: `Peer ${index + 1}` })),
     ...roots,
     mention,
     reply,
     ...(options.withDm
       ? [
-          roster(relayKey, "dm-room", [viewer.pubkey, alice.pubkey], 10),
+          roster(
+            relayKey,
+            "dm-room",
+            [viewer.pubkey, alice.pubkey, ...peers.map((peer) => peer.pubkey)],
+            10,
+          ),
           metadata(relayKey, "dm-room", "Direct message", 10, [
             ["t", "dm"],
             ["hidden"],
@@ -682,6 +690,11 @@ it("DM draft composer labels use exact roster participants and recover as profil
   await chooseFilter("Drafts");
   const detail = () => screen.getByRole("region", { name: "Draft detail" });
   const row = screen.getByRole("list", { name: "Drafts" });
+  expect(
+    within(row).getByRole("button", {
+      name: `Open draft for ${h.alice.pubkey.slice(0, 10)}`,
+    }),
+  ).toBeInTheDocument();
   expect(row).toHaveTextContent("DM");
   fireEvent.click(
     within(row).getByRole("button", { name: /^Open draft for / }),
@@ -703,6 +716,9 @@ it("DM draft composer labels use exact roster participants and recover as profil
         }),
       ).toBeInTheDocument(),
     );
+    expect(
+      within(row).getByRole("button", { name: "Open draft for Alice" }),
+    ).toBeInTheDocument();
     expect(h.journal()?.state.frontiers).toEqual({});
   } finally {
     h.releaseProfiles();
@@ -1469,4 +1485,33 @@ it("returns to the invoking row when Send saves a remembered-agent follow-up", a
   expect(readView(h.owner.session.scope, "draft:dm-room", "")).toMatchObject({
     text: "@Alice ",
   });
+});
+
+it("group DM draft rows and headers retain the same full participant label", async () => {
+  const h = fixture({ withDm: true, groupDm: true, withWriter: true });
+  writeView(h.owner.session.scope, "draft:dm-room", "Group draft");
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await chooseFilter("Drafts");
+  const row = within(screen.getByRole("list", { name: "Drafts" })).getByRole(
+    "button",
+    { name: /^Open draft for / },
+  );
+  await waitFor(() => expect(row).toHaveAccessibleName(/Alice/));
+  const label = (row.getAttribute("aria-label") ?? "").replace(
+    "Open draft for ",
+    "",
+  );
+  for (const name of ["Alice", "Peer 1", "Peer 2", "Peer 3"])
+    expect(label).toContain(name);
+  fireEvent.click(row);
+  expect(
+    within(screen.getByRole("region", { name: "Draft detail" })).getByRole(
+      "heading",
+      { name: label },
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("textbox", { name: `Message DM with ${label}` }),
+  ).toHaveValue("Group draft");
 });

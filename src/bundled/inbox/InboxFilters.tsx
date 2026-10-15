@@ -105,10 +105,24 @@ export function InboxFilters({
 }) {
   const controls = useRef<HTMLSpanElement>(null);
   const [compact, setCompact] = useState(false);
+  const activityTrigger = useRef<HTMLButtonElement>(null);
+  const senderTrigger = useRef<HTMLButtonElement>(null);
+  const resizingFocus = useRef<{
+    element: HTMLButtonElement;
+    target: RefObject<HTMLButtonElement | null>;
+  } | null>(null);
   useLayoutEffect(() => {
     const header = controls.current?.closest("header");
     if (!header) return;
-    const measure = () =>
+    const measure = () => {
+      const focused = document.activeElement;
+      const target = [activityTrigger, senderTrigger].find(
+        (ref) => ref.current === focused,
+      );
+      resizingFocus.current =
+        target && focused instanceof HTMLButtonElement
+          ? { element: focused, target }
+          : null;
       setCompact(
         header.clientWidth <=
           40 *
@@ -116,11 +130,25 @@ export function InboxFilters({
               getComputedStyle(document.documentElement).fontSize,
             ),
       );
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(header);
     return () => observer.disconnect();
   }, []);
+  useLayoutEffect(() => {
+    // Restore only after the compact presentation has committed its replacement.
+    void compact;
+    const previous = resizingFocus.current;
+    resizingFocus.current = null;
+    if (
+      previous &&
+      !previous.element.isConnected &&
+      document.activeElement === document.body
+    ) {
+      previous.target.current?.focus({ preventScroll: true });
+    }
+  }, [compact]);
   const summaryId = useId();
   const activityLabel = activities.find(
     (item) => item.value === activity,
@@ -147,6 +175,7 @@ export function InboxFilters({
       />
       <MenuRoot>
         <MenuTrigger
+          ref={activityTrigger}
           aria-label={`Inbox filters: ${activityLabel}`}
           aria-describedby={summaryId}
           render={
@@ -198,6 +227,7 @@ export function InboxFilters({
       </MenuRoot>
       <MenuRoot>
         <MenuTrigger
+          ref={senderTrigger}
           aria-label={`Filter by sender: ${senderLabel}`}
           render={
             compact ? (

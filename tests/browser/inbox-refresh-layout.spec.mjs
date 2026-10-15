@@ -205,3 +205,32 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
     )
     .toBeLessThanOrEqual(390);
 });
+
+// Native focus loss when React replaces a focused trigger requires a browser.
+test("compact filter transitions preserve focus ownership", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  for (const name of [/^Inbox filters:/, /^Filter by sender:/]) {
+    const trigger = inbox.getByRole("button", { name });
+    await trigger.focus();
+    for (const width of [850, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      if (width === 850)
+        await expect(trigger).toHaveAttribute("data-icon-size", "sm");
+      else await expect(trigger).not.toHaveAttribute("data-icon-size");
+      await expect(trigger).toBeFocused();
+    }
+  }
+  const tab = inbox.getByRole("tab", { name: "Inbox", exact: true });
+  await tab.focus();
+  await page.setViewportSize({ width: 850, height: 800 });
+  await expect(
+    inbox.getByRole("button", { name: /^Inbox filters:/ }),
+  ).toHaveAttribute("data-icon-size", "sm");
+  await expect(tab).toBeFocused();
+});

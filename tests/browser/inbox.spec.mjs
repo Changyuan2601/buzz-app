@@ -1107,29 +1107,57 @@ test.describe("touch Inbox metadata", () => {
     isMobile: true,
     viewport: { width: 390, height: 844 },
   });
-  test("keeps timestamps and actions visible without hover", async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    await openPage(page, "Inbox");
-    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
-    await expect(
-      inbox.getByText("Unread reply 1", { exact: true }),
-    ).toBeVisible();
-    expect(await page.evaluate(() => matchMedia("(hover: none)").matches)).toBe(
-      true,
-    );
-    const row = inbox
-      .getByRole("list", { name: "Inbox conversations" })
-      .getByRole("listitem")
-      .first();
-    await expect(row.locator("time")).toBeVisible();
-    await expect(row.getByRole("button", { name: /^Archive / })).toBeVisible();
-    const time = await row.locator("time").boundingBox();
-    const action = await row
-      .getByRole("button", { name: /^Mark / })
-      .boundingBox();
-    expect(time.x + time.width).toBeLessThanOrEqual(action.x);
-  });
+  for (const scale of [1, 2])
+    for (const width of [320, 390])
+      test(`keeps touch timestamps visible after tapping at ${width}px and ${scale}x text`, async ({
+        page,
+        app,
+      }, testInfo) => {
+        await page.setViewportSize({ width, height: 844 });
+        await page.addInitScript(
+          (scale) => localStorage.setItem("buzz-font-scale.v1", String(scale)),
+          scale,
+        );
+        await open(page, app);
+        await openPage(page, "Inbox");
+        const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+        await expect(
+          inbox
+            .getByRole("list", { name: "Inbox conversations" })
+            .getByRole("listitem"),
+        ).toHaveCount(3);
+        expect(
+          await page.evaluate(() => matchMedia("(hover: none)").matches),
+        ).toBe(true);
+        const row = inbox
+          .getByRole("list", { name: "Inbox conversations" })
+          .getByRole("listitem")
+          .first();
+        await expect(row.locator("time")).toBeVisible();
+        await expect(
+          row.getByRole("button", { name: /^Archive / }),
+        ).toBeVisible();
+        const time = await row.locator("time").boundingBox();
+        const action = await row
+          .getByRole("button", { name: /^Mark / })
+          .boundingBox();
+        expect(
+          time.x + time.width <= action.x ||
+            time.y + time.height <= action.y ||
+            action.y + action.height <= time.y,
+        ).toBe(true);
+        await row.getByRole("button", { name: /^Mark read / }).tap();
+        await expect(
+          row.getByRole("button", { name: /^Mark unread / }),
+        ).toBeEnabled();
+        await expect(row.locator("time")).toBeVisible();
+        for (const mode of ["light", "dark"]) {
+          await page.evaluate((mode) => {
+            document.documentElement.dataset.colorMode = mode;
+          }, mode);
+          await page.screenshot({
+            path: testInfo.outputPath(`touch-${mode}.png`),
+          });
+        }
+      });
 });

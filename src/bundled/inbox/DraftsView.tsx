@@ -2,7 +2,6 @@ import {
   type ReactNode,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -14,8 +13,6 @@ import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
-import { selectProfiles } from "../../features/relay/profile-selection";
-import { useIdentityNames } from "../../features/identity-names/react";
 import { mentionDraft } from "../../features/messages/mention-draft";
 import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
 import {
@@ -44,7 +41,6 @@ import {
   XIcon,
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
-import { dmLabel } from "./dm-label";
 import { useChannelLabels } from "../channels/useChannelLabels";
 import { avatarMedia } from "../../shared/avatar-source";
 
@@ -126,66 +122,34 @@ export function DraftsView({
         item.members?.includes(scope.viewer),
     );
   const visible = entries.slice(0, limit);
-  const profileKey = [
-    ...new Set(
-      [
-        ...visible,
-        ...(active && !visible.some((entry) => entry.key === active.key)
-          ? [active]
-          : []),
-      ].flatMap(({ coordinates }) => {
-        const channel = channelFor(coordinates.channelId);
-        return channel?.channelType === "dm"
-          ? (channel.participants?.slice(0, 3) ?? [])
-          : [];
-      }),
-    ),
-  ]
-    .sort()
-    .join(":");
-  const profileIds = useMemo(
-    () => (profileKey ? profileKey.split(":") : []),
-    [profileKey],
-  );
-  const selection = useMemo(
-    () => selectProfiles(session.profiles, profileIds),
-    [session, profileIds],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const name = useIdentityNames(session.names);
-  useEffect(() => {
-    // An access/cache reset retires old profile work; a ready roster starts
-    // a fresh bounded read for the visible DM destinations.
-    void list.asOf;
-    if (list.status === "ready" && profileIds.length)
-      void session.profiles.ensure(profileIds, "background").catch(() => {});
-  }, [session, profileIds, list.status, list.asOf]);
-  const destination = (channel: ChannelSummary | undefined) => {
-    if (!channel) return "Unavailable conversation";
-    if (channel.channelType !== "dm") return `#${channel.name}`;
-    return dmLabel(channel.participants, profiles, name);
-  };
   const activeChannel = active
     ? channelFor(active.coordinates.channelId)
     : undefined;
-  const headerRoster = useMemo(
-    () => (activeChannel ? [activeChannel] : []),
-    [activeChannel],
-  );
-  const { channels: headerChannels } = useChannelLabels(
-    headerRoster,
+  const labelRoster = [
+    ...new Set(
+      [
+        ...visible.map((entry) => channelFor(entry.coordinates.channelId)),
+        activeChannel,
+      ].filter((channel): channel is ChannelSummary => !!channel),
+    ),
+  ];
+  const { channels: labelledChannels, profiles } = useChannelLabels(
+    labelRoster,
     session.profiles,
     session.names,
   );
-  const title = !activeChannel
-    ? "Unavailable conversation"
-    : activeChannel.channelType === "dm"
-      ? (headerChannels[0]?.name ?? activeChannel.name)
-      : activeChannel.name;
+  const labelFor = (channel: ChannelSummary) =>
+    labelledChannels.find((entry) => entry.id === channel.id)?.name ??
+    channel.name;
+  const destination = (channel: ChannelSummary | undefined) => {
+    if (!channel) return "Unavailable conversation";
+    return channel.channelType === "dm"
+      ? labelFor(channel)
+      : `#${channel.name}`;
+  };
+  const title = activeChannel
+    ? labelFor(activeChannel)
+    : "Unavailable conversation";
   const ActiveChannelIcon = channelIcon(activeChannel);
   const open = async () => {
     if (!active) return;
