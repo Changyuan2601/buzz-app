@@ -27,7 +27,18 @@ test("Channels renders grouped history and live membership without turning activ
   await expect(groups.first()).toContainText(
     "Pinky added by you, along with Brain",
   );
-  await expect(groups.locator("button")).toHaveCount(0);
+  // Member names open profiles; the row carries no message actions.
+  await expect(groups.locator("button")).toHaveText(["Pinky", "you", "Brain"]);
+  await groups.getByRole("button", { name: "View Pinky profile" }).click();
+  const profile = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await expect(profile).toContainText("Pinky");
+  await page
+    .getByRole("button", { name: "Close Pinky tab", exact: true })
+    .click();
+  await expect(profile).toHaveCount(0);
   // Count each identity once; its overlap frame and shared artwork both
   // carry the shape. Shared Avatar owns the single-letter fallback.
   const avatars = groups

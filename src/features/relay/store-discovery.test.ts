@@ -37,12 +37,16 @@ beforeAll(() => {
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function setup(options: ChannelStoreOptions = {}) {
+function setup(
+  options: ChannelStoreOptions = {},
+  relayInfo: { channelIdentity?: true } = {},
+) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let receive!: (events: readonly RelayEvent[]) => void;
   const owner = createRelaySession(
     {
       ...wire.transport,
+      ...relayInfo,
       subscribe(callbacks) {
         receive = callbacks.receive;
         return { update() {}, retry() {}, dispose() {} };
@@ -731,4 +735,174 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   // Clearing the cache forgets the last answer.
   await h.clearCache();
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
+});
+
+it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
+  let clock = 1_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string, at: number) =>
+    metadata(relay, id(n), name, at, [["public"], ["t", "stream"]]);
+  // A full first page of newer channels, as the relay orders it.
+  const recent = Array.from({ length: 500 }, (_, n) =>
+    open(n, `recent-${n}`, 1_700_000_100),
+  ).sort((a, b) => a.id.localeCompare(b.id));
+  const older = open(500, "buzz-community", 1_700_000_000);
+  const gaveUp = new AbortController();
+  const first = h.channels.searchPublic?.("buzz-c", { signal: gaveUp.signal });
+  assert.exists(first);
+  const page = await h.next(39000);
+  expect(page.filters).toEqual([
+    { kinds: [39000], authors: [relay.pubkey], limit: 500 },
+  ]);
+  gaveUp.abort();
+  await expect(first).rejects.toThrow();
+  expect(page.signal?.aborted).toBe(false);
+  // A read still running is reused however long it takes.
+  clock += 60_000;
+  const second = h.channels.searchPublic?.("buzz-com");
+  assert.exists(second);
+  page.respond(recent);
+  const last = recent.at(-1);
+  assert.exists(last);
+  const next = await h.next(39000);
+  expect(next.filters).toEqual([
+    {
+      kinds: [39000],
+      authors: [relay.pubkey],
+      limit: 500,
+      until: last.created_at,
+      before_id: last.id,
+    },
+  ]);
+  next.respond([older]);
+  const resolve = await h.next(39000);
+  expect(resolve.filters[0]?.["#d"]).toEqual([id(500)]);
+  resolve.respond([older]);
+  const result = await second;
+  expect(result.channels.map((channel) => channel.name)).toEqual([
+    "buzz-community",
+  ]);
+  expect(result.partial).toBe(false);
+  expect(h.pending).toHaveLength(0);
+});
+
+it("refuses a label lookup without sending it when the relay does not advertise NIP-CL", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const sent = h.pending.length;
+  await expect(
+    h.channels.findLabeled?.({ creator: keypair().pubkey, label: "for-you" }),
+  ).rejects.toThrow(/does not support channel labels/);
+  expect(h.pending.length).toBe(sent);
+});
+
+it("finds one creator's labeled channels oldest first and admits only relay-proven matches", async () => {
+  const h = setup({}, { channelIdentity: true });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const creator = keypair().pubkey;
+  const id = (n: number) =>
+    `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const labeled = (
+    n: number,
+    extra: readonly string[][],
+    author: typeof relay = relay,
+  ) =>
+    metadata(author, id(n), `labeled ${n}`, 1_700_000_000, [
+      ["public"],
+      ["t", "stream"],
+      ...extra,
+    ]);
+  const page = [
+    labeled(1, [
+      ["t", "for-you"],
+      ["P", creator],
+      ["created_at", "200"],
+    ]),
+    labeled(2, [
+      ["t", "for-you"],
+      ["P", creator],
+      ["created_at", "100"],
+    ]),
+    // No creation time ranks last; the relay returned it, so it still counts.
+    labeled(3, [
+      ["t", "for-you"],
+      ["P", creator],
+    ]),
+    // Same creation time breaks the tie by channel ID.
+    labeled(0, [
+      ["t", "for-you"],
+      ["P", creator],
+      ["created_at", "200"],
+    ]),
+    // The relay's answer is checked: wrong creator, a type that only looks
+    // like the label, and metadata signed by someone else are all dropped.
+    labeled(4, [
+      ["t", "for-you"],
+      ["P", keypair().pubkey],
+    ]),
+    metadata(relay, id(5), "typed", 1_700_000_000, [
+      ["public"],
+      ["t", "for-you"],
+      ["P", creator],
+    ]),
+    labeled(
+      6,
+      [
+        ["t", "for-you"],
+        ["P", creator],
+      ],
+      keypair(),
+    ),
+  ];
+  const done = h.channels.findLabeled?.({ creator, label: "for-you" });
+  assert.exists(done);
+  const request = await h.next(39000);
+  expect(request.filters).toEqual([
+    {
+      kinds: [39000],
+      authors: [relay.pubkey],
+      "#P": [creator],
+      "#t": ["for-you"],
+      limit: 100,
+    },
+  ]);
+  request.respond(page);
+  const resolve = await h.next(39000);
+  const ids = resolve.filters[0]?.["#d"] ?? [];
+  expect([...ids].sort()).toEqual([id(0), id(1), id(2), id(3)]);
+  resolve.respond(page.filter((event) => ids.includes(tag(event, "d") ?? "")));
+  const found = await done;
+  expect(found.map((channel) => channel.id)).toEqual([
+    id(2),
+    id(0),
+    id(1),
+    id(3),
+  ]);
+  expect(found[0]).toMatchObject({
+    labels: ["for-you"],
+    creator,
+    createdAt: 100,
+  });
+  expect(h.channels.get?.(id(2))?.labels).toEqual(["for-you"]);
+  // Lookup admits channels for reading; it never adds them to the sidebar.
+  const listed = h.channels.list();
+  expect(
+    listed.status === "ready" &&
+      listed.channels.some((channel) => ids.includes(channel.id)),
+  ).toBe(false);
+  await expect(
+    h.channels.findLabeled?.({ creator, label: "System" }),
+  ).rejects.toThrow(/channel labels/);
+  await expect(
+    h.channels.findLabeled?.({ creator: "nope", label: "for-you" }),
+  ).rejects.toThrow(/creator/);
 });

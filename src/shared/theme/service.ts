@@ -1,3 +1,8 @@
+import {
+  BUBBLE_COLOR_KEY,
+  parseBubbleColor,
+  type BubbleColor,
+} from "./bubble-color";
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
 export type ColorModePreference = ColorMode | "system";
@@ -27,6 +32,8 @@ export interface AppearanceSnapshot {
   readonly mode: ColorMode;
   readonly fontScale: number;
   readonly fontError: string | null;
+  readonly bubbleColor: BubbleColor;
+  readonly bubbleError: string | null;
   readonly error: string | null;
 }
 
@@ -46,6 +53,8 @@ export function createAppearance(
     error: null,
     fontScale: 1,
     fontError: null,
+    bubbleColor: "neutral",
+    bubbleError: null,
   };
   let disposed = false;
   const listeners = new Set<() => void>();
@@ -70,6 +79,7 @@ export function createAppearance(
         host.requestAnimationFrame(() => transitionGuard.remove()),
       );
     }
+    root.dataset.bubbleColor = state.bubbleColor;
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
@@ -126,25 +136,47 @@ export function createAppearance(
     }
     notify();
   };
+  const restoreBubble = () => {
+    try {
+      state = {
+        ...state,
+        bubbleColor: parseBubbleColor(
+          host?.localStorage.getItem(BUBBLE_COLOR_KEY),
+        ),
+        bubbleError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        bubbleError:
+          "Bubble color could not be restored. Choose a color to try saving it again.",
+      };
+    }
+    notify();
+  };
   const onStorage = (event: StorageEvent) => {
     if (
       event.key !== APPEARANCE_KEY &&
       event.key !== FONT_SCALE_KEY &&
+      event.key !== BUBBLE_COLOR_KEY &&
       event.key !== null
     )
       return;
     // Re-read the current value: an older queued event must not undo a newer save.
     try {
       if (event.storageArea !== host?.localStorage) return;
-      if (event.key !== FONT_SCALE_KEY) restore();
-      if (event.key !== APPEARANCE_KEY) restoreFont();
+      if (event.key === null || event.key === APPEARANCE_KEY) restore();
+      if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
+      if (event.key === null || event.key === BUBBLE_COLOR_KEY) restoreBubble();
     } catch {
-      if (event.key !== FONT_SCALE_KEY) restore();
-      if (event.key !== APPEARANCE_KEY) restoreFont();
+      if (event.key === null || event.key === APPEARANCE_KEY) restore();
+      if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
+      if (event.key === null || event.key === BUBBLE_COLOR_KEY) restoreBubble();
     }
   };
   restore();
   restoreFont();
+  restoreBubble();
   host?.addEventListener("storage", onStorage);
   systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
@@ -189,6 +221,20 @@ export function createAppearance(
           "This interface size is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, fontScale, fontError };
+      notify();
+    },
+    setBubbleColor(value: BubbleColor) {
+      if (disposed) return;
+      const bubbleColor = parseBubbleColor(value);
+      let bubbleError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(BUBBLE_COLOR_KEY, bubbleColor);
+      } catch {
+        bubbleError =
+          "This bubble color is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, bubbleColor, bubbleError };
       notify();
     },
     dispose() {

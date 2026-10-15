@@ -3,8 +3,8 @@
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
 [GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
-pushes: an isolated serial measurement job runs alongside sixteen Linux functional jobs
-(eight file-level shards per engine, two workers per runner) and one macOS WebKit
+pushes: an isolated serial measurement job runs alongside eighteen Linux functional jobs
+(nine file-level shards per engine, two workers per runner) and one macOS WebKit
 recording job. Both engines remain
 mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
 `CI required` fails if any lane or shard fails, is cancelled, or is skipped.
@@ -96,6 +96,19 @@ Results go to ignored `test-results/browser/`: each built-app test writes `evide
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.
+
+On local macOS runs, WebKit traces omit the screenshot filmstrip. macOS
+WindowServer leaks the IOSurfaces that WebKit trace screenshots use (about 55 per
+traced WebKit test), and it crashes and logs the user out near 65,536 surfaces.
+DOM snapshots, logs and failure screenshots are still retained. CI keeps the
+filmstrip. To restore it for one local run:
+
+```sh
+BUZZ_WEBKIT_TRACE_SCREENSHOTS=1 bin/pnpm test:browser --project webkit ...
+```
+
+> **Warning:** this leaks WindowServer surfaces until you log out. Use it only
+> for a single diagnostic run, never in a loop or with `--repeat-each`.
 The one exception is the `chromium-classic-scrollbars` project, whose `evidence.json`,
 failure screenshots and traces land in `test-results/browser-classic-scrollbars/`
 so that its separate invocation cannot clear the measurement evidence.
@@ -116,15 +129,15 @@ are unchanged, and no recording cases become local-only. Both engines, serial
 measurement order, zero retries, the documented functional assertions and
 measurement ceilings, and the strict `CI required` aggregate remain in place.
 
-CI shards each functional engine across eight runners, without waiting for the
+CI shards each functional engine across nine runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
-`--shard=N/8`; measurement success is enforced by `CI required`, not job ordering.
+`--shard=N/9`; measurement success is enforced by `CI required`, not job ordering.
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.
 
 The Node integration gate lists tests without launching browsers and checks that
-the workflow's sixteen Linux selections plus macOS recording cover every functional
+the workflow's eighteen Linux selections plus macOS recording cover every functional
 test/project from the full local config exactly once, with no measurements included.
 It also exercises the required
 check's shell against failed, skipped, cancelled and missing lane results.
@@ -152,13 +165,15 @@ is set on a Mac whose scrollbars take space:
 BUZZ_CLASSIC_SCROLLBARS=1 bin/pnpm test:browser --project chromium-classic-scrollbars --no-deps
 ```
 
-The following **three WebKit cases are local-only**, not passing CI coverage:
+The following **three WebKit cases are local-only**, not passing CI coverage,
+and one case is Chromium-only in every run:
 
 | Case | Reason and coverage gap |
 | --- | --- |
 | `channel-opening.spec.mjs`: cold opening / warm switching | Originally excluded after hosted Linux WebKit recorded 104ms against the former <100ms budget. The warm gate now uses the target/ceiling policy below; this change does not revalidate Linux WebKit or restore its CI selection. The whole case remains local-only, including cold opening under held DM labels and no-new-head-read assertions. Chromium retains the full case in CI. |
 | `scroll.spec.mjs`: cursor paging / large-history virtualization | Linux WebKit repeatedly stops short of the requested wheel edge. The cause remains unresolved between engine/input handling and the harness. Its 31 unique cursor requests, 640-message traversal, 4px anchors and DOM ceilings remain local-only on WebKit; Chromium retains them in CI. |
 | `scroll.spec.mjs`: live edits / reading anchor | Linux WebKit's fetch reader can leave part of an edit undelivered while the SSE stream is open. WebKit growth/shrinkage and reading-anchor checks are local-only; Chromium retains the case in CI. The delivery defect is not fixed by this selection change. |
+| `navigation-leak.spec.mjs`: Settings → Back releases the unmounted Settings DOM | Needs CDP `HeapProfiler.collectGarbage` and `Performance.getMetrics` for post-GC DOM node counts, which only Chromium exposes, so the case is skipped on WebKit in every run. The leak it guards is V8-specific: a reason-less `abort()`'s lazily formatted stack retains the aborting closure's scope, which JSC's stack capture does not. WebKit/JSC was measured on the real production bundle with `WeakRef` probes and never retained the unmounted Settings sidebar, pre- or post-fix, so the skip is for a case that engine does not have, not one it cannot verify. Chromium runs the case in CI. |
 
 Evidence: [Linux run at `d25ed65`](https://github.com/block/buzz-app/actions/runs/34538518724)
 and its measurement artifacts. Local Apple Silicon passes do not establish Linux

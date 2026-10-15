@@ -20,6 +20,7 @@ function recipe(name, ...args) {
   const settings = typeof args[0] === "object" ? args.shift() : {};
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-dev-command-"));
   const callsFile = path.join(directory, "calls.jsonl");
+  const gooseFile = path.join(directory, "goose.jsonl");
   try {
     copyFileSync(
       new URL("../../justfile", import.meta.url),
@@ -37,6 +38,11 @@ function recipe(name, ...args) {
         new URL(`../../scripts/${file}`, import.meta.url),
         path.join(directory, "scripts", file),
       );
+    // Record the bundled goose-acp build instead of compiling it.
+    writeFileSync(
+      path.join(directory, "scripts/build-goose-acp.mjs"),
+      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.BUZZ_TEST_GOOSE, JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
+    );
     if (settings.local !== undefined)
       writeFileSync(path.join(directory, ".env.local"), settings.local);
     if (settings.mode !== undefined)
@@ -82,6 +88,7 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
         env: {
           ...process.env,
           BUZZ_TEST_CALLS: callsFile,
+          BUZZ_TEST_GOOSE: gooseFile,
           // Do not inherit the operator's public pin in isolated launcher tests.
           BUZZ_DEV_VIEWER: undefined,
           ...settings.env,
@@ -94,10 +101,13 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
     const calls = existsSync(callsFile)
       ? readFileSync(callsFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
+    const goose = existsSync(gooseFile)
+      ? readFileSync(gooseFile, "utf8").trim().split("\n").map(JSON.parse)
+      : [];
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, port: portForPath(root) };
+    return { ...result, calls, goose, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -143,6 +153,12 @@ test("desktop derives a port from the worktree path and leaves the OS scheme alo
   assert.deepEqual(config, overlay(port));
   assert.match(stdout, announced(port));
   assert.doesNotMatch(stdout, /deep links open as/);
+});
+
+test("desktop builds the dev goose-acp first, and help does not", () => {
+  assert.deepEqual(launched("desktop").goose, [["--dev"]]);
+  assert.deepEqual(launched("desktop", "--help").goose, []);
+  assert.deepEqual(launched("desktop-bundle").goose, []);
 });
 
 test("stock tauri.conf.json starts Vite on its own devUrl port without the launcher", () => {

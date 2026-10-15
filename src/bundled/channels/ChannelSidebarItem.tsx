@@ -24,6 +24,7 @@ import { UnreadBadge } from "./UnreadBadge";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noSessions: readonly ChannelSummary[] = [];
 
@@ -152,11 +153,7 @@ function ChannelSidebarItemCore({
             {channel.participants?.length === 1 ? (
               <span className={styles.dmAvatar} data-dm-identity="">
                 <Avatar
-                  src={
-                    profile?.picture
-                      ? session.media(profile.picture, "small")
-                      : undefined
-                  }
+                  src={avatarMedia(profile?.picture, session.media)}
                   alt=""
                   fallback={channel.name}
                   size="fill"

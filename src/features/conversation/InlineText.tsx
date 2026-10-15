@@ -7,6 +7,7 @@ import type {
   InlineRenderer,
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
+import { WithTargetOpener } from "./opener";
 
 type Match = InlineRange & { renderer: Contribution<InlineRenderer> };
 /** First registered renderer wins overlapping ranges; malformed/throwing matchers are skipped. */
@@ -58,13 +59,17 @@ export function InlineText({
   for (const match of inlineMatches(content, renderers)) {
     nodes.push(content.text.slice(offset, match.start));
     const text = content.text.slice(match.start, match.end);
-    const Render = match.renderer.component;
     nodes.push(
       <ContributionBoundary
         key={`${contributionKey(match.renderer)}:${match.start}:${text}`}
         fallback={text}
       >
-        <Render text={text} content={content} media={media} />
+        <WithTargetOpener
+          component={match.renderer.component}
+          props={{ text, content, media }}
+          registry={registry}
+          entry={match.renderer}
+        />
       </ContributionBoundary>,
     );
     offset = match.end;

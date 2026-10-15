@@ -17,6 +17,7 @@ import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
 import { ConversationPresentation } from "./ConversationPresentation";
+import { LinkThreadTabContext } from "./LinkLabelContext";
 
 afterEach(() => {
   cleanup();
@@ -184,7 +185,9 @@ it("reports a clipboard failure and allows an explicit retry", async () => {
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 
-it.each(["buzz://channel/alpha"])(
+const messageId = "a".repeat(64);
+const threadLink = `buzz://message?channel=alpha&id=${messageId}`;
+it.each(["buzz://channel/alpha", threadLink])(
   "leaves non-HTTP(S) link context menus alone: %s",
   (target) => {
     const { anchor } = mount(target);
@@ -197,6 +200,48 @@ it.each(["buzz://channel/alpha"])(
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   },
 );
+
+it("opens a message link's thread in a tab from its context menu, else as a click would", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const openThreadTab = vi.fn(() => true);
+  const onOpenLink = vi.fn(() => true);
+  const rootId = "b".repeat(64);
+  const tree = (target: string) => (
+    <ToastProvider>
+      <LinkThreadTabContext value={openThreadTab}>
+        <MessageLink
+          url={target}
+          registry={undefined}
+          onOpenLink={onOpenLink}
+        />
+      </LinkThreadTabContext>
+    </ToastProvider>
+  );
+  const view = render(tree(threadLink));
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await screen.findByRole("menu");
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Open link", "Copy link"]);
+  await user.click(screen.getByRole("menuitem", { name: "Open link" }));
+  expect(openThreadTab).toHaveBeenCalledWith("alpha", messageId, messageId);
+  expect(onOpenLink).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
+  await waitFor(() => expect(write).toHaveBeenCalledWith(threadLink));
+  // A reply's link names its root; a workspace that can't show it falls back.
+  openThreadTab.mockReturnValue(false);
+  const reply = `${threadLink}&thread=${rootId}`;
+  view.rerender(tree(reply));
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await user.click(await screen.findByRole("menuitem", { name: "Open link" }));
+  expect(openThreadTab).toHaveBeenLastCalledWith("alpha", messageId, rootId);
+  expect(onOpenLink).toHaveBeenCalledWith(reply);
+});
 
 it("leaves noninteractive message content without a menu or anchor", () => {
   mount(url, false);

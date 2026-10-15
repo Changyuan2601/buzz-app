@@ -1,7 +1,9 @@
 import { isTauri } from "@tauri-apps/api/core";
+import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { config, defaults, validWorkspace } from "./config";
+import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
@@ -22,11 +24,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const providerController = new CodexProvider(start, localStorage, setup);
   const runtime = new CodexRuntime(
     start,
-    ctx.agents.relay,
+    (pubkey) => ownerReads(ctx.agents.relay(pubkey), pubkey),
     localStorage,
     (raw) => providerController.resolve(raw),
   );
-  const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/codex`;
+  const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
   let needed: boolean | undefined;
@@ -41,8 +43,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // up to date; that is also when a first copy is downloaded.
     const was = needed;
     needed = running.length > 0;
-    if (spawn && (was === undefined || (needed && !was)))
-      void setup.update(needed);
+    if (spawn && (was === undefined || (needed && !was))) {
+      const updated = setup.update(needed);
+      // Then, after the check that follows it (two first starts of Codex
+      // race on its state), a usable copy's server starts so the first
+      // mention skips its startup. One being installed is left to the mention.
+      if (needed)
+        void updated
+          .then(() => providerController.check())
+          .then(
+            () => {
+              if (
+                needed &&
+                !setup.snapshot().running &&
+                providerController.snapshot().readiness === "ready"
+              )
+                runtime.warm();
+            },
+            () => undefined,
+          );
+    }
   };
   const offAgents = ctx.agents.subscribe(sync);
   const offProvider = providerController.subscribe(sync);
@@ -50,6 +70,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const timer =
     spawn && setInterval(() => void setup.update(needed ?? false), UPDATE_MS);
   ctx.effect(() => () => {
+    needed = false;
     clearInterval(timer);
     offAgents();
     offProvider();
@@ -57,23 +78,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime.dispose();
     setup.dispose();
   });
-  const {
-    Create,
-    CreateModelMenu,
-    createModelLabel,
-    ProviderDialogBody,
-    SettingsTab,
-  } = createTabs(providerController, runtime, start, setup);
+  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
+    createTabs(providerController, runtime, start, setup);
   ctx.agents.register({
-    id: "codex",
+    id: TYPE_ID,
     title: "Codex",
     icon: CodexLogoIcon,
     description:
       "Codex on this computer, using its native coding tools and your account.",
     defaults: () => ({ config: { ...defaults } }),
     Create,
-    CreateModelMenu,
-    createModelLabel,
+    CreateModel,
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -120,17 +135,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: ActivityTab,
+      },
     ],
-    models: (agent) => runtime.preview(agent),
     // A mention during the first download waits for it, within its deadline.
-    run: async (delivery) => {
-      await setup.installed(delivery.signal);
+    ...codexRun(runtime, async (signal) => {
+      await setup.installed(signal);
       if (providerController.snapshot().readiness === "checking")
         await providerController.check();
-      return runtime.run(delivery);
-    },
-    timeoutMs: 2 * 60_000,
+    }),
   });
 };

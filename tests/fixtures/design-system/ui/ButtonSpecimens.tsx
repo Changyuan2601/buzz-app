@@ -315,6 +315,19 @@ export function IconButtonSpecimen() {
         Labelled buttons stay medium; choose a larger icon size explicitly.
       </p>
       <ExamplePreview
+        label="Squircle avatar action"
+        code={
+          '<IconButton variant="prominent" shape="squircle" aria-label="Add item" icon={<PlusIcon />} />'
+        }
+      >
+        <IconButton
+          variant="prominent"
+          shape="squircle"
+          aria-label="Add item"
+          icon={<PlusIcon />}
+        />
+      </ExamplePreview>
+      <ExamplePreview
         className="justify-center"
         code={`<IconButton
   aria-label="Add item"

@@ -19,6 +19,7 @@ import { XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const personKey = (pubkey: string) => `person:${pubkey}`;
 
@@ -268,7 +269,7 @@ export function RecipientPicker({
     <Avatar
       alt=""
       fallback={person.name}
-      src={session.media(person.picture ?? "", "small")}
+      src={avatarMedia(person.picture, session.media)}
       size={small ? "small" : "default"}
       shape={person.isAgent ? "squircle" : "circle"}
     />

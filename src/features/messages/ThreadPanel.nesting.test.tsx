@@ -27,10 +27,19 @@ vi.mock("../relay/react", () => {
   return { useRowProfiles: () => profiles };
 });
 vi.mock("./MessageRow", () => ({
-  MessageRow: ({ row, onReply, layout, compactAvatar }: MessageRowProps) => (
+  MessageRow: ({
+    row,
+    onReply,
+    layout,
+    compactAvatar,
+    stackPrevious,
+    stackNext,
+  }: MessageRowProps) => (
     <article
       data-message-id={row.id}
       data-layout={layout}
+      data-stack-previous={stackPrevious || undefined}
+      data-stack-next={stackNext || undefined}
       data-compact-avatar={compactAvatar}
     >
       <span>{row.content}</span>
@@ -248,27 +257,33 @@ it("does not silently retarget a deleted parent to the root", () => {
   ).toBeEnabled();
 });
 
-it("groups the first same-author reply with the root but respects the time window", () => {
+it("starts replies with a full author header and only groups replies within the time window", () => {
   const h = setup();
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
-    "data-layout",
-    "continuation",
-  );
-  h.update([{ ...row("parent", "root"), createdAt: 301 }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
-    "data-layout",
-    "continuation",
-  );
-  h.update([{ ...row("parent", "root"), createdAt: 302 }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
-    "data-layout",
-    "thread",
-  );
-  h.update([{ ...row("parent", "root"), authorId: "b".repeat(64) }]);
-  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
-    "data-layout",
-    "thread",
-  );
+  const root = document.querySelector('[data-message-id="root"]');
+  const parent = () => screen.getByText("parent").closest("article");
+  const peer = () => screen.getByText("peer").closest("article");
+  expect(parent()).toHaveAttribute("data-layout", "thread");
+  expect(parent()).not.toHaveAttribute("data-stack-previous");
+  expect(root).not.toHaveAttribute("data-stack-next");
+
+  // The divider breaks the root's bubble group, not the groups among replies.
+  h.update([row("parent", "root"), { ...row("peer", "root"), createdAt: 301 }]);
+  expect(peer()).toHaveAttribute("data-layout", "continuation");
+  expect(peer()).toHaveAttribute("data-stack-previous", "true");
+  expect(parent()).toHaveAttribute("data-stack-next", "true");
+  expect(root).not.toHaveAttribute("data-stack-next");
+
+  h.update([row("parent", "root"), { ...row("peer", "root"), createdAt: 302 }]);
+  expect(peer()).toHaveAttribute("data-layout", "thread");
+  expect(peer()).not.toHaveAttribute("data-stack-previous");
+  expect(parent()).not.toHaveAttribute("data-stack-next");
+  h.update([
+    row("parent", "root"),
+    { ...row("peer", "root"), authorId: "b".repeat(64) },
+  ]);
+  expect(peer()).toHaveAttribute("data-layout", "thread");
+  expect(peer()).not.toHaveAttribute("data-stack-previous");
+  expect(parent()).not.toHaveAttribute("data-stack-next");
 });
 it("keeps ordinary replies flat and visible when nested branches open or new replies arrive", () => {
   const h = setup();
@@ -394,7 +409,7 @@ it("groups same-parent siblings but restores the author after an expanded branch
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
   expect(screen.getByText("parent").closest("article")).toHaveAttribute(
     "data-layout",
-    "continuation",
+    "thread",
   );
   expect(screen.getByText("child").closest("article")).toHaveAttribute(
     "data-layout",

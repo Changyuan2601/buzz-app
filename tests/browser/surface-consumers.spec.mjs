@@ -130,11 +130,14 @@ for (const mode of ["light", "dark"]) {
       await page.goto(app.origin);
       await openPage(page, "Me");
       const sidebar = page.getByRole("navigation", {
-        name: "Me conversations",
+        name: "Solo conversations",
       });
-      const session = sidebar.getByRole("button", { name: /^Alpha(?: |$)/ });
+      const alpha = { name: /^Alpha(?: |$)/ };
+      const session = sidebar.getByRole("button", alpha);
       await session.click();
-      const row = session.locator("..");
+      const row = sidebar
+        .locator("[data-session-menu-id]")
+        .filter({ has: page.getByRole("button", alpha) });
       await page.mouse.move(1, 1);
       const selected =
         mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)";
@@ -145,7 +148,7 @@ for (const mode of ["light", "dark"]) {
       await expect(row).toHaveCSS("background-color", selected);
       await expect(session).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await sidebar
-        .getByRole("button", { name: "New conversation", exact: true })
+        .getByRole("button", { name: "New chat", exact: true })
         .click();
       await expect(session).not.toHaveAttribute("aria-current", "page");
       await session.hover();

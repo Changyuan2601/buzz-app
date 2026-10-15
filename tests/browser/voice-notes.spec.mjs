@@ -1,5 +1,5 @@
 import { watchPageErrors } from "./page-errors.mjs";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,10 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => {
   await server?.close();
+});
+test.afterEach(async ({ page }) => {
+  // Media routes read fixture blobs from the page; finish them before it closes.
+  await page.unrouteAll({ behavior: "wait" });
 });
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/relay/media?*", async (route) => {
@@ -98,13 +102,6 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Play voice note", exact: true }),
   ).toBeVisible();
-});
-// WebKit defers voice-card media reads until the first click and keeps issuing
-// them until the page closes, so a test that ends just after a click can close
-// the page under a media route still reading bytes from it. Those reads serve
-// no assertion once the test has finished.
-test.afterEach(async ({ page }) => {
-  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 async function record(page) {
   await page
@@ -411,4 +408,24 @@ test("rejects a full attachment draft before opening the microphone", async ({
     page.getByText("Attach at most 10 files per message."),
   ).toBeVisible();
   expect(await page.evaluate(() => window.voiceMic.started)).toBe(0);
+  await expect(
+    page.getByRole("status").filter({ hasText: /file-\d+\.txt:.*Ready/ }),
+  ).toHaveCount(10);
+  const uploaded = await page.evaluate(async () => {
+    const { attachmentDraft } = await import(
+      "/src/features/messages/attachment-draft.ts"
+    );
+    return attachmentDraft(
+      window.voiceFixture.session,
+      "voice-fixture:draft:general",
+      "general",
+    )
+      .snapshot()
+      .map((item) => item.uploaded);
+  });
+  expect(uploaded.map((item) => item.type)).toEqual(
+    Array(10).fill("text/plain"),
+  );
+  expect(new Set(uploaded.map((item) => item.url)).size).toBe(10);
+  expect(uploaded.every((item) => !item.voice)).toBe(true);
 });

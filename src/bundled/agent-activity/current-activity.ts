@@ -5,7 +5,7 @@ import {
 } from "../../features/agents/activity-transcript";
 import { activityPresentation } from "./activity-presentation";
 
-/** Compact preview of the same transcript shown in the full activity panel. */
+/** Compact preview of an agent's current turn from its activity records. */
 export function currentActivity(
   records: readonly ActivityRecord[],
   turns: readonly { turnId: string; state: string }[],

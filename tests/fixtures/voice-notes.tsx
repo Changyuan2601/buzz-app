@@ -16,6 +16,7 @@ import {
   bounds,
 } from "../../src/features/relay/testing";
 import { encodeVoiceNoteWav } from "../../src/bundled/voice-notes/voiceNoteWav";
+import { isVoiceNoteFile } from "../../src/bundled/voice-notes/audio";
 import {
   attachmentMessage,
   type UploadedAttachment,
@@ -86,7 +87,7 @@ const owner = createRelaySession(
       return { update() {}, retry() {}, dispose() {} };
     },
     async uploadAttachment(file, signal) {
-      report.uploads++;
+      const upload = ++report.uploads;
       await new Promise((resolve, reject) => {
         const timer = setTimeout(resolve, report.delayUpload ? 2000 : 80);
         const abort = () => {
@@ -97,11 +98,13 @@ const owner = createRelaySession(
         if (signal.aborted) abort();
       });
       if (report.failUpload) throw new Error("Fixture upload failed");
+      const voice = isVoiceNoteFile(file);
       const result: UploadedAttachment = {
-        ...attachment,
-        name: file.name.replace(/\.wav$/, ".mp4"),
-        url: `https://fixture.test/media/${report.uploads.toString(16).padStart(64, "0")}.mp4`,
-        sha256: report.uploads.toString(16).padStart(64, "0"),
+        type: voice ? attachment.type : file.type || "application/octet-stream",
+        ...(voice && attachment.voice ? { voice: attachment.voice } : {}),
+        name: voice ? file.name.replace(/\.wav$/, ".mp4") : file.name,
+        url: `https://fixture.test/media/${upload.toString(16).padStart(64, "0")}.mp4`,
+        sha256: upload.toString(16).padStart(64, "0"),
         size: file.size,
       };
       // The fixture only exercises local delivery; retain exact captured bytes for playback.

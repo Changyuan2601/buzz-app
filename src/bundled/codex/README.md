@@ -22,7 +22,7 @@ BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
    optionally pick a model beside it and add instructions. Name the agent and
    click **Create agent**.
-3. **Agents → More → Provider settings → Codex** checks Buzz's copy of Codex and
+3. **Settings → Agents → AI defaults → Codex** checks Buzz's copy of Codex and
    its account. If it says Codex is not installed, click **Install Codex**; if
    it needs you to sign in, click **Sign in** and finish in the browser. It also
    manages explicit-save model/thinking defaults. A blank agent choice inherits
@@ -63,7 +63,8 @@ A mention in a chat filed in the owner's Me is one conversation whatever the
 scope: the agent continues the channel's session and posts at its top level, and
 its tools refuse a reply into a thread there. A turn keeps the routing it started
 with, so a mention after the chat is shared waits for it and then threads as
-usual. Watches keep their own routing.
+usual. Watch and timer turns have no default destination: their `send` must
+name a channel.
 Bindings persist locally under the community and agent identity. Earlier bindings without dynamic tools are ignored; new conversations start fresh. Switching
 communities does not end an agent's work. Removing the agent, leaving or
 disconnecting from its community interrupts its turns and asks Codex to end
@@ -73,7 +74,7 @@ If a saved Codex thread no longer exists, the next mention starts a fresh one.
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
-`send`, `edit`, `react`, `read`, `channels`, `members`, `users`, `dm`, `mem_get`,
+`send`, `edit`, `react`, `read`, `channels`, `channel`, `members`, `users`, `dm`, `mem_get`,
 `mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
@@ -135,8 +136,14 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 
 ## Limits and boundaries
 
-- Only the owner's events start work. Event watches support those events; timers
-  are unsupported and report an error.
+- Only the owner's mentions start conversation work. The agent always has the
+  attention tools and guidance. Each turn ends with the attention review, or,
+  when attention is off, a note that those tools refuse. Its watches and timers run
+  as one-off turns on an ephemeral Codex thread of their own, queued per
+  Interest by the Agents runner; a watch's event can come from
+  anyone and is framed as observed data. These turns save no binding, have no
+  default `send` destination, stop after 5 minutes, and do not run when their
+  watch or timer, or attention, changed while they waited.
 - Replies use Agents' host signer. Codex receives no Buzz agent key and does not
   publish through the Buzz CLI. The shared Buzz base prompt, custom instructions
   and the agent's `core` memory are supplied as developer instructions, preserving
@@ -147,8 +154,8 @@ Buzz checks when the agents load and every 6 hours; the first download (about
   network, and use git and `gh`. Web search, inherited MCP servers, Apps, and plugins
   are disabled.
 - Shared Agent Activity integration is deferred because this Agents delivery
-  contract has no live-activity API. The Runtime diagnostics disclosure in the
-  agent's Settings shows conversation status and the latest command/output.
+  contract has no live-activity API. The agent's Activity tab shows
+  conversation status and the latest command/output.
   Messages and uploads use the shared Buzz tools. Codex assistant text is not automatically posted. After `buzz.send` with `final: true`, Codex finishes normally and consumes pending steering. A turn that has nothing new to say ends without posting. Final sends preserve background processes, such as a dev server it started.
 - Turns have a 29-minute deadline;
   RPC acknowledgements have a 30-second deadline. Local bindings retain 200 sessions.

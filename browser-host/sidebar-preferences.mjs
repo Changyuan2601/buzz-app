@@ -1,6 +1,8 @@
 import {
   editSidebarAssignment,
+  editSidebarSectionOrder,
   editSidebarSectionRemoval,
+  validSidebarSectionOrder,
   validSidebarSectionRemoval,
   validSidebarAssignment,
 } from "../src/features/relay/sidebar-edits.ts";
@@ -172,6 +174,34 @@ export function prepareSidebarSectionRemoval(
     ),
   );
 }
+export function assertSidebarSectionOrderIntent(intent) {
+  if (
+    !intent ||
+    typeof intent !== "object" ||
+    Array.isArray(intent) ||
+    !Array.isArray(intent.sectionIds) ||
+    !intent.sectionIds.every((id) => typeof id === "string") ||
+    !validSidebarSectionOrder(intent.sectionIds) ||
+    Object.keys(intent).some((key) => key !== "sectionIds")
+  )
+    throw new Error("Invalid sidebar section order intent");
+}
+export function prepareSidebarSectionOrder(
+  events,
+  intent,
+  secret,
+  now = Date.now(),
+) {
+  assertSidebarSectionOrderIntent(intent);
+  return prepareSections(events, secret, now, (current) =>
+    editSidebarSectionOrder(
+      current.blob,
+      current.createdAt,
+      intent.sectionIds,
+      now,
+    ),
+  );
+}
 function prepareSections(events, secret, now, edit) {
   const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
@@ -229,6 +259,21 @@ export async function mutateSidebarSectionRemoval(
   assertSidebarSectionRemovalIntent(intent);
   return mutateSections(
     prepareSidebarSectionRemoval,
+    intent,
+    secret,
+    readHead,
+    publish,
+  );
+}
+export async function mutateSidebarSectionOrder(
+  intent,
+  secret,
+  readHead,
+  publish,
+) {
+  assertSidebarSectionOrderIntent(intent);
+  return mutateSections(
+    prepareSidebarSectionOrder,
     intent,
     secret,
     readHead,

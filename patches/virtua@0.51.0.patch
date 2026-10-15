@@ -1,5 +1,5 @@
 diff --git a/lib/index.js b/lib/index.js
-index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc276456f8452ab 100644
+index a183cc7b1669aab25467840540ce3bd1c025fb47..e641a5661230f2578eb1e23d66144085e8186cd9 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
@@ -77,7 +77,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                  }
 -
 +
-@@ -97,7 +119,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -97,7 +119,22 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                  break;
 -
 +
@@ -87,13 +87,23 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +                    // Rows a shift prepends measure after its jump; remember
 +                    // how many so scroll-end can tell whether it awaits them.
 +                    shiftEnd = (2 === y ? shiftEnd : 0) + Math.max(l[0] - itemCount(), 0), shiftIdle = !1;
++                    // A flushed jump keeps the last range until its scroll event
++                    // arrives, in the indices before this shift: move it with the
++                    // rows so the same ones stay mounted instead of churning. A
++                    // removal past the held rows would name rows above the list,
++                    // an inverted range that renders nothing for a frame; the
++                    // offset lands at the top, so hold as many rows from there.
++                    if (z) {
++                        const delta = l[0] - itemCount();
++                        k = k[0] + delta < 0 ? [ 0, k[1] - k[0] ] : [ k[0] + delta, k[1] + delta ];
++                    }
 +                    L(c(l[0], !0)), y = 2, h = 1;
 +                } else c(l[0]), h = 1;
                  break;
 -
 +
                case 6:
-@@ -173,15 +200,44 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -173,15 +210,44 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          q: () => [ l.slice(), o ]
      };
  }, C = e => {
@@ -141,7 +151,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
              t && t.disconnect();
          }
      };
-@@ -249,32 +305,64 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -249,32 +315,64 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          o && o();
      } ];
  }, E = (e, t) => {
@@ -215,7 +225,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                      behavior: "instant"
                  }) : u.scrollBy({
                      [l]: T(t, i),
-@@ -283,7 +371,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -283,7 +375,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              }), r[1](!0);
          },
          _() {
@@ -226,7 +236,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-@@ -797,4 +887,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -797,4 +897,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
  });
 -
 +

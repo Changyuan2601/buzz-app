@@ -20,6 +20,8 @@ export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
 /** Channel REQs awaiting EOSE at once. `scripts/live-setup-probe.mjs` compares others. */
 export const SETUP_CONCURRENCY = 4;
+/** How long one channel REQ may wait for EOSE before its route fails. */
+export const SETUP_TIMEOUT_MS = 10_000;
 const MAX_QUOTA_RETRIES = 3;
 const BASE_RECONNECT_DELAY = 500;
 const MAX_RECONNECT_DELAY = 30_000;
@@ -213,6 +215,7 @@ export function subscribeRelayTraffic(
   socketFactory: (url: string) => WebSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
   setupConcurrency = SETUP_CONCURRENCY,
+  setupTimeoutMs = SETUP_TIMEOUT_MS,
 ): LiveSubscription {
   const log = getLogger("relay-ws");
   const peer = relayLabel(url);
@@ -567,7 +570,7 @@ export function subscribeRelayTraffic(
             "Live subscription setup timed out; retry available",
             true,
           );
-      }, 10000);
+      }, setupTimeoutMs);
       active++;
       if (route.id === "observer") {
         route.since = Math.floor(Date.now() / 1000);

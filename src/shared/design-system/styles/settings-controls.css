@@ -63,8 +63,8 @@
   .buzz-theme-preview-divider {
     stroke: var(--border-standard);
   }
-  .buzz-theme-preview-accent {
-    fill: var(--affordance-accent-prominent);
+  .buzz-theme-preview-message {
+    fill: var(--surface-message-own);
   }
   .buzz-theme-preview-composer {
     fill: none;

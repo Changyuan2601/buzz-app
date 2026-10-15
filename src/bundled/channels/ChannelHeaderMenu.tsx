@@ -29,12 +29,14 @@ export function ChannelHeaderMenu({
   openDetails,
   menuPanels,
   openMenuPanel,
+  finishConversion,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
   origin?: AbortSignal | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
+  finishConversion?: (() => void) | undefined;
   menuPanels?: readonly RegisteredPanel[] | undefined;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
@@ -73,6 +75,12 @@ export function ChannelHeaderMenu({
         finalFocus.current ? finalFocus.current() : (trigger.current ?? false)
       }
     >
+      {finishConversion && (
+        <MenuItem onClick={finishConversion}>
+          <MenuIcon>{null}</MenuIcon>
+          Finish conversion
+        </MenuItem>
+      )}
       <MenuItem onClick={openDetails}>
         <MenuIcon>
           <InfoIcon size={16} />

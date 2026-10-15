@@ -65,12 +65,14 @@ const ToolGroup = forwardRef<HTMLDivElement, ComponentProps<typeof motion.div>>(
 export function ComposerFormattingTools({
   children,
   disabled,
+  singleRow,
   activeFormats,
   toggleFormat,
   editLink,
 }: {
   children: ReactNode;
   disabled: boolean;
+  singleRow?: boolean;
   activeFormats: readonly ComposerFormat[];
   toggleFormat(format: ComposerFormat): void;
   editLink(): void;
@@ -110,7 +112,11 @@ export function ComposerFormattingTools({
     />
   );
   return (
-    <div className={styles.tools} data-formatting-open={open || undefined}>
+    <div
+      className={styles.tools}
+      data-formatting-open={open || undefined}
+      data-single-row={singleRow || undefined}
+    >
       <AnimatePresence mode="popLayout" initial={false}>
         {open ? (
           <ToolGroup

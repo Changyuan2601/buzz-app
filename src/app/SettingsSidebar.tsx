@@ -1,5 +1,5 @@
 import { useRelayConnection } from "../features/relay/react";
-import { readChannelSidebarWidth } from "../bundled/channels/useSidebarView";
+import { ResizableSidebar } from "../features/channel-navigation/ResizableSidebar";
 import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -24,7 +24,7 @@ export function SettingsSidebar({
   onSection: (section: string) => void;
 }) {
   const connection = useRelayConnection(communities.relay);
-  const width = readChannelSidebarWidth(connection.scope ?? "disconnected");
+  const scope = connection.scope ?? "disconnected";
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -54,7 +54,7 @@ export function SettingsSidebar({
   );
 
   return (
-    <div className="shell-sidebar-default" style={{ width }}>
+    <ResizableSidebar scope={scope}>
       <Panel as="aside" aria-label="Settings sidebar">
         <div className={`${channelStyles.sidebar} ${styles.settingsSidebar}`}>
           <NavigationItem
@@ -74,7 +74,7 @@ export function SettingsSidebar({
           </nav>
         </div>
       </Panel>
-    </div>
+    </ResizableSidebar>
   );
 }
 

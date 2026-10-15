@@ -289,6 +289,44 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-message",
+        variable: "--surface-message",
+        pointsAt: "neutral-2 light / neutral-4 dark",
+        use: "Received message bubbles; pair with standard text and links.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-own",
+        variable: "--surface-message-own",
+        pointsAt:
+          "received fill with 5% black light / 5% white dark; selected accent otherwise",
+        use: "Own message bubbles; pair with --text-message-own.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action",
+        variable: "--surface-message-action",
+        pointsAt: "neutral-12 by default; selected message accent otherwise",
+        use: "Send button and color swatches; pair with text-message-action.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action-hover",
+        variable: "--surface-message-action-hover",
+        pointsAt:
+          "neutral-11 by default; selected accent darkened 10% otherwise",
+        use: "Hover state for message-colored prominent actions.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action-pressed",
+        variable: "--surface-message-action-pressed",
+        pointsAt:
+          "neutral-action-pressed by default; selected accent darkened 20% otherwise",
+        use: "Pressed state for message-colored prominent actions.",
+        status: "core",
+      },
+      {
         token: "bg-surface-inset",
         variable: "--surface-inset",
         pointsAt: "neutral-2 light / neutral-2 dark",
@@ -377,6 +415,27 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-link",
         pointsAt: "blue-11 light / blue-11 dark",
         use: "Inline links and mentions in prose.",
+        status: "core",
+      },
+      {
+        token: "text-message-own",
+        variable: "--text-message-own",
+        pointsAt: "text-standard by default; bubble-ink for accents",
+        use: "Prose on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-message-link-own",
+        variable: "--text-message-link-own",
+        pointsAt: "text-link by default; bubble-ink for accents",
+        use: "Links and mentions on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-message-action",
+        variable: "--text-message-action",
+        pointsAt: "neutral-1 by default; bubble-ink for accents",
+        use: "Send icon and selected swatch check on surface-message-action.",
         status: "core",
       },
       {

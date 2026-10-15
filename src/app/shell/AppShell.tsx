@@ -101,7 +101,7 @@ export function AppShell({
     selected === "settings" ||
     pages.some((page) => page.key === selected && page.primary);
   const sidebarLabel = meNavigation
-    ? "Me sidebar"
+    ? "Solo sidebar"
     : channelsNavigation
       ? "Channel sidebar"
       : "sidebar";

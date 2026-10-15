@@ -293,6 +293,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               <p role="status">Opening destination…</p>
             ) : settings ? (
               <Settings
+                agents={services.agents}
                 plugins={plugins}
                 cards={services.settingsCards}
                 communities={services.communities}

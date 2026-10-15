@@ -25,7 +25,6 @@ import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
 import { recordReaction, useQuickReactions } from "./quick-reactions";
-import { AnimatedReactionCount } from "./AnimatedReactionCount";
 import styles from "./Messages.module.css";
 
 type Props = {
@@ -228,8 +227,9 @@ function ReactionGlyph({
   );
 }
 
-function ReactionPill({
+function ReactionEmoji({
   reaction,
+  authorId,
   session,
   profiles,
   disabled,
@@ -242,6 +242,7 @@ function ReactionPill({
   onPreviewChange,
 }: {
   reaction: MessageReaction;
+  authorId: string;
   session: RelaySession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
@@ -254,39 +255,33 @@ function ReactionPill({
   onPreviewChange(open: boolean): void;
 }) {
   const [name, setName] = useState(reaction.content);
-  const authors = [...new Set(reaction.events.map((event) => event.authorId))];
-  const authorIds = authors.slice().sort().join(":");
   const reactorProfiles = useMemo(
-    () =>
-      selectProfiles(session.profiles, authorIds ? authorIds.split(":") : []),
-    [session.profiles, authorIds],
+    () => selectProfiles(session.profiles, [authorId]),
+    [session.profiles, authorId],
   );
   const loadedReactors = useSyncExternalStore(
     reactorProfiles.subscribe,
     reactorProfiles.snapshot,
     reactorProfiles.snapshot,
   );
-  const mine = authors.includes(session.viewer ?? "");
-  const users = [
-    ...(mine ? ["You"] : []),
-    ...authors
-      .filter((author) => author !== session.viewer)
-      .map(
-        (author) =>
-          loadedReactors.get(author)?.name ??
-          profiles?.get(author)?.name ??
-          author.slice(0, 10),
-      ),
-  ];
+  const own = authorId === session.viewer;
+  const mine = reaction.events.some(
+    (event) => event.authorId === session.viewer,
+  );
+  const user = own
+    ? "You"
+    : (loadedReactors.get(authorId)?.name ??
+      profiles?.get(authorId)?.name ??
+      authorId.slice(0, 10));
   const revealName = () => {
-    void session.profiles.ensure(authors, "background").catch(() => {});
+    void session.profiles.ensure([authorId], "background").catch(() => {});
     if (reaction.emoji) return;
     void import("./reaction-name").then(({ reactionName }) =>
       setName(reactionName(reaction.content)),
     );
   };
   return (
-    <span className={styles.reactionPillWrap}>
+    <span className={styles.reactionItem}>
       <PreviewCard
         side="top"
         open={previewOpen}
@@ -300,36 +295,45 @@ function ReactionPill({
           .join(" ")}
         onOpenChange={onPreviewChange}
         trigger={
-          <button
-            type="button"
-            className={styles.reactionChip}
+          <IconButton
+            variant="link"
+            size="sm"
             data-reaction={reaction.content}
-            aria-label={`${reaction.content}: ${authors.length} ${authors.length === 1 ? "person" : "people"}${mine ? ", including you" : ""}`}
+            data-reaction-author={authorId}
+            aria-label={`${reaction.content}: ${user}`}
             aria-pressed={mine}
             aria-disabled={unavailable}
             disabled={disabled}
-            onMouseEnter={revealName}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.setProperty(
+                "--reaction-tilt",
+                `${Math.random() * 20 - 10}deg`,
+              );
+              revealName();
+            }}
             onFocus={revealName}
             onClick={(event) => {
               if (unavailable) return;
               const losesFocus =
-                mine &&
-                authors.length === 1 &&
-                event.currentTarget === document.activeElement;
+                own && event.currentTarget === document.activeElement;
               if (toggle(reaction.content, reaction.emoji) && losesFocus)
                 onFocusedRemoval?.();
             }}
-          >
-            <ReactionGlyph reaction={reaction} session={session} />
-            <AnimatedReactionCount value={authors.length} />
-          </button>
+            icon={
+              <span className={styles.reactionGlyph} data-reaction-glyph>
+                <ReactionGlyph reaction={reaction} session={session} />
+              </span>
+            }
+          />
         }
       >
-        <span className={styles.reactionPreviewEmoji}>
-          <ReactionGlyph reaction={reaction} session={session} />
+        <div className={styles.reactionPreviewContent}>
+          <span className={styles.reactionPreviewEmoji}>
+            <ReactionGlyph reaction={reaction} session={session} />
+          </span>
+          <span className={styles.reactionPreviewNames}>{user}</span>
           <span className={styles.reactionPreviewName}>{name}</span>
-        </span>
-        <span className={styles.reactionPreviewNames}>{users.join(", ")}</span>
+        </div>
       </PreviewCard>
     </span>
   );
@@ -344,7 +348,6 @@ export function MessageReactions(
 ) {
   const active = useConversationPresentation();
   const { row, session, scope, tools } = props;
-  const reactions = row.reactions;
   const action = useReactionAction(props);
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -362,6 +365,12 @@ export function MessageReactions(
   const select = (content: string) => {
     return action.toggle(content, catalogEmoji(catalog.entries, content));
   };
+  // Keep one visible reaction per person, even if old clients sent duplicates.
+  const reactions = row.reactions.flatMap((reaction) =>
+    [...new Set(reaction.events.map((event) => event.authorId))].map(
+      (authorId) => ({ reaction, authorId }),
+    ),
+  );
   return (
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
     <div
@@ -376,8 +385,12 @@ export function MessageReactions(
       }}
     >
       {active &&
-        reactions.map((reaction, index) => {
-          const key = JSON.stringify([reaction.content, reaction.emoji?.url]);
+        reactions.map(({ reaction, authorId }, index) => {
+          const key = JSON.stringify([
+            reaction.content,
+            reaction.emoji?.url,
+            authorId,
+          ]);
           const slideFrom =
             preview?.key === key ? preview.fromIndex : preview?.index;
           const previewSlide =
@@ -387,9 +400,10 @@ export function MessageReactions(
                 : "left"
               : undefined;
           return (
-            <ReactionPill
+            <ReactionEmoji
               key={key}
               reaction={reaction}
+              authorId={authorId}
               session={session}
               profiles={props.profiles}
               disabled={props.disabled}

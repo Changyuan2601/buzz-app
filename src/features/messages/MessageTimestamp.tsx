@@ -1,7 +1,7 @@
+import { useRef, useState, type ReactNode } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
-  formatCompactTime,
   formatFullTimestamp,
   formatItemTimestamp,
 } from "../../shared/datetime";
@@ -54,37 +54,62 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
   );
 }
 
-/** One date source for the byline and the compact continuation clock. The
- * byline names the day outside today ("Yesterday at 9:05 AM"): a day divider
- * scrolls away, and surfaces such as Activity have none. The continuation
- * clock sits under a byline, so it shows the time only. */
-export function MessageTimestamp({
-  createdAt,
-  compact = false,
-}: {
-  createdAt: number;
-  compact?: boolean;
-}) {
+/** The byline includes a day outside today because its divider can scroll away. */
+export function MessageTimestamp({ createdAt }: { createdAt: number }) {
   useLocalDay();
   const date = new Date(createdAt * 1000);
-  const label = compact
-    ? formatCompactTime(createdAt)
-    : formatItemTimestamp(createdAt, { withTime: true });
   const fullDate = formatFullTimestamp(createdAt);
   return (
-    // The action bar can sit over the byline; keep the date hint non-interactive
-    // so it cannot intercept nearby controls when their paint layers overlap.
     <Tooltip content={fullDate} delay={500} disableHoverablePopup>
-      <time
-        dateTime={date.toISOString()}
-        style={{ cursor: "default" }}
-        className={compact ? styles.continuationTime : undefined}
-      >
-        <span aria-hidden="true">{label}</span>
-        {/* Engines copy visually hidden text; a selection across rows would
-            otherwise repeat every clock as a date the reader never saw. */}
+      <time dateTime={date.toISOString()} style={{ cursor: "default" }}>
+        <span aria-hidden="true">
+          {formatItemTimestamp(createdAt, { withTime: true })}
+        </span>
+        {/* Keep accessible dates out of copied conversation text. */}
         <span className="sr-only select-none">{fullDate}</span>
       </time>
+    </Tooltip>
+  );
+}
+
+/** Grouped messages keep their date available without an inline clock. */
+export function MessageTimestampHint({
+  createdAt,
+  children,
+}: {
+  createdAt: number | undefined;
+  children: ReactNode;
+}) {
+  useLocalDay();
+  const payload = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const fullDate =
+    createdAt === undefined ? undefined : formatFullTimestamp(createdAt);
+  return (
+    <Tooltip
+      content={fullDate}
+      open={createdAt !== undefined && open}
+      onOpenChange={(next) =>
+        setOpen(next && !payload.current?.contains(document.activeElement))
+      }
+      delay={1000}
+      disableHoverablePopup
+    >
+      <div
+        ref={payload}
+        className={styles.messagePayload}
+        onFocusCapture={() => setOpen(false)}
+      >
+        {children}
+        {createdAt !== undefined && (
+          <time
+            dateTime={new Date(createdAt * 1000).toISOString()}
+            className="sr-only select-none"
+          >
+            {fullDate}
+          </time>
+        )}
+      </div>
     </Tooltip>
   );
 }

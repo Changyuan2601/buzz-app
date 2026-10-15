@@ -479,11 +479,11 @@ it.each([false, true])(
     const options = { sectionId: grouped ? "work" : undefined };
     try {
       await expect(f.session.mePlacement.admit(id, options)).rejects.toThrow(
-        "Me storage is full",
+        "Solo storage is full",
       );
       await expect(
         f.session.mePlacement.set(id, true, options),
-      ).rejects.toThrow("Me storage is full");
+      ).rejects.toThrow("Solo storage is full");
       expect(f.publish).not.toHaveBeenCalled();
       const removed = value.channels?.[0];
       if (!removed) throw new Error("Missing placement");

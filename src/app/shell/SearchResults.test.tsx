@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
 import { npubEncode } from "nostr-tools/nip19";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { eventDto } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
@@ -1837,6 +1837,104 @@ it.each([
   },
 );
 
+// A full first page can hide an exact namesake past the cap.
+const alexSession = (
+  exact: ReturnType<typeof keypair>,
+  page: readonly ReturnType<typeof profile>[],
+) => {
+  const relay = keypair(),
+    viewer = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(exact, { display_name: "Alex" }),
+          ...page,
+        ]);
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      return Promise.resolve([]);
+    },
+  });
+  return { owner, reads };
+};
+const alexandras = (count: number) =>
+  Array.from({ length: count }, (_, index) =>
+    profile(keypair(), { display_name: `Alexandra ${index}` }),
+  );
+
+it.each([
+  ["a full prefix page", () => alexandras(39), 12],
+  ["exact namesakes", () => [profile(keypair(), { display_name: "Alex" })], 2],
+])(
+  "asks which author a completed from: name means with %s",
+  async (_, page, shown) => {
+    const exact = keypair();
+    const { owner, reads } = alexSession(exact, page());
+    const change = vi.fn();
+    const props = {
+      session: owner.session,
+      onQueryChange: change,
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      openConversation: () => {},
+    };
+    try {
+      const mounted = render(<SearchResults {...props} query="from:Alex " />);
+      const people = within(
+        await screen.findByRole("group", { name: "People" }),
+      );
+      expect(await people.findAllByRole("option")).toHaveLength(shown);
+      // The picker follows the resolver's completed lookup.
+      expect(reads).toEqual([]);
+      fireEvent.click(
+        people.getByRole("option", {
+          name: new RegExp(exact.pubkey.slice(0, 12)),
+        }),
+      );
+      expect(change).toHaveBeenCalledWith(`from:${exact.pubkey} `);
+      mounted.rerender(
+        <SearchResults {...props} query={`from:${exact.pubkey} `} />,
+      );
+      await waitFor(() =>
+        expect(reads.at(-1)).toEqual([
+          expect.objectContaining({ authors: [exact.pubkey] }),
+        ]),
+      );
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("resolves one exact from: name in a partial prefix page", async () => {
+  const exact = keypair();
+  const { owner, reads } = alexSession(exact, alexandras(38));
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:Alex "
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(reads.at(-1)).toEqual([
+        expect.objectContaining({ authors: [exact.pubkey] }),
+      ]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it.each([
   ["resolves it", false],
   ["reports a profile namesake as ambiguous", true],
@@ -2509,7 +2607,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       ["t", "stream"],
     ]),
   );
-  // A full first page means an exact-name miss outside it cannot be declared exhaustive.
+  // A partial directory means an exact-name miss outside it cannot be declared exhaustive.
   for (let i = 0; i < 491; i++)
     discovery.push(
       metadata(relay, `extra-${i}`, `extra-${i}`, 1700000000, [
@@ -2525,15 +2623,30 @@ it("resolves an exact public name beyond eight preceding substring matches and r
         reads.push(filters as Filter[]);
         return [message(viewer, "dev", "deploy found", 1700000001)];
       }
+      // The directory is one full page: nothing is older than its cursor.
+      if (filters.some((filter) => filter.before_id !== undefined)) return [];
       return discovery.filter((event) =>
         filters.some((filter) => matchFilter(filter as Filter, event)),
       );
     },
   });
+  // Reaching the store's read bound takes 20,000 signed events; report it here.
+  const searchPublic = owner.session.channels.searchPublic;
+  assert.exists(searchPublic);
+  const session = {
+    ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      searchPublic: async (...args: Parameters<typeof searchPublic>) => ({
+        ...(await searchPublic(...args)),
+        partial: true,
+      }),
+    },
+  };
   try {
     render(
       <SearchResults
-        session={owner.session}
+        session={session}
         query="deploy in:#dev"
         onQueryChange={() => {}}
         input={createRef()}
@@ -2548,9 +2661,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
       expect.objectContaining({ "#h": ["dev"], search: "deploy" }),
     ]);
     expect(
-      screen.getByText(
-        "Public channel results include only the first page of channels.",
-      ),
+      screen.getByText("Only the newest open channels were searched."),
     ).toBeVisible();
   } finally {
     cleanup();

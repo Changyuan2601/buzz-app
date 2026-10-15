@@ -23,6 +23,16 @@ import type { Contribution } from "../plugins/contributions";
 
 afterEach(cleanup);
 
+// The shared sidebar's resize handle measures its panel.
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
+
 function registry(initial: Contribution<SettingsCard>[]) {
   let entries: readonly Contribution<SettingsCard>[] = initial;
   const listeners = new Set<() => void>();

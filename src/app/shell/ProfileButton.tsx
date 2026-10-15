@@ -1,7 +1,7 @@
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { usePresenceStatus } from "../../features/presence/react";
 import { useRelayConnection } from "../../features/relay/react";
-import { avatarSource } from "../../shared/avatar-source";
+import { avatarMedia, avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
@@ -159,7 +159,7 @@ export function ProfileButton({
     (viewer ? formatPublicKey(viewer) : undefined) ||
     "Your profile";
   const source = avatarSource(profile?.picture);
-  const picture = selected ? source && session?.media(source, "small") : source;
+  const picture = selected ? avatarMedia(source, session?.media) : source;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
   const profileTrigger = useRef<HTMLButtonElement>(null);

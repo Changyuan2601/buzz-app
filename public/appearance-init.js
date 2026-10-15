@@ -13,6 +13,18 @@
     // Storage may be denied; the system palette still opens safely.
   }
   document.documentElement.dataset.colorMode = mode;
+  let bubbleColor = "neutral";
+  try {
+    let value = localStorage.getItem("buzz-bubble-color.v1");
+    if (value === "cyan" || value === "indigo") value = "blue";
+    else if (value === "red") value = "pink";
+    else if (value === "purple") value = "lilac";
+    if (["neutral", "blue", "green", "orange", "pink", "lilac"].includes(value))
+      bubbleColor = value;
+  } catch {
+    /* Neutral remains usable without storage. */
+  }
+  document.documentElement.dataset.bubbleColor = bubbleColor;
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

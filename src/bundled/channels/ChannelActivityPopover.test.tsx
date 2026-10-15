@@ -273,10 +273,11 @@ test("working agents open their thread when linked, otherwise the conversation",
   );
 });
 
-test("a typing agent offers no activity view while Agent Activity is off", async () => {
+test("a typing agent still opens its profile activity while Agent Activity is off", async () => {
   const user = userEvent.setup();
   const agent = "a".repeat(64);
   const openWorkingAgent = vi.fn();
+  const openAgentActivity = vi.fn();
   const unread = {
     channelId: "studio",
     items: [],
@@ -310,13 +311,16 @@ test("a typing agent offers no activity view while Agent Activity is off", async
       agents={[agent]}
       agentProfiles={new Map([[agent, { name: "Buzzy" }]])}
       onOpenWorkingAgent={openWorkingAgent}
-      onOpenAgentActivity={vi.fn()}
+      onOpenAgentActivity={openAgentActivity}
       onOpenThread={vi.fn()}
     />,
   );
   screen.getByRole("button", { name: "Activity" }).focus();
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("button", { name: /View .* activity/ })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "View Buzzy activity" }));
+  expect(openAgentActivity).toHaveBeenCalledExactlyOnceWith("studio", agent);
+  screen.getByRole("button", { name: "Activity" }).focus();
+  await user.keyboard("{Enter}");
   await user.click(
     screen.getByRole("button", {
       name: "Open conversation for Buzzy in Studio",

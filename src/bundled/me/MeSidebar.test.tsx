@@ -195,6 +195,7 @@ function fixture() {
 }
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
   const f = fixture();
+  expect(screen.getByRole("img", { name: "Berd" })).toBeVisible();
   const row = screen.getByRole("button", { name: /^Planning/ });
   expect(
     row.querySelector('[data-channel-unread-title="true"]'),
@@ -280,16 +281,20 @@ it("offers unread thread navigation and mark-read through the shared activity po
     }),
   );
 });
-it("does not offer a disabled activity panel for typing-only agents", async () => {
+it("opens a typing-only agent's profile activity in its Me conversation", async () => {
   const f = fixture();
   f.typing([{ channelId: id, pubkey: agent }]);
   const user = userEvent.setup();
   screen.getByRole("button", { name: /^Planning/ }).focus();
   await user.keyboard("{Enter}");
-  const popup = screen.getByRole("dialog", { name: "Activity in Planning" });
-  expect(
-    within(popup).queryByRole("button", { name: /View .+ activity/ }),
-  ).toBeNull();
+  let popup = screen.getByRole("dialog", { name: "Activity in Planning" });
+  await user.click(
+    within(popup).getByRole("button", { name: "View Owned Agent activity" }),
+  );
+  expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, id));
+  screen.getByRole("button", { name: /^Planning/ }).focus();
+  await user.keyboard("{Enter}");
+  popup = screen.getByRole("dialog", { name: "Activity in Planning" });
   await user.click(
     within(popup).getByRole("button", {
       name: "Open conversation for Owned Agent in Planning",
@@ -297,3 +302,36 @@ it("does not offer a disabled activity panel for typing-only agents", async () =
   );
   expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, id));
 });
+
+it.each(["disconnected", "connecting", "error"] as const)(
+  "keeps Solo's brand visible while %s without offering unavailable chat creation",
+  (status) => {
+    const owner = createRelaySession(null);
+    owners.push(owner);
+    const snapshot = { status, generation: 1, scope, session: owner.session };
+    const relay: RelayData = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry() {},
+      disconnect() {},
+      async clearCache() {},
+    };
+    // No navigation is needed until the connected history is mounted.
+    const navigator = { open: vi.fn() } as unknown as Navigation;
+    render(
+      <MeSidebar
+        relay={relay}
+        navigator={navigator}
+        target={meTarget(scope)}
+      />,
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Solo sidebar" });
+    expect(within(sidebar).getByRole("img", { name: "Berd" })).toBeVisible();
+    expect(within(sidebar).getByRole("status")).toHaveTextContent(
+      "Connect to a community",
+    );
+    expect(
+      within(sidebar).queryByRole("button", { name: "New chat" }),
+    ).toBeNull();
+  },
+);

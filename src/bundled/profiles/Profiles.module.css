@@ -104,32 +104,6 @@
   text-overflow: ellipsis;
 }
 
-.activityPreview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-card);
-  background: var(--surface-inset);
-}
-.activityItems {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.activityText {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
 .agentIdentity {
   display: flex;
   flex-direction: column;

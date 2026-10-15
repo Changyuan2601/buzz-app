@@ -5,17 +5,24 @@ import { useWorkingAgents } from "../channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../channels/WorkingAgentsBadge";
 import channelStyles from "../channels/Channels.module.css";
 import { sessionLinkTarget } from "../sessions/SessionsPage";
-import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
+import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
+import {
+  SidebarBrand,
+  SidebarFrame,
+} from "../../features/channel-navigation/SidebarFrame";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import {
+  RecoveryNotice,
+  useRecoveryShown,
+} from "../../features/relay/RecoveryNotice";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { useMePlacement } from "../../features/sessions/personal";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SessionSections } from "../sessions/SessionSections";
-import { readChannelSidebarWidth } from "../channels/useSidebarView";
 import { UnreadBadge } from "../channels/UnreadBadge";
 import { meSelection, meTarget } from "./routes";
 import styles from "../sessions/SessionsWorkspace.module.css";
@@ -24,10 +31,9 @@ type Props = { relay: RelayData; navigator: Navigation; target: OpenTarget };
 export function MeSidebar({ relay, navigator, target }: Props) {
   const connection = useRelayConnection(relay);
   const scope = connection.scope ?? "disconnected";
-  const width = readChannelSidebarWidth(scope);
   return (
-    <div className="shell-sidebar-default" style={{ width }}>
-      <SidebarFrame label="Me sidebar">
+    <ResizableSidebar scope={scope}>
+      <SidebarFrame label="Solo sidebar">
         {connection.status === "ready" ? (
           <PersonalHistory
             key={`${scope}:${connection.generation}`}
@@ -37,10 +43,17 @@ export function MeSidebar({ relay, navigator, target }: Props) {
             target={target}
           />
         ) : (
-          <p role="status">Connect to a community to see your conversations.</p>
+          <>
+            <div className={channelStyles.sidebarTop}>
+              <SidebarBrand mark="berd" />
+            </div>
+            <p role="status">
+              Connect to a community to see your conversations.
+            </p>
+          </>
         )}
       </SidebarFrame>
-    </div>
+    </ResizableSidebar>
   );
 }
 
@@ -57,6 +70,7 @@ function PersonalHistory({
 }) {
   const list = useChannelList(session.channels);
   const placement = useMePlacement(session);
+  const recoveryShown = useRecoveryShown(session.recovery);
   const selected = meSelection(target);
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
@@ -101,25 +115,19 @@ function PersonalHistory({
   return (
     <nav
       className={`${styles.sidebar} ${styles.history}`}
-      aria-label="Me conversations"
+      aria-label="Solo conversations"
     >
       <SessionSections
+        header={<SidebarBrand mark="berd" />}
         personal
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
+        onConverted={openMessage}
         sessions={conversations.map((item) => ({
           id: item.id,
           title: item.name,
         }))}
-        onShared={(id) => {
-          const destination = sessionLinkTarget(
-            `buzz://channel/${id}`,
-            scope,
-            session.viewer,
-          );
-          if (destination) void navigator.open(destination);
-        }}
         onNew={(sectionId) =>
           void navigator.open(meTarget(scope, "new", sectionId))
         }
@@ -144,25 +152,23 @@ function PersonalHistory({
         )}
       />
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
-      {list.status === "error" && (
-        <div role="alert">
-          <p>{list.error}</p>
-          <Button
-            onClick={() => {
-              session.channels.refreshList?.();
-            }}
-          >
-            Retry
-          </Button>
-        </div>
+      {list.status === "error" && !recoveryShown && (
+        <p role="alert">{list.error}</p>
       )}
-      {placement.status !== "ready" && (
+      {/* Network and relay outages for the channel list and Me placement
+          recover through one automatic owner; its notice is the single Retry.
+          Other failures need the user and keep their own Retry. */}
+      <RecoveryNotice recovery={session.recovery} />
+      {placement.status === "error" && !placement.transient ? (
         <p role="status">
-          {placement.error ?? "Loading Me placement…"}{" "}
+          {placement.error}{" "}
           <Button onClick={() => void session.mePlacement.refresh()}>
-            Retry Me
+            Retry Solo
           </Button>
         </p>
+      ) : (
+        placement.status !== "ready" &&
+        !recoveryShown && <p role="status">Loading Solo chats…</p>
       )}
       {!conversations.length &&
         list.status === "ready" &&

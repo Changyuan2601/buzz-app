@@ -2,7 +2,7 @@ import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
-import { ReadError, readErrorKind } from "./errors";
+import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import type {
   ChannelReference,
   ChannelList,
@@ -14,6 +14,12 @@ import type {
   ChannelWindow,
 } from "./contracts";
 import { DiscoveryState, metadataName, openMetadata } from "./discovery";
+import {
+  channelIdentity,
+  channelIdentityUnsupported,
+  channelLabelTags,
+  compareChannelAge,
+} from "./channel-labels";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
@@ -78,9 +84,13 @@ export type ChannelStoreOptions = {
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
-// One page of public channel metadata for name search; matches resolve exactly.
+// Public channel metadata for name search, read a page at a time up to a
+// bound; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
-/** How long name search reuses one page of public channel metadata. Typing
+const PUBLIC_CHANNEL_DIRECTORY = 20_000;
+/** One creator's channels with one label: a small answer, within one `resolve`. */
+const LABELED_CHANNEL_PAGE = 100;
+/** How long name search reuses the public channel metadata once read. Typing
  * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
 /** How long a channel link keeps a `withheld` answer before rechecking it. */
@@ -115,6 +125,8 @@ export function createChannelStore(
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
         rosterChanged?(strong?: boolean): void;
+        /** The relay advertises NIP-CL; label lookups are refused without it. */
+        channelIdentity?: true | undefined;
       })
     | null,
   directory: ProfileDirectory,
@@ -162,6 +174,8 @@ export function createChannelStore(
   type RosterRefresh = Readonly<{
     state: "idle" | "pending" | "verified" | "deferred" | "error";
     error?: string;
+    /** Set with an error that a later retry can fix; see isTransientFailure. */
+    transient?: true;
   }>;
   let rosterRefresh: RosterRefresh = Object.freeze({ state: "idle" });
   let list: ChannelList = transport
@@ -1211,7 +1225,11 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       outcome = isAbort(error)
         ? { state: "deferred" }
-        : { state: "error", error: describe(error) };
+        : {
+            state: "error",
+            error: describe(error),
+            ...(isTransientFailure(error) ? { transient: true as const } : {}),
+          };
       if (error instanceof ReadError && error.retryAfterMs !== undefined)
         listRetryAt = performance.now() + error.retryAfterMs;
       if (denyAllOnFailure && readErrorKind(error) === "denied") {
@@ -1414,14 +1432,66 @@ export function createChannelStore(
     }
   }
   /** Find active public channels the viewer has not joined, by name.
-   * The relay has no metadata text search, so this reads one bounded page of
-   * relay-signed 39000 metadata without applying it (reused for typing, see
+   * The relay has no metadata text search, so this reads every page of
+   * relay-signed 39000 metadata without applying it (shared while typing, see
    * PUBLIC_CHANNEL_PAGE_TTL), ranks name matches locally, and admits only
    * the best matches through `resolve`. Matches become readable
    * previews through `get`; they never enter `list()`. */
-  let publicPage:
-    | { generation: number; at: number; events: readonly RelayEvent[] }
+  let publicDirectory:
+    | {
+        generation: number;
+        /** When the read finished; a pending read is always reused. */
+        at?: number;
+        read: Promise<{ events: readonly RelayEvent[]; partial: boolean }>;
+      }
     | undefined;
+  /** All open channels' metadata, newest first, through the relay's
+   * `(until, before_id)` cursor. One read serves every keystroke: a caller
+   * that stops waiting leaves it running for the next one. */
+  async function readPublicDirectory(
+    relay: RelayReader & { relayAuthor: string },
+    generation: number,
+    signal: AbortSignal,
+  ) {
+    const events: RelayEvent[] = [];
+    let cursor: { until: number; before_id: string } | undefined;
+    for (;;) {
+      const page = await relay.read(
+        [
+          {
+            kinds: [39000],
+            authors: [relay.relayAuthor],
+            limit: PUBLIC_CHANNEL_PAGE,
+            ...cursor,
+          },
+        ],
+        { signal, priority: "foreground", fresh: true },
+      );
+      signal.throwIfAborted();
+      if (disposed || generation !== epoch)
+        throw new DOMException("Stale channel search", "AbortError");
+      events.push(
+        ...page.filter(
+          (event) => event.kind === 39000 && event.pubkey === relay.relayAuthor,
+        ),
+      );
+      if (page.length < PUBLIC_CHANNEL_PAGE) return { events, partial: false };
+      if (events.length >= PUBLIC_CHANNEL_DIRECTORY)
+        return { events, partial: true };
+      // Relay query order is time descending, then ID ascending (also at ties).
+      const last = [...page]
+        .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+        .at(-1);
+      if (
+        !last ||
+        (cursor &&
+          (last.created_at > cursor.until ||
+            (last.created_at === cursor.until && last.id <= cursor.before_id)))
+      )
+        throw new Error("Public channel search did not advance");
+      cursor = { until: last.created_at, before_id: last.id };
+    }
+  }
   async function searchPublic(
     query: string,
     settings?: ReadOptions & { limit?: number; exact?: boolean },
@@ -1435,31 +1505,44 @@ export function createChannelStore(
     const generation = epoch;
     // Candidates only: `resolve` below re-reads each match, so a reused page
     // never grants access by itself.
-    let metadata =
-      publicPage?.generation === generation &&
-      now() - publicPage.at < PUBLIC_CHANNEL_PAGE_TTL
-        ? publicPage.events
-        : undefined;
-    if (!metadata) {
-      const events = await transport.read(
-        [
-          {
-            kinds: [39000],
-            authors: [transport.relayAuthor],
-            limit: PUBLIC_CHANNEL_PAGE,
-          },
-        ],
-        { ...settings, fresh: true },
+    if (
+      publicDirectory?.generation !== generation ||
+      (publicDirectory.at !== undefined &&
+        now() - publicDirectory.at >= PUBLIC_CHANNEL_PAGE_TTL)
+    ) {
+      const controller = new AbortController();
+      controllers.add(controller);
+      const entry: NonNullable<typeof publicDirectory> = {
+        generation,
+        read: readPublicDirectory(transport, generation, controller.signal),
+      };
+      publicDirectory = entry;
+      // A failed read is not reused; the next keystroke starts again.
+      void entry.read.then(
+        () => {
+          controllers.delete(controller);
+          entry.at = now();
+        },
+        () => {
+          controllers.delete(controller);
+          if (publicDirectory === entry) publicDirectory = undefined;
+        },
       );
-      settings?.signal?.throwIfAborted();
-      if (disposed || generation !== epoch)
-        throw new DOMException("Stale channel search", "AbortError");
-      metadata = events.filter(
-        (event) =>
-          event.kind === 39000 && event.pubkey === transport.relayAuthor,
-      );
-      publicPage = { generation, at: now(), events: metadata };
     }
+    const { read } = publicDirectory;
+    const signal = settings?.signal;
+    signal?.throwIfAborted();
+    const directory = await new Promise<Awaited<typeof read>>(
+      (resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+        read.then(resolve, reject);
+      },
+    );
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel search", "AbortError");
+    const metadata = directory.events;
     const latest = new Map<string, RelayEvent>();
     for (const event of metadata) {
       const id = tag(event, "d");
@@ -1501,7 +1584,71 @@ export function createChannelStore(
     });
     if (generation === epoch)
       recentPublic = { generation, ids: channels.map(({ id }) => id) };
-    return { channels, partial: metadata.length >= PUBLIC_CHANNEL_PAGE };
+    return { channels, partial: directory.partial };
+  }
+  /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
+   * The page only names candidates; `resolve` re-reads each one before it
+   * becomes readable through `get`. Matches never enter `list()`. */
+  async function findLabeled(
+    query: Readonly<{ creator: string; label: string }>,
+    settings?: ChannelReadOptions,
+  ): Promise<readonly ChannelSummary[]> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    // An old relay ignores the label filter; "none found" would be a guess.
+    if (!transport.channelIdentity) throw channelIdentityUnsupported();
+    if (!/^[0-9a-f]{64}$/.test(query.creator))
+      throw new Error("Choose a valid channel creator.");
+    channelLabelTags([query.label]);
+    const generation = epoch;
+    const events = await transport.read(
+      [
+        {
+          kinds: [39000],
+          ...(settings?.consistency
+            ? { consistency: settings.consistency }
+            : {}),
+          authors: [transport.relayAuthor],
+          "#P": [query.creator],
+          "#t": [query.label],
+          limit: LABELED_CHANNEL_PAGE,
+        },
+      ],
+      { ...settings, fresh: true },
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel lookup", "AbortError");
+    // Check the relay's answer: only relay-signed metadata whose creator and
+    // labels match. A label alone proves nothing; the creator tag does.
+    const ids = [
+      ...new Set(
+        events.flatMap((event) => {
+          const id = tag(event, "d");
+          const identity = channelIdentity(event);
+          return event.kind === 39000 &&
+            event.pubkey === transport.relayAuthor &&
+            id &&
+            identity.creator === query.creator &&
+            identity.labels.includes(query.label)
+            ? [id]
+            : [];
+        }),
+      ),
+    ];
+    if (ids.length) await resolve(ids, settings);
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel lookup", "AbortError");
+    return ids
+      .flatMap((id) => {
+        const channel = discovery.get(id);
+        return channel &&
+          channel.creator === query.creator &&
+          channel.labels?.includes(query.label)
+          ? [channel]
+          : [];
+      })
+      .sort(compareChannelAge);
   }
   /** An open channel's current read-only preview, as name search admits it. */
   function previewable(id: string) {
@@ -1889,6 +2036,7 @@ export function createChannelStore(
     get: (id: string) => discovery?.get(id),
     resolve,
     searchPublic,
+    findLabeled,
     matchPublic,
     describe: describeReference,
     refer: referChannel,

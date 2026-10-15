@@ -380,7 +380,7 @@ it("seeds a first launch to now and keeps communities apart", async () => {
 });
 
 // Roster pages per launch shape: "two" puts the channel on page two of 501,
-// "capped" returns full pages until discovery stops at its retained cap.
+// "capped" overflows discovery's retained cap on the third page.
 const ROSTERS = { one: 1, empty: 1, two: 2, capped: 3 } as const;
 
 type Launch = Readonly<{
@@ -562,7 +562,7 @@ async function launch(options: Launch) {
         : shape === "capped"
           ? page === 0
             ? [room(2e6), ...filler(0, 499)]
-            : filler(page, 500)
+            : filler(page, page === 1 ? 500 : 25)
           : [room(1e6)];
   let served = 0;
   return {
@@ -583,6 +583,7 @@ async function launch(options: Launch) {
       served++;
     },
     roster: () => owner.session.live.snapshot().roster.state,
+    list: () => owner.session.channels.list(),
     reminder,
     history,
     reminders: () => owner.session.reminders?.snapshot(),
@@ -727,6 +728,11 @@ it.each<[string, Launch["first"], Launch["banners"], Partial<Launch>]>([
       await vi.waitFor(() => expect(app.show).toHaveBeenCalledTimes(banners));
       await vi.waitFor(() => expect(app.saved()).toBe("5000"));
       if (rest.revoke) expect(app.roster()).toBe("verified");
+      if (rest.roster === "capped")
+        expect(app.list()).toMatchObject({
+          status: "ready",
+          coverage: "partial",
+        });
       await app.refresh();
       expect(app.show).toHaveBeenCalledTimes(banners);
     } finally {

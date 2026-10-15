@@ -346,7 +346,9 @@ it.each(["leave", "hide", "archive", "unarchive"] as const)(
       unarchive: "Unarchive channel",
     }[action];
     const confirm = screen.getByRole("button", { name: label });
-    expect(confirm.getAttribute("data-variant")).toBe("prominent");
+    expect(confirm.getAttribute("data-variant")).toBe(
+      action === "leave" ? "subtle" : "prominent",
+    );
     if (action === "archive") {
       expect(
         screen.getByText(
@@ -388,6 +390,49 @@ it.each(["leave", "hide", "archive", "unarchive"] as const)(
     expect(completed).not.toHaveBeenCalled();
   },
 );
+it.each([
+  ["archive", "Archive channel", "prominent", "subtle", true],
+  ["unarchive", "Unarchive channel", "prominent", "subtle", true],
+  ["hide", "Hide conversation", "prominent", "subtle", true],
+  ["leave", "Leave channel", "subtle", "prominent", false],
+  ["delete", "Delete channel", "destructive", "prominent", false],
+] as const)(
+  "Enter presses the prominent default button for %s",
+  async (action, label, confirmVariant, cancelVariant, confirms) => {
+    const lifecycle = capability();
+    const close = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Fixture"
+        action={action}
+        lifecycle={lifecycle}
+        close={close}
+        completed={vi.fn()}
+      />,
+    );
+    const confirm = screen.getByRole("button", { name: label });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(confirm).toHaveAttribute("data-variant", confirmVariant);
+    expect(cancel).toHaveAttribute("data-variant", cancelVariant);
+    await waitFor(() => expect(confirms ? confirm : cancel).toHaveFocus());
+    await user.keyboard("{Enter}");
+    if (confirms) {
+      await waitFor(() =>
+        expect(lifecycle.run).toHaveBeenCalledWith(
+          action,
+          "id",
+          expect.any(AbortSignal),
+        ),
+      );
+      expect(close).not.toHaveBeenCalled();
+    } else {
+      expect(close).toHaveBeenCalledOnce();
+      expect(lifecycle.run).not.toHaveBeenCalled();
+    }
+  },
+);
 it("uncertain delivery keeps the dialog recoverable without offering blind resubmission", async () => {
   const lifecycle = capability();
   lifecycle.run.mockRejectedValueOnce(
@@ -414,6 +459,36 @@ it("uncertain delivery keeps the dialog recoverable without offering blind resub
   );
   expect(confirm.disabled).toBe(true);
   await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(close).toHaveBeenCalledOnce();
+  expect(lifecycle.run).toHaveBeenCalledOnce();
+});
+
+it("uncertain Enter confirmation moves focus to Cancel", async () => {
+  const lifecycle = capability();
+  lifecycle.run.mockRejectedValueOnce(
+    new ChannelLifecycleUnconfirmed("connection lost"),
+  );
+  const user = userEvent.setup();
+  const close = vi.fn();
+  render(
+    <ChannelLifecycleDialog
+      channelId="id"
+      channelName="Fixture"
+      action="archive"
+      lifecycle={lifecycle}
+      close={close}
+      completed={() => {}}
+    />,
+  );
+  const confirm = screen.getByRole("button", { name: "Archive channel" });
+  await waitFor(() => expect(confirm).toHaveFocus());
+  await user.keyboard("{Enter}");
+  await screen.findByRole("alert");
+  expect(confirm).toBeDisabled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
   expect(close).toHaveBeenCalledOnce();
   expect(lifecycle.run).toHaveBeenCalledOnce();
 });

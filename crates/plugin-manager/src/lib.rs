@@ -41,6 +41,10 @@ pub struct HostGrants {
     /// a process takes stdin and the caller appends its own arguments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub processes: Vec<HostProcess>,
+    /// The plugin may serve MCP servers on loopback HTTP to the agents it
+    /// runs, answering their messages itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +73,9 @@ pub struct HostProcess {
     /// Fixed leading arguments; the caller's arguments follow them.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Run the copy the app ships in its `bin` resources, never one on PATH.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bundled: bool,
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -224,6 +231,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("claude manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/codex/manifest.json"))
             .expect("codex manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/goose/manifest.json"))
+            .expect("goose manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -266,6 +275,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
+            | "buzz.goose"
             | "buzz.workflows"
             | "buzz.sessions"
             | "block.hosted-communities"
@@ -955,7 +965,7 @@ fn prepare_reload_artifact(source: &ReloadSource) -> Result<Release> {
     imports::read_package(&directory, &relative)
 }
 fn validate_candidate_path(path: &str) -> Result<PathBuf> {
-    let path = path.trim();
+    // Recorded paths are lossless folder identities; spaces are part of valid names.
     if path.is_empty() {
         return Err("Reload source path is empty".into());
     }
@@ -1056,11 +1066,12 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_from_text, bundled_manifests, enabled_by_default, Manager, Manifest,
-        MAX_HOST_COMMAND_OUTPUT_BYTES,
+        artifact_from_text, bundled_manifests, enabled_by_default, validate_candidate_path,
+        Manager, Manifest, MAX_HOST_COMMAND_OUTPUT_BYTES,
     };
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn native_catalog_matches_desktop_bundles() {
@@ -1379,6 +1390,11 @@ mod tests {
             parsed.host.as_ref().unwrap().processes[0].args,
             Vec::<String>::new()
         );
+        assert!(!parsed.host.as_ref().unwrap().processes[0].bundled);
+        let mut bundled = processes.clone();
+        bundled["host"]["processes"][0]["bundled"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(bundled).unwrap();
+        assert!(parsed.host.as_ref().unwrap().processes[0].bundled);
         for (field, value) in [
             ("program", serde_json::json!("/bin/sh")),
             ("program", serde_json::json!("")),
@@ -1678,6 +1694,17 @@ mod tests {
             manager.catalog().err().as_deref(),
             Some("Invalid installed plugin identity")
         );
+    }
+
+    #[test]
+    fn reload_source_paths_keep_spaces_and_reject_escapes() {
+        for path in [" plugin", "plugin ", "a/ b /c", " "] {
+            assert_eq!(validate_candidate_path(path).unwrap(), Path::new(path));
+        }
+        assert_eq!(validate_candidate_path(".").unwrap(), Path::new(""));
+        for path in ["", "/plugin", "../plugin", "a/../b", "./plugin"] {
+            assert!(validate_candidate_path(path).is_err(), "{path:?}");
+        }
     }
 
     #[test]

@@ -1,0 +1,27 @@
+language js
+
+// Avatar URLs come from avatarMedia (avatar-source.ts). It always asks the
+// relay for the cached thumbnail, the URL message rows load and the media
+// warmer prefetches, so the avatar paints at once; a bare media(picture) asks
+// for the original and the avatar sits blank until it downloads. The two
+// full-size frames that need the original are excluded by name in biome.json.
+or {
+  or {
+    `$receiver.media($args)`,
+    `$receiver?.media($args)`,
+    `media($args)`
+  } where {
+    $args <: contains or {
+      r"(?i).*(?:picture|avatar).*",
+      `"small"`
+    },
+    register_diagnostic(span=$args, message="Build avatar URLs with avatarMedia(value, media) from shared/avatar-source.ts, which requests the cached thumbnail.", severity="error")
+  },
+  `$preview($value, $community)` where {
+    $preview <: or {
+      `useAvatarPreview`,
+      `avatarPreview`
+    },
+    register_diagnostic(span=$preview, message="Pass the small size so the avatar reuses the cached relay thumbnail, or exclude this full-size frame by name in biome.json.", severity="error")
+  }
+}

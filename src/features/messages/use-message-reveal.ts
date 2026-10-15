@@ -10,6 +10,7 @@ export function useMessageReveal({
   ready,
   complete,
   prepare,
+  hold,
   focus = true,
 }: {
   scroller: RefObject<HTMLElement | null>;
@@ -21,11 +22,21 @@ export function useMessageReveal({
   prepare?(): void;
   /** A covering modal owns focus; the underlying target still verifies/reveals. */
   focus?: boolean;
+  /**
+   * While this returns true after the reveal, keep the row where the reveal put
+   * it. Rows mounted around the target can measure after verification and push
+   * it out of view. The owner ends the hold on reader intent.
+   */
+  hold?: () => boolean;
 }) {
   const revealed = useRef<AbortSignal | undefined>(undefined);
   const focused = useRef<{ signal: AbortSignal; row: HTMLElement } | undefined>(
     undefined,
   );
+  // Outlives the reveal effect: a dependency change after completion must not
+  // end the hold, but unmount and the next reveal do.
+  const holding = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => () => holding.current?.(), []);
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -37,6 +48,7 @@ export function useMessageReveal({
       return;
     const container = scroller.current;
     if (!container) return;
+    const target = messageId;
     let frame = 0;
     const cancel = () => {
       cancelAnimationFrame(frame);
@@ -92,6 +104,10 @@ export function useMessageReveal({
           return;
         revealed.current = signal;
         cancel();
+        holding.current?.();
+        holding.current = hold
+          ? keep(container, target, signal, hold)
+          : undefined;
         readingPositioned(container);
         complete();
       });
@@ -118,6 +134,69 @@ export function useMessageReveal({
       cancel();
       signal.removeEventListener("abort", cancel);
     };
-  }, [scroller, settled, messageId, signal, ready, complete, prepare, focus]);
+  }, [
+    scroller,
+    settled,
+    messageId,
+    signal,
+    ready,
+    complete,
+    prepare,
+    focus,
+    hold,
+  ]);
   return revealed;
+}
+
+/** Undo layout drift of a revealed row until its owner, request or viewport ends the hold. */
+function keep(
+  container: HTMLElement,
+  messageId: string,
+  signal: AbortSignal,
+  hold: () => boolean,
+) {
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  const offset = () => {
+    const row = [
+      ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ].find((element) => element.dataset.messageId === messageId);
+    return row
+      ? row.getBoundingClientRect().top - container.getBoundingClientRect().top
+      : undefined;
+  };
+  const at = offset();
+  let frame = 0;
+  const release = () => {
+    cancelAnimationFrame(frame);
+    observer.disconnect();
+    signal.removeEventListener("abort", release);
+  };
+  const check = () => {
+    const now = offset();
+    // A resized viewport is a new layout, not drift; the owner positions it.
+    if (
+      signal.aborted ||
+      !hold() ||
+      !container.isConnected ||
+      container.clientWidth !== width ||
+      container.clientHeight !== height ||
+      at === undefined ||
+      now === undefined
+    )
+      return release();
+    if (Math.abs(now - at) >= 0.5) container.scrollTop += now - at;
+  };
+  const observer = new MutationObserver(() => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(check);
+  });
+  observer.observe(container, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+  signal.addEventListener("abort", release, { once: true });
+  return release;
 }

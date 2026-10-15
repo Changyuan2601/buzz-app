@@ -35,7 +35,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function harness(role = "owner") {
+function harness(role = "owner", labels = false) {
   let clock = 100;
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent(
@@ -74,6 +74,7 @@ function harness(role = "owner") {
   const owner = createChannelDetails({
     reader: { read },
     writer: { sign, publish },
+    labels,
     viewer,
     relayAuthor,
     canAccess: () => active,
@@ -676,30 +677,31 @@ it("allows only a single canonical TTL command tag without widening other fields
   }
 });
 
-it("renames standalone sessions with a name-only command and confirmed relay readback", async () => {
-  const h = harness();
-  h.set([
-    h.metadata("Old title", sessionDescription(), "private"),
-    ...h.events().slice(1),
-  ]);
-  const base = await h.owner.capability.load(id);
-  expect(base.canEdit).toBe(true);
-  h.publish.mockImplementationOnce(async () => {
-    h.set([
-      h.metadata("New title", sessionDescription(), "private"),
-      ...h.events().slice(1),
+it.each([false, true])(
+  "renames standalone sessions with a name-only command and confirmed relay readback (personal=%s)",
+  async (personal) => {
+    const h = harness();
+    const about = sessionDescription(undefined, personal);
+    h.set([h.metadata("Old title", about, "private"), ...h.events().slice(1)]);
+    const base = await h.owner.capability.load(id);
+    expect(base.canEdit).toBe(true);
+    h.publish.mockImplementationOnce(async () => {
+      h.set([
+        h.metadata("New title", about, "private"),
+        ...h.events().slice(1),
+      ]);
+    });
+    await h.owner.capability.save(base, { ...base, name: "New title" });
+    const command = h.sign.mock.calls[0]?.[0];
+    expect(command?.tags).toEqual([
+      ["h", id],
+      ["name", "New title"],
     ]);
-  });
-  await h.owner.capability.save(base, { ...base, name: "New title" });
-  const command = h.sign.mock.calls[0]?.[0];
-  expect(command?.tags).toEqual([
-    ["h", id],
-    ["name", "New title"],
-  ]);
-  assert(command);
-  expect(() => validateDetailsTemplate(command)).not.toThrow();
-  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
-});
+    assert(command);
+    expect(() => validateDetailsTemplate(command)).not.toThrow();
+    expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
+  },
+);
 it.each([false, true])(
   "promotes a standalone session in place (public/temporary=%s)",
   async (changed) => {
@@ -778,3 +780,89 @@ it.each([
     expect(h.sign).not.toHaveBeenCalled();
   },
 );
+
+it("writes NIP-CL labels only when the set changes, and admits only valid label tails", () => {
+  const base = { ...draft, labels: ["for-you", "demo"] };
+  const tagsOf = (labels?: readonly string[]) =>
+    detailsTemplate(id, { ...draft, labels }, base).tags;
+  // Absent or the same set (any order) sends no `t`, so the relay keeps it.
+  expect(tagsOf(undefined).some(([key]) => key === "t")).toBe(false);
+  expect(tagsOf(["demo", "for-you"]).some(([key]) => key === "t")).toBe(false);
+  // A new set replaces it; an empty set clears it with one empty `t`.
+  expect(tagsOf(["for-you", "app:records"]).slice(3)).toEqual([
+    ["t", "for-you"],
+    ["t", "app:records"],
+  ]);
+  expect(tagsOf([]).slice(3)).toEqual([["t", ""]]);
+  for (const labels of [["for-you"], [], ["a", "b", "c"]]) {
+    const template = detailsTemplate(id, { ...draft, labels }, base);
+    expect(() => validateDetailsTemplate(template)).not.toThrow();
+  }
+  for (const labels of [["System"], ["stream"], ["x".repeat(65)], ["a b"]])
+    expect(() => tagsOf(labels)).toThrow(/channel labels/);
+  expect(() => tagsOf(Array.from({ length: 9 }, (_, n) => `l${n}`))).toThrow(
+    /at most 8/,
+  );
+  const head = [
+    ["h", id],
+    ["name", "renamed"],
+    ["about", ""],
+  ];
+  for (const tail of [
+    [["t", "system"]],
+    [
+      ["t", "a"],
+      ["t", "a"],
+    ],
+    [
+      ["t", ""],
+      ["t", "a"],
+    ],
+    [
+      ["t", "a"],
+      ["visibility", "open"],
+    ],
+    [["t", "a", "extra"]],
+    Array.from({ length: 9 }, (_, n) => ["t", `l${n}`]),
+  ])
+    expect(() =>
+      validateDetailsTemplate({
+        kind: 9002,
+        created_at: 1,
+        content: "",
+        tags: [...head, ...tail],
+      }),
+    ).toThrow();
+  expect(() =>
+    validateDetailsTemplate({
+      kind: 9002,
+      created_at: 1,
+      content: "",
+      tags: [...head, ["visibility", "open"], ["ttl", ""], ["t", "a"]],
+    }),
+  ).not.toThrow();
+});
+
+it("refuses a label change without signing when the relay does not advertise NIP-CL", async () => {
+  const old = harness();
+  const base = await old.owner.capability.load(id);
+  expect(base.labels).toEqual([]);
+  await expect(
+    old.owner.capability.save(base, { ...draft, labels: ["for-you"] }),
+  ).rejects.toThrow(/does not support channel labels/);
+  expect(old.sign).not.toHaveBeenCalled();
+  // Other edits still save, with the unchanged (empty) label set.
+  await old.owner.capability.save(base, { ...draft, labels: [] });
+  expect(old.publish).toHaveBeenCalledOnce();
+
+  const supported = harness("owner", true);
+  const current = await supported.owner.capability.load(id);
+  await supported.owner.capability
+    .save(current, { ...draft, labels: ["for-you"] })
+    .catch(() => {});
+  expect(supported.sign).toHaveBeenCalledOnce();
+  expect(supported.sign.mock.calls[0]?.[0].tags).toContainEqual([
+    "t",
+    "for-you",
+  ]);
+});

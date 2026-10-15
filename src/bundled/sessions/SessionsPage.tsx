@@ -1,9 +1,20 @@
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
+import { profileActivityViewTarget } from "../../features/profiles/target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { activityTarget } from "../../features/agents/activity-target";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
-import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -17,6 +28,9 @@ import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
+import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -31,6 +45,7 @@ import {
   PencilSimpleIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import {
   useCallback,
@@ -66,7 +81,14 @@ import {
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
+import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
+import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
+import { SessionProjectControl } from "../../features/sessions/SessionProjectControl";
+import {
+  readSelectedAssistant,
+  writeSelectedAssistant,
+} from "../../features/sessions/selected-assistant";
 import {
   SessionColumn,
   SessionHeading,
@@ -103,9 +125,9 @@ export function SessionsPage({
     />
   ) : (
     <PanelFrame companion={companion}>
-      <section className={styles.empty} aria-label="Me">
+      <section className={styles.empty} aria-label="Solo">
         <ChatCircleIcon size={28} />
-        <h1>Me</h1>
+        <h1>Solo</h1>
         <p>
           {connection.status === "connecting"
             ? "Connecting to your community…"
@@ -124,16 +146,7 @@ export function SessionsPage({
   );
 }
 
-function LiveSessions({
-  relay,
-  panels,
-  companion,
-  session,
-  scope,
-  extensions,
-  navigator,
-  navigation,
-}: {
+type LiveProps = {
   relay: RelayData;
   panels: Panels;
   companion?: ReactNode;
@@ -142,7 +155,55 @@ function LiveSessions({
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
-}) {
+};
+type Lifecycle = {
+  channel: ChannelSummary;
+  action: ChannelLifecycleAction;
+  trigger?: HTMLElement | undefined;
+  origin?: AbortSignal | undefined;
+};
+
+// Lifecycle actions remove the conversation from Me, so the dialog outlives
+// the view but not the visit that opened it.
+function LiveSessions(props: LiveProps) {
+  const { session, scope, navigator } = props;
+  const [lifecycle, setLifecycle] = useState<Lifecycle>();
+  return (
+    <>
+      <SessionsView {...props} chooseLifecycle={setLifecycle} />
+      {lifecycle && !lifecycle.origin?.aborted && (
+        <ChannelLifecycleDialog
+          channelId={lifecycle.channel.id}
+          channelName={lifecycle.channel.name}
+          action={lifecycle.action}
+          lifecycle={session.channelLifecycle}
+          close={() => {
+            setLifecycle(undefined);
+            if (lifecycle.trigger?.isConnected)
+              lifecycle.trigger.focus({ preventScroll: true });
+          }}
+          completed={() => {
+            setLifecycle(undefined);
+            if (!lifecycle.origin?.aborted)
+              void navigator?.open(meTarget(scope));
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function SessionsView({
+  relay,
+  panels,
+  companion,
+  session,
+  scope,
+  extensions,
+  navigator,
+  navigation,
+  chooseLifecycle,
+}: LiveProps & { chooseLifecycle(lifecycle: Lifecycle): void }) {
   const list = useChannelList(session.channels);
   const placement = useMePlacement(session);
   const selected = meSelection(navigation?.target);
@@ -198,6 +259,14 @@ function LiveSessions({
   if (selectedSession)
     return (
       <SessionWork
+        chooseLifecycle={(action, trigger) =>
+          chooseLifecycle({
+            channel: selectedSession,
+            action,
+            trigger,
+            origin: navigation?.signal,
+          })
+        }
         relay={relay}
         panels={panels}
         companion={companion}
@@ -214,19 +283,12 @@ function LiveSessions({
     <PanelFrame companion={companion}>
       <section className={styles.empty}>
         {placement.status !== "ready" ? (
-          <div role="status">
-            <p>{placement.error ?? "Loading Me placement…"}</p>
-            <Button onClick={() => void session.mePlacement.refresh()}>
-              Retry Me
-            </Button>
-          </div>
+          <p role="status">{placement.error ?? "Loading Solo chats…"}</p>
         ) : list.status === "loading" ? (
           <p role="status">Loading your conversation…</p>
         ) : (
           <>
-            <p>
-              This conversation isn’t in your Me workspace. Open it in Messages.
-            </p>
+            <p>This conversation isn’t in Solo. Open it in Multiplayer.</p>
             {selectedSession && (
               <Button
                 onClick={() => {
@@ -240,7 +302,7 @@ function LiveSessions({
                     });
                 }}
               >
-                Open in Messages
+                Open in Multiplayer
               </Button>
             )}
             <Button
@@ -268,6 +330,7 @@ function SessionWork({
   parentName,
   navigator,
   navigation,
+  chooseLifecycle,
 }: {
   relay: RelayData;
   panels: Panels;
@@ -279,13 +342,27 @@ function SessionWork({
   parentName?: string | undefined;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
+  chooseLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
+  useSessionConversions(session);
   const window = useChannelWindow(session.channels, channel.id);
+  const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const shareAttempts = useSessionShareAttempts(session);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState(() =>
+    readSelectedAssistant(scope, channel.id),
+  );
+  const selectAgent = (agent: string) => {
+    setSelectedAgent(agent);
+    writeSelectedAssistant(scope, channel.id, agent);
+  };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
+  const personalChat = inMe && channel.channelType === "session";
   const list = useChannelList(session.channels);
   const { channels } = useChannelLabels(
     list.channels,
@@ -302,7 +379,9 @@ function SessionWork({
       mounted.current = false;
     };
   }, []);
+  const focusFallback = useRef<HTMLElement>(null);
   const secondary = useConversationTabs({
+    fallbackFocus: focusFallback,
     state: tabState,
     relay,
     session,
@@ -332,9 +411,9 @@ function SessionWork({
       navigation?.signal.aborted
     )
       return;
-    const target = activityTarget(intent.agent, intent.channelId);
-    const panel = panels.resolve(target);
-    if (panel) {
+    const target = profileActivityViewTarget(intent.agent);
+    const panel = target && panels.resolve(target);
+    if (target && panel) {
       panelTrigger.current = intent.trigger;
       open({ channelId: intent.channelId, panel, target }, true);
     }
@@ -344,7 +423,7 @@ function SessionWork({
   const canOpenLink = (url: string) =>
     !!panels.resolve(url) ||
     (!!navigator && !!sessionLinkTarget(url, scope, session.viewer));
-  function openLink(url: string) {
+  function openLink(url: string, origin?: MessageLinkOrigin) {
     const connection = relay.snapshot();
     if (
       !mounted.current ||
@@ -365,7 +444,12 @@ function SessionWork({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    secondary.open({ channelId: channel.id, panel, target: url });
+    secondary.open({
+      channelId: channel.id,
+      ...(origin && { rootId: origin.rootId }),
+      panel,
+      target: url,
+    });
     return true;
   }
   useEffect(
@@ -379,8 +463,10 @@ function SessionWork({
   const workspace = (
     <div className={channelStyles.root}>
       <div ref={split.ref} style={split.style} className={channelStyles.board}>
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker. */}
-        <div
+        <section
+          ref={focusFallback}
+          aria-label={`Chat ${channel.name}`}
+          tabIndex={-1}
           className={styles.work}
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
@@ -392,31 +478,33 @@ function SessionWork({
             <SessionShare
               session={session}
               channel={channel}
-              direct
               signal={navigation?.signal}
-              onShared={() => {
-                if (navigation?.signal.aborted) return;
-                const target = sessionLinkTarget(
-                  `buzz://channel/${channel.id}`,
-                  scope,
-                  session.viewer,
-                );
-                if (target) void navigator?.open(target);
-              }}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
             <MenuRoot>
               <MenuTrigger
-                render={(props) => (
+                render={
                   <IconButton
-                    {...props}
+                    ref={actionsTrigger}
                     size="toolbar"
                     aria-label="Session actions"
                     title="Session actions"
                     icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
                   />
-                )}
+                }
               />
               <MenuPopup aria-label="Session actions" align="end">
+                {canConvertSession(session, channel) && (
+                  <MenuItem
+                    disabled={shareAttempts.has(channel.id)}
+                    onClick={() => {
+                      if (!sessionShareAttempt(session, channel.id))
+                        setConvertOpen(true);
+                    }}
+                  >
+                    {conversionLabel(session, channel.id)}
+                  </MenuItem>
+                )}
                 <MenuItem
                   disabled={
                     !!channel.readOnly || !session.channelDetails?.available
@@ -435,27 +523,48 @@ function SessionWork({
                   <MenuIcon>
                     <GearIcon size={16} />
                   </MenuIcon>
-                  Session settings…
+                  {inMe ? "Chat settings…" : "Session settings…"}
                 </MenuItem>
+                {!channel.readOnly && !channel.cached && !channel.archived && (
+                  <ChannelLifecycleMenu
+                    channelId={channel.id}
+                    lifecycle={session.channelLifecycle}
+                    disabled={false}
+                    separator
+                    choose={(action) =>
+                      chooseLifecycle(
+                        action,
+                        actionsTrigger.current ?? undefined,
+                      )
+                    }
+                  />
+                )}
               </MenuPopup>
             </MenuRoot>
-            {!showingPanel && (
-              <span className={panelStyles.paneToggle}>
-                <IconButton
-                  ref={splitTrigger}
-                  data-tab-pane-toggle=""
-                  size="toolbar"
-                  aria-label="Toggle tab pane"
-                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
-                  aria-expanded={!!showingPanel}
-                  icon={<SidebarRightIcon size="1rem" />}
-                  disabled={!hasLocalPanel}
-                  focusableWhenDisabled
-                  onClick={() => tabState.setPaneOpen(!showingPanel)}
-                />
-              </span>
+            {hasLocalPanel && !showingPanel && (
+              <IconButton
+                ref={splitTrigger}
+                data-tab-pane-toggle=""
+                size="toolbar"
+                aria-label="Toggle tab pane"
+                title="Open tab pane"
+                aria-expanded={false}
+                icon={<SidebarRightIcon size="1rem" />}
+                onClick={() => tabState.setPaneOpen(true)}
+              />
             )}
           </SessionHeading>
+          {convertOpen && (
+            <ConvertSession
+              key={channel.id}
+              session={session}
+              id={channel.id}
+              signal={navigation?.signal}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
+              close={() => setConvertOpen(false)}
+              finalFocus={actionsTrigger}
+            />
+          )}
           {renameOpen && (
             <RenameSession
               key={channel.id}
@@ -474,22 +583,26 @@ function SessionWork({
               close={() => setSettingsOpen(false)}
             />
           )}
-          {placement.status !== "ready" && (
-            <div role="status">
-              <p>{placement.error ?? "Loading Me placement…"}</p>
+          {placement.status === "error" && !placement.transient ? (
+            <p role="status">
+              {placement.error}{" "}
               <Button onClick={() => void session.mePlacement.refresh()}>
-                Retry Me
+                Retry Solo
               </Button>
-            </div>
+            </p>
+          ) : (
+            placement.status !== "ready" && (
+              <p role="status">Loading Solo chats…</p>
+            )
           )}
           {!inMe && placement.status === "ready" && (
             <div role="status">
-              <p>This conversation is in Messages.</p>
+              <p>This conversation is in Multiplayer.</p>
               {navigator && (
                 <Button
                   onClick={() => openLink(`buzz://channel/${channel.id}`)}
                 >
-                  Open in Messages
+                  Open in Multiplayer
                 </Button>
               )}
             </div>
@@ -497,7 +610,9 @@ function SessionWork({
           <SessionColumn enabled={false}>
             <MessageManagementStatus />
             <div className={styles.timeline}>
-              {window.status === "error" && !window.rows.length ? (
+              {window.status === "error" &&
+              !window.rows.length &&
+              !recoveryShown ? (
                 <div className={styles.empty} role="alert">
                   <p>{window.error}</p>
                   <Button
@@ -513,6 +628,7 @@ function SessionWork({
                 </p>
               ) : (
                 <ChannelTimeline
+                  chatPresentation={personalChat}
                   historyControl="scroll"
                   extensions={extensions}
                   queries={session}
@@ -527,16 +643,47 @@ function SessionWork({
               )}
             </div>
             <MessageComposer
-              sessionConversation
+              chatPresentation={personalChat}
+              sessionConversation={channel.channelType === "session"}
               activityClickOpensPanel
-              personalConversation={placement.status !== "ready" || inMe}
+              personalConversation={
+                channel.channelType === "session" &&
+                (placement.status !== "ready" || inMe)
+              }
+              selectedAgent={personalChat ? selectedAgent : undefined}
+              trailingTool={
+                personalChat ? (
+                  <>
+                    <SessionAgentControl
+                      session={session}
+                      channelId={channel.id}
+                      value={selectedAgent}
+                      onChange={selectAgent}
+                      disabled={
+                        !!channel.archived || placement.status !== "ready"
+                      }
+                    />
+                    <SessionProjectControl
+                      session={session}
+                      channelId={channel.id}
+                      disabled={
+                        !!channel.archived || placement.status !== "ready"
+                      }
+                    />
+                  </>
+                ) : undefined
+              }
               onSend={setSent}
               extensions={extensions}
               session={session}
               scope={scope}
               channelId={channel.id}
               channelName={channel.name}
-              label="Message your agents"
+              label={
+                channel.channelType === "session"
+                  ? "Message your agents"
+                  : undefined
+              }
               disabled={
                 !!channel.archived ||
                 window.status !== "ready" ||
@@ -547,7 +694,7 @@ function SessionWork({
             />
           </SessionColumn>
           {drawer.content}
-        </div>
+        </section>
         <PanelDock
           open={!!companion || !!showingPanel}
           keepMounted={hasLocalPanel && !tabState.paneOpen}

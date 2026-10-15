@@ -22,6 +22,7 @@ import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
 import type { ComposerToolProps } from "../../features/conversation/contracts";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
@@ -329,13 +330,12 @@ export function MentionPicker({
                       <Avatar
                         alt=""
                         fallback={label}
-                        src={session.media(
+                        src={avatarMedia(
                           profiles.get(recipient.pubkey)?.picture ??
                             model.directory.people.find(
                               (person) => person.pubkey === recipient.pubkey,
-                            )?.picture ??
-                            "",
-                          "small",
+                            )?.picture,
+                          session.media,
                         )}
                         size="large"
                         shape={

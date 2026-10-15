@@ -30,6 +30,7 @@ import styles from "./Channels.module.css";
 import activityStyles from "../../features/agents/ActivityRows.module.css";
 import { AgentActivityRow } from "../../features/agents/AgentActivityRow";
 import { workingAgentDetails } from "./working-agents";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const elapsed = (createdAt: number, now = Date.now()) => {
   const seconds = Math.max(0, Math.floor(now / 1000) - createdAt);
@@ -118,9 +119,7 @@ function ActivityRow({
           ) : (
             <Avatar
               name={name}
-              src={
-                profile?.picture ? session.media(profile.picture) : undefined
-              }
+              src={avatarMedia(profile?.picture, session.media)}
               shape={isAgent ? "squircle" : "circle"}
               className={activityStyles.activityAvatar ?? ""}
             />
@@ -231,16 +230,7 @@ export function ChannelActivityPopover({
     startedAt: number;
     messageId?: string;
     label?: string;
-    local?: boolean;
   } | null)[];
-  // Typing alone lists an agent while the Agent Activity plugin is off, when
-  // no activity panel is registered to open.
-  const openAgentActivity = useSyncExternalStore(
-    open && agentIds ? session.agentActivity.subscribe : noSubscribe,
-    () => !!agentIds && session.agentActivity.snapshot().status === "disabled",
-  )
-    ? undefined
-    : onOpenAgentActivity;
   const keyLabels = publicKeyLabels(activeAgents);
   const hasActivity = items.length > 0 || activeAgents.length > 0;
   useEffect(() => {
@@ -330,17 +320,12 @@ export function ChannelActivityPopover({
                 {activeAgents.map((agent, index) => {
                   const profile = agentProfiles?.get(agent);
                   const name = profile?.name ?? keyLabels.get(agent) ?? "Agent";
-                  const { messageId, startedAt, label, local } =
-                    details[index] ?? {};
+                  const { messageId, startedAt, label } = details[index] ?? {};
                   return (
                     <AgentActivityRow
                       key={agent}
                       name={name}
-                      picture={
-                        profile?.picture
-                          ? session.media(profile.picture, "small")
-                          : undefined
-                      }
+                      picture={avatarMedia(profile?.picture, session.media)}
                       status={label ?? "Working"}
                       meta={
                         startedAt === undefined
@@ -353,10 +338,10 @@ export function ChannelActivityPopover({
                         onOpenWorkingAgent?.(channelId, agent, messageId);
                       }}
                       onOpenActivity={
-                        openAgentActivity && !local
+                        onOpenAgentActivity
                           ? () => {
                               close();
-                              openAgentActivity(channelId, agent);
+                              onOpenAgentActivity(channelId, agent);
                             }
                           : undefined
                       }

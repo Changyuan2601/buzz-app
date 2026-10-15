@@ -55,3 +55,22 @@ for (const variant of ["inline", "compact", "field"] as const) {
     expect(screen.getByRole("combobox", { name: "Retention" })).toBeVisible();
   });
 }
+
+it.each(["inline", "compact", "preference"] as const)(
+  "keeps the intended button shape for %s selects",
+  (variant) => {
+    render(
+      <Select
+        label="Model"
+        variant={variant}
+        value="one"
+        groups={[{ label: "", options: [{ value: "one", label: "One" }] }]}
+        onValueChange={() => {}}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "data-button-shape",
+      variant === "preference" ? "control" : "capsule",
+    );
+  },
+);

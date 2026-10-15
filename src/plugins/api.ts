@@ -24,7 +24,11 @@ export type PluginManifest = Readonly<{
       id: string;
       program: string;
       args?: readonly string[];
+      /** Run the copy the app ships, never one on PATH. */
+      bundled?: boolean;
     }>[];
+    /** The plugin may serve MCP servers to its agents with `host.serveMcp`. */
+    mcp?: boolean;
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.

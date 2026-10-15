@@ -23,6 +23,8 @@ export type DialogProps = {
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
   headerGap?: "default" | "compact";
+  /** Keep spacing beside scrolling content on the fixed header and footer. */
+  chromeSpacing?: "default" | "padded";
   /** Keep a final body control close to its confirmation actions. */
   footerGap?: "default" | "compact";
   /** Replace a step inside this modal; scale defines its recessed/raised position. */
@@ -35,7 +37,7 @@ export type DialogProps = {
   dismissOnOutsideClick?: boolean;
   closeLabel?: string;
   /** Reserve viewport-capped space for changing content; scroll only the body. */
-  height?: "content" | "stable";
+  height?: "content" | "stable" | "stable-tall";
   /** Let bounded content own its scrolling instead of the shared body. */
   bodyLayout?: "flow" | "flex";
   /** Wide catalogs and expanded reading surfaces retain the same modal/focus behavior. */
@@ -58,6 +60,7 @@ export function Dialog({
   children,
   actions,
   headerGap = "default",
+  chromeSpacing = "default",
   footerGap = "default",
   step,
   leadingActions,
@@ -80,7 +83,10 @@ export function Dialog({
     motion === "none" || (!open && instantClose) ? "none" : "default";
   const contents = (
     <>
-      <header className="buzz-dialog-header">
+      <header
+        className="buzz-dialog-header"
+        data-chrome-spacing={chromeSpacing}
+      >
         <div className="buzz-dialog-heading">
           {step ? (
             <div className="text-label" aria-hidden="true">
@@ -117,13 +123,17 @@ export function Dialog({
       </header>
       <div
         className="buzz-dialog-body buzz-dialog-content"
+        data-chrome-spacing={chromeSpacing}
         data-header-gap={headerGap}
         data-footer-gap={footerGap}
       >
         {children}
       </div>
       {(actions || leadingActions) && (
-        <footer className="buzz-dialog-actions">
+        <footer
+          className="buzz-dialog-actions"
+          data-chrome-spacing={chromeSpacing}
+        >
           {leadingActions && (
             <div className="buzz-dialog-leading-actions">{leadingActions}</div>
           )}

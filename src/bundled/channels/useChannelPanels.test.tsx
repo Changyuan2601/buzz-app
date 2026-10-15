@@ -105,3 +105,86 @@ it.each(["bottom", "side"] as const)(
     expect(screen.getByRole("region", { name: label })).toBeVisible();
   },
 );
+
+it.each(["bottom", "side"] as const)(
+  "lets a %s panel and its launcher open targets as channel tabs",
+  async (placement) => {
+    const user = userEvent.setup();
+    const context: ChannelPanelContext = {
+      scope: "scope",
+      viewer: "viewer",
+      channelId: "alpha",
+      channelName: "Alpha",
+      relayUrl: "wss://example.com",
+    };
+    let retained: ((target: string) => boolean) | undefined;
+    const panel: RegisteredPanel = {
+      id: "todos",
+      key: "fixture:todos",
+      pluginId: "fixture",
+      revision: "1",
+      title: "Todos",
+      channelPlacement: placement,
+      matches: () => true,
+      channelLauncher: ({ toggle, open, canOpen }) => (
+        <>
+          <button type="button" onClick={() => toggle("todos")}>
+            Todos
+          </button>
+          <button
+            type="button"
+            disabled={!canOpen("todo:launcher")}
+            onClick={() => open("todo:launcher")}
+          >
+            Open from launcher
+          </button>
+        </>
+      ),
+      component: ({ context: opening }) => {
+        retained = opening?.open;
+        return (
+          <button type="button" onClick={() => opening?.open("todo:one")}>
+            Open todo
+          </button>
+        );
+      },
+    };
+    const available = [panel];
+    const panels: Panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      register: () => {},
+      resolve: () => panel,
+    };
+    const open = vi.fn(() => true);
+    function Harness() {
+      const drawer = useChannelPanels(panels, context, undefined, undefined, {
+        canOpen: (target) => target.startsWith("todo:"),
+        open,
+      });
+      return (
+        <>
+          {drawer.launchers}
+          {drawer.content}
+          {drawer.side}
+        </>
+      );
+    }
+    render(<Harness />);
+    await user.click(
+      screen.getByRole("button", { name: "Open from launcher" }),
+    );
+    expect(open).toHaveBeenLastCalledWith("todo:launcher");
+    await user.click(screen.getByRole("button", { name: "Todos" }));
+    await user.click(screen.getByRole("button", { name: "Open todo" }));
+    expect(open).toHaveBeenLastCalledWith("todo:one");
+    // Closing the drawer retires that opening's commands.
+    await user.click(screen.getByRole("button", { name: "Todos" }));
+    expect(
+      screen.queryByRole("button", { name: "Open todo" }),
+    ).not.toBeInTheDocument();
+    open.mockClear();
+    expect(retained?.("todo:one")).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+  },
+);

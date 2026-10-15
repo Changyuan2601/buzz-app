@@ -222,7 +222,12 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
                   `${button.textContent}: content overflows button`,
                 );
             }
-            if (box.left < bounds.left || box.right > bounds.right)
+            const palette = button.closest("[data-message-colors]");
+            const visibleBounds = palette?.getBoundingClientRect() ?? box;
+            if (
+              visibleBounds.left < bounds.left ||
+              visibleBounds.right > bounds.right
+            )
               failures.push(`${button.textContent}: button overflows section`);
           }
           return failures;
@@ -252,7 +257,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       });
       await chooseColorMode(page, mode);
       await expect(appearance.getByRole("button")).toHaveCount(
-        scale === 100 ? 2 : 3,
+        scale === 100 ? 8 : 9,
       );
       await expect(
         appearance.getByRole("button", {
@@ -262,6 +267,38 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
+      const colors = appearance.locator("[data-message-colors] button");
+      await colors.first().focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      for (let index = 0; index < 6; index++) {
+        if (index) await page.keyboard.press("Tab");
+        await expect(colors.nth(index)).toBeFocused();
+        await expect
+          .poll(() =>
+            colors.nth(index).evaluate((button) => {
+              const box = button.getBoundingClientRect();
+              const palette = button
+                .closest("[data-message-colors]")
+                .getBoundingClientRect();
+              const style = getComputedStyle(button);
+              const ring =
+                parseFloat(style.outlineWidth) +
+                parseFloat(style.outlineOffset);
+              return (
+                ring === 4 &&
+                box.left - ring >= palette.left &&
+                box.right + ring <= palette.right &&
+                box.top - ring >= palette.top &&
+                box.bottom + ring <= palette.bottom
+              );
+            }),
+          )
+          .toBe(true);
+      }
+      await appearance.screenshot({
+        path: info.outputPath(`appearance-${scale}-${width}-${mode}.png`),
+      });
       // Icon buttons grow with the interface while keeping their square shape.
       await expect(
         page.getByRole("button", { name: "Search Buzz", exact: true }),

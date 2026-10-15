@@ -25,8 +25,8 @@ export function JumpToLatestButton({
       <div className={styles.jumpToLatestSurface}>
         <Button
           data-jump-to-latest=""
-          size="sm"
-          shape="control"
+          size="xs"
+          shape="capsule"
           variant="ghost"
           onClick={onClick}
         >

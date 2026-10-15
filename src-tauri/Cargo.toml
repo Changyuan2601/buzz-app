@@ -35,6 +35,9 @@ sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 bytes = "1"
 url = "2"
 percent-encoding = "2"
@@ -73,7 +76,7 @@ libc = "0.2"
 security-framework = "3.7"
 block2 = "=0.6.2"
 objc2 = "=0.6.4"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSScreen", "NSWindow"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSScreen", "NSWindow", "NSEvent", "block2"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSError", "NSUserDefaults"] }
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["UNUserNotificationCenter", "UNNotificationSettings", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "block2"] }
 

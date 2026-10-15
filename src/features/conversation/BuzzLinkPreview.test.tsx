@@ -5,6 +5,7 @@ import { BuzzLinkPreview } from "./BuzzLinkPreview";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { ChannelMessage } from "../relay/contracts";
+import { mediaUrl } from "../relay/transport";
 
 afterEach(cleanup);
 const text = (tree: HTMLElement) =>
@@ -21,7 +22,11 @@ const root: ChannelMessage = {
   reactions: [],
   replyCount: 0,
 };
-function setup(snapshot: ThreadSnapshot, messageId = root.id) {
+function setup(
+  snapshot: ThreadSnapshot,
+  messageId = root.id,
+  profiles = new Map<string, { name?: string; picture?: string }>(),
+) {
   const view = {
     snapshot: () => snapshot,
     subscribe: () => () => {},
@@ -31,7 +36,6 @@ function setup(snapshot: ThreadSnapshot, messageId = root.id) {
     dispose: vi.fn(),
   } satisfies ThreadView;
   const thread = vi.fn(() => view);
-  const profiles = new Map();
   const list = { channels: [{ id: "channel", name: "General" }] };
   const session = {
     thread,
@@ -44,7 +48,9 @@ function setup(snapshot: ThreadSnapshot, messageId = root.id) {
       subscribeList: () => () => {},
       list: () => list,
     },
-    media: () => undefined,
+    // The real sizing rewrite behind a pass-through proxy, as the session applies it.
+    media: (url: string, size?: "small") =>
+      mediaUrl(url, (proxied) => proxied, "https://relay.test", size),
   } as unknown as RelaySession;
   const mounted = render(
     <BuzzLinkPreview
@@ -169,4 +175,21 @@ it("labels a workflow preview as automation, with an owner fallback instead of a
     "Workflow · owned by cccccccccc",
   );
   expect(tree.querySelector("img")).toBeNull();
+});
+
+it("asks for the relay thumbnail of the author's picture, as message rows do", () => {
+  const sha = "d".repeat(64);
+  const { tree } = setup(
+    { ...base, status: "ready", root },
+    root.id,
+    new Map([
+      [
+        root.authorId,
+        { name: "Bea", picture: `https://relay.test/media/${sha}.png` },
+      ],
+    ]),
+  );
+  expect(tree.querySelector("img")?.getAttribute("src")).toBe(
+    `https://relay.test/media/${sha}.thumb.jpg`,
+  );
 });

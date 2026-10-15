@@ -128,6 +128,10 @@ gaps rather than each plugin inventing its own rhythm. Dependent preferences ret
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
+Use `Accordion variant="settings"` for disclosures alongside preference rows.
+Its full-row trigger uses the settings container shape and spacing; the chevron
+is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
+label and compact choice control without adding a group container.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
 [`NotificationSettings`](../../app/NotificationSettings.tsx) illustrates immediate
 preferences; [`ProfileSettings`](../../app/ProfileSettings.tsx) illustrates an
@@ -158,7 +162,9 @@ close button, body padding, or footer with feature-specific markup.
 
 These are starting choices, not permission to combine every option. Default to
 content height; reserve stable height when changing results would otherwise make
-the task jump. Do not hardcode a screen-sized modal or add header/body gaps on top
+the task jump. Proposed `height="stable-tall"` reserves up to 44rem for agent
+creation and its avatar catalog, with the same viewport cap and scrolling as
+`stable`. Do not hardcode a screen-sized modal or add header/body gaps on top
 of the shared padding. [`ChannelMembersDialog`](../../bundled/channels/ChannelMembersDialog.tsx)
 shows bounded search/results; [`RemindDialog`](../../bundled/reminders/RemindDialog.tsx)
 shows a short form; [`DiffMessage`](../../bundled/diffs/DiffMessage.tsx) shows expanded
@@ -196,6 +202,9 @@ of unrelated buttons. Use `MenuNote` for non-action explanatory text and `tone="
 for a destructive menu action. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
+For choices that must stay within a modal, pass its element to
+`Combobox.Popup collisionBoundary` when the picker opens. Base UI positions it
+and the shared popup scrolls within the resulting available height; keep the portal.
 Use their supported `padding`/alignment props; do not add another padded card inside
 the popup or cancel its styles. Keep long lists scrollable and all actions reachable.
 
@@ -517,7 +526,9 @@ border-prominent stroke fading over 150ms ease for pointer interaction. The
 field-scoped --border variable selects transparent, active, or error color for
 the reserved 1px border, so state changes do not shift the layout. Keyboard
 focus and reduced motion change immediately. Composite fields own one stroke
-around the input and actions; error strokes retain priority. Placeholders use
+around the input and actions; error strokes retain priority. Borderless title and
+heading inputs keep their perimeter transparent on pointer/autofocus entry and
+show the focus border during keyboard navigation. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
 and no-container-ring recipes for these fields.
@@ -706,6 +717,11 @@ text-body (14px / 20px), and the 16px control inset. Derive vertical padding fro
 size, text line height, and boundary; do not force a fixed height that clips
 larger text or wrapped Select values. Textarea uses the control inset on all four
 sides (16px at the default scale), with manual vertical resizing and a code variant.
+Agent instructions intentionally use `appearance="outlined"`: one container-radius
+border over a transparent background, with no inset fill or nested SettingsGroup.
+Focus strengthens that same border. Preserve this choice in creation and profiles.
+Use `surface="panel"` when a standalone textarea needs an opaque surface over a
+floating dialog; the default inset surface remains for fields on panels.
 In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px
 (space-1) inside the corner. Keep it visible at rest. Preserve the native resize hit target and
 leave the browser grip unchanged where custom resizer styling is unsupported.
@@ -1033,6 +1049,12 @@ channel header uses the same control with a single non-closable tab with `showSe
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.
+Reopening an existing thread increments its navigation tab's `attentionRequest`:
+the tab briefly uses `affordance-subtle-pressed`, then returns to its selected
+fill. The shared tab owns this paint-only cue and reveals an overflowed tab
+without moving focus. Repeated openings restart only the cue; mounting retained
+tabs and ordinary selection do not replay it. Reduced motion holds the tint
+briefly and removes it without fading.
 
 NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
@@ -1046,8 +1068,10 @@ from the trigger reaches the action; Shift+Tab returns to the trigger; forward T
 continues after the trigger. Escape dismisses the preview before restoring focus,
 but never pulls focus back if the user moved it during exit. Closing previews
 are no longer Tab destinations or pointer targets.
-Scrolling anything that contains the trigger dismisses a hover-opened preview: a
-still pointer cannot report that its trigger moved away. A keyboard-focused
+Scrolling anything that contains the trigger dismisses a hover-opened preview when
+the trigger moves: a still pointer cannot report that its trigger moved away. A
+scroll that leaves the trigger in place, such as scroll anchoring, keeps the
+preview. A keyboard-focused
 trigger keeps its preview, hidden while the trigger is scrolled out of view
 unless focus is inside it.
 The positioned portal owns its layer above dialogs. An optional content anchor
@@ -1155,6 +1179,14 @@ need their own values in each mode.
 - Tints are pale in light mode and deep in dark mode; their names describe their purpose.
 - Check text with its actual fill and backdrop, including interactive states.
 - The original design exploration was light-only. Buzz’s dark values are authored choices and should be revised when rendered evidence shows a problem.
+
+Default own message bubbles use the received fill mixed with 5% black in light
+mode or 5% white in dark mode, with standard text and link colors. The five accent
+choices—blue, green, orange, pink and lilac—pair with white ink. They retain the
+reference hue and as much chroma as sRGB permits; lightness is lowered only to
+reach the 4.5:1 WCAG floor (also meeting the Lc 60 target). Reactions and
+ThemePicker previews follow the selected bubble pair. Default send controls use
+the neutral prominent pair; accent choices use their message pair.
 
 ## Density and rhythm
 
@@ -1321,6 +1353,10 @@ the timeline measures its rem-sized leading region for Virtua's pixel start marg
 Use direct, familiar language and remove words that do not help someone decide or act.
 
 - Labels describe the action or destination in the reader’s terms.
+- Name the app destinations Solo and Multiplayer, matching navigation. Use “Solo chats”
+  or “threads in Multiplayer” when context helps. Ordinary messages and message
+  settings still refer to content, not the Multiplayer destination. These labels
+  do not rename internal routes, plugin IDs or saved preference keys.
 - Empty states explain what belongs there and provide a useful next step.
 - Errors explain what happened and how to recover, beside the affected control.
 - Keep names and capitalization consistent across the flow.
@@ -1460,17 +1496,17 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
-The wide shell topbar is the deliberate exception: Me and Messages use
+The wide shell topbar is the deliberate exception: Solo and Multiplayer use
 `Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
 move focus without selecting; Enter, Space or pointer selection changes the page
 while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
-Messages represents the containing area for registered sidebar/default-placement
+Multiplayer represents the containing area for registered sidebar/default-placement
 pages, while their sidebar selection and route remain exact. Its tab stays linked
 to the active child panel. The shell opts into Tabs' `onReselect` to return from a
-child to Messages without changing ordinary active-tab behavior elsewhere. More
+child to Multiplayer without changing ordinary active-tab behavior elsewhere. More
 pages marks that containing area with `aria-current="true"`, reserving `page` for
 an exact destination. Settings and independent header pages stay separate.
 
@@ -1488,7 +1524,14 @@ viewer includes enabled and disabled examples.
 ### Chip and title fields (proposed)
 
 `Combobox.Control appearance="chip"` drops the field's surface and browse
-button until the control is hovered or open, so a choice reads as a label, such
-as the model beside the type in the New agent card. Keyboard focus keeps a ring.
+button, so an editable choice reads as a compact label. Keyboard focus keeps a ring.
 `Input appearance="title"` sets its value at title size with no field around it,
-for a name that is also the heading, such as the new agent's name.
+for a name that is also the heading, such as the new agent's name. It keeps
+the field border transparent at rest and uses the shared perimeter stroke on focus.
+
+Proposed: `InputGroup surface="panel"` uses the panel fill for image URL entry
+on a contrasting modal surface, retaining the shared field focus treatment.
+
+Proposed: `Dialog chromeSpacing="padded"` keeps a 12px bottom gutter on the
+fixed header and a footer top gutter matching the modal bottom padding. The
+body omits its vertical gutters; agent creation uses this for scrolling steps.

@@ -37,12 +37,37 @@ Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. The host appends the shared Attention tab.
 
+Attention is shared by every harness, and a harness has no attention code.
+`src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
+attention tools. Their guidance is part of `BUZZ_PROMPT`. Every session gets the
+same list and prompt, whether attention is on or off, so turning attention on or off never
+restarts a session or invalidates its prompt cache. `turnNote` gives the text
+to add at the end of each turn: the attention review when attention is on, and a
+note that it is off when it is off. `callSessionTool` dispatches each call and
+refuses attention calls while attention is off. A new shared tool needs no
+harness change.
+
+The Agents runner starts a mention run from a `p` tag, or from any new message
+by the other member of a one-to-one DM the agent is in; group DMs still need
+the mention. It also owns watches and timers.
+`src/features/agent-harness/wakes.ts` queues each wake in its Interest's lane
+(`lanes.ts`), checks that it is still current before and while its prompt is
+built, and passes it to the type's optional `runOnce`. That runs one turn with
+no saved conversation (Claude: a
+one-off process; Codex: an ephemeral thread). Its signal aborts
+`STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
+be ready. The prompt text lives in `attention-prompt.ts`.
+
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
 `Settings` destination and supplies the current type identity plus retype
 control through `settingsHost`. The type keeps ownership of its config draft
 and Save behavior. Types without a settings-role tab receive a host-owned,
 type-only Settings tab in both surfaces.
+
+A type may mark its sessions tab with `role: "activity"`. The host keeps it at
+a stable `agent:activity` destination, where opening the agent's activity lands
+in its profile panel.
 
 A reviewed provider choice remains a host-owned draft until that Settings
 form's Save action succeeds. While it is pending, the selected provider's
@@ -68,7 +93,7 @@ provider preferences preserve native behavior. A provider-default save notifies
 the runtime like the corresponding per-agent save but does not mutate agent
 records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
-state may appear as collapsed diagnostics in Settings, but is not durable history.
+state may appear in the Activity tab, but is not durable history.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
@@ -206,7 +231,9 @@ You can always mention yourself. If archive state is unknown, the mention is
 allowed.
 
 A mention notifies a member. It does not promise that an agent will answer, and
-choosing someone does not give them access or start an agent.
+choosing someone does not give them access or start an agent. In a one-to-one
+DM with your own agent, it answers every message you send, mention or not; a
+group DM still requires a mention.
 
 Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
 group, matches against the visible resolved label come first: whole-name exact,
@@ -397,19 +424,20 @@ HTTP broker/verified transport, including corrupted signature rejection.
 
 ## Agent Activity plugin
 
-**Agent Activity** owns live capture demand and the full Transcript/Raw panel;
-host-owned saved history remains independent of plugin enablement. This branch
-adds an avatar-and-dots bubble beneath the exact message that triggered current
-work. Multiple turns group by agent; completing one turn does not hide another.
-Hover, click, tap or keyboard opens a compact avatar-and-latest-tool popup. Its
-row opens that exact agent's profile Activity tab, using the mainline transcript,
-conversation filtering and saved-history controls. Escape or outside click closes
-the popup. Human typing remains in the ordinary conversation indicator.
+**Agent Activity** owns live capture demand and an avatar-and-dots bubble beneath
+the exact message that triggered current work; host-owned saved history remains
+independent of plugin enablement. It registers no panel. Multiple turns group by
+agent; completing one turn does not hide another. Hover, click, tap or keyboard
+opens a compact avatar-and-latest-tool popup. Its row, like the composer's working
+indicator and the channel popover's **View activity**, opens that exact agent's
+profile on its Activity tab (see [Profiles](profiles.md#agent-activity)). Escape
+or outside click closes the popup. Human typing remains in the ordinary
+conversation indicator.
 
 ### Local plugin-agent lifecycle
 
 The popup resets on conversation changes and when current work ends. Idle and
-historical activity remain accessible from the activity panel rather
+past sessions remain in the agent's profile Activity tab rather
 than lingering above the composer. Compact status labels omit raw arguments and
 full paths; the transcript retains the detail.
 
@@ -446,8 +474,8 @@ the library) anywhere in the channel, threads included. Typing remains a working
 self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
 future timestamps instead of capping them, schedules its own expiry eight
 seconds after the signed timestamp and stays quiet for two seconds after the
-typer's message. It is display-only evidence, not ownership; while the plugin is
-off, the channel popover lists such an agent without a **View activity** action.
+typer's message. It is display-only evidence, not ownership; the channel popover
+still offers **View activity** for such an agent while the plugin is off.
 A timeline thread summary shows the same dots from this source while one of the
 viewer's agents types in that thread; before the first reply it offers **View thread**.
 The visual working label is reduced to dots; its accessible name retains the status.
@@ -457,9 +485,9 @@ existing dev server once to receive typing; frontend HMR alone is insufficient.
 
 ### Transcript
 
-The panel opens on **Transcript**; **Raw** keeps the exact diagnostic records
-below. `activityTranscript` (`src/features/agents/activity-transcript.ts`) is a
-display projection over the same session-owned records, not a second store. It
+`activityTranscript` (`src/features/agents/activity-transcript.ts`) is a
+display projection over session-owned records, not a second store; the bubble's
+latest-tool line uses it. It
 reads allowlisted ACP fields into turns: the triggering prompt (author and content
 from the `<buzz-event>` framing, other sections collapsed), the session's system
 prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
@@ -469,39 +497,15 @@ names and inputs differ by adapter (Pi, Goose, Codex, Claude), so tool rows show
 adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
 `locations` and content (text, with a wholly fenced Markdown block shown as its body,
 and `diff` as removed/added lines) are interpreted.
-Adapter-specific `_meta` such as exit codes stays in **Raw**. The one adapter
+Adapter-specific `_meta` such as exit codes is not shown. The one adapter
 special case: pi-acp repeats its `session/new` startup banner
 (`_meta.piAcp.startupInfo`) as an agent message, which the transcript omits. JSON-RPC ids are matched per pool slot and
 direction. Agent-elided strings and payloads are labeled, not hidden. Turns whose
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
-Agents use a channel or a thread as their conversation context, so one
-**Conversation** selector scopes the view: all conversations, a whole channel
-(threads included), or one thread. Threads are listed from loaded turns and named
-by their first prompt. A thread composer opens `buzz:agent-activity?…&thread=<root>`
-(valid only with its channel) with that thread selected. A turn's thread root is
-the payload's `threadRootEventId` (harness 2026-10-01 and later) or, for older
-harnesses, the prompt `<context>` block's `Thread root:`. Turns whose thread cannot
-be recovered appear only in the whole channel and are counted, never guessed. The
-whole channel labels each turn as channel conversation, a thread or unknown. Each
-turn starts with a **Turn** line (start time and the session's selected config as
-`Name: choice`, e.g. `Effort: Medium`, or the adapter's label when it already names
-the setting); its status line notes when the turn started a new ACP session.
-
-The transcript covers only loaded records: the live window plus one saved page.
-
-In **Raw**, a channel or thread selection filters entries and working-turn counts
-to that channel; all conversations includes unscoped records. For a selected channel, batches are projected
-as individual matching children, with the original envelope ID retained; displayed
-child JSON is reserialized, not claimed byte-identical to the envelope. Unscoped
-children are omitted rather than inheriting the enclosing batch's channel. The
-all-channels diagnostic retains the exact raw envelope. Raw capture is unchanged.
-Channels owns contextual panel placement and closes it on channel/session or
-contribution changes; close returns focus to the originating control if retained.
-
-The plugin's activation leases `session.agentActivity` for the live display;
-closing the panel does not release that demand. Disabling the plugin clears its
+The plugin's activation leases `session.agentActivity` for the live display.
+Disabling the plugin clears its
 live evidence, but **does not control archive capture**. The shared live connection
 carries one dedicated owner (`#p=viewer`) route for demanded observer/metrics kinds,
 with no `#h` or history limit. Live activity starts at actual dispatch/retry.
@@ -617,21 +621,18 @@ telemetry publication enabled, then give it work. This activity plugin does not
 start agents. No records may mean publishing is off, no new traffic, or an
 interrupted feed, not that an agent is idle.
 
-For a contextual view, click the identity's avatar/mention in the channel, then
-**View activity**. It preselects that exact key and channel; **Conversation → All conversations**
-broadens the view. Alternatively, select an active agent above the channel or thread composer.
-Check the transcript, then open **Raw**, expand entries and close/reopen the panel. In **Settings → Agents → Saved agent
-activity**, verify both capture switches and the host path. Disable the **Agent
-Activity** plugin in **Settings → Plugins**, give the agent work, then re-enable:
-archive capture should continue independently, and restored rows must not claim
-the agent is working. Reload and reopen **View activity**; saved entries should
-remain. Use **Load older activity** when another page is available.
+Select an active agent above the channel or thread composer, or its bubble under
+the triggering message: it opens the agent's profile on its Activity tab. In
+**Settings → Agents → Saved agent activity**, verify both capture switches and the
+host path. Disable the **Agent Activity** plugin in **Settings → Plugins**, give the
+agent work, then re-enable: archive capture should continue independently, and
+restored rows must not claim the agent is working. Saved rows have no viewer in
+the app; inspect the archive file to confirm they remain.
 
-Turn **Save agent activity** off, give the agent work and verify live display still
-works without retaining that new activity across reload. Turn it back on. Cancel a
-retention-shortening confirmation and verify the original value remains. Confirm
-**Clear activity history** in Settings, reload, and verify old activity is gone
-while metrics remain independently retained. For native acceptance, quit/relaunch
+Turn **Save agent activity** off, give the agent work and verify the bubble and
+working indicator still work. Turn it back on. Cancel a retention-shortening
+confirmation and verify the original value remains. Confirm **Clear activity
+history** in Settings while metrics remain independently retained. For native acceptance, quit/relaunch
 the desktop app as well as reloading its view.
 
 The feed is best-effort telemetry: producers coalesce/batch and may elide oversized
@@ -648,8 +649,7 @@ activity/session/native transport tests, and `src/app/ArchiveSettings.test.tsx`.
 `browser-host/agent-observer.test.mjs`, `browser-host/relay-broker-live.test.mjs`,
 and the activity/live service tests cover signed/encrypted WS to host decode to SSE
 to the actual session, route generations, terminal retention and stale controls.
-`tests/browser/agent-activity.spec.mjs` covers the actual plugin, raw HTML
-nonexecution, keyboard disclosures, agent selection and disable/re-enable in
+`tests/browser/agent-activity.spec.mjs` covers the actual plugin, keyboard opening of each agent's profile and disable/re-enable in
 Chromium and WebKit. These use ephemeral identities and synthetic telemetry.
 Packaged GUI quit/relaunch, real-relay agent ownership admission and hosted
 cross-platform checks are separate gates; consult the pull request for results

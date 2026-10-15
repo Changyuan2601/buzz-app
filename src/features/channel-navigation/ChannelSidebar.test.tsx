@@ -163,6 +163,7 @@ function fixture(
         <button type="button">Projects</button>
       </nav>
     ),
+    meEnabled = false,
   ) => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
@@ -176,6 +177,7 @@ function fixture(
             scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
           }}
           sessionsEnabled={sessionsEnabled}
+          meEnabled={meEnabled}
         >
           {pages}
         </ChannelSidebar>
@@ -739,3 +741,138 @@ it.each([true, false])(
     expect(run).not.toHaveBeenCalled();
   },
 );
+
+// The actual mounted caller owns the Me/Message visibility boundary.
+it.each([true, false])(
+  "Me placement keeps sessions hidden but ordinary streams visible (enabled=%s)",
+  async (enabled) => {
+    const h = fixture();
+    const entries = [
+      {
+        eventId: "placement",
+        createdAt: 1,
+        record: {
+          version: 1 as const,
+          community: "https://relay.test",
+          deleted: false,
+          value: {
+            type: "groups" as const,
+            id: "me" as const,
+            groups: [],
+            assignments: {},
+            channels: ["beta"],
+          },
+        },
+      },
+    ];
+    const placement = {
+      ...h.session.mePlacement.snapshot(),
+      status: "ready" as const,
+      entries,
+    };
+    h.session.mePlacement = {
+      ...h.session.mePlacement,
+      snapshot: () => placement,
+    };
+    h.publish("beta", { channelType: "session", private: true });
+    render(h.view("alpha", true, undefined, enabled));
+    await screen.findByRole("button", { name: "gamma" });
+    expect(!!screen.queryByRole("button", { name: "beta" })).toBe(!enabled);
+    h.publish("beta", { channelType: "stream" });
+    expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+it("moves a saved group from its menu, rolls back a failed save, and retries it", async () => {
+  const data: SidebarPreferences = {
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { beta: "work" },
+    starred: [],
+    muted: [],
+  };
+  const order = vi
+    .fn(async (ids: readonly string[]) => ({
+      sections: ids.map((id, index) => ({
+        id,
+        name: id === "work" ? "Work" : "Later",
+        order: index,
+      })),
+      assignments: data.assignments,
+    }))
+    .mockRejectedValueOnce(new Error("offline"));
+  const read = vi.fn(async () => data);
+  const preferences = createSidebarPreferencesStore(
+    read,
+    true,
+    async () => data,
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    order,
+  );
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    { id: "beta", name: "beta", channelType: "stream" },
+  ]);
+  const user = userEvent.setup();
+  const groups = () =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-sidebar-section^="group:"]',
+      ),
+    ].map((section) => section.dataset.sidebarSection);
+  try {
+    render(h.view("beta"));
+    await waitFor(() =>
+      expect(groups()).toEqual(["group:work", "group:later"]),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Move down" }),
+    );
+    expect(
+      await screen.findByText("Couldn’t save the move for Work. offline"),
+    ).toBeVisible();
+    expect(groups()).toEqual(["group:work", "group:later"]);
+    read.mockRejectedValueOnce(new Error("refresh failed"));
+    await act(() => preferences.queries.refresh());
+    const retry = screen.getByRole("button", { name: "Retry move" });
+    expect(retry).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Refresh saved sidebar preferences before retrying this move.",
+      ),
+    ).toBeVisible();
+    await act(() => preferences.queries.refresh());
+    expect(retry).toBeEnabled();
+    expect(
+      screen.queryByText(
+        "Refresh saved sidebar preferences before retrying this move.",
+      ),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry move" }));
+    await waitFor(() =>
+      expect(groups()).toEqual(["group:later", "group:work"]),
+    );
+    expect(order).toHaveBeenLastCalledWith(
+      ["later", "work"],
+      expect.any(AbortSignal),
+    );
+    expect(screen.queryByRole("button", { name: "Retry move" })).toBeNull();
+    expect(
+      document.querySelector('[data-sidebar-section="group:work"]'),
+    ).toContainElement(screen.getByRole("button", { name: "beta" }));
+  } finally {
+    preferences.dispose();
+  }
+});

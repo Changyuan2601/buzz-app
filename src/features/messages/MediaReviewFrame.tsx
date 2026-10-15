@@ -63,7 +63,7 @@ export function MediaReviewFrame({
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismissal complements the close button and Escape shortcut.
     <div
       ref={backdrop}
-      className={`${styles.mediaReviewBackdrop} ${styles.darkReviewBackdrop} dark`}
+      className={`${styles.mediaReviewBackdrop} ${styles.darkReviewBackdrop}`}
       role="presentation"
       onMouseDown={(event) => {
         if (event.button === 0 && event.target === event.currentTarget)
@@ -77,8 +77,7 @@ export function MediaReviewFrame({
       />
       <section
         ref={frame}
-        className={`${styles.mediaReviewViewer} dark`}
-        data-color-mode="dark"
+        className={styles.mediaReviewViewer}
         data-review-pending={origin ? "" : undefined}
         data-video={isVideo || undefined}
         data-comments-motion={commentsMotion || undefined}
@@ -164,7 +163,11 @@ export function MediaReviewFrame({
             }
           />
         </div>
-        <div className={styles.mediaReviewStage} data-review-stage="">
+        <div
+          className={`${styles.mediaReviewStage} dark`}
+          data-color-mode="dark"
+          data-review-stage=""
+        >
           {children}
         </div>
         {sidebar}

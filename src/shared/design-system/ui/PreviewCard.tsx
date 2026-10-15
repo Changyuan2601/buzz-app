@@ -52,6 +52,8 @@ export function PreviewCard({
   const triggerRef = useRef<HTMLAnchorElement>(null);
   const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  // Where the trigger was when opening began, or at the last scroll since.
+  const triggerPlace = useRef<DOMRect | null>(null);
   const promote = useCallback((positioner: HTMLDivElement) => {
     // Join the top layer after the hovered row's floating actions, but not
     // above a modal the trigger is outside. The portal is never inside one.
@@ -66,18 +68,28 @@ export function PreviewCard({
     // Hover cannot see its trigger scroll away from a still pointer: the
     // preview would stay open, follow the trigger out of its scroller and
     // take the wheel. Keyboard focus keeps its preview, because focusing a
-    // clipped trigger scrolls it into view.
+    // clipped trigger scrolls it into view. A scroll that leaves the trigger
+    // in place, such as scroll anchoring while rows above it are re-measured,
+    // moves nothing relative to the pointer and keeps the preview.
     const closeOnScroll = ({ target }: Event) => {
       const trigger = triggerRef.current;
       const popup = popupRef.current;
+      if (!trigger || !(target instanceof Node) || !target.contains(trigger))
+        return;
+      // Only an opening or open preview reads layout here: a timeline holds
+      // many triggers, and every one of them hears each scroll.
+      const before = triggerPlace.current;
+      const place = before && trigger.getBoundingClientRect();
+      triggerPlace.current = place;
       const keyboard = ":focus-visible, :has(:focus-visible)";
       if (
-        trigger &&
-        target instanceof Node &&
-        target.contains(trigger) &&
         popup?.hasAttribute("data-open") &&
         !trigger.matches(keyboard) &&
-        !popup.matches(keyboard)
+        !popup.matches(keyboard) &&
+        (!before ||
+          !place ||
+          Math.abs(place.x - before.x) >= 1 ||
+          Math.abs(place.y - before.y) >= 1)
       )
         actions.current?.close();
     };
@@ -116,6 +128,9 @@ export function PreviewCard({
       onOpenChange={(next, details) => {
         onOpenChange?.(next, details);
         if (details.isCanceled) return;
+        triggerPlace.current = next
+          ? (triggerRef.current?.getBoundingClientRect() ?? null)
+          : null;
         closingPopup.current =
           !next &&
           details.reason === "escape-key" &&

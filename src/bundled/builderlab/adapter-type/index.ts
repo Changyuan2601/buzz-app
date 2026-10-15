@@ -1,4 +1,4 @@
-import { createInstructionsTab } from "./Instructions";
+import { createSettingsTab } from "./Instructions";
 import type { AgentType } from "../../../features/agents/service";
 import type { AgentClient } from "../agents/client";
 import {
@@ -63,9 +63,11 @@ export function builderlabType(
     defaults: () => ({ config: {} }),
     tabs: [
       {
-        id: "instructions",
-        title: "Instructions",
-        component: createInstructionsTab(client, session),
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        splitSettings: true,
+        component: createSettingsTab(client, session),
       },
     ],
     remote: {

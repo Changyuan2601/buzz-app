@@ -1,6 +1,7 @@
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
+import type { AgentAttention } from "../features/agents/service";
 
 export type BuzzEvent = Readonly<{
   id: string;
@@ -28,6 +29,13 @@ export type Upload = Readonly<{
   thumb?: string;
   duration?: number;
 }>;
+/** One of the owner's channel templates, as a channel made from it starts:
+ * its Canvas and the owner's agents it adds. */
+export type ChannelTemplate = Readonly<{
+  name: string;
+  canvas: string;
+  agents: readonly string[];
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -50,6 +58,11 @@ export interface BuzzClient {
   memories(): Promise<readonly Memory[]>;
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
   remember(slug: string, body: string, after: number): Promise<void>;
+  /** The owner's channel templates, where the host has them. */
+  templates?(): Promise<readonly ChannelTemplate[]>;
+  /** The agent's attention, where its host keeps one. Without it the
+   * attention tools have nothing to act on. */
+  readonly attention?: AgentAttention;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

@@ -31,6 +31,7 @@ export function appClient(
   };
   return {
     pubkey: agent.pubkey,
+    attention: agent.attention,
     query: (filters) => {
       check();
       return agent.query(filters);
@@ -60,6 +61,10 @@ export function appClient(
       await agent.remember(slug, body, after);
       check();
       options.remembered?.();
+    },
+    templates: async () => {
+      check();
+      return agent.templates();
     },
   };
 }

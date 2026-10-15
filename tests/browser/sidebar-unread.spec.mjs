@@ -37,7 +37,7 @@ const removeDm = async (page, id) => {
   await dm.click({ button: "right" });
   const menu = page.getByRole("menu", { name: /Actions for / });
   const remove = menu.getByRole("menuitem", {
-    name: "Remove from Messages",
+    name: "Remove from Multiplayer",
     exact: true,
   });
   await expect(remove).toBeVisible();
@@ -158,10 +158,10 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
     await expect(cue(page, "below")).toBeVisible();
-    await expect(cue(page, "below")).toHaveCSS("border-radius", "12px");
+    await expect(cue(page, "below")).toHaveCSS("border-radius", "26px");
     await expect(cue(page, "below").locator("..")).toHaveCSS(
       "border-radius",
-      "12px",
+      "26px",
     );
     await expect.poll(() => evidence().length).toBe(2); // 130 IDs, not retries.
     expect(evidence().map(({ filter }) => filter["#h"].length)).toEqual([
@@ -236,6 +236,7 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   });
   await expect(cue(page, "below")).toBeVisible();
   await expect(cue(page, "below")).toHaveText(/\d+ unread$/);
+  await expect(cue(page, "below").locator("..")).toHaveCSS("bottom", "12px");
   await expect(cue(page, "below")).toHaveAccessibleName(
     /^\d+ unread conversations? below$/,
   );
@@ -252,6 +253,7 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   await expect.poll(() => inView(page, "alpha")).toBe(false);
   await expect(cue(page, "above")).toBeVisible();
   await expect(cue(page, "above")).toHaveText(/\d+ unread$/);
+  await expect(cue(page, "above").locator("..")).toHaveCSS("top", "12px");
   await expect(cue(page, "above")).toHaveAccessibleName(
     /^\d+ unread conversations? above$/,
   );
@@ -620,6 +622,7 @@ test.describe("DM preview wiring", () => {
         });
       const pill = cue(page, edge);
       await expect(pill).toBeVisible();
+      await expect(pill).toHaveCSS("height", "24px");
       const expected = await list(page).evaluate((nav, edge) => {
         const viewport = nav.getBoundingClientRect();
         const ids = [...nav.querySelectorAll("button[data-channel-id]")]
@@ -648,8 +651,8 @@ test.describe("DM preview wiring", () => {
       for (const preview of await previews.all()) {
         const avatar = preview.locator("[data-avatar-shape]");
         await expect(avatar).toHaveCSS("padding", "0px");
-        await expect(avatar).toHaveCSS("width", "20px");
-        await expect(avatar).toHaveCSS("height", "20px");
+        await expect(avatar).toHaveCSS("width", "16px");
+        await expect(avatar).toHaveCSS("height", "16px");
       }
     }
     await scroll(page, 0);

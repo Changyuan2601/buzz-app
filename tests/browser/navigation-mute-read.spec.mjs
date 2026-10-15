@@ -287,7 +287,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     await page.getByRole("button", { name: "Plugins", exact: true }).click();
     const toggle = page
       .getByRole("region", { name: "Plugins", exact: true })
-      .getByRole("switch", { name: "Enable Me", exact: true });
+      .getByRole("switch", { name: "Enable Solo", exact: true });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
     await page
@@ -312,9 +312,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await toggleMe(true);
   // Conversation creation lives in Me and still uses the production broker.
   await openPage(page, "Me");
-  await page
-    .getByRole("button", { name: "New conversation", exact: true })
-    .click();
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeFocused();

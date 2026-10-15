@@ -7,6 +7,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { outsideMentionDetail } from "./mention-candidates";
 import { matchesMentionQuery } from "./mention-query";
+import { avatarMedia } from "../../shared/avatar-source";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
@@ -123,13 +124,12 @@ export function MentionCompletion({
           <Avatar
             alt=""
             fallback={label}
-            src={session.media(
+            src={avatarMedia(
               profiles.get(recipient.pubkey)?.picture ??
                 model.directory.people.find(
                   (person) => person.pubkey === recipient.pubkey,
-                )?.picture ??
-                "",
-              "small",
+                )?.picture,
+              session.media,
             )}
             size="default"
             shape={

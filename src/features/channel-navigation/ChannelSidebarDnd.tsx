@@ -2,6 +2,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  type CollisionDetection,
   pointerWithin,
   useDraggable,
   useDroppable,
@@ -20,23 +21,60 @@ import { SidebarSection } from "../../bundled/channels/SidebarSection";
 
 const Writable = createContext(false);
 
+// Group gaps target the neighbour whose insertion edge lies in that same gap.
+const sidebarCollisions: CollisionDetection = (args) => {
+  if (!args.active.data.current?.group) return pointerWithin(args);
+  const groups = args.droppableContainers
+    .filter(({ id }) => String(id).startsWith("group:"))
+    .sort((a, b) => a.data.current?.groupIndex - b.data.current?.groupIndex);
+  const hits = pointerWithin({ ...args, droppableContainers: groups });
+  if (hits.length) return hits;
+  const pointer = args.pointerCoordinates;
+  if (!pointer) return [];
+  for (let index = 1; index < groups.length; index++) {
+    const above = groups[index - 1];
+    const below = groups[index];
+    if (!above || !below) continue;
+    const top = args.droppableRects.get(above.id);
+    const bottom = args.droppableRects.get(below.id);
+    if (
+      top &&
+      bottom &&
+      pointer.y > top.bottom &&
+      pointer.y < bottom.top &&
+      pointer.x >= Math.max(top.left, bottom.left) &&
+      pointer.x <= Math.min(top.right, bottom.right)
+    ) {
+      const target =
+        args.active.data.current.groupIndex < below.data.current?.groupIndex
+          ? above
+          : below;
+      return [{ id: target.id }];
+    }
+  }
+  return [];
+};
+
 /**
- * Pointer moves between saved groups, Starred and Channels. A drop only reports its
- * destination, so the caller saves it exactly like the row menu's move; that
- * menu remains the keyboard path.
+ * Pointer moves between sidebar sections (Messages groups, Starred and Channels,
+ * or Me projects and Chats), and reorders saved groups by their header. A drop
+ * only reports its destination, so the caller saves it exactly like the menus'
+ * moves; those menus remain the keyboard path.
  */
 export function ChannelSidebarDnd({
   writable,
   onMove,
+  onReorder,
   overlay,
   children,
 }: {
   writable: boolean;
   onMove: (channelId: string, sectionKey: string) => void;
-  overlay: (channelId: string) => ReactNode;
+  onReorder: (sectionKey: string, overKey: string) => void;
+  overlay: (id: string, group: boolean) => ReactNode;
   children: ReactNode;
 }) {
-  const [dragging, setDragging] = useState<string>();
+  const [dragging, setDragging] = useState<{ id: string; group: boolean }>();
   const sensors = useSensors(
     // A click must still select the row; only a deliberate pull starts a move.
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -44,14 +82,23 @@ export function ChannelSidebarDnd({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={pointerWithin}
+      collisionDetection={sidebarCollisions}
       // The sidebar's own status is its loading notice; drag announcements live outside it.
       accessibility={{ container: document.body }}
-      onDragStart={({ active }) => setDragging(String(active.id))}
+      onDragStart={({ active }) =>
+        setDragging({
+          id: String(active.id),
+          group: !!active.data.current?.group,
+        })
+      }
       onDragCancel={() => setDragging(undefined)}
       onDragEnd={({ active, over }) => {
         setDragging(undefined);
-        if (over && over.id !== active.data.current?.sectionKey)
+        if (!over) return;
+        if (active.data.current?.group) {
+          if (over.id !== active.id)
+            onReorder(String(active.id), String(over.id));
+        } else if (over.id !== active.data.current?.sectionKey)
           onMove(String(active.id), String(over.id));
       }}
     >
@@ -59,7 +106,7 @@ export function ChannelSidebarDnd({
       {createPortal(
         // The optimistic move relocates the row, so nothing remains to settle back onto.
         <DragOverlay dropAnimation={null}>
-          {dragging ? overlay(dragging) : null}
+          {dragging ? overlay(dragging.id, dragging.group) : null}
         </DragOverlay>,
         document.body,
       )}
@@ -97,21 +144,51 @@ export function DraggableChannel({
   );
 }
 
+/** A reorderable saved group drags by its header, never its rows or actions. */
 export function DroppableSidebarSection({
   disabled,
+  reorderable,
+  groupIndex,
   ...section
-}: ComponentProps<typeof SidebarSection> & { disabled: boolean }) {
+}: ComponentProps<typeof SidebarSection> & {
+  disabled: boolean;
+  reorderable: boolean;
+  groupIndex: number;
+}) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
+    data: { groupIndex },
     disabled,
   });
+  const drag = useDraggable({
+    id: section.sectionKey,
+    data: { group: true, groupIndex },
+    disabled: !reorderable,
+  });
+  const group = !!active?.data.current?.group;
+  const from = active?.data.current?.groupIndex;
   return (
     <SidebarSection
       {...section}
       dropRef={setNodeRef}
       dropTarget={
-        isOver && active?.data.current?.sectionKey !== section.sectionKey
+        !group &&
+        isOver &&
+        active?.data.current?.sectionKey !== section.sectionKey
       }
+      dropEdge={
+        group && isOver && active?.id !== section.sectionKey
+          ? from !== undefined && from < groupIndex
+            ? "after"
+            : "before"
+          : undefined
+      }
+      dragHandle={
+        reorderable
+          ? { ref: drag.setNodeRef, listeners: drag.listeners }
+          : undefined
+      }
+      dragging={drag.isDragging}
     />
   );
 }

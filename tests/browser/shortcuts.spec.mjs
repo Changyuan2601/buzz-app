@@ -316,7 +316,7 @@ test.describe("scaled history", () => {
       name: "Channel sidebar",
     });
     const handle = page.getByRole("separator", {
-      name: "Resize channel sidebar",
+      name: "Resize sidebar",
     });
     const before = await sidebar.boundingBox();
     const grip = await handle.boundingBox();

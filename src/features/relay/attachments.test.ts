@@ -2,6 +2,7 @@ import { assert, afterEach, expect, it, vi } from "vitest";
 import {
   attachmentMessage,
   brokerUpload,
+  readUploadResponse,
   UPLOAD_MAX_BYTES,
   validateUploadResult,
 } from "./attachments";
@@ -390,3 +391,23 @@ it.each(["M4A ", "zzzz"])(
     );
   },
 );
+
+it.each([
+  [
+    422,
+    "video resolution too high: maximum is 2160 on the short edge and 3840 on the long edge",
+    "resolution",
+  ],
+  [422, "video too long: duration exceeds 600 seconds", "duration"],
+  [
+    415,
+    "unsupported media codec: only H.264 video and AAC audio are accepted",
+    "codec",
+  ],
+  [415, "unsupported container: only MP4 is accepted", "rejected"],
+  [422, "moov atom not at front of file (not fast-start)", "rejected"],
+])("names the relay's %i video rule: %s", async (status, error, code) => {
+  await expect(
+    readUploadResponse(Response.json({ error }, { status })),
+  ).rejects.toMatchObject({ code });
+});

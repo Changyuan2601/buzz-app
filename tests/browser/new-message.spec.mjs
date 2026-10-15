@@ -1,6 +1,6 @@
 import { openPage } from "./navigation.mjs";
 import { upper, settle } from "./timeline.mjs";
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect } from "./playwright-test.mjs";
 import { preview } from "vite";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
@@ -485,7 +485,11 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await page.screenshot({
     path: info.outputPath("new-message-one-result.png"),
   });
-  expect(app.reads.filter((filter) => filter.search).length).toBe(searchReads);
+  // The reopened picker searches the relay again behind the local match.
+  await expect
+    .poll(() => app.reads.filter((filter) => filter.search).length)
+    .toBe(searchReads + 1);
+  await expect(loading).toHaveCount(0);
   app.showPeople();
   await input.press("ArrowDown");
   await input.press("Enter");
@@ -727,7 +731,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await sidebarDm.click({ button: "right" });
   await page
     .getByRole("menu", { name: "Actions for Avery Chen" })
-    .getByRole("menuitem", { name: "Remove from Messages", exact: true })
+    .getByRole("menuitem", { name: "Remove from Multiplayer", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();
