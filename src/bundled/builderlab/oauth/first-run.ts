@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Host } from "../../../features/host/service";
 import manifest from "../manifest.json";
-import { browserCredential, type Credential } from "./browser";
+import { browserCredential, type Credential, nativeBridge } from "./browser";
 
 /**
  * First launch runs before this plugin can share its Settings session, so the
@@ -19,5 +19,9 @@ export const bundledHost: Host = {
     }),
 };
 
-export const firstRunCredential = (signal: AbortSignal): Promise<Credential> =>
-  browserCredential(bundledHost, signal);
+/** `origin`: a tenant's portal chosen from the community URL; default otherwise. */
+export const firstRunCredential = (
+  signal: AbortSignal,
+  origin?: string,
+): Promise<Credential> =>
+  browserCredential(bundledHost, signal, nativeBridge, origin);

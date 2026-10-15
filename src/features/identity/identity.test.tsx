@@ -719,14 +719,18 @@ it("first launch offers Builderlab and a live community URL field, with QR scann
  * A relay that answers the two unauthenticated reads a landing URL triggers,
  * before any key exists. `info` holds the NIP-11 answer so the page can be
  * observed waiting on it; the policy is missing, as on most deployments.
+ * `created` holds key creation so "Creating keys…" can be observed.
  */
-function landingRelay() {
+function landingRelay(
+  origin = "https://relay.example.com:8443",
+  created: Promise<string> = Promise.resolve(viewer),
+) {
   const relayCalls: unknown[] = [];
   const info = deferred<void>();
   const answer = (status: number, body = "") => ({ status, headers: {}, body });
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "identity_restore") return null;
-    if (command === "identity_create") return viewer;
+    if (command === "identity_create") return created;
     if (command !== "relay_http")
       throw new Error(`Unexpected command ${command}`);
     relayCalls.push(args);
@@ -742,7 +746,7 @@ function landingRelay() {
     );
   });
   const get = (path: string) => ({
-    community: "https://relay.example.com:8443",
+    community: origin,
     path,
     method: "GET",
     body: null,
@@ -751,11 +755,17 @@ function landingRelay() {
 }
 const urlField = () => screen.getByRole("textbox", { name: "Community URL" });
 const urlJoin = () => screen.getByRole("button", { name: "Join" });
+/** The test table: relay.example.com (any subdomain, default port) signs in at tenant.example. */
+const tenants = [
+  { relayHost: "relay.example.com", loginOrigin: "https://tenant.example" },
+];
 
-it("a landing URL is looked up before sign-in, setup then lands on Join Community, and Cancel reaches Join a community with the address kept", async () => {
-  const relay = landingRelay();
+it("a landing URL is looked up before sign-in, a tenant's relay signs in at that tenant's portal, setup then lands on Join Community, and Cancel reaches Join a community with the address kept", async () => {
+  const relay = landingRelay("https://relay.example.com");
   const released = deferred<Credential>();
-  const connect = vi.fn((_signal: AbortSignal) => released.promise);
+  const connect = vi.fn(
+    (_signal: AbortSignal, _origin?: string) => released.promise,
+  );
   const { delay, release } = gatedDelay();
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -764,34 +774,44 @@ it("a landing URL is looked up before sign-in, setup then lands on Join Communit
       identity={identity}
       communities={noJoin}
       connect={connect}
+      tenants={tenants}
       delay={delay}
     >
       <p>Signed in</p>
     </Welcome>,
   );
   await screen.findByRole("button", { name: "Connect with Builderlab" });
-  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  await user.type(urlField(), "Design.Relay.Example.com{Enter}");
   // Discovery: the same two unauthenticated GETs the find page sends, with
   // no sign-in and no key yet.
   expect(
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent(
-    "relay.example.com:8443",
+    "design.relay.example.com",
   );
-  expect(relay.relayCalls).toEqual(relay.lookup);
+  const lookup = relay.lookup.map((call) => ({
+    ...call,
+    community: "https://design.relay.example.com",
+  }));
+  expect(relay.relayCalls).toEqual(lookup);
   expect(connect).not.toHaveBeenCalled();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await act(async () => relay.info.resolve());
-  // Found: sign-in starts at once; the landing shows it pending with the
+  // Found: the host matches the tenant row as a subdomain, so sign-in starts
+  // at once at that tenant's portal; the landing shows it pending with the
   // typed address held in the disabled field.
   expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect).toHaveBeenCalledWith(
+    expect.any(AbortSignal),
+    "https://tenant.example",
+  );
   expect(
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
   expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
   expect(urlField()).toBeDisabled();
-  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(urlField()).toHaveValue("Design.Relay.Example.com");
   expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
   await act(async () => released.resolve(credential));
   // Setup skips "Finding communities": the URL already names the community.
@@ -815,18 +835,77 @@ it("a landing URL is looked up before sign-in, setup then lands on Join Communit
     screen.queryByRole("heading", { name: "Join a community" }),
   ).toBeNull();
   expect(screen.queryByText("Signed in")).toBeNull();
-  expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
+  expect(relay.relayCalls).toEqual([...lookup, ...lookup]);
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
-  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(urlField()).toHaveValue("Design.Relay.Example.com");
   // Join from the choices page looks the same address up again.
   await user.click(urlJoin());
   expect(
     await screen.findByRole("heading", { name: "Join Community" }),
   ).toBeVisible();
   expect(relay.relayCalls).toHaveLength(6);
+  identity.dispose();
+});
+
+it("a landing URL no tenant hosts skips Builderlab: setup only creates the key, then lands on Join Community", async () => {
+  // The same host on a non-default port is not a tenant's relay.
+  const created = deferred<string>();
+  const relay = landingRelay(undefined, created.promise);
+  const connect = vi.fn();
+  const delay = vi.fn();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={connect}
+      tenants={tenants}
+      delay={delay}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  expect(
+    screen.getByRole("heading", { name: "Finding community" }),
+  ).toBeVisible();
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  await act(async () => relay.info.resolve());
+  // Found, key-only: no sign-in, no key backup placeholders, just the key.
+  expect(
+    screen.getByRole("heading", { name: "Setting up Buzz" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
+  expect(invoke).toHaveBeenCalledWith("identity_create", {});
+  expect(connect).not.toHaveBeenCalled();
+  expect(delay).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
+  await act(async () => created.resolve(viewer));
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  expect(
+    screen.queryByRole("heading", { name: "Join a community" }),
+  ).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(connect).not.toHaveBeenCalled();
+  expect(delay).not.toHaveBeenCalled();
+  expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "relay_http",
+    "relay_http",
+    "identity_create",
+    "relay_http",
+    "relay_http",
+  ]);
   identity.dispose();
 });
 
@@ -874,11 +953,11 @@ it("a landing URL that cannot be reached fails before sign-in, and Cancel keeps 
 });
 
 it("canceling or failing sign-in after a landing URL returns to the landing with the address kept and no second lookup", async () => {
-  const relay = landingRelay();
+  const relay = landingRelay("https://relay.example.com");
   relay.info.resolve();
   let signal: AbortSignal | undefined;
   const connect = vi
-    .fn<(signal: AbortSignal) => Promise<Credential>>()
+    .fn<(signal: AbortSignal, origin?: string) => Promise<Credential>>()
     .mockImplementationOnce((current) => {
       signal = current;
       return new Promise(() => {});
@@ -887,13 +966,22 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
-    <Welcome identity={identity} communities={noJoin} connect={connect}>
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={connect}
+      tenants={tenants}
+    >
       <p>Signed in</p>
     </Welcome>,
   );
   await screen.findByRole("button", { name: "Connect with Builderlab" });
-  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  await user.type(urlField(), "relay.example.com{Enter}");
   await screen.findByRole("button", { name: "Cancel sign-in" });
+  expect(connect).toHaveBeenCalledWith(
+    expect.any(AbortSignal),
+    "https://tenant.example",
+  );
   expect(connect).toHaveBeenCalledTimes(1);
   expect(relay.relayCalls).toEqual(relay.lookup);
   await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
@@ -903,7 +991,7 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   expect(welcomeHeading()).toBeVisible();
   expect(connectButton()).toBeEnabled();
   expect(urlField()).toBeEnabled();
-  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(urlField()).toHaveValue("relay.example.com");
   expect(
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
@@ -920,7 +1008,7 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(welcomeHeading()).toBeVisible();
-  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(urlField()).toHaveValue("relay.example.com");
   expect(
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
@@ -972,7 +1060,8 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
   expect(connect).toHaveBeenCalledTimes(1);
-  expect(connect.mock.calls[0]?.[0]).toBeInstanceOf(AbortSignal);
+  // No community URL chose a tenant, so sign-in uses the build's default origin.
+  expect(connect).toHaveBeenCalledWith(expect.any(AbortSignal), undefined);
   expect(screen.getByRole("status")).toHaveTextContent(
     "Finish sign-in in your browser",
   );

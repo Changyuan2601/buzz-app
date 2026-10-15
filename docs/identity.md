@@ -17,11 +17,16 @@ relay or a non-Buzz address fails there with the same classified copy; **Cancel*
 (and **Retry**, when offered) behave as below, except that Cancel returns to the
 welcome screen with the address kept in the field. A found community decides
 which sign-in follows: `discoverAuthentication` in
-`src/features/identity/setup.ts` is the seam for that, and today treats every
-community URL as Builderlab-hosted, so sign-in starts at once and the welcome
-screen shows it pending (**Cancel sign-in**, with the field disabled). Cancel
-sign-in, and **Back** from a sign-in or setup failure, return to the welcome
-screen with the address kept and do not look it up again.
+`src/features/identity/builderlab-tenants.ts` matches the community's hostname,
+then its NIP-11 `self` key, against the
+[`BUZZ_BUILDERLAB_TENANTS` build table](configuration.md#builderlab-tenant-table-build-input).
+A match starts Builderlab sign-in at once at that tenant's portal (the same
+browser sign-in, exchange and account check, at the row's `loginOrigin` instead
+of `BUZZ_BUILDERLAB_URL`), and the welcome screen shows it pending (**Cancel
+sign-in**, with the field disabled). Cancel sign-in, and **Back** from a sign-in
+or setup failure, return to the welcome screen with the address kept and do not
+look it up again. A community no row hosts is not known to be Builderlab-hosted,
+so it skips sign-in entirely and goes straight to setup with the key alone.
 
 Success continues to a **Setting up Buzz** page that runs its steps in order,
 showing the current label with a spinner: *Downloading keys*, *Creating keys*,
@@ -30,8 +35,10 @@ screen — *Finding communities*. Only **Creating keys** does real work: it
 generates a Nostr key through the same native create command as the key setup
 screen, so the next launch opens as a returning user. The others are
 placeholders marked `[TODO]` that wait two seconds each until their backends
-exist (`src/features/identity/setup.ts`). A failed step shows **Couldn’t finish
-setup** with the error and **Back** to the welcome screen. Setup then lands on
+exist (`src/features/identity/setup.ts`); the key download and upload ones are
+Builderlab key backup, so key-only setup runs **Creating keys** alone. A failed
+step shows **Couldn’t finish setup** with the error and **Back** to the welcome
+screen. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
 a **Community URL** field with **Join** beside it, and **Scan a QR code** and
@@ -94,7 +101,7 @@ development seed, counts as having communities), the gate stays up for **Set up
 your profile** (`src/features/identity/ProfileStep.tsx`): the shared profile
 fields — avatar, required display name, optional description — prefilled from
 the relay's existing profile, or otherwise with the local part of the Builderlab
-email as the name. **Continue** publishes the kind 0 to that one relay through
+email as the name (blank after key-only setup). **Continue** publishes the kind 0 to that one relay through
 the same signed `relay_sign` + `POST /events` route Settings → Profile uses
 (skipped when an existing relay profile is left unchanged), keeps the result as
 the device's local default for later joins, and enters the app on the community.

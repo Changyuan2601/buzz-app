@@ -6,11 +6,13 @@ import {
 } from "./find-community";
 
 const url = "https://relay.example.com:8443";
+const self = "76aa9daa7edc9c2e1dc6a2a90dbce10c1bd52f060fa6506ba7bad4f50240fc01";
 const buzz = {
   name: "Buzz Relay",
   software: "https://github.com/block/buzz",
   version: "1.4.2",
   icon: "https://cdn.example.com/icon.png",
+  self,
   read_state_snapshot: { community_id: "c1" },
 };
 const policy = {
@@ -51,6 +53,7 @@ it("reports only what the relay publishes, with the icon sanitized, from two una
     url,
     host: "relay.example.com:8443",
     icon: "https://cdn.example.com/icon.png",
+    self,
     policy: {
       version: "v1",
       terms_markdown: "# Terms",
@@ -77,9 +80,22 @@ it("reports only what the relay publishes, with the icon sanitized, from two una
     url,
     host: "relay.example.com:8443",
     icon: undefined,
+    self: undefined,
     policy: null,
   });
 });
+
+it.each([self.toUpperCase(), self.slice(1), 42, null])(
+  "keeps only a well-formed relay key, dropping self %j",
+  async (value) => {
+    await expect(
+      find({
+        "/": Response.json({ ...buzz, self: value }),
+        "/api/join-policy": html(404),
+      }),
+    ).resolves.toMatchObject({ self: undefined });
+  },
+);
 
 it.each([
   ["a network failure", { "/": new TypeError("fetch failed") }, "unreachable"],

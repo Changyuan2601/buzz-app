@@ -1,4 +1,3 @@
-import type { FoundCommunity } from "../communities/find-community";
 import type { Identity } from "./service";
 
 export type SetupStep = Readonly<{ label: string; run: () => Promise<void> }>;
@@ -24,37 +23,25 @@ async function createKey(identity: Identity) {
 }
 
 /**
- * First-run steps after Builderlab sign-in, in order. `[TODO]` steps have no
- * backend yet and only wait; replace their `run` with the real call and drop the
- * marker from the label. Setup started from a community URL already knows
- * which community to join, so it skips "Finding communities".
+ * First-run steps, in order. `[TODO]` steps have no backend yet and only wait;
+ * replace their `run` with the real call and drop the marker from the label.
+ * The key download/upload placeholders are Builderlab key backup, so key-only
+ * setup (a community no Builderlab tenant hosts) omits them. Setup started from
+ * a community URL already knows which community to join, so it skips "Finding
+ * communities".
  */
 export function setupSteps(
   identity: Identity,
   delay = wait,
-  { findCommunities = true } = {},
+  { findCommunities = true, builderlab = true } = {},
 ): SetupStep[] {
+  const placeholder = (label: string) => ({ label, run: () => delay(2000) });
   return [
-    { label: "Downloading keys… [TODO]", run: () => delay(2000) },
+    ...(builderlab ? [placeholder("Downloading keys… [TODO]")] : []),
     { label: "Creating keys…", run: () => createKey(identity) },
-    { label: "Uploading keys… [TODO]", run: () => delay(2000) },
-    ...(findCommunities
-      ? [{ label: "Finding communities… [TODO]", run: () => delay(2000) }]
-      : []),
+    ...(builderlab ? [placeholder("Uploading keys… [TODO]")] : []),
+    ...(findCommunities ? [placeholder("Finding communities… [TODO]")] : []),
   ];
-}
-
-export type Authentication = "builderlab";
-
-/**
- * Which sign-in a community URL given before setup leads to.
- *
- * TODO: nothing a relay publishes identifies its host today (NIP-11 `self` is
- * the likeliest future signal), so every community URL is treated as
- * Builderlab-hosted.
- */
-export function discoverAuthentication(_found: FoundCommunity): Authentication {
-  return "builderlab";
 }
 
 /** Runs the given steps once, stopping at the first failure. */

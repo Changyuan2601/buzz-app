@@ -1,4 +1,4 @@
-import { nativeRelayRequest } from "../relay/native";
+import { nativeRelayRequest, relaySelf } from "../relay/native";
 import { communityIcon } from "./community-icon";
 import { joinPolicy, type JoinPolicy } from "./join-policy";
 
@@ -8,6 +8,8 @@ export type FoundCommunity = {
   url: string;
   host: string;
   icon?: string | undefined;
+  /** The relay deployment's key (NIP-11 `self`), when it is well-formed. */
+  self?: string | undefined;
   policy: JoinPolicy | null;
 };
 
@@ -55,6 +57,7 @@ export async function findCommunity(
     url,
     host: new URL(url).host,
     icon: communityIcon(info.icon),
+    self: relaySelf(info),
     policy: await policyAnswer(await policy),
   };
 }

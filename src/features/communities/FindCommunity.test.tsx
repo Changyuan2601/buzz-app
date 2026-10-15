@@ -8,11 +8,13 @@ import type { RelayFetch } from "./find-community";
 
 const url = "https://relay.example.com:8443";
 const host = "relay.example.com:8443";
+const self = "76aa9daa7edc9c2e1dc6a2a90dbce10c1bd52f060fa6506ba7bad4f50240fc01";
 const buzz = {
   name: "Buzz Relay",
   software: "https://github.com/block/buzz",
   version: "1.4.2",
   icon: "https://cdn.example.com/icon.png",
+  self,
   read_state_snapshot: { community_id: "c1" },
 };
 const policy = {
@@ -113,6 +115,7 @@ it("shows the host while finding, then only published facts, gating Join on ever
     url,
     host,
     icon: "https://cdn.example.com/icon.png",
+    self,
     policy,
   });
   // The two unauthenticated reads are the only pre-join traffic: nothing is signed.
@@ -171,6 +174,7 @@ it("with onFound a found community is handed over while the lookup page stays", 
       url,
       host,
       icon: "https://cdn.example.com/icon.png",
+      self,
       policy,
     }),
   );

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -18,11 +19,16 @@ import {
   CopyIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import {
+  type BuilderlabTenant,
+  configuredBuilderlabTenants,
+  discoverAuthentication,
+} from "./builderlab-tenants";
 import { CommunityUrlField } from "./CommunityUrlField";
 import { JoinCommunity } from "./JoinCommunity";
 import { ProfileStep } from "./ProfileStep";
 import type { Identity } from "./service";
-import { createSetup, discoverAuthentication, setupSteps, wait } from "./setup";
+import { createSetup, setupSteps, wait } from "./setup";
 import { SetupWindowHeader } from "./SetupWindowHeader";
 
 /**
@@ -34,17 +40,24 @@ export function Welcome({
   communities,
   children,
   connect = firstRunCredential,
+  tenants = configuredBuilderlabTenants,
   delay = wait,
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
   communities: Pick<Communities, "snapshot" | "joined" | "saveProfile">;
   children: ReactNode;
-  connect?: (signal: AbortSignal) => Promise<Credential>;
+  /** `origin` is the tenant portal a community URL selected; the build default otherwise. */
+  connect?: (signal: AbortSignal, origin?: string) => Promise<Credential>;
+  tenants?: readonly BuilderlabTenant[];
   delay?: (ms: number) => Promise<void>;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
-  const [login] = useState(() => createOAuthSession(connect));
+  // Set by discovery before each sign-in; the session store never sees a URL.
+  const loginOrigin = useRef<string | undefined>(undefined);
+  const [login] = useState(() =>
+    createOAuthSession((signal) => connect(signal, loginOrigin.current)),
+  );
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
   const [setup] = useState(createSetup);
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
@@ -74,7 +87,8 @@ export function Welcome({
   );
   if (state.status === "ready" && progress.status === "idle") return children;
   /** `findCommunities` is false when a landing-page URL already names the community. */
-  const signIn = async (findCommunities: boolean) => {
+  const signIn = async (findCommunities: boolean, origin?: string) => {
+    loginOrigin.current = origin;
     await login.signIn();
     if (login.snapshot().status === "signed-in")
       void setup.start(setupSteps(identity, delay, { findCommunities }));
@@ -229,13 +243,21 @@ export function Welcome({
         ) : finding && auth.status === "signed-out" ? (
           // Discovery: the same unauthenticated lookup Join Community runs
           // after setup, so a bad address fails here, before sign-in and before
-          // a key exists. A found community says which sign-in comes next.
+          // a key exists. A found community says which sign-in comes next: a
+          // Builderlab tenant's portal, or none, which only creates the key.
           <FindCommunity
             url={finding}
             onCancel={backToLanding}
             onFound={(found) => {
-              if (discoverAuthentication(found) === "builderlab")
-                void signIn(false);
+              const auth = discoverAuthentication(found, tenants);
+              if (auth.kind === "builderlab") void signIn(false, auth.origin);
+              else
+                void setup.start(
+                  setupSteps(identity, delay, {
+                    findCommunities: false,
+                    builderlab: false,
+                  }),
+                );
             }}
             titleId="welcome-title"
           />
