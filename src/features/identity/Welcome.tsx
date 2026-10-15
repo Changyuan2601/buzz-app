@@ -249,8 +249,9 @@ export function Welcome({
             url={finding}
             onCancel={backToLanding}
             onFound={(found) => {
-              const auth = discoverAuthentication(found, tenants);
-              if (auth.kind === "builderlab") void signIn(false, auth.origin);
+              const method = discoverAuthentication(found, tenants);
+              if (method.kind === "builderlab")
+                void signIn(false, method.origin);
               else
                 void setup.start(
                   setupSteps(identity, delay, {

@@ -46,10 +46,16 @@ export function parseBuilderlabTenants(raw = ""): readonly BuilderlabTenant[] {
         (self !== undefined && typeof self !== "string")
       )
         throw new Error();
-      const host = relayHost.trim().toLowerCase().replace(/\.$/, "");
+      // ASCII-only folding and the 253-byte cap mirror build.rs, so a row the
+      // native grant would refuse fails here, at configuration time, instead.
+      const host = relayHost
+        .trim()
+        .replace(/[A-Z]/g, (c) => c.toLowerCase())
+        .replace(/\.$/, "");
       const origin = new URL(loginOrigin);
       if (
         !HOSTNAME.test(host) ||
+        host.length > 253 ||
         hosts.has(host) ||
         origin.protocol !== "https:" ||
         origin.username ||

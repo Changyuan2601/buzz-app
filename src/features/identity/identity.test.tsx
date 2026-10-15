@@ -962,6 +962,7 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
       signal = current;
       return new Promise(() => {});
     })
+    .mockImplementationOnce(() => new Promise(() => {}))
     .mockRejectedValueOnce(new Error("Browser could not open."));
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -996,6 +997,16 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
   expect(relay.relayCalls).toEqual(relay.lookup);
+  // Connect without the URL: the tenant origin from the cancelled sign-in
+  // must not leak into this one.
+  await user.click(connectButton());
+  await screen.findByRole("button", { name: "Cancel sign-in" });
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(connect).toHaveBeenLastCalledWith(expect.any(AbortSignal), undefined);
+  await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(urlField()).toHaveValue("relay.example.com");
+  expect(relay.relayCalls).toEqual(relay.lookup);
   // Join again: a fresh lookup, then a sign-in that fails; Back behaves the same.
   await user.click(urlJoin());
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -1004,7 +1015,7 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   expect(
     screen.getByRole("heading", { name: "Couldn’t connect to Builderlab" }),
   ).toBeVisible();
-  expect(connect).toHaveBeenCalledTimes(2);
+  expect(connect).toHaveBeenCalledTimes(3);
   expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(welcomeHeading()).toBeVisible();

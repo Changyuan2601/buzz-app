@@ -170,6 +170,16 @@ it.each([
     "a port in the host",
     '[{"relayHost":"a.example:8443","loginOrigin":"https://a.example"}]',
   ],
+  [
+    // Four 63-byte labels: every label is legal, the 255-byte whole is not.
+    "an over-long host",
+    `[{"relayHost":"${["a", "b", "c", "d"].map((l) => l.repeat(63)).join(".")}","loginOrigin":"https://a.example"}]`,
+  ],
+  [
+    // U+212A KELVIN SIGN: toLowerCase() would fold it to ASCII "k"; build.rs does not.
+    "a Kelvin sign in the host",
+    '[{"relayHost":"\u212Aelvin.example","loginOrigin":"https://a.example"}]',
+  ],
   ["a missing host", '[{"loginOrigin":"https://a.example"}]'],
   [
     "an unknown field",
