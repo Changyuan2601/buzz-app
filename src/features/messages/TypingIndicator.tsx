@@ -10,7 +10,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { activityTarget } from "../agents/activity-target";
+import { profileActivityViewTarget } from "../profiles/target";
 import { currentActivity } from "../agents/current-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -22,7 +22,9 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import type { RelaySession } from "../relay/session";
+import type { MessageLinkOrigin } from "./MessageRow";
 import styles from "./TypingIndicator.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
@@ -42,7 +44,9 @@ export function TypingIndicator({
   channelId: string;
   threadRootId?: string | undefined;
   canOpenActivity?: ((target: string) => boolean) | undefined;
-  openActivity?: ((target: string) => boolean) | undefined;
+  openActivity?:
+    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | undefined;
 }) {
   const replaced = useReplacedTypers(session, channelId, threadRootId);
   const entries = useSyncExternalStore(
@@ -105,7 +109,7 @@ export function TypingIndicator({
           fallback={name(pubkey)}
           shape="squircle"
           size="fill"
-          src={picture ? session.media(picture, "small") : undefined}
+          src={avatarMedia(picture, session.media)}
         />
       </span>
     );
@@ -128,23 +132,24 @@ export function TypingIndicator({
       ...(roots.length > 2 ? [`+${roots.length - 2} more`] : []),
     ].join(" / ");
   };
-  const targetForAgent = (pubkey: string) => {
+  // Unknown or multiple scopes open channel activity, never an inferred transcript.
+  const activityOrigin = (pubkey: string): MessageLinkOrigin | undefined => {
     const roots = details.get(pubkey)?.roots ?? [];
-    const root = threadRootId ?? (roots.length === 1 ? roots[0] : undefined);
-    return activityTarget(pubkey, channelId, root ?? undefined);
+    const rootId = threadRootId ?? (roots.length === 1 ? roots[0] : undefined);
+    return rootId ? { rootId } : undefined;
   };
   const directTarget =
     clickOpensPanel && agents.length === 1 && firstAgent
-      ? targetForAgent(firstAgent)
+      ? profileActivityViewTarget(firstAgent)
       : undefined;
-  const agentStatus = (pubkey: string, navigate: (target: string) => void) => {
+  const agentStatus = (
+    pubkey: string,
+    navigate: (target: string, origin?: MessageLinkOrigin) => void,
+  ) => {
     const detail = details.get(pubkey);
     if (!detail) return null;
-    // Unknown or multiple scopes open channel activity, never an inferred transcript.
-    const root =
-      threadRootId ?? (detail.roots.length === 1 ? detail.roots[0] : undefined);
-    const target = activityTarget(pubkey, channelId, root ?? undefined);
-    const canOpen = !!openActivity && !!canOpenActivity?.(target);
+    const target = profileActivityViewTarget(pubkey);
+    const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
     const knownRoots = detail.roots.filter(
       (value) => typeof value === "string",
     );
@@ -157,12 +162,16 @@ export function TypingIndicator({
     return (
       <AgentActivityRow
         name={name(pubkey)}
-        picture={picture ? session.media(picture, "small") : undefined}
+        picture={avatarMedia(picture, session.media)}
         status={detail.label}
         scope={scopeLabel(pubkey)}
         openLabel={`Open ${conversationRoot ? "thread" : "conversation"} for ${name(pubkey)}`}
         onOpen={openActivity ? () => navigate(conversation) : undefined}
-        onOpenActivity={canOpen ? () => navigate(target) : undefined}
+        onOpenActivity={
+          canOpen && target
+            ? () => navigate(target, activityOrigin(pubkey))
+            : undefined
+        }
       />
     );
   };
@@ -206,6 +215,7 @@ export function TypingIndicator({
                   ? directTarget
                   : undefined
               }
+              directOrigin={firstAgent ? activityOrigin(firstAgent) : undefined}
             >
               {(navigate) =>
                 agents.map((pubkey) => (
@@ -236,14 +246,20 @@ function AgentChooser({
   overflow,
   openTarget,
   directTarget,
+  directOrigin,
   children,
 }: {
   label: string;
   avatars: ReactNode;
   overflow: number;
-  openTarget?: ((target: string) => boolean) | undefined;
+  openTarget?:
+    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | undefined;
   directTarget?: string | undefined;
-  children(navigate: (target: string) => void): ReactNode;
+  directOrigin?: MessageLinkOrigin | undefined;
+  children(
+    navigate: (target: string, origin?: MessageLinkOrigin) => void,
+  ): ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -270,14 +286,14 @@ function AgentChooser({
     document.addEventListener("keydown", dismiss, true);
     return () => document.removeEventListener("keydown", dismiss, true);
   }, [open]);
-  const navigate = (target: string) => {
+  const navigate = (target: string, origin?: MessageLinkOrigin) => {
     const previous = document.activeElement;
     // The popup action unmounts after navigation. Existing panel navigation
     // captures activeElement, so give it the retained avatar control instead.
     trigger.current?.focus({ preventScroll: true });
     // Close through Base UI so its hover/press state resets too. A retained
     // conversation keeps this control mounted after navigation.
-    if (openTarget?.(target)) {
+    if (openTarget?.(target, origin)) {
       if (actions.current) actions.current.close();
       else setOpen(false);
     } else if (previous instanceof HTMLElement)
@@ -345,7 +361,7 @@ function AgentChooser({
               if (!directTarget) return;
               // Keep hover preview separate from explicit click/keyboard activation.
               event.preventDefault();
-              navigate(directTarget);
+              navigate(directTarget, directOrigin);
             }}
           >
             <span className={styles.avatars} aria-hidden="true">

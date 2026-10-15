@@ -1,3 +1,4 @@
+import { PreferenceRow } from "./PreferenceRow";
 import { useId, type ReactNode } from "react";
 import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
@@ -22,7 +23,7 @@ export function Select({
   value,
   groups,
   onValueChange,
-  variant = "inline",
+  variant: requestedVariant = "inline",
   disabled = false,
   description,
   error,
@@ -34,6 +35,7 @@ export function Select({
   valueTitle,
   leading,
   align = "start",
+  appearance = "outlined",
 }: {
   label: string;
   description?: ReactNode;
@@ -43,18 +45,21 @@ export function Select({
   readOnly?: boolean;
   placeholder?: string;
   /** Compact display text; option labels retain their full meaning. */
-  valueLabel?: string;
+  valueLabel?: string | undefined;
   valueTitle?: string;
   /** Decorative identity artwork shown before the selected value. */
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
-  variant?: "inline" | "field" | "compact";
+  variant?: "inline" | "field" | "compact" | "preference";
+  appearance?: "outlined" | "subtle";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
   onValueChange: (value: string) => void;
 }) {
+  const variant =
+    requestedVariant === "preference" ? "compact" : requestedVariant;
   const optionDescriptionId = useId();
   const items = groups.flatMap((group) => group.options);
   const selectedValue =
@@ -118,7 +123,16 @@ export function Select({
             render={(props) => (
               <Button
                 {...props}
-                variant={variant === "compact" ? "outline" : "ghost"}
+                shape={
+                  requestedVariant === "preference" ? "control" : "capsule"
+                }
+                variant={
+                  variant === "compact"
+                    ? appearance === "subtle"
+                      ? "subtle"
+                      : "outline"
+                    : "ghost"
+                }
                 size={variant === "compact" ? "sm" : "md"}
               >
                 <span className="buzz-select-value-content">
@@ -145,13 +159,15 @@ export function Select({
                     {valueLabel}
                   </BaseSelect.Value>
                 </span>
-                <BaseSelect.Icon>
-                  <CaretDownIcon
-                    size={14}
-                    className="buzz-dropdown-chevron"
-                    aria-hidden="true"
-                  />
-                </BaseSelect.Icon>
+                {!(variant === "compact" && appearance === "subtle") && (
+                  <BaseSelect.Icon>
+                    <CaretDownIcon
+                      size={14}
+                      className="buzz-dropdown-chevron"
+                      aria-hidden="true"
+                    />
+                  </BaseSelect.Icon>
+                )}
               </Button>
             )}
           />
@@ -230,6 +246,22 @@ export function Select({
       </BaseSelect.Root>
     </div>
   );
+  if (requestedVariant === "preference")
+    return (
+      <>
+        <PreferenceRow
+          title={label}
+          subtitle={description}
+          disabled={disabled}
+          trailing={control}
+        />
+        {error && (
+          <p role="alert" className="buzz-field-error">
+            {error}
+          </p>
+        )}
+      </>
+    );
   return variant === "field" ? (
     <Field
       nativeLabel={false}

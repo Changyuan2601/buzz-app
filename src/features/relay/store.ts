@@ -2,7 +2,7 @@ import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
-import { ReadError, readErrorKind } from "./errors";
+import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import type {
   ChannelReference,
   ChannelList,
@@ -14,6 +14,12 @@ import type {
   ChannelWindow,
 } from "./contracts";
 import { DiscoveryState, metadataName, openMetadata } from "./discovery";
+import {
+  channelIdentity,
+  channelIdentityUnsupported,
+  channelLabelTags,
+  compareChannelAge,
+} from "./channel-labels";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
@@ -80,6 +86,8 @@ const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 const DISCOVERY_LIMIT = 500;
 // One page of public channel metadata for name search; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+/** One creator's channels with one label: a small answer, within one `resolve`. */
+const LABELED_CHANNEL_PAGE = 100;
 /** How long name search reuses one page of public channel metadata. Typing
  * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
@@ -115,6 +123,8 @@ export function createChannelStore(
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
         rosterChanged?(strong?: boolean): void;
+        /** The relay advertises NIP-CL; label lookups are refused without it. */
+        channelIdentity?: true | undefined;
       })
     | null,
   directory: ProfileDirectory,
@@ -162,6 +172,8 @@ export function createChannelStore(
   type RosterRefresh = Readonly<{
     state: "idle" | "pending" | "verified" | "deferred" | "error";
     error?: string;
+    /** Set with an error that a later retry can fix; see isTransientFailure. */
+    transient?: true;
   }>;
   let rosterRefresh: RosterRefresh = Object.freeze({ state: "idle" });
   let list: ChannelList = transport
@@ -1211,7 +1223,11 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       outcome = isAbort(error)
         ? { state: "deferred" }
-        : { state: "error", error: describe(error) };
+        : {
+            state: "error",
+            error: describe(error),
+            ...(isTransientFailure(error) ? { transient: true as const } : {}),
+          };
       if (error instanceof ReadError && error.retryAfterMs !== undefined)
         listRetryAt = performance.now() + error.retryAfterMs;
       if (denyAllOnFailure && readErrorKind(error) === "denied") {
@@ -1502,6 +1518,70 @@ export function createChannelStore(
     if (generation === epoch)
       recentPublic = { generation, ids: channels.map(({ id }) => id) };
     return { channels, partial: metadata.length >= PUBLIC_CHANNEL_PAGE };
+  }
+  /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
+   * The page only names candidates; `resolve` re-reads each one before it
+   * becomes readable through `get`. Matches never enter `list()`. */
+  async function findLabeled(
+    query: Readonly<{ creator: string; label: string }>,
+    settings?: ChannelReadOptions,
+  ): Promise<readonly ChannelSummary[]> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    // An old relay ignores the label filter; "none found" would be a guess.
+    if (!transport.channelIdentity) throw channelIdentityUnsupported();
+    if (!/^[0-9a-f]{64}$/.test(query.creator))
+      throw new Error("Choose a valid channel creator.");
+    channelLabelTags([query.label]);
+    const generation = epoch;
+    const events = await transport.read(
+      [
+        {
+          kinds: [39000],
+          ...(settings?.consistency
+            ? { consistency: settings.consistency }
+            : {}),
+          authors: [transport.relayAuthor],
+          "#P": [query.creator],
+          "#t": [query.label],
+          limit: LABELED_CHANNEL_PAGE,
+        },
+      ],
+      { ...settings, fresh: true },
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel lookup", "AbortError");
+    // Check the relay's answer: only relay-signed metadata whose creator and
+    // labels match. A label alone proves nothing; the creator tag does.
+    const ids = [
+      ...new Set(
+        events.flatMap((event) => {
+          const id = tag(event, "d");
+          const identity = channelIdentity(event);
+          return event.kind === 39000 &&
+            event.pubkey === transport.relayAuthor &&
+            id &&
+            identity.creator === query.creator &&
+            identity.labels.includes(query.label)
+            ? [id]
+            : [];
+        }),
+      ),
+    ];
+    if (ids.length) await resolve(ids, settings);
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel lookup", "AbortError");
+    return ids
+      .flatMap((id) => {
+        const channel = discovery.get(id);
+        return channel &&
+          channel.creator === query.creator &&
+          channel.labels?.includes(query.label)
+          ? [channel]
+          : [];
+      })
+      .sort(compareChannelAge);
   }
   /** An open channel's current read-only preview, as name search admits it. */
   function previewable(id: string) {
@@ -1889,6 +1969,7 @@ export function createChannelStore(
     get: (id: string) => discovery?.get(id),
     resolve,
     searchPublic,
+    findLabeled,
     matchPublic,
     describe: describeReference,
     refer: referChannel,

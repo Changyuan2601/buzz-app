@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
+import { ownerReads } from "../../features/agents/reads";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -12,6 +13,9 @@ import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
+import { localSessions } from "./sessions";
+import { Lanes } from "../../features/agent-harness/lanes";
+import { wake } from "../../features/agent-harness/wakes";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -95,7 +99,11 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new ClaudeRuntime(host, () => relay, storage);
+  const runtime = new ClaudeRuntime(
+    host,
+    (pubkey) => ownerReads(relay, pubkey),
+    storage,
+  );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
     published.push(template);
@@ -147,12 +155,13 @@ function setup(
       if (trigger.interest)
         objects.set(`interest/${value.interest_id}`, trigger.interest);
     }
-    return runtime.run({
+    const signal = options.signal ?? new AbortController().signal;
+    const delivery = {
       trigger,
       channelId: channel,
       agent,
       config: DEFAULT_CONFIG,
-      signal: options.signal ?? new AbortController().signal,
+      signal,
       workingUntil,
       // The host's answer, as it is when asked.
       current: () =>
@@ -160,8 +169,23 @@ function setup(
         (attention.on &&
           objects.get(trigger.slug)?.enabled === true &&
           !stale.has(trigger.slug)),
-    } as unknown as Delivery);
+    } as unknown as Delivery;
+    if (trigger.type === "mention") return runtime.run(delivery);
+    // A watch or timer, as the agent runner hands it over: a standalone turn
+    // in its Interest's lane.
+    workingUntil(
+      wake(
+        lanes,
+        agent as unknown as Delivery["agent"],
+        trigger,
+        delivery.current,
+        (key, prompt) => runtime.runOnce({ delivery, key, signal, prompt }),
+        "Claude",
+      ),
+    );
   };
+  // The runner's lanes for this agent.
+  const lanes = new Lanes();
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
   return {
@@ -177,11 +201,44 @@ function setup(
     agent,
     workingUntil,
     attention,
+    lanes,
     objects,
     stale,
     session,
   };
 }
+
+it("names each saved session's channel as the community lists it", () => {
+  const { runtime, data } = setup();
+  const saved = localSessions(
+    {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+      removeItem: (key: string) => void data.delete(key),
+    } as Storage,
+    self,
+  );
+  saved.set(channel, { id: "s1", seen: 100, at: 5 });
+  saved.set("chan-gone/root-1", { id: "s2", seen: 100, at: 3 });
+  expect(runtime.conversations(self)).toEqual([
+    {
+      key: channel,
+      agent: self,
+      sessionId: "s1",
+      channelId: channel,
+      name: "general",
+      at: 5,
+    },
+    {
+      key: "chan-gone/root-1",
+      agent: self,
+      sessionId: "s2",
+      channelId: "chan-gone",
+      root: "root-1",
+      at: 3,
+    },
+  ]);
+});
 
 it("hands a mention to its thread's session", async () => {
   const root = message("1", "Build is red");
@@ -228,7 +285,7 @@ it("knows the agent's own model once one of its sessions has begun", async () =>
   // Before then nothing says which model it runs, nor what else it could.
   expect(await runtime.models(self)).toEqual({
     current: "",
-    models: [{ id: "", label: "Claude", efforts: EFFORTS }],
+    models: [{ id: "", label: "Claude", efforts: [] }],
   });
   await deliver({ type: "mention", event: mention });
   await flush(10);
@@ -272,6 +329,8 @@ it("still offers a configured model Claude does not list", async () => {
       "Haiku 5.5",
       "Legacy 1",
     ]);
+    // It runs at any effort a listed model has.
+    expect(models[0]?.efforts).toEqual(EFFORTS);
   } finally {
     runtime.dispose();
   }
@@ -442,6 +501,47 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
   expect(first?.killed).toBe(true);
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).toContain(`You are Pollen (pubkey ${self}).`);
+  runtime.dispose();
+});
+
+it("resumes an idle session at a newly saved effort", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (event: typeof root, effort: string) => {
+    const config = { ...DEFAULT_CONFIG, effort };
+    runtime.sync([{ pubkey: self, config } as Agent]);
+    return runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  };
+  await run(root, "");
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.args).not.toContain("--effort");
+  await run(reply, "low");
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toEqual(
+    expect.arrayContaining(["--resume", "--effort", "low"]),
+  );
   runtime.dispose();
 });
 
@@ -971,7 +1071,7 @@ it("skips a waiting turn whose watch was disabled or removed, or whose agent's a
 });
 
 it("counts a wake as working until it ends or is dropped", async () => {
-  const { runtime, deliver, claudes, workingUntil } = setup([], { hold: true });
+  const { deliver, claudes, workingUntil, lanes } = setup([], { hold: true });
   await deliver(timer("first", "ops"));
   await deliver(timer("second", "ops"));
   await flush(10);
@@ -984,10 +1084,9 @@ it("counts a wake as working until it ends or is dropped", async () => {
   });
   await flush(5);
   expect([first?.settled, second?.settled]).toEqual([false, false]);
-  // Turned off: the waiting turn is dropped; the running one still works.
-  runtime.sync([
-    { pubkey: self, config: DEFAULT_CONFIG, attentionEnabled: false } as Agent,
-  ]);
+  // Turned off, the runner clears the lanes: the waiting turn is dropped;
+  // the running one still works.
+  lanes.clear();
   await flush(5);
   expect([first?.settled, second?.settled]).toEqual([false, true]);
   claudes()
@@ -1052,7 +1151,7 @@ it("gives up a one-off turn that runs past its deadline", async () => {
   }
 });
 
-it("offers attention tools and guidance only while attention is on", async () => {
+it("always offers attention tools and guidance, and says in each turn whether attention is on", async () => {
   const { runtime, claudes, deliver, attention } = setup();
   const agent = {
     pubkey: self,
@@ -1085,19 +1184,26 @@ it("offers attention tools and guidance only while attention is on", async () =>
   const on = asked("6");
   expect(await names(on, 1)).toContain("watch_add");
   expect(systemPromptOf(on)).toContain("## Attention");
-  expect(on?.prompts[0]).toContain("<attention>");
+  expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
+  // Turned off, the session keeps its tools and prompt: nothing restarts.
+  attention.on = false;
   runtime.sync([{ ...agent, attentionEnabled: false } as Agent]);
   await flush(10);
-  expect(on?.killed).toBe(true);
-  // Nor does a mention turn get the attention review.
-  attention.on = false;
+  expect(on?.killed).toBe(false);
   await mention("7");
   await flush(10);
   const off = asked("7");
-  expect(await names(off, 2)).not.toContain("watch_add");
-  expect(await names(off, 3)).toContain("send");
-  expect(systemPromptOf(off)).not.toContain("## Attention");
-  expect(off?.prompts[0]).not.toContain("<attention>");
+  expect(await names(off, 2)).toContain("watch_add");
+  expect(systemPromptOf(off)).toContain("## Attention");
+  // Only the turn says that attention is off, and the tools refuse.
+  expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
+  expect(off?.prompts[0]).not.toContain("Handle the work");
+  const refused = (await mcp(off, 3, "tools/call", {
+    name: "interest_list",
+    arguments: {},
+  })) as { isError?: boolean; content: { text: string }[] } | undefined;
+  expect(refused?.isError).toBe(true);
+  expect(refused?.content[0]?.text).toMatch(/^Attention is off/);
 });
 
 it("keeps one spare for all its agents, and none once they are gone", async () => {
@@ -1127,6 +1233,18 @@ it("replaces the spare when no agent runs where it was started", async () => {
     expect.arrayContaining(["--model", "sonnet"]),
   );
   expect(claudes()).toHaveLength(2);
+  runtime.sync([
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, model: "sonnet", effort: "low" },
+    } as Agent,
+  ]);
+  await flush(10);
+  const [, sonnet, low] = claudes();
+  expect(sonnet?.killed).toBe(true);
+  expect(low?.options.args).toEqual(
+    expect.arrayContaining(["--model", "sonnet", "--effort", "low"]),
+  );
 });
 
 it("tells the owner, not the asking sibling, when a sibling's turn fails", async () => {

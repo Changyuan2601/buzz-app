@@ -387,7 +387,6 @@ for (const kind of ["mention", "thread reply"]) {
       mode: `live ${kind} click to exact conversation row`,
       clickToOpenedMs: performance.now() - start,
     });
-    expect(app.report.readPublications.length).toBe(before);
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -408,6 +407,19 @@ for (const kind of ["mention", "thread reply"]) {
       expect(
         app.report.queries.filter((q) => q.filter.depth_limit),
       ).toHaveLength(0);
+      // A row measuring taller after the reveal must not push the latest row
+      // out of view: the reveal left the reader at the bottom, following.
+      const height = await surface.evaluate((element) => element.scrollHeight);
+      await surface
+        .locator("[data-message-id]")
+        .filter({ hasText: "Earlier message 19" })
+        .evaluate((element) => {
+          element.style.paddingBottom = "60px";
+        });
+      await expect
+        .poll(() => surface.evaluate((element) => element.scrollHeight))
+        .toBeGreaterThanOrEqual(height + 60);
+      await expect(row).toBeInViewport({ ratio: 1 });
     }
     await expect
       .poll(() => app.report.readPublications.length)

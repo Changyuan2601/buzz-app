@@ -7,26 +7,33 @@ there is no ACP helper, process-backed session store or MCP bridge. See the
 
 ## Modes and admission
 
-- **Chat:** one leased chat completion, no local or Buzz tools. An owner-configured
-  watch with exactly `author == "<64-character lowercase hex public key>"` may
-  follow that sender, including thread replies. The matched Interest instructions
-  apply only to that watched turn; earlier messages are context and the final
-  message is its subject. Direct mentions do not inherit watch instructions.
+- **Chat:** one leased chat completion, no local or Buzz tools. Normal host
+  delivery applies, without a sibling-watch exception. Matched Interest
+  instructions apply only to the owner's watched turn; direct mentions do not
+  inherit watch instructions.
 - **Agent (default):** the inline runtime provides local shell, write, edit and
   skill-loading tools in the configured workspace (default `~/.buzz`). Local
   tools have the user’s filesystem authority, not a sandbox. This trial does not
   provide tree/image tools, extension installation or delegation.
 - **Buzz access (default on):** Agent mode offers the full shared Buzz catalog
-  with `buzz_` names: send, edit-message, react, emoji, read, channels, members,
+  with `buzz_` names: send, edit-message, react, read, channels, members,
   users, dm, mem_get, mem_set, canvas and media_get. Calls use the
   existing TypeScript handlers and captured agent handle/native signer. No key
   enters the model. Turning Buzz access off removes these tools and core-memory
   guidance, not local tools or automatic final-response delivery.
 
-Agent turns remain owner-only. A broad/compound watch does not authorize another
-sender, nor does a non-owner mention. No mode triggers itself. A one-way Chat
-follower should keep the source agent’s watch restricted to the human owner to
-avoid reciprocal conversations.
+Both modes remain owner-only. Watches and non-owner mentions do not grant
+permission to trigger Mesh. No mode triggers itself.
+
+## Quick setup
+
+Settings → Shared compute → Helpers creates Thread summarizer, Translator,
+Media converter or Custom agent through the existing Agents creation service.
+Chat presets have no tools; Agent presets disclose local shell/files and Buzz
+access before creation. Defaults are created directly; edit names, instructions,
+mode and workspace afterward in Agents → Settings. Configure Attention and add
+the agent to a conversation there. Emoji maker and the shared emoji-publishing
+operation are removed; existing agent identities and published emoji are not deleted.
 
 ## Conversations and delivery
 

@@ -1,3 +1,5 @@
+import type { ComponentProps, Ref } from "react";
+import { CaretDownIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import styles from "./AgentCard.module.css";
@@ -13,29 +15,61 @@ const artwork = [
   "fuzzies-18",
 ];
 export function NewAgentTile({
-  disabled,
-  onClick,
-}: {
-  disabled: boolean;
-  onClick(): void;
+  fullWidth = false,
+  variant = "tile",
+  labelRef,
+  label = "New agent",
+  ...props
+}: Omit<ComponentProps<typeof SurfaceButton>, "className" | "children"> & {
+  /** What the tile makes, such as New team. */
+  label?: string;
+  fullWidth?: boolean;
+  variant?: "tile" | "button";
+  labelRef?: Ref<HTMLSpanElement>;
 }) {
+  if (variant === "button")
+    return (
+      <SurfaceButton
+        {...props}
+        type="button"
+        className={`${styles.newLabel} text-label-sm`}
+      >
+        {label}
+        <CaretDownIcon
+          size={14}
+          className="buzz-dropdown-chevron"
+          aria-hidden="true"
+        />
+      </SurfaceButton>
+    );
   return (
     <SurfaceButton
+      {...props}
       type="button"
       className={styles.newTile}
-      aria-haspopup="dialog"
-      disabled={disabled}
-      onClick={onClick}
+      data-full-width={fullWidth || undefined}
     >
       <span aria-hidden="true" className={styles.newArtwork}>
-        {artwork.flatMap((id) => {
+        {(fullWidth
+          ? agentAvatars
+              .filter(
+                (_, index) =>
+                  index % Math.max(1, Math.floor(agentAvatars.length / 12)) ===
+                  0,
+              )
+              .slice(0, 12)
+              .map((avatar) => avatar.id)
+          : artwork
+        ).flatMap((id) => {
           const avatar = agentAvatars.find((item) => item.id === id);
           return avatar?.preview
             ? [<img key={id} src={avatar.preview} alt="" />]
             : [];
         })}
       </span>
-      <span className={`${styles.newLabel} text-label-sm`}>New agent</span>
+      <span ref={labelRef} className={`${styles.newLabel} text-label-sm`}>
+        {label}
+      </span>
     </SurfaceButton>
   );
 }

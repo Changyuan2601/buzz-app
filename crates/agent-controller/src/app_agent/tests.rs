@@ -260,10 +260,13 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let (_, agent) = created(dir.path(), &credentials);
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
-    for kind in [5, 7, 9, 40003, 40100, 41010] {
+    for kind in [
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 40003, 40100, 41010,
+    ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
             vec!["h".to_owned(), "channel".to_owned()],
+            vec!["p".to_owned(), agent.owner.clone(), "admin".to_owned()],
         ];
         let event = agent.sign(&key, kind, "hi".into(), tags).unwrap();
         assert_eq!(event["kind"], kind);
@@ -274,7 +277,11 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         assert!(ms[1].parse::<u16>().unwrap() < 1000);
         assert_eq!(
             tags,
-            [vec!["h".to_owned(), "channel".to_owned()], saved.clone()]
+            [
+                vec!["h".to_owned(), "channel".to_owned()],
+                vec!["p".to_owned(), agent.owner.clone(), "admin".to_owned()],
+                saved.clone()
+            ]
         );
     }
     // A plugin cannot pick its own `ms`, and events outside a channel get none.
@@ -288,7 +295,7 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let event = agent.sign(&key, 7, "+".into(), vec![]).unwrap();
     let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
     assert!(tags.iter().all(|tag| tag[0] != "ms"));
-    for kind in [0, 1, 3, 9000, 24242, 27235, 30078, 30174, 40002] {
+    for kind in [0, 1, 3, 9003, 10100, 24242, 27235, 30078, 30174, 40002] {
         assert!(agent.sign(&key, kind, String::new(), vec![]).is_err());
     }
     assert!(agent
@@ -615,40 +622,4 @@ fn old_adopted_flags_are_read_then_dropped_without_relaxing_the_schema() {
         std::fs::write(&agents.path, saved.to_string()).unwrap();
         assert!(agents.list().is_err());
     }
-}
-
-#[test]
-fn signs_only_canonical_agent_emoji_sets() {
-    let dir = tempfile::tempdir().unwrap();
-    let credentials = Memory::default();
-    let (_, agent) = created(dir.path(), &credentials);
-    let key = agent.read_key(&credentials).unwrap();
-    let tags = vec![
-        vec!["d".into(), "buzz:custom-emoji".into()],
-        vec![
-            "emoji".into(),
-            "party".into(),
-            "https://relay.example/media/x.png".into(),
-        ],
-    ];
-    let event = agent
-        .sign(&key, 30030, String::new(), tags.clone())
-        .unwrap();
-    assert_eq!(event["pubkey"], agent.pubkey);
-    assert_eq!(event["kind"], 30030);
-    assert!(agent
-        .sign(&key, 30030, "not empty".into(), tags.clone())
-        .is_err());
-    assert!(agent.sign(&key, 30030, String::new(), vec![]).is_err());
-    let mut duplicate = tags.clone();
-    duplicate.push(tags[1].clone());
-    assert!(agent.sign(&key, 30030, String::new(), duplicate).is_err());
-    for code in ["Party", "bad code", ""] {
-        let mut invalid = tags.clone();
-        invalid[1][1] = code.into();
-        assert!(agent.sign(&key, 30030, String::new(), invalid).is_err());
-    }
-    let mut invalid = tags;
-    invalid[1][2] = "file:///tmp/a.png".into();
-    assert!(agent.sign(&key, 30030, String::new(), invalid).is_err());
 }

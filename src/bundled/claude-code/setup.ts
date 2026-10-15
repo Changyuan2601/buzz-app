@@ -24,9 +24,8 @@ export type Request = (input: HostRequest) => Promise<HostResponse>;
 
 /** Where Anthropic publishes each release with its checksums. */
 const RELEASES = "https://downloads.claude.ai/claude-code-releases";
-/** The oldest release Buzz drives: MCP servers marked `alwaysLoad`, which the
- * Buzz tools are, arrived in 2.1.121. */
-export const MIN_VERSION = "2.1.121";
+/** Model discovery disables customizations with --safe-mode (2.1.169+). */
+export const MIN_VERSION = "2.1.169";
 /** `uname -sm` to the release's platform name. */
 const PLATFORMS: Readonly<Record<string, string>> = {
   "Darwin arm64": "darwin-arm64",
@@ -66,23 +65,40 @@ export function compareVersions(a: string, b: string) {
   return 0;
 }
 
-async function queryModels(spawn: Spawn) {
-  const process = await ClaudeProcess.spawn(spawn, { cwd: "~/.buzz" });
-  let timer: ReturnType<typeof setTimeout> | undefined;
+async function queryModels(spawn: Spawn, signal: AbortSignal) {
+  let child: HostProcess | undefined;
+  let process: ClaudeProcess | undefined;
+  const request = new AbortController();
+  const abort = () => {
+    request.abort();
+    void child?.kill();
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  const timer = setTimeout(() => {
+    request.abort(new Error("Claude Code model discovery timed out"));
+    void child?.kill();
+  }, CHECK_TIMEOUT_MS);
   try {
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("Claude Code model discovery timed out")),
-        CHECK_TIMEOUT_MS,
-      );
-    });
-    return await Promise.race([
-      process.initialize({ systemPrompt: "" }).then(() => process.models()),
-      timeout,
-    ]);
+    process = await ClaudeProcess.start(
+      async (id, options) => {
+        request.signal.throwIfAborted();
+        child = await spawn(id, options);
+        if (request.signal.aborted) await child.kill();
+        request.signal.throwIfAborted();
+        return child;
+      },
+      { cwd: "~", systemPrompt: "", discovery: true },
+    );
+    request.signal.throwIfAborted();
+    const models = await process.models();
+    request.signal.throwIfAborted();
+    return models;
   } finally {
-    if (timer) clearTimeout(timer);
-    await process.kill().catch(() => undefined);
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+    if (process) await process.kill().catch(() => undefined);
+    else await child?.kill().catch(() => undefined);
   }
 }
 
@@ -188,6 +204,8 @@ async function testRelease(spawn: Spawn, version: string) {
 export type SetupState = Readonly<{
   status: ClaudeStatus | undefined;
   models: readonly ClaudeModel[];
+  modelsChecking: boolean;
+  modelsError: string;
   checking: boolean;
   running: "install" | "login" | undefined;
   /** The running or last step's output. */
@@ -202,6 +220,8 @@ export class ClaudeSetup {
   private state: SetupState = {
     status: undefined,
     models: [],
+    modelsChecking: false,
+    modelsError: "",
     checking: false,
     running: undefined,
     output: "",
@@ -210,7 +230,8 @@ export class ClaudeSetup {
   private readonly listeners = new Set<() => void>();
   private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
-  private loadingModels = false;
+  private modelRequest: AbortController | undefined;
+  private modelsLoaded = false;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
@@ -260,7 +281,7 @@ export class ClaudeSetup {
     this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) });
   }
 
-  async check() {
+  async check(refreshModels = false) {
     if (!this.spawn) {
       this.set({
         status: {
@@ -271,30 +292,53 @@ export class ClaudeSetup {
       return;
     }
     if (this.state.checking || this.state.running) return;
+    const previous = this.state.status;
     this.set({ checking: true });
     const status = await checkClaude(this.spawn);
+    const invalidate =
+      refreshModels || JSON.stringify(previous) !== JSON.stringify(status);
+    if (invalidate) {
+      this.modelRequest?.abort();
+      this.modelRequest = undefined;
+      this.modelsLoaded = false;
+    }
     this.set({
       status,
-      ...(status.state === "ready" ? {} : { models: [] }),
+      ...(invalidate
+        ? { models: [], modelsChecking: false, modelsError: "" }
+        : {}),
       checking: false,
     });
   }
 
   /** Loads optional model copy only for surfaces that display the catalog. */
-  async loadModels() {
+  async loadModels(retry = false) {
     if (
       !this.spawn ||
       this.state.status?.state !== "ready" ||
-      this.loadingModels
+      this.state.checking ||
+      this.modelRequest ||
+      (this.modelsLoaded && !retry)
     )
       return;
-    this.loadingModels = true;
+    const request = new AbortController();
+    this.modelRequest = request;
+    this.set({ modelsChecking: true, modelsError: "" });
     try {
-      this.set({ models: await queryModels(this.spawn) });
-    } catch {
-      // Model metadata is optional; setup remains usable when discovery fails.
+      const models = await queryModels(this.spawn, request.signal);
+      if (!models.length) throw new Error("Claude did not list its models");
+      if (this.modelRequest === request) this.set({ models });
+    } catch (error) {
+      if (this.modelRequest === request && !request.signal.aborted)
+        this.set({
+          modelsError: error instanceof Error ? error.message : String(error),
+        });
     } finally {
-      this.loadingModels = false;
+      if (this.modelRequest === request) {
+        this.modelRequest = undefined;
+        this.modelsLoaded = true;
+        this.set({ modelsChecking: false });
+      }
     }
   }
 
@@ -384,7 +428,7 @@ export class ClaudeSetup {
       this.process = undefined;
       this.set({ running: undefined });
     }
-    await this.check();
+    await this.check(asked);
   }
 
   /** Runs one process with its output shown; throws unless it succeeds. */
@@ -467,6 +511,8 @@ export class ClaudeSetup {
     return this.process?.kill();
   }
   dispose() {
+    this.modelRequest?.abort();
+    this.modelRequest = undefined;
     void this.cancel();
   }
 }

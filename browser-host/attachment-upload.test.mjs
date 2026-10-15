@@ -412,7 +412,7 @@ test.each(["text/html"])(
   async (type) => {
     const bytes = Buffer.from("partial");
     const h = await harness((url, init) => {
-      expect(url).toBe(`${relay}/media/document.bin`);
+      expect(url).toBe(`${relay}/media/${"d".repeat(64)}.bin`);
       expect(init.headers.Range).toBe("bytes=3-9");
       return new Response(bytes, {
         status: 206,
@@ -426,7 +426,7 @@ test.each(["text/html"])(
     });
     try {
       const response = await fetch(
-        `${h.base}/api/relay/media?url=${encodeURIComponent(`${relay}/media/document.bin`)}`,
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${relay}/media/${"d".repeat(64)}.bin`)}`,
         { headers: { Range: "bytes=3-9" } },
       );
       expect(response.status).toBe(206);

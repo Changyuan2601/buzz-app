@@ -13,6 +13,7 @@ import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
+import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
 import {
   keypair,
   message,
@@ -1673,6 +1674,26 @@ it("reopening waits for the prior visit's queued unread and reconciles its sideb
   expect(h.snapshot().manual).toBe("none");
 });
 
+it("leaving a channel during its catch-up save withdraws the read without a sync error", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([bottom]);
+  const lease = h.session.unread.reading("room");
+  const { started, release } = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  await started; // The visit ends while its storage update is held.
+  try {
+    lease.dispose();
+  } finally {
+    release();
+  }
+  await expect(pending).rejects.toThrow("Reading observation expired");
+  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.session.unread.sync().error).toBeUndefined();
+  expect(h.session.unread.sync().status).not.toBe("error");
+});
+
 it("without a signer, own descendants do not require read frontiers to clear a forced peer subtree", async () => {
   const peer = message(keypair(), "room", "peer", 11);
   const h = setup({}, false, (journal) => ({
@@ -2522,6 +2543,49 @@ it("exposes immutable verified member facts through the shared session without I
   stop();
 });
 
+it("inbox projects only matching mention evidence when a followed thread has newer unread progress", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const root = message(h.viewer, "room", "My thread", 20);
+  const mention = message(h.alice, "room", "Please decide", 21, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([root, mention]);
+  const unread = h.session.unread;
+  await unread.markThrough(
+    { kind: "thread", channelId: "room", rootId: root.id },
+    mention.id,
+  );
+  const progress = message(h.alice, "room", "Ordinary progress", 23, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = message(h.alice, "dm", "Direct hello", 24, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([progress, dm]);
+  const item = unread.inbox().items.find((item) => item.channelId === "room");
+  expect(item).toMatchObject({ unreadCount: 1, preview: "Ordinary progress" });
+  expect(item?.mention).toMatchObject({
+    messageId: mention.id,
+    latestMessageId: mention.id,
+    messageIds: [mention.id],
+    preview: "Please decide",
+    unreadCount: 0,
+    readThrough: [
+      {
+        target: { kind: "thread", channelId: "room", rootId: root.id },
+        messageId: mention.id,
+      },
+    ],
+  });
+  expect(
+    unread.inbox().items.find((item) => item.channelId === "dm")?.mention,
+  ).toBeUndefined();
+});
+
 it("inbox groups relevant conversations, preserves read rows and exact unread resume points", async () => {
   const h = setup();
   h.grant("room");
@@ -2587,6 +2651,94 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
     unread.snapshot({ kind: "channel", channelId: "room" }).observedCount,
   ).toBe(2);
   stop();
+});
+
+it("inbox groups a session's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("session");
+  h.emit([
+    metadata(h.relay, "session", "Session", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ]),
+  ]);
+  const mention = (channel: string, content: string, at: number) =>
+    message(h.alice, channel, content, at, [["p", h.viewer.pubkey]]);
+  const [first, second] = [
+    mention("session", "First", 20),
+    mention("session", "Second", 21),
+  ];
+  const root = message(h.viewer, "session", "My thread", 22);
+  const reply = message(h.alice, "session", "Reply", 23, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([
+    first,
+    second,
+    root,
+    reply,
+    mention("room", "One", 24),
+    mention("room", "Two", 25),
+  ]);
+  const items = h.session.unread.inbox().items;
+  expect(items.filter((item) => item.channelId === "room")).toHaveLength(2);
+  const session = () =>
+    h.session.unread
+      .inbox()
+      .items.filter((item) => item.channelId === "session");
+  expect(session()).toEqual([
+    expect.objectContaining({
+      id: `session:${root.id}`,
+      target: { kind: "thread", channelId: "session", rootId: root.id },
+      messageIds: [reply.id],
+    }),
+    expect.objectContaining({
+      id: "session:session",
+      target: { kind: "message", channelId: "session", messageId: second.id },
+      messageIds: [first.id, second.id],
+      thread: false,
+      unreadCount: 2,
+    }),
+  ]);
+  for (const step of session()[1]?.readThrough ?? [])
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(session().map((item) => item.unreadCount)).toEqual([1, 0]);
+});
+
+it("inbox keeps a mentioned session root with its thread so reading the thread clears it", async () => {
+  const h = setup();
+  h.grant("session");
+  h.emit([
+    metadata(h.relay, "session", "Session", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ]),
+  ]);
+  const root = message(h.alice, "session", "Question", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reply = (author: typeof h.alice, content: string, at: number) =>
+    message(author, "session", content, at, [["e", root.id, "", "reply"]]);
+  h.emit([
+    root,
+    reply(h.viewer, "Answer", 21),
+    reply(h.alice, "Follow-up", 22),
+  ]);
+  const items = () => h.session.unread.inbox().items;
+  expect(items()).toEqual([
+    expect.objectContaining({
+      id: `session:${root.id}`,
+      target: { kind: "thread", channelId: "session", rootId: root.id },
+      unreadCount: 2,
+    }),
+  ]);
+  const [item] = items();
+  for (const step of item?.readThrough ?? [])
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(items().map((item) => item.unreadCount)).toEqual([0]);
 });
 
 it.each([false, true])(

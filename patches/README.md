@@ -161,6 +161,34 @@ keeps the viewport start as before. Installed-store regressions cover the late
 batch, unrelated/partial batches before completion, the stock window and an
 unmounted prepend.
 
+## A page that lands before a correction's scroll event
+
+After the store flushes a jump (a shift or a resize correction), it keeps the
+last rendered range until that jump's own scroll event arrives, so the frame in
+between cannot render from a scroll offset the DOM has already left. That range
+is a pair of item indices. When the next page of older history lands inside that
+window, which continuous paging makes common since corrections flush almost
+every frame, its prepend moves every mounted row by the page size and the held
+range now names the wrong rows: the render mounts the whole new page above the
+viewport and unmounts the rows just below it, and the jump's scroll event
+mounts those again one frame later. Measured in Chromium on the 640-row
+fixture, each such page mounted and unmounted 20 rows in its own task and
+remounted 20 in the scroll handler, 50–80 ms frames; the pages that landed with
+no pending jump cost a few milliseconds.
+
+The store moves the held range by the shift's item delta, so the rows it kept
+mounted stay mounted and the scroll event's live range is computed as before.
+A shift can also remove rows from the head, since the timeline reports one
+whenever the first row changes and the last does not; a removal past the held
+range's start would move the range above the list, so it then holds the same
+number of rows from the top instead. A partial removal holds a range wider
+than the live one for that frame; a removal of every held row, which would
+otherwise leave an inverted range that renders no row, lands with the
+corrected offset at the top. Nothing changes when no jump is pending, for
+appends, or for the correction itself. The installed-store regressions hold a
+correction's range across a second prepend and across such a removal, and
+require the live range that follows to lie inside it.
+
 ## Viewport size is delivered in the observer callback
 
 Row resizes are delivered in the next animation frame, outside the native

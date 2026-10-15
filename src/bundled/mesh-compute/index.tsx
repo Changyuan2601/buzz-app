@@ -1,3 +1,4 @@
+import { ownerReads } from "../../features/agents/reads";
 import { InlineAgent } from "./inlineAgent";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
@@ -21,7 +22,6 @@ import { MeshAgentTab } from "./MeshAgentTab";
 import { MeshHelpers } from "./MeshHelpers";
 import {
   DEFAULT_MESH_AGENT_CONFIG,
-  allowMeshAgentWatch,
   type MeshAgentConfig,
   MeshAgentRuntime,
   type PreparedInference,
@@ -170,7 +170,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const snapshot = agents.relay(agent)?.snapshot();
       if (snapshot?.status !== "ready")
         throw new Error("Buzz is not connected to this community");
-      const listing = await memoryReads.read(snapshot.session, agent, signal);
+      const source = ownerReads(agents.relay(agent), agent);
+      if (!source) throw new Error("Buzz is not connected to this community");
+      const listing = await memoryReads.read(source, agent, signal);
       if (agents.relay(agent)?.snapshot() !== snapshot)
         throw new Error("Community changed during memory read");
       return listing;
@@ -254,7 +256,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         delivery.workingUntil(done);
         // Release the host queue so a subsequent mention can steer this run.
       },
-      allowAgentWatch: allowMeshAgentWatch,
     });
   }
 
@@ -685,7 +686,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
             <MeshHelpers
               key={`${snapshot.origin}:${snapshot.viewer}`}
               agents={ctx.agents}
-              community={snapshot.origin}
             />
           )}
         {isTauri() && status?.available && community && (

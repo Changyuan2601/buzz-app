@@ -1,3 +1,9 @@
+import { ProfilePanel } from "../profiles/ProfilePanel";
+import { createRelaySession } from "../../features/relay/session";
+import {
+  profileActivityViewTarget,
+  profileTarget,
+} from "../../features/profiles/target";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -9,6 +15,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
@@ -21,13 +28,16 @@ import type {
   AgentsSnapshot,
   RegisteredAgentType,
   TeamChange,
+  FoundAgents,
+  TeamPort,
 } from "../../features/agents/service";
-import type { PortableAgent } from "../../features/agents/native";
+import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
+import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
 
 afterEach(cleanup);
@@ -124,6 +134,8 @@ function setup(
   saved: Agent[],
   {
     shown = true,
+    model = false,
+    status = "ready" as AgentsSnapshot["status"],
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
     page = {} as {
@@ -133,7 +145,7 @@ function setup(
   } = {},
 ) {
   let snapshot: AgentsSnapshot = {
-    status: "ready",
+    status,
     agents: saved,
     running: saved,
     teams: [],
@@ -203,6 +215,25 @@ function setup(
     defaults: () => ({ config: { reply: "" } }),
     summary: (item: Agent) => (item.config as { reply: string }).reply,
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
+    CreateModel: model
+      ? ({
+          config,
+          onChange,
+          disabled,
+        }: {
+          config: { reply: string };
+          onChange(config: { reply: string }): void;
+          disabled: boolean;
+        }) => (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange({ ...config, reply: "New model" })}
+          >
+            Change model
+          </button>
+        )
+      : undefined,
     provider: echoProvider.contribution,
     tabs,
     Create: ({
@@ -239,8 +270,23 @@ function setup(
       return created;
     }),
     finish: vi.fn(async (_: string) => created),
-    portable: vi.fn(async () => ({ agents: portable, warnings: [] })),
+    portable: vi.fn(
+      async (): Promise<FoundAgents> => ({
+        agents: portable,
+        teams: [],
+        warnings: [],
+        here: [],
+      }),
+    ),
     port: vi.fn(async () => created),
+    portTeam: vi.fn(
+      async (): Promise<TeamPort> => ({
+        imported: [],
+        failed: [],
+        elsewhere: [],
+        foreign: [],
+      }),
+    ),
     save: vi.fn(async () => {}),
     previewRetype: vi.fn(
       () =>
@@ -303,47 +349,64 @@ function setup(
   return { agents, echoProvider, types, show, relay, ...view };
 }
 
-async function openAction(
-  user: ReturnType<typeof userEvent.setup>,
-  name: string,
-) {
-  await user.click(screen.getByRole("button", { name: "More agent actions" }));
-  await user.click(await screen.findByRole("menuitem", { name }));
-}
-
-it("peeks at a selected agent beside the grid and follows the arrow keys", async () => {
+it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1), agent("Bo", 2)]);
-  const grid = screen.getByRole("listbox", { name: "Agents" });
+  const grid = screen.getByRole("grid", { name: "Agents" });
   expect(within(grid).getByText("Ada says hi")).toBeInTheDocument();
   expect(screen.queryByText("Peek of Ada")).not.toBeInTheDocument();
 
   await user.click(within(grid).getByText("Ada"));
-  expect(screen.getByRole("option", { name: /Ada/ })).toHaveAttribute(
+  expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  expect(screen.getByText("Peek of Ada")).toBeInTheDocument();
-  expect(screen.getByText("Every hour")).toBeInTheDocument();
-  expect(screen.getByText("Mentions")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  const profilePane = screen.getByRole("region", { name: "Agent profile" });
+  expect(screen.getByRole("region", { name: "Agents" })).not.toContainElement(
+    profilePane,
+  );
+  expect(
+    within(profilePane).getByRole("tablist", { name: "Panel tabs" }),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Open" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
 
   await user.keyboard("{ArrowRight}");
-  expect(screen.getByText("Peek of Bo")).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: /Bo/ })).toHaveFocus();
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: /Bo/ })).toHaveFocus();
 
   await user.keyboard("{Escape}");
-  expect(screen.queryByText("Peek of Bo")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("tab", { name: "Identity" }),
+  ).not.toBeInTheDocument();
   expect(grid).toBeInTheDocument();
 });
 
-it("opens the build view with the type's tabs and the app's Attention and Memory tabs", async () => {
+it("opens the side panel with the type's tabs and the app's Attention and Memory tabs", async () => {
   const user = userEvent.setup();
   setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(screen.getByRole("grid")).toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
-  expect(tabs).toEqual(["Settings", "Reply", "Attention", "Memory"]);
+  expect(tabs).toEqual([
+    "Agents",
+    "Your agents",
+    "Your teams",
+    "AAda",
+    "Identity",
+    "Reply",
+    "Memory",
+    "Attention",
+    "Settings",
+  ]);
   expect(
     within(
       screen.getByRole("complementary", { name: "Ada identity" }),
@@ -354,14 +417,14 @@ it("opens the build view with the type's tabs and the app's Attention and Memory
   await user.click(screen.getByRole("tab", { name: "Attention" }));
   expect(screen.getByText("Default")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "All agents" }));
-  expect(screen.getByRole("option", { name: /Ada/ })).toHaveAttribute(
+  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
     "aria-selected",
-    "true",
+    "false",
   );
 });
 
-it("checks active providers in a health submenu and opens their host-owned dialogs", async () => {
+it("checks providers in AI defaults and opens their host-owned dialogs", async () => {
   const user = userEvent.setup();
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const relay = {
@@ -399,44 +462,51 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     provider: checkingProvider.contribution,
   } as unknown as RegisteredAgentType;
   try {
-    const { echoProvider } = setup([agent("Ada", 1)], {
+    const { echoProvider, agents } = setup([agent("Ada", 1)], {
       more: [relay, broken, checking],
     });
-    const more = screen.getByRole("button", { name: "More agent actions" });
-
-    await user.click(more);
-    const trigger = await screen.findByRole("menuitem", {
-      name: "Provider settings",
-    });
-    await user.hover(trigger);
-    const menu = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await vi.waitFor(() =>
-      expect(menu).not.toHaveAttribute("data-starting-style"),
+    expect(
+      screen.queryByRole("button", { name: "More agent actions" }),
+    ).toBeNull();
+    const defaults = render(
+      <AgentSettings
+        agents={agents}
+        active={false}
+        archive={<div>Archived agents</div>}
+      />,
     );
-    expect(screen.getAllByRole("menu")).toHaveLength(2);
-    const echo = within(menu).getByRole("menuitem", {
+    expect(echoProvider.check).not.toHaveBeenCalled();
+    expect(screen.queryByText("AI defaults")).toBeNull();
+    defaults.rerender(
+      <AgentSettings agents={agents} archive={<div>Archived agents</div>} />,
+    );
+    expect(
+      screen
+        .getByText("AI defaults")
+        .compareDocumentPosition(screen.getByText("Archived agents")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const menu = defaults.container;
+    const echo = within(menu).getByRole("button", {
       name: "Echo, ready",
     });
-    const relayRow = within(menu).getByRole("menuitem", {
+    const relayRow = within(menu).getByRole("button", {
       name: "Relay, unavailable",
     });
-    expect(relayRow).toHaveAttribute("aria-disabled", "true");
+    expect(relayRow).toBeDisabled();
     expect(
-      within(menu).getByRole("menuitem", {
+      within(menu).getByRole("button", {
         name: "Repair Broken, attention",
       }),
     ).toBeEnabled();
-    const checkingRow = within(menu).getByRole("menuitem", {
+    const checkingRow = within(menu).getByRole("button", {
       name: "Checking, checking",
     });
-    expect(checkingRow).toHaveAttribute("aria-disabled", "true");
+    expect(checkingRow).toBeDisabled();
     expect(checkingRow).toHaveAttribute("aria-busy", "true");
     expect(
       checkingRow.querySelector(".motion-safe\\:animate-spin"),
     ).toBeVisible();
-    expect(echo.querySelector("svg")).toBeInTheDocument();
     expect(checkingProvider.check).toHaveBeenCalled();
 
     fireEvent.click(echo);
@@ -453,18 +523,7 @@ it("checks active providers in a health submenu and opens their host-owned dialo
     );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    await user.click(more);
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const reopenedProviders = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    fireEvent.click(
-      within(reopenedProviders).getByRole("menuitem", {
-        name: "Echo, ready",
-      }),
-    );
+    await user.click(screen.getByRole("button", { name: "Echo, ready" }));
     const reopenedDialog = await screen.findByRole("dialog", { name: "Echo" });
     act(() => echoProvider.set({ readiness: "attention" }));
     expect(
@@ -490,50 +549,27 @@ it("checks active providers in a health submenu and opens their host-owned dialo
         attentionLabel: "Log in to Echo",
       }),
     );
-    await user.click(more);
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const actionableProviders = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await vi.waitFor(() =>
-      expect(actionableProviders).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(actionableProviders).getByRole("menuitem", {
-        name: "Log in to Echo, attention",
-      }),
+    await user.click(
+      screen.getByRole("button", { name: "Log in to Echo, attention" }),
     );
     expect(attentionAction).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull();
 
-    await user.click(more);
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const providers = await screen.findByRole("menu", {
-      name: "Provider settings",
+    const brokenTrigger = screen.getByRole("button", {
+      name: "Repair Broken, attention",
     });
-    await vi.waitFor(() =>
-      expect(providers).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(providers).getByRole("menuitem", {
-        name: "Repair Broken, attention",
-      }),
-    );
+    await user.click(brokenTrigger);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Provider controls are unavailable.",
     );
     await user.keyboard("{Escape}");
-    await vi.waitFor(() => expect(more).toHaveFocus());
+    await vi.waitFor(() => expect(brokenTrigger).toHaveFocus());
   } finally {
     errors.mockRestore();
   }
 });
 
-it("restores a provider dialog from page history and writes open and close visits", async () => {
+it("restores legacy provider links and writes close visits", async () => {
   const user = userEvent.setup();
   const base = {
     version: 1,
@@ -578,18 +614,6 @@ it("restores a provider dialog from page history and writes open and close visit
   const page = { navigator, navigation: request() };
   const view = setup([agent("Ada", 1)], { page });
 
-  await user.click(screen.getByRole("button", { name: "More agent actions" }));
-  await user.hover(
-    await screen.findByRole("menuitem", { name: "Provider settings" }),
-  );
-  const providers = await screen.findByRole("menu", {
-    name: "Provider settings",
-  });
-  fireEvent.click(
-    within(providers).getByRole("menuitem", { name: "Echo, ready" }),
-  );
-  expect(open).toHaveBeenLastCalledWith(routed);
-
   current = { id: "provider", target: routed };
   view.unmount();
   const restored = render(pageView(view.agents, view.relay));
@@ -607,33 +631,55 @@ it("restores a provider dialog from page history and writes open and close visit
   );
 });
 
-it("shows an agent's picture in the grid, peek and build view", async () => {
+it("shows an agent's picture in the grid and side panel", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
   setup([{ ...agent("Ada", 1), picture }]);
   const pictures = () =>
     document.querySelectorAll(`img[src="${picture}"]`).length;
   expect(pictures()).toBe(1);
-  await user.click(screen.getByRole("option", { name: /Ada/ }));
-  expect(pictures()).toBe(2);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  expect(pictures()).toBe(3);
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  expect(pictures()).toBe(1);
+  expect(screen.getByRole("grid")).toBeInTheDocument();
+  expect(pictures()).toBe(3);
 });
 
-it("edits the picture from the build view and shows why a save failed", async () => {
+it("keeps name edits inline and lets a failed save retry", async () => {
   const user = userEvent.setup();
   const picture = "https://old.example/media/a.png";
   const { agents } = setup([{ ...agent("Ada", 1), picture }]);
-  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   agents.save.mockRejectedValueOnce(new Error("Could not save"));
-  await user.click(screen.getByRole("button", { name: "Edit avatar" }));
   await user.click(
-    await screen.findByRole("button", { name: "Remove avatar" }),
+    screen.getByRole("button", { name: "Agent profile actions" }),
   );
-  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change name" }),
+  );
+  const field = screen.getByRole("textbox", { name: "Agent name" });
+  expect(field).toHaveAttribute("data-appearance", "heading");
+  await waitFor(() => expect(field).toHaveFocus());
+  expect((field as HTMLInputElement).selectionStart).toBe(3);
+  expect((field as HTMLInputElement).selectionEnd).toBe(3);
+  await user.clear(field);
+  await user.type(field, "Updated");
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
+    name: "Updated",
+  });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
+  expect(
+    screen.getByRole("textbox", { name: "Agent name" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Agent name" }),
+    ).not.toBeInTheDocument(),
+  );
 });
 
 it("saves a reviewed provider change with the destination settings", async () => {
@@ -689,7 +735,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
     more: [relay],
     dirtySettings: true,
   });
-  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
   await user.keyboard("{Enter}");
   const rail = screen.getByRole("complementary", { name: "Ada identity" });
   expect(
@@ -776,10 +822,13 @@ it("makes a new agent in the create dialog and goes straight to building it", as
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new agent" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   expect(
-    within(dialog).getByText("Echo").closest("span")?.querySelector("svg"),
-  ).toBeInTheDocument();
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  ).toHaveTextContent("Echo");
   await user.type(within(dialog).getByLabelText("Reply"), "Hi there");
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(screen.getByRole("button", { name: "Create agent" }));
@@ -797,40 +846,58 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)], { shown: false });
   await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new agent" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await user.type(within(dialog).getByLabelText("Name"), "Nova");
   await user.click(screen.getByRole("button", { name: "Create agent" }));
   await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
   expect(
-    await screen.findByRole("listbox", { name: "Agents" }),
+    await screen.findByRole("grid", { name: "Agents" }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "New agent" })).toBeNull();
   expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
 });
 
-it("saves a rename on Enter and discards it on Escape", async () => {
+it("cancels inline name edits and rejects an empty name", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("option", { name: /Ada/ }));
-  await user.keyboard("{Enter}");
-  const field = within(
-    screen.getByRole("complementary", { name: "Ada identity" }),
-  ).getByLabelText("Name");
-  await user.clear(field);
-  await user.type(field, "Discarded{Escape}");
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  const edit = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change name" }),
+    );
+  };
+  await edit();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Message" }),
+  ).not.toBeInTheDocument();
+  await user.clear(screen.getByRole("textbox", { name: "Agent name" }));
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Agent name" }),
+    "Discarded",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
-  expect(field).toHaveValue("Ada");
-  await user.clear(field);
-  await user.type(field, "Kept{Enter}");
-  expect(agents.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
-    name: "Kept",
-  });
+  await edit();
+  expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue(
+    "Ada",
+  );
 });
 
 it("imports an earlier agent as the chosen type and shows it in Your agents", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
   const list = await screen.findByRole("region", { name: "Agents to import" });
   // Names are unique here, so each card shows only where it comes from.
   expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
@@ -856,9 +923,14 @@ it("tells same-named agents to import apart by their keys", async () => {
       ...portable,
       { source: "development", pubkey: "c".repeat(64), name: "Bea", relay: "" },
     ],
+    teams: [],
     warnings: [],
+    here: [],
   });
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
   const list = await screen.findByRole("region", { name: "Agents to import" });
   expect(within(list).getByText("Buzz 1.0 harness agent")).toBeInTheDocument();
   expect(within(list).getByText(/^Buzz 0\.X · npub…/)).toBeInTheDocument();
@@ -874,7 +946,10 @@ it("imports agents only as a type that runs here", async () => {
     title: "Cloud",
     remote: {},
   } as unknown as RegisteredAgentType);
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
   const importAda = await screen.findByRole("button", { name: "Import Ada" });
   expect(screen.queryByLabelText("Import as")).not.toBeInTheDocument();
   await user.click(importAda);
@@ -887,7 +962,10 @@ it("shows why importing an agent failed and keeps it listed", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
   agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
-  await user.click(screen.getByRole("tab", { name: "Import" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
   await user.click(await screen.findByRole("button", { name: "Import Ada" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Keychain access was denied",
@@ -895,13 +973,304 @@ it("shows why importing an agent failed and keeps it listed", async () => {
   expect(screen.getByRole("button", { name: "Import Ada" })).toBeEnabled();
 });
 
+const nightShift: OldTeam = {
+  id: "old-night-shift",
+  name: "Night Shift",
+  instructions: "Ship small.",
+  members: [
+    { pubkey: "b".repeat(64), name: "Bea", source: "installed" },
+    { pubkey: "c".repeat(64), name: "Cy", source: "installed" },
+  ],
+};
+const onImport = () =>
+  expect(
+    screen.getByRole("dialog", { name: "Import a team" }),
+  ).toBeInTheDocument();
+async function openImport(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import a team" }),
+  );
+}
+
+it("offers New team on Your teams with create and import, but no marketplace", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.queryByRole("button", { name: "New agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Import a team" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Browse the marketplace" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("menuitem", { name: "Create a new team" }));
+  expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
+});
+
+it("shows only teams in Import a team and only agents in Import an agent", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  await openImport(user);
+  const teamDialog = screen.getByRole("dialog", { name: "Import a team" });
+  expect(
+    await within(teamDialog).findByRole("region", { name: "Teams to import" }),
+  ).toBeInTheDocument();
+  expect(
+    within(teamDialog).queryByRole("region", { name: "Agents to import" }),
+  ).not.toBeInTheDocument();
+  await user.click(within(teamDialog).getByRole("button", { name: "Close" }));
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const agentDialog = screen.getByRole("dialog", { name: "Import an agent" });
+  expect(
+    await within(agentDialog).findByRole("region", {
+      name: "Agents to import",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    within(agentDialog).queryByRole("region", { name: "Teams to import" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps Import a team from closing while a team import is pending", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  let finish!: (value: Awaited<ReturnType<typeof agents.portTeam>>) => void;
+  agents.portTeam.mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  await openImport(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Import team Night Shift" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import a team" });
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeInTheDocument();
+  await act(async () =>
+    finish({
+      imported: [],
+      failed: [],
+      elsewhere: ["Cy"],
+      foreign: [],
+      teamError: { name: "Night Shift" },
+    }),
+  );
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled();
+  await user.keyboard("{Escape}");
+  expect(
+    screen.queryByRole("dialog", { name: "Import a team" }),
+  ).not.toBeInTheDocument();
+});
+
+it("lists old teams with how many members are here, and imports one as a team", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValueOnce({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: ["c".repeat(64)],
+  });
+  await openImport(user);
+  const teams = await screen.findByRole("region", { name: "Teams to import" });
+  expect(
+    within(teams).getByRole("heading", { name: "Teams" }),
+  ).toBeInTheDocument();
+  expect(within(teams).getByText("Night Shift")).toBeInTheDocument();
+  // Cy is here already; Bea is still listed as an agent.
+  expect(
+    within(teams).getByText("2 members · 1 already here"),
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Import team Night Shift" }),
+  );
+  expect(agents.portTeam).toHaveBeenCalledWith({
+    id: "old-night-shift",
+    type: "test/echo",
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Import a team" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("counts no member of a team as here when they were imported into another community", async () => {
+  const user = userEvent.setup();
+  // Bea and Cy were imported into another community; Import there lists none.
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValueOnce({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  await openImport(user);
+  const teams = await screen.findByRole("region", { name: "Teams to import" });
+  expect(within(teams).getByText("2 members")).toBeInTheDocument();
+  expect(within(teams).queryByText(/already here/)).not.toBeInTheDocument();
+  expect(
+    within(teams).getByRole("button", { name: "Import team Night Shift" }),
+  ).toBeEnabled();
+});
+
+it("keeps a team whose members are all here importable with no agents to list", async () => {
+  const user = userEvent.setup();
+  const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
+  const cy = { ...agent("Cy", 3), pubkey: "c".repeat(64) };
+  const { agents } = setup([bea, cy]);
+  agents.portable.mockResolvedValueOnce({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  agents.portTeam.mockImplementationOnce(async () => ({
+    team: await agents.saveTeam({
+      name: "Night Shift",
+      instructions: "Ship small.",
+      members: [bea.pubkey, cy.pubkey],
+    }),
+    imported: [],
+    failed: [],
+    elsewhere: [],
+    foreign: [],
+  }));
+  await openImport(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Import team Night Shift" }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Agents to import" }),
+  ).not.toBeInTheDocument();
+  expect(agents.portTeam).toHaveBeenCalled();
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.getByRole("button", { name: /Night Shift/ }),
+  ).toBeInTheDocument();
+});
+
+it("keeps Import open and names each part of a team import that did not come", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  // Renamed in old Buzz since it was listed: messages name what was saved.
+  const team = { id: "t", name: "Late Shift", instructions: "", members: [] };
+  const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
+  agents.portTeam
+    .mockResolvedValueOnce({
+      team,
+      imported: [bea],
+      failed: [{ name: "Cy", error: "Keychain access was denied" }],
+      elsewhere: [],
+      foreign: [],
+    })
+    .mockResolvedValueOnce({
+      imported: [bea],
+      failed: [],
+      elsewhere: ["Cy"],
+      foreign: [],
+      teamError: { name: "Late Shift" },
+    })
+    .mockResolvedValueOnce({
+      team,
+      imported: [],
+      failed: [],
+      elsewhere: ["Cy"],
+      foreign: [],
+    });
+  await openImport(user);
+  const importTeam = await screen.findByRole("button", {
+    name: "Import team Night Shift",
+  });
+  await user.click(importTeam);
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Imported team Late Shift with Bea. Couldn't import Cy: Keychain access was denied.",
+  );
+  expect(screen.getByText("2 members · 1 already here")).toBeInTheDocument();
+  await user.click(importTeam);
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't save team Late Shift. Imported Bea; add them in Teams. Kept out: Cy, in another community.",
+  );
+  await user.click(importTeam);
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Imported team Late Shift. Kept out: Cy, in another community.",
+  );
+});
+
+it("neither counts nor adds a member another account on this device has", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: portable,
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  const bea = { ...agent("Bea", 2), pubkey: "b".repeat(64) };
+  agents.portTeam.mockResolvedValueOnce({
+    team: { id: "t", name: "Night Shift", instructions: "", members: [] },
+    imported: [bea],
+    failed: [],
+    elsewhere: [],
+    foreign: ["Cy"],
+  });
+  await openImport(user);
+  const teams = await screen.findByRole("region", { name: "Teams to import" });
+  expect(within(teams).getByText("2 members")).toBeInTheDocument();
+  await user.click(
+    within(teams).getByRole("button", { name: "Import team Night Shift" }),
+  );
+  onImport();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Imported team Night Shift with Bea. Kept out: Cy, which another account on this device has.",
+  );
+});
+
 it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
-  await openAction(user, "Teams");
-  expect(screen.getByText("No teams yet.")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(screen.queryByRole("grid", { name: "Teams" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
   await user.type(
     screen.getByRole("textbox", { name: "Instructions" }),
@@ -916,14 +1285,61 @@ it("makes a team of chosen agents and lists it with its members", async () => {
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
   });
-  const list = screen.getByRole("list", { name: "Teams" });
-  expect(within(list).getByText("Crew")).toBeInTheDocument();
-  expect(within(list).getByText("Ada, Cy")).toBeInTheDocument();
+  const card = within(screen.getByRole("list", { name: "Teams" })).getByRole(
+    "button",
+    { name: "Crew" },
+  );
+  expect(card).toHaveTextContent("Ada, Cy");
 
-  await user.click(screen.getByRole("button", { name: "Edit Crew" }));
+  await user.click(card);
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
-  expect(screen.getByText("No teams yet.")).toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
+});
+
+it("closes the team editor when leaving Your teams", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(() =>
+    agents.saveTeam({ name: "Crew", instructions: "", members: [] }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.queryByRole("form", { name: "Edit Crew" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+});
+
+it("offers New team again when the team being edited disappears", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(async () => {
+    await agents.saveTeam({
+      id: "crew",
+      name: "Crew",
+      instructions: "",
+      members: [],
+    });
+    await agents.saveTeam({
+      id: "gone",
+      name: "Gone",
+      instructions: "",
+      members: [],
+    });
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Gone" }));
+  expect(
+    screen.queryByRole("button", { name: "New team" }),
+  ).not.toBeInTheDocument();
+  await act(() => agents.removeTeam("gone"));
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New team" })).toBeInTheDocument();
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {
@@ -940,7 +1356,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
     attention: {},
   };
   const { agents } = setup([far, sky]);
-  const grid = screen.getByRole("listbox", { name: "Agents" });
+  const grid = screen.getByRole("grid", { name: "Agents" });
   expect(within(grid).getByText("On another device")).toBeInTheDocument();
   expect(within(grid).getByText("Setup unfinished")).toBeInTheDocument();
 
@@ -951,7 +1367,7 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   ).not.toBeInTheDocument();
   expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
   await user.dblClick(within(grid).getByText("Far"));
-  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  expect(screen.getByRole("grid")).toBeInTheDocument();
 
   await user.click(within(grid).getByText("Sky"));
   expect(
@@ -963,10 +1379,10 @@ it("shows an agent on another device read-only, and offers only Finish setup and
   await user.click(screen.getByRole("button", { name: "Finish setup" }));
   expect(agents.finish).toHaveBeenCalledWith(sky.pubkey);
   await user.dblClick(within(grid).getByText("Sky"));
-  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  expect(screen.getByRole("grid")).toBeInTheDocument();
 });
 
-it("moves focus from Finish setup to Open once the setup finishes", async () => {
+it("moves focus from Finish setup to Identity once the setup finishes", async () => {
   const user = userEvent.setup();
   const finished: Agent = {
     ...agent("Sky", 4),
@@ -981,5 +1397,450 @@ it("moves focus from Finish setup to Open once the setup finishes", async () => 
   await user.click(screen.getByText("Sky"));
   screen.getByRole("button", { name: "Finish setup" }).focus();
   await user.keyboard("{Enter}");
-  expect(await screen.findByRole("button", { name: "Open" })).toHaveFocus();
+  expect(await screen.findByRole("tab", { name: "Identity" })).toHaveFocus();
+});
+
+it("opens deletion from the card menu without selecting it and requires confirmation", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  expect(screen.queryByText("Peek of Ada")).not.toBeInTheDocument();
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open settings" }),
+  );
+  expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("saves a card model through its type and keeps failures on the card", async () => {
+  const user = userEvent.setup();
+  const saved = agent("Ada", 1);
+  const { agents } = setup([saved], { model: true });
+  agents.save.mockRejectedValueOnce(new Error("Model could not save"));
+  await user.click(screen.getByRole("button", { name: "Change model" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Model could not save",
+  );
+  expect(screen.queryByText("Peek of Ada")).not.toBeInTheDocument();
+  expect(agents.save).toHaveBeenCalledWith(saved.pubkey, {
+    config: { reply: "New model" },
+  });
+  await user.click(screen.getByRole("button", { name: "Change model" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(agents.save).toHaveBeenCalledTimes(2);
+});
+
+it("opens marketplace in a modal and restores focus to New agent", async () => {
+  const user = userEvent.setup();
+  setup([]);
+  expect(
+    screen.queryByRole("button", { name: "Teams" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Create agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Browse the marketplace" }),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Marketplace" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: "Your teams" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New agent" })).toHaveFocus();
+});
+
+it.each(["loading", "error", "unavailable"] as const)(
+  "keeps import and marketplace reachable while agents are %s",
+  async (status) => {
+    setup([], { status });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Create a new agent" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("menuitem", { name: "Import an agent" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Import an agent" }),
+    ).toBeVisible();
+  },
+);
+
+it("keeps the copy and delete rows in Settings, below the agent identity", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  const copy = vi.spyOn(navigator.clipboard, "writeText");
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  const identity = screen.getByRole("complementary", { name: "Ada identity" });
+  expect(within(identity).queryByText("Public key")).not.toBeInTheDocument();
+  expect(
+    within(identity).queryByRole("button", { name: "Delete agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Copy public key" }));
+  expect(copy).toHaveBeenCalledWith(expect.stringMatching(/^npub1/));
+  expect(
+    await screen.findByRole("button", { name: "Copied" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Delete Ada?" });
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("tab", { name: "Attention" }));
+  expect(
+    screen.queryByRole("button", { name: "Delete agent" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  copy.mockRejectedValueOnce(new Error("Clipboard denied"));
+  await user.click(
+    screen.getByRole("button", { name: /Copied|Copy public key/ }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not copy the public key",
+  );
+  copy.mockRestore();
+});
+
+it("opens provider setup before staging an unready provider, and leaves the switch unsaved", async () => {
+  const user = userEvent.setup();
+  const install = vi.fn();
+  const destination = provider("attention", ({ onClose }) => (
+    <>
+      <p>Provider installation and sign-in</p>
+      <button
+        type="button"
+        onClick={() => {
+          install();
+          destination.set({ readiness: "ready" });
+          onClose();
+        }}
+      >
+        Install and connect
+      </button>
+    </>
+  ));
+  const target = {
+    key: "test/destination",
+    pluginId: "test",
+    revision: "1",
+    id: "destination",
+    title: "Destination",
+    defaults: () => ({ config: {} }),
+    provider: destination.contribution,
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1)], { more: [target] });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  const choose = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Change provider from Echo" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Destination" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    return screen.findByRole("dialog", { name: "Destination" });
+  };
+  const setupDialog = await choose();
+  expect(destination.check).toHaveBeenCalledOnce();
+  expect(install).not.toHaveBeenCalled();
+  expect(agents.retype).not.toHaveBeenCalled();
+  await user.click(within(setupDialog).getByRole("button", { name: "Close" }));
+  expect(
+    screen.getByRole("button", { name: "Change provider from Echo" }),
+  ).toBeInTheDocument();
+  await choose();
+  await user.click(screen.getByRole("button", { name: "Install and connect" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("button", { name: "Change provider from Destination" }),
+  ).toBeInTheDocument();
+  expect(agents.retype).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.retype).toHaveBeenCalledWith("1".repeat(64), target.key, {
+    config: expect.anything(),
+  });
+});
+
+it("opens avatar and name editing from the profile menu", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  const menu = screen.getByRole("button", { name: "Agent profile actions" });
+  await user.click(menu);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  expect(dialog).toHaveAttribute("data-height", "stable-tall");
+  expect(
+    within(dialog).getByRole("button", { name: "Use image" }),
+  ).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: "Back" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(menu).toHaveFocus());
+  await user.click(menu);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change name" }),
+  );
+  expect(
+    await screen.findByRole("textbox", { name: "Agent name" }),
+  ).toHaveValue("Ada");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("shares the editable owner profile with chat profile targets", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    viewer: ada.owner,
+    session: owner.session,
+  };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  const close = vi.fn();
+  try {
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        target={profileTarget(ada.pubkey, { agent: true }) ?? ""}
+        close={close}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Ada" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Identity" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Info" })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change name" }),
+    );
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBeVisible();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("saves an avatar directly from its choices and cancels a changed draft", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  const open = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change avatar" }),
+    );
+    return screen.findByRole("dialog", { name: "Edit agent" });
+  };
+  let dialog = await open();
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
+  expect(
+    within(dialog).getByRole("button", { name: "Gloopies 1" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(
+    within(dialog).queryByRole("textbox", { name: "Agent name" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(dialog).queryByRole("button", { name: "Back" }),
+  ).not.toBeInTheDocument();
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(
+    within(dialog).getByRole("button", { name: /^Gloopies$/ }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: /^Gloopies$/ }));
+  expect(
+    within(dialog).getByRole("button", { name: "Gloopies 1" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(agents.save).not.toHaveBeenCalled();
+  dialog = await open();
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies" }));
+  await user.click(within(dialog).getByRole("button", { name: "Gloopies 1" }));
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
+    picture: expect.any(String),
+  });
+});
+
+it("opens the owned agent provider Activity tab for the originating conversation", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    viewer: ada.owner,
+    session: owner.session,
+  };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  const renderActivity = vi.fn(({ agent, conversation }: AgentViewProps) => (
+    <p>
+      Transcript: {agent.pubkey} / {conversation?.channelId}
+    </p>
+  ));
+  const originalType = view.agents.types()[0];
+  if (!originalType) throw new Error("Missing fixture type");
+  const activityType: RegisteredAgentType = {
+    ...originalType,
+    tabs: [
+      ...(originalType.tabs ?? []),
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: renderActivity,
+      },
+    ],
+  };
+  const types = [activityType];
+  view.agents.types = () => types;
+  const context = {
+    channelId: "channel-a",
+    canOpen: vi.fn(() => true),
+    open: vi.fn(() => true),
+  };
+  const close = vi.fn();
+  try {
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        target={profileTarget(ada.pubkey) ?? ""}
+        context={context}
+        close={close}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        target={profileActivityViewTarget(ada.pubkey) ?? ""}
+        context={context}
+        close={close}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText(`Transcript: ${ada.pubkey} / channel-a`),
+    ).toBeVisible();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: "Identity" }));
+    expect(screen.getByRole("tab", { name: "Identity" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    types[0] = originalType;
+    view.rerender(
+      <ProfilePanel
+        agents={view.agents}
+        relay={relay}
+        target={profileActivityViewTarget(ada.pubkey) ?? ""}
+        context={context}
+        close={close}
+      />,
+    );
+    expect(
+      screen.queryByRole("tab", { name: "Activity" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("removes an existing avatar through the image editor and explicit Save", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([
+    { ...agent("Ada", 1), picture: "https://example.com/avatar.png" },
+  ]);
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  await user.click(within(dialog).getByRole("button", { name: "Use image" }));
+  const url = within(dialog).getByRole("textbox", { name: /url/i });
+  await user.clear(url);
+  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  expect(agents.save).toHaveBeenCalledWith("1".repeat(64), { picture: null });
+});
+
+it("retains the selected profile draft while viewing teams", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], { dirtySettings: true });
+  await user.click(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Ada"),
+  );
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(screen.getByRole("button", { name: "New team" })).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(field).toBeInTheDocument();
+  expect(field).not.toBeVisible();
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  expect(screen.getByRole("textbox", { name: "Reply" })).toBe(field);
+  expect(field).toBeVisible();
+  expect(field).toHaveValue("Unsaved reply");
+  expect(agents.save).not.toHaveBeenCalled();
 });

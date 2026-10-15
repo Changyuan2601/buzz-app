@@ -310,3 +310,39 @@ it.each([0, 2])(
     );
   },
 );
+
+it("offers Move up and Move down for reorderable groups, disabled at each end", async () => {
+  const user = userEvent.setup();
+  const down = vi.fn();
+  render(
+    <SidebarSection
+      sectionKey="group:work"
+      title="Work"
+      open
+      onToggle={() => {}}
+      move={{ down }}
+    >
+      <button type="button">General</button>
+    </SidebarSection>,
+  );
+  const trigger = screen.getByRole("button", { name: "More actions for Work" });
+  await user.click(trigger);
+  expect(
+    await screen.findByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitem", { name: "Move down" }));
+  expect(down).toHaveBeenCalledOnce();
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+it("never offers moves without a move capability", async () => {
+  const user = userEvent.setup();
+  render(<Section />);
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await screen.findByRole("menuitem", { name: "Collapse section" });
+  expect(screen.queryByRole("menuitem", { name: "Move up" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Move down" })).toBeNull();
+});

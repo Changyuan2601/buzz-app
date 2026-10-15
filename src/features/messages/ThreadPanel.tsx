@@ -313,11 +313,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           }
         />
       ) : (
-        !error && (
-          <p className={styles.empty} role="status">
-            Loading thread…
-          </p>
-        )
+        !error && <ThreadLoading />
       )}
     </>
   );
@@ -415,9 +411,7 @@ function OwnedThreadPanel({
       canOpenLink={canOpenLink}
     />
   ) : (
-    <p className={styles.empty} role="status">
-      Loading thread…
-    </p>
+    <ThreadLoading />
   );
 }
 function ThreadMessages({
@@ -900,13 +894,11 @@ function ThreadMessages({
     if (
       (revealSelected && !inlineReveal) ||
       (revealSignal && revealed.current !== revealSignal) ||
+      // Seeded rows are not yet the thread: hold the loader until this view's
+      // first page lands. Later pages and repairs keep presented rows showing.
       (!positioned.current &&
-        ((snapshot.status !== "ready" &&
-          !(
-            snapshot.status === "loading" &&
-            snapshot.readKind === "refresh" &&
-            snapshot.root
-          )) ||
+        !(snapshot.root && snapshot.direction) &&
+        (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
@@ -1107,10 +1099,14 @@ function ThreadMessages({
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    return (tree.children.get(parent) ?? []).map((row) => {
+    const siblings = tree.children.get(parent) ?? [];
+    return siblings.map((row, index) => {
+      const nextRow = siblings[index + 1];
       const children = tree.children.get(row.id);
       const continuation =
-        previousParent === parent && continuesMessageGroup(previousReply, row);
+        previousReply !== snapshot.root &&
+        previousParent === parent &&
+        continuesMessageGroup(previousReply, row);
       const day =
         !previousReply ||
         new Date(previousReply.createdAt * 1000).toDateString() !==
@@ -1133,6 +1129,12 @@ function ThreadMessages({
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
           getThreadRoot={getThreadRoot}
+          stackPrevious={continuation}
+          stackNext={
+            !!nextRow &&
+            continuesMessageGroup(row, nextRow) &&
+            !children?.length
+          }
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}
@@ -1233,6 +1235,12 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
+  // Match the channel's relay summary total. Without a positive total,
+  // stay neutral: visible rows and reader state cannot prove empty history.
+  const replyCount = snapshot.root?.replyCount ?? 0;
+  const replyLabel = replyCount
+    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
+    : "Replies";
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -1357,7 +1365,7 @@ function ThreadMessages({
               media={session.media}
               onOpenLink={onOpenLink}
               canOpenLink={canOpenLink}
-              day={true}
+              day={false}
               layout="thread"
               retry={session.messages.retry}
               mediaMode="thread"
@@ -1374,6 +1382,11 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
+          {snapshot.root && snapshot.replies.length > 0 && (
+            <div className={styles.replyDivider}>
+              <span>{replyLabel}</span>
+            </div>
+          )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
@@ -1395,7 +1408,7 @@ function ThreadMessages({
             </p>
           )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <p role="status">Loading thread…</p>
+          <ThreadLoading />
         ) : null}
         {snapshot.targetStatus === "unavailable" && !selectionNotice && (
           <p role="status">Selected message unavailable.</p>
@@ -1524,5 +1537,20 @@ function ThreadMessages({
           />
         )}
     </MessageEditScope>
+  );
+}
+/** Holds the thread's area with the Buzz mark until its first page can show. */
+function ThreadLoading() {
+  return (
+    <div className={styles.threadLoading} role="status">
+      <picture>
+        <source
+          media="(prefers-reduced-motion: reduce)"
+          srcSet="/buzz-mark.svg"
+        />
+        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
+      </picture>
+      <span className="sr-only">Loading thread…</span>
+    </div>
   );
 }

@@ -2842,7 +2842,7 @@ it("restores live profile avatars with one removal control per exact recipient",
   const media = vi
     .spyOn(h.session, "media")
     .mockImplementation((url) =>
-      url ? `https://media.test/${url}` : undefined,
+      url.replace("https://art.test", "https://media.test"),
     );
   act(() => {
     h.commands().insertMention(first);
@@ -2858,8 +2858,11 @@ it("restores live profile avatars with one removal control per exact recipient",
   // Profiles can arrive after draft restoration; artwork must update without an edit.
   h.setProfiles(
     new Map([
-      [first.pubkey, { name: "Honey", picture: "person.png" }],
-      [second.pubkey, { name: "Honey", picture: "agent.png", isAgent: true }],
+      [first.pubkey, { name: "Honey", picture: "https://art.test/person.png" }],
+      [
+        second.pubkey,
+        { name: "Honey", picture: "https://art.test/agent.png", isAgent: true },
+      ],
     ]),
   );
   expect(controls[0]?.querySelector(".buzz-avatar")).toHaveAttribute(
@@ -2874,7 +2877,7 @@ it("restores live profile avatars with one removal control per exact recipient",
     "src",
     "https://media.test/agent.png",
   );
-  expect(media).toHaveBeenCalledWith("agent.png", "small");
+  expect(media).toHaveBeenCalledWith("https://art.test/agent.png", "small");
   // Loaded-library hints update both artwork layers without another keystroke;
   // clearing them removes only that fallback, not self-declared agent metadata.
   for (const control of controls)
@@ -4001,6 +4004,77 @@ it("opt-out changes future prefills, not the current draft, and re-enable revive
   expect(h.input()).toHaveValue("");
   setRememberAgentsPreference(true);
   expect(h.input()).toHaveValue("");
+});
+
+it("uses Me's selected assistant for plain follow-ups while explicit mentions override it", async () => {
+  const h = mount({
+    personalConversation: true,
+    sessionConversation: true,
+    selectedAgent: second.pubkey,
+  });
+  h.setLibrary([
+    { pubkey: first.pubkey, name: "Explicit" },
+    { pubkey: second.pubkey, name: "Selected" },
+  ]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Explicit", isAgent: true }],
+      [second.pubkey, { name: "Selected", isAgent: true }],
+    ]),
+  );
+  const channel = {
+    id: "channel",
+    channelType: "session" as const,
+    members: [first.pubkey, second.pubkey],
+  };
+  Object.assign(h.session, {
+    mePlacement: { has: () => true },
+    workSessions: {
+      refreshMembership: vi.fn(async () => channel),
+      addAgents: vi.fn(async () => {}),
+    },
+  });
+
+  h.fill("plain follow-up");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+
+  h.fill("override");
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps a Me draft when its selected assistant is unavailable", async () => {
+  const h = mount({
+    personalConversation: true,
+    sessionConversation: true,
+    selectedAgent: second.pubkey,
+  });
+  Object.assign(h.session, {
+    mePlacement: { has: () => true },
+    workSessions: {
+      refreshMembership: vi.fn(async () => ({
+        id: "channel",
+        channelType: "session" as const,
+        members: [],
+      })),
+      addAgents: vi.fn(async () => {}),
+    },
+  });
+  h.fill("keep this draft");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "selected assistant is no longer available",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("keep this draft");
 });
 
 it.each([

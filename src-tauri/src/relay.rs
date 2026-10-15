@@ -306,6 +306,19 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
             return Err("A leave request carries no content or other tags".into());
         }
+    } else if event.kind == 20003 {
+        // Owner presence for agents: a status and one `p` tag per agent; the
+        // relay keeps only the agents the signer owns.
+        if !matches!(event.content.as_str(), "online" | "offline")
+            || event.tags.is_empty()
+            || event.tags.len() > 256
+            || !event
+                .tags
+                .iter()
+                .all(|tag| matches!(tag.as_slice(), [name, key] if name == "p" && hex_key(key)))
+        {
+            return Err("Invalid agent presence".into());
+        }
     } else if matches!(event.kind, 9030..=9032) {
         if !valid_member_command(event) {
             return Err("Invalid member change".into());

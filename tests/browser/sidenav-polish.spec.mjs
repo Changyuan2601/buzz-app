@@ -975,7 +975,7 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
     exact: true,
   });
   await expect(retry).toBeAttached();
-  const scroller = sidebar.locator('[class*="sidebarScroll"]');
+  const scroller = sidebar.locator('[class*="_channelList_"]');
   const scrollToBottom = async (target) => {
     await sidebar.hover();
     // Visibility is not input completion: focusing early interrupts WebKit's
@@ -1080,4 +1080,50 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
   await expect(
     page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
+});
+
+// Pixel positions across two sidebar states need a real layout engine.
+test("Personal space keeps the brand and page rows where a community places them", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await open(page, app);
+  const sidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+    exact: true,
+  });
+  // Measure from the scrollport: the fixture's unresolved Me placement adds a
+  // community-only notice above it, which a live relay settles.
+  const geometry = () =>
+    sidebar.evaluate((frame) => {
+      const brand = frame.querySelector('[role="img"][aria-label="Buzz"]');
+      let scroll = brand.parentElement;
+      while (getComputedStyle(scroll).overflowY !== "auto")
+        scroll = scroll.parentElement;
+      const top = scroll.getBoundingClientRect().top;
+      const left = frame.getBoundingClientRect().left;
+      const pages = brand.parentElement.nextElementSibling.querySelectorAll(
+        '[data-variant="row"]',
+      );
+      return [brand, ...pages].map((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          left: box.left - left,
+          top: box.top - top,
+          width: box.width,
+        };
+      });
+    });
+  await expect(
+    page.getByRole("navigation", { name: "Subscribed channels" }),
+  ).toBeVisible();
+  const community = await geometry();
+  await page
+    .getByRole("button", { name: "Personal space", exact: true })
+    .click();
+  await expect(
+    sidebar.getByText("Choose a community to see channels.", { exact: true }),
+  ).toBeVisible();
+  expect(await geometry()).toEqual(community);
 });

@@ -326,6 +326,23 @@ it("positions once per sibling change, scroll or resize, and reads nothing while
   expect(frames.size).toBe(0);
 });
 
+it("skips a pending frame once the bar has left the document", async () => {
+  const { frames, advanceFrame, drain } = controlFrames();
+  const { container, row, bar, scroller } = renderInScroller();
+  fireEvent.pointerEnter(row);
+  await drain();
+  advanceFrame();
+  await drain();
+  fireEvent.scroll(scroller);
+  expect(frames.size).toBe(1);
+  // Replacing page content detaches the tree without unmounting React.
+  const writes = show.mock.calls.length;
+  container.remove();
+  expect(bar.isConnected).toBe(false);
+  advanceFrame();
+  expect(show).toHaveBeenCalledTimes(writes);
+});
+
 it("follows ancestor motion every frame only while it runs, then realigns once", async () => {
   const { frames, advanceFrame, drain } = controlFrames();
   const { row, bar, scroller, readAnchor } = renderInScroller();

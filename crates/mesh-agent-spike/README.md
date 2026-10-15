@@ -43,7 +43,7 @@ completed effects are never assumed rolled back or automatically replayed.
 
 Agent mode respects the existing Buzz-access switch. Chat is unchanged and has
 no local tools. The full shared Buzz catalog is exposed with `buzz_` names: send,
-message edit, reactions, emoji, read, channels, members, users, DM, memory get/set,
+message edit, reactions, read, channels, members, users, DM, memory get/set,
 canvas and media reads. Final prose is still automatically posted independently of tool
 sends. Each turn receives Buzz conversation history; exact older messages can be
 read with the Buzz read tool when enabled. Follow-ups queue, not steer.

@@ -8,7 +8,10 @@ import {
 import type { AgentAttention } from "../features/agents/service";
 import type { AgentRecord } from "../features/agents/store";
 import { ATTENTION_TOOLS } from "./attention";
+import type { BuzzClient } from "./client";
+import { BUZZ_PROMPT } from "./prompt";
 import { respond } from "./rpc";
+import { turnNote } from "./session-tools";
 import { TOOLS } from "./tools";
 
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
@@ -22,8 +25,9 @@ function agent(options: { classifier?: boolean; enabled?: boolean } = {}) {
     config: {},
   };
   const now = () => Math.floor(Date.now() / 1000);
+  let enabled = options.enabled ?? true;
   const api: AgentAttention = {
-    enabled: () => options.enabled ?? true,
+    enabled: () => enabled,
     classifier: () => (options.classifier ? "available" : "unavailable"),
     show: (slug, interest) => show(record, slug, now(), interest),
     interests: (search) => interestIds(record, search),
@@ -34,13 +38,14 @@ function agent(options: { classifier?: boolean; enabled?: boolean } = {}) {
     },
   };
   let id = 0;
+  // The attention tools need nothing else of the client.
+  const client = { attention: api } as unknown as BuzzClient;
   /** Calls tool `name` through the RPC, as Claude does. */
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const answer = (await respond(
-      undefined,
+      client,
       {},
       { id: ++id, method: "tools/call", params: { name, arguments: args } },
-      { offered: true, api },
     )) as { result: { content: { text: string }[]; isError?: true } };
     const text = answer.result.content[0]?.text ?? "";
     if (answer.result.isError) throw new Error(text);
@@ -58,7 +63,11 @@ function agent(options: { classifier?: boolean; enabled?: boolean } = {}) {
       },
     };
   };
-  return { api, call, ran };
+  /** The owner turns attention off, as the session runs. */
+  const turnOff = () => {
+    enabled = false;
+  };
+  return { api, call, ran, turnOff };
 }
 
 const ABSENT = "object-v1:absent";
@@ -78,23 +87,33 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("the tool list", () => {
-  const list = (attention?: Parameters<typeof respond>[3]) =>
-    respond(undefined, {}, { id: 1, method: "tools/list" }, attention).then(
-      (answer) =>
-        (
-          (answer as { result: { tools: { name: string }[] } }).result.tools ??
-          []
-        ).map((tool) => tool.name),
+  const list = (client?: BuzzClient) =>
+    respond(client, {}, { id: 1, method: "tools/list" }).then((answer) =>
+      (
+        (answer as { result: { tools: { name: string }[] } }).result.tools ?? []
+      ).map((tool) => tool.name),
     );
 
-  it("offers the attention tools only when the session is given them", async () => {
-    expect(await list()).toEqual(TOOLS.map((tool) => tool.name));
-    expect(await list({ offered: false })).toEqual(
-      TOOLS.map((tool) => tool.name),
+  it("always offers the attention tools and guidance, and says each turn whether attention is on", async () => {
+    // One list whatever the setting, so turning attention on or off never
+    // replaces a session or its cached prompt prefix.
+    const names = [...TOOLS, ...ATTENTION_TOOLS].map((tool) => tool.name);
+    expect(await list()).toEqual(names);
+    for (const enabled of [true, false])
+      expect(
+        await list({
+          attention: agent({ enabled }).api,
+        } as unknown as BuzzClient),
+      ).toEqual(names);
+    expect(BUZZ_PROMPT).toContain("## Attention");
+    expect(turnNote({ attention: agent().api })).toMatch(
+      /^<attention>\nHandle the work/,
     );
-    expect(await list({ offered: true })).toEqual(
-      [...TOOLS, ...ATTENTION_TOOLS].map((tool) => tool.name),
+    expect(turnNote({ attention: agent({ enabled: false }).api })).toMatch(
+      /^<attention>\nYour owner has attention off/,
     );
+    // A client whose host keeps no attention gets no note.
+    expect(turnNote({})).toBeUndefined();
   });
 
   it("has Janet's verbs, and always has the classifier fields", () => {
@@ -119,14 +138,11 @@ describe("the tool list", () => {
       ).toHaveProperty("classifier");
   });
 
-  it("refuses an attention call that the session was not given", async () => {
-    const { api } = agent();
-    // A ready client, so the refusal comes from the tool set, not readiness.
+  it("refuses an attention call for a client whose host keeps no attention", async () => {
     const answer = (await respond(
-      {} as never,
+      {} as BuzzClient,
       {},
       { id: 1, method: "tools/call", params: { name: "interest_list" } },
-      { offered: false, api },
     )) as { result: { isError?: true; content: { text: string }[] } };
     expect(answer.result.isError).toBe(true);
     expect(answer.result.content[0]?.text).toMatch(/No tool interest_list/);
@@ -341,7 +357,9 @@ describe("the attention tools", () => {
   });
 
   it("refuses every call once the owner turns attention off", async () => {
-    const { call } = agent({ enabled: false });
+    const { call, turnOff } = agent();
+    await call("interest_list");
+    turnOff();
     await expect(call("interest_list")).rejects.toThrow(
       /Attention is off[\s\S]*\(classifier: unavailable\)/,
     );

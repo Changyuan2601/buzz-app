@@ -1,7 +1,7 @@
 /* Cards share one grid; each is a soft control surface. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
   gap: var(--space-2);
   outline: none;
 }
@@ -17,31 +17,57 @@
   padding: var(--space-8) var(--space-3) var(--space-4);
   border: 1px solid transparent;
   border-radius: var(--radius-container);
-  background: var(--surface-control);
+  background: var(--interaction-row-hover);
   text-align: center;
   user-select: none;
 }
-.card[role="option"] {
+.card:is([role="option"], [role="gridcell"]) {
   cursor: pointer;
 }
-.card[role="option"]:hover {
-  background: var(--surface-hover);
-}
-.card[aria-selected="true"] {
+.card:is([aria-selected="true"], [data-selected="true"]) {
   border-color: var(--border-focus);
 }
 .card:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
-.portrait {
-  flex-shrink: 0;
-  width: 6rem;
+.card:is(button) {
+  width: 100%;
+  cursor: pointer;
+}
+.card:is(button):hover {
+  background: var(--surface-hover);
+}
+/* A team's first members, overlapped in one portrait-sized row. */
+.crew {
+  display: flex;
+  justify-content: center;
   height: 6rem;
 }
-.portrait[data-animated] {
-  width: 8rem;
-  height: 8rem;
+.crewPortrait {
+  width: 4.5rem;
+  height: 4.5rem;
+  align-self: center;
+}
+.crewPortrait + .crewPortrait {
+  margin-left: calc(var(--space-5) * -1);
+}
+.crewPortrait :is(img, video) {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.portrait {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: clamp(4rem, 16cqw, 8rem);
+  height: clamp(4rem, 16cqw, 8rem);
+}
+/* Solid photos need less area than the transparent pack artwork. */
+.portrait > [class~="buzz-avatar-status"] {
+  width: 75%;
+  height: 75%;
 }
 .card[data-unavailable] .portrait {
   opacity: 0.5;
@@ -52,6 +78,8 @@
   object-fit: contain;
 }
 .name {
+  /* Balance the gaps around the name against the inset photo edge. */
+  margin-block: calc(-1 * var(--space-2)) var(--space-2);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -71,6 +99,9 @@
   white-space: nowrap;
 }
 .actions {
+  --interaction-fill: var(--interaction-selected);
+  --interaction-hover: var(--interaction-pressed);
+  max-width: 100%;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -87,6 +118,9 @@
   border-radius: var(--radius-container);
   background: var(--surface);
   cursor: pointer;
+}
+.newTile[data-full-width] {
+  grid-column: 1 / -1;
 }
 .newTile:hover {
   background: var(--surface-hover);
@@ -143,7 +177,9 @@
   top: 45%;
 }
 .newLabel {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-pill);
   color: var(--text-inverse);
@@ -158,5 +194,87 @@
 @media (max-width: 360px) {
   .grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.menu {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}
+
+/* Larger, separated artwork frames the action without crowding it. */
+.newTile[data-full-width] .newArtwork img:nth-child(n) {
+  width: clamp(4.5rem, 14%, 6.5rem);
+  height: auto;
+  aspect-ratio: 1;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%) rotate(var(--art-rotation));
+}
+.newTile[data-full-width] .newArtwork img:nth-child(1) {
+  left: 8%;
+  top: 6%;
+  --art-rotation: -16deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(2) {
+  left: 35%;
+  top: 0%;
+  --art-rotation: 12deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(3) {
+  left: 65%;
+  top: 6%;
+  --art-rotation: -10deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(4) {
+  left: 94%;
+  top: 3%;
+  --art-rotation: 17deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(5) {
+  left: 5%;
+  top: 101%;
+  --art-rotation: 14deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(6) {
+  left: 34%;
+  top: 103%;
+  --art-rotation: -18deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(7) {
+  left: 67%;
+  top: 101%;
+  --art-rotation: 11deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(8) {
+  left: 96%;
+  top: 102%;
+  --art-rotation: -12deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(9) {
+  left: 6%;
+  top: 53%;
+  --art-rotation: 14deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(10) {
+  left: 28%;
+  top: 52%;
+  --art-rotation: -10deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(11) {
+  left: 73%;
+  top: 53%;
+  --art-rotation: 12deg;
+}
+.newTile[data-full-width] .newArtwork img:nth-child(12) {
+  left: 96%;
+  top: 52%;
+  --art-rotation: -16deg;
+}
+@media (max-width: 560px) {
+  .newTile[data-full-width] .newArtwork img:nth-child(10),
+  .newTile[data-full-width] .newArtwork img:nth-child(11) {
+    display: none;
   }
 }

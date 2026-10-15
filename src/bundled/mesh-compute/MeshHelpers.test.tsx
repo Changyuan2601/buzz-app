@@ -1,14 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
-stubAvatarBrowserApis();
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
@@ -29,87 +21,150 @@ const type = {
   revision: "1",
   defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
 } as RegisteredAgentType;
-function setup(status = "ready") {
-  const create = vi.fn(
-    async (input) => ({ ...input, pubkey: "a".repeat(64) }) as Agent,
-  );
-  const state = { status, agents: [], running: [], teams: [] };
+function setup(status = "ready", types = [type], initial: Agent[] = []) {
+  const listeners = new Set<() => void>();
+  let state = { status, agents: initial, running: [], teams: [] };
+  const create = vi.fn(async (input) => {
+    const agent = { ...input, pubkey: "a".repeat(64) } as Agent;
+    state = { ...state, agents: [...state.agents, agent] };
+    for (const listener of listeners) listener();
+    return agent;
+  });
   const agents = {
     snapshot: () => state,
-    subscribe: () => () => {},
-    types: () => [type],
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    types: () => types,
     create,
   } as unknown as Agents;
-  render(<MeshHelpers agents={agents} community="https://relay.example" />);
-  return { create, user: userEvent.setup() };
+  render(<MeshHelpers agents={agents} />);
+  return {
+    create,
+    user: userEvent.setup(),
+    remove: () => {
+      state = { ...state, agents: [] };
+      for (const listener of listeners) listener();
+    },
+  };
 }
-it("offers all four helpers and custom without creating an agent on selection", async () => {
-  const { create, user } = setup();
+it("offers the retained prefabs and custom, disclosing tool access before creation", () => {
+  const { create } = setup();
   for (const preset of MESH_AGENT_PRESETS)
     expect(
-      screen.getByRole("button", { name: `Set up ${preset.name}` }),
+      screen.getByRole("button", { name: `Create ${preset.name}` }),
     ).toBeEnabled();
   expect(
-    screen.getByRole("button", { name: "Set up Custom agent" }),
+    screen.getByRole("button", { name: "Create Custom agent" }),
   ).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Set up Emoji maker" }));
-  const dialog = screen.getByRole("dialog", { name: "Create agent" });
-  expect(within(dialog).getByLabelText("Name")).toHaveValue("Emoji maker");
-  expect(within(dialog).getByLabelText("Instructions")).toHaveValue(
-    MESH_AGENT_PRESETS[0]?.prompt,
-  );
-  expect(create).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByText("Emoji maker")).not.toBeInTheDocument();
+  expect(
+    screen.getAllByText(/shell and files on this machine, plus Buzz access/),
+  ).toHaveLength(2);
+  expect(screen.getAllByText(/Chat: no tools/)).toHaveLength(2);
   expect(create).not.toHaveBeenCalled();
 });
-it("reviews and customises a helper's instructions, mode, workspace and session scope before creation", async () => {
-  const { create, user } = setup();
-  await user.click(screen.getByRole("button", { name: "Set up Translator" }));
-  const dialog = screen.getByRole("dialog", { name: "Create agent" });
-  fireEvent.change(within(dialog).getByLabelText("Name"), {
-    target: { value: "Thomas's helper" },
-  });
-  fireEvent.change(within(dialog).getByLabelText("Instructions"), {
-    target: { value: "Custom task" },
-  });
-  await user.click(within(dialog).getByRole("combobox", { name: "Mode" }));
-  await user.click(
-    await screen.findByRole("option", {
-      name: "Agent — goose with shell and files",
-    }),
-  );
-  await user.click(
-    within(dialog).getByRole("checkbox", { name: /Buzz access/ }),
-  );
-  fireEvent.change(within(dialog).getByLabelText("Workspace"), {
-    target: { value: "/tmp/helper" },
-  });
-  await user.click(within(dialog).getByRole("combobox", { name: "Sessions" }));
-  await user.click(
-    await screen.findByRole("option", { name: "One session per channel" }),
-  );
-  await user.click(
-    within(dialog).getByRole("button", { name: "Create agent" }),
-  );
-  expect(create).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({
+it.each(MESH_AGENT_PRESETS)(
+  "creates $name using the existing service and preset defaults",
+  async (preset) => {
+    const { create, user } = setup();
+    await user.click(
+      screen.getByRole("button", { name: `Create ${preset.name}` }),
+    );
+    expect(create).toHaveBeenCalledExactlyOnceWith({
       type: type.key,
-      name: "Thomas's helper",
-      config: expect.objectContaining({
-        prompt: "Custom task",
-        mode: "agent",
-        buzz: false,
-        workspace: "/tmp/helper",
-        scope: "channel",
-      }),
-    }),
-  );
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Thomas's helper created",
-  );
+      name: preset.name,
+      picture: expect.stringMatching(/^https:/),
+      config: {
+        ...DEFAULT_MESH_AGENT_CONFIG,
+        preset: preset.id,
+        prompt: preset.prompt,
+        mode: preset.mode,
+        buzz: preset.buzz ?? true,
+      },
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      `${preset.name} created`,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  },
+);
+it("creates a custom agent with defaults for editing in normal Settings", async () => {
+  const { create, user } = setup();
+  await user.click(screen.getByRole("button", { name: "Create Custom agent" }));
+  expect(create).toHaveBeenCalledExactlyOnceWith({
+    type: type.key,
+    name: "Custom agent",
+    picture: expect.stringMatching(/^https:/),
+    config: DEFAULT_MESH_AGENT_CONFIG,
+  });
 });
-it("keeps creation unavailable while agents are loading", () => {
-  setup("loading");
+it("blocks duplicate creation while pending, surfaces failure and permits retry", async () => {
+  const { create, user } = setup();
+  let reject!: (error: Error) => void;
+  create.mockImplementationOnce(
+    () =>
+      new Promise<Agent>((_, fail) => {
+        reject = fail;
+      }),
+  );
+  await user.click(screen.getByRole("button", { name: "Create Translator" }));
+  try {
+    expect(create).toHaveBeenCalledTimes(1);
+    for (const button of screen.getAllByRole("button"))
+      expect(button).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Create Translator" }));
+    expect(create).toHaveBeenCalledTimes(1);
+  } finally {
+    reject(new Error("Creation failed"));
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent("Creation failed");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Create Translator" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Translator created",
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(create).toHaveBeenCalledTimes(2);
+});
+it.each(["loading", "error"])(
+  "keeps creation unavailable while agents are %s",
+  (status) => {
+    setup(status);
+    for (const button of screen.getAllByRole("button"))
+      expect(button).toBeDisabled();
+  },
+);
+it("keeps creation unavailable when the Mesh type is absent", () => {
+  setup("ready", []);
   for (const button of screen.getAllByRole("button"))
     expect(button).toBeDisabled();
+});
+
+it("shows saved presets at the action point, including renamed ones, and allows creation after removal", async () => {
+  const { create, user, remove } = setup(
+    "ready",
+    [type],
+    [
+      {
+        type: type.key,
+        name: "My translator",
+        config: { ...DEFAULT_MESH_AGENT_CONFIG, preset: "translator" },
+      } as Agent,
+    ],
+  );
+  const made = screen.getByRole("button", {
+    name: "Translator created as My translator",
+  });
+  expect(made).toHaveTextContent("Created");
+  expect(made).toBeDisabled();
+  await user.click(made);
+  expect(create).not.toHaveBeenCalled();
+  act(remove);
+  await user.click(screen.getByRole("button", { name: "Create Translator" }));
+  expect(
+    screen.getByRole("button", { name: "Translator created as Translator" }),
+  ).toBeDisabled();
+  expect(create).toHaveBeenCalledTimes(1);
 });

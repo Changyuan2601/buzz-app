@@ -10,14 +10,18 @@ import type {
   ComposerTool,
   ComposerToolProps,
   ContributionReader,
+  TargetOpener,
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
+import { useTargetOpener } from "./opener";
+
+type HostToolProps = Omit<ComposerToolProps, keyof TargetOpener>;
 
 export function ComposerTools({
   registry,
   renderLeading,
   ...props
-}: ComposerToolProps & {
+}: HostToolProps & {
   registry: ContributionReader<ComposerTool>;
   /** Host layout for tools ordered before the default group; preserves DOM order. */
   renderLeading?: (tools: ReactNode) => ReactNode;
@@ -54,7 +58,7 @@ function OwnedTool({
   tool,
   registry,
   ...props
-}: ComposerToolProps & {
+}: HostToolProps & {
   tool: Contribution<ComposerTool>;
   registry: ContributionReader<ComposerTool>;
 }) {
@@ -114,6 +118,7 @@ function OwnedTool({
       release?.();
     };
   }, [tool, registry]);
+  const opener = useTargetOpener(registry, tool);
   const Tool = tool.component;
-  return commands ? <Tool {...props} {...commands} /> : null;
+  return commands ? <Tool {...props} {...commands} {...opener} /> : null;
 }

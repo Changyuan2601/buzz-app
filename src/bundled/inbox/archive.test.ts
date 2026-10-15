@@ -245,6 +245,38 @@ it("preserves archive intent when exact conversation evidence regroups and resto
   expect(h.archived(regrouped)).toBe(false);
 });
 
+it("keeps a session mention visible when an earlier archive covers only part of its merged row", () => {
+  const h = fixture();
+  const row = (created: number): InboxItem => {
+    const event = message(h.alice, "session", `Mention ${created}`, created, [
+      ["p", h.viewer.pubkey],
+    ]);
+    return {
+      ...h.item,
+      id: `session:${event.id}`,
+      channelId: "session",
+      target: { kind: "message", channelId: "session", messageId: event.id },
+      messageId: event.id,
+      latestMessageId: event.id,
+      messageIds: [event.id],
+      createdAt: created,
+      messages: [{ id: event.id, createdAt: created, mentioned: true }],
+    };
+  };
+  const [kept, archived] = [row(15), row(20)];
+  updateArchive(h.scope, archived, true);
+  expect(h.archived(kept)).toBe(false);
+  const merged: InboxItem = {
+    ...archived,
+    id: "session:session",
+    messageIds: [...kept.messageIds, ...archived.messageIds],
+    messages: [...kept.messages, ...archived.messages],
+  };
+  expect(h.archived(merged)).toBe(false);
+  updateArchive(h.scope, kept, true);
+  expect(h.archived(merged)).toBe(true);
+});
+
 it("persists a regrouped archive coordinate after its original evidence is replaced", () => {
   const h = fixture();
   const rootId = "a".repeat(64);

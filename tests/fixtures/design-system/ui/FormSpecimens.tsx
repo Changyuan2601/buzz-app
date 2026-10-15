@@ -2,6 +2,8 @@ import { ExamplePreview } from "./ExamplePreview";
 import { Section } from "./primitives";
 import { useState, type ReactNode } from "react";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
+import { InputGroup } from "../../../../src/shared/design-system/ui/InputGroup";
+import { CodeIcon } from "../../../../src/shared/design-system/icons";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
 import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
 import { SearchField } from "../../../../src/shared/design-system/ui/SearchField";
@@ -121,6 +123,11 @@ export function InputExamples() {
         >
           <Input required />
         </Field>
+        <Field label="Image URL on a floating surface">
+          <InputGroup surface="panel">
+            <input type="url" placeholder="https://example.com/image.png" />
+          </InputGroup>
+        </Field>
       </FormExample>
     </div>
   );
@@ -140,6 +147,9 @@ export function TextareaExamples() {
     rows={3}
     placeholder="A place to explore and share ideas."
   />
+</Field>
+<Field label="On a floating surface">
+  <Textarea surface="panel" rows={3} placeholder="Describe what I should do" />
 </Field>
 <Field label="Read-only notes">
   <Textarea
@@ -166,6 +176,20 @@ export function TextareaExamples() {
   />
 </Field>`}
       >
+        <Field label="Outlined instructions">
+          <Textarea
+            appearance="outlined"
+            rows={3}
+            placeholder="Describe what I should do"
+          />
+        </Field>
+        <Field label="On a floating surface">
+          <Textarea
+            surface="panel"
+            rows={3}
+            placeholder="Describe what I should do"
+          />
+        </Field>
         <Field
           label="Description"
           description="Explain what this workspace is for."
@@ -410,6 +434,15 @@ export function SelectExamples() {
             groups={workspaceGroups}
           />
         </div>
+        <Select
+          label="Card workspace"
+          variant="compact"
+          appearance="subtle"
+          leading={<CodeIcon size={16} aria-hidden="true" />}
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
       </FormExample>
     </div>
   );
@@ -421,11 +454,13 @@ export function WorkspaceCombobox({
   state = "ready",
   disabled = false,
   readOnly = false,
+  compact = false,
 }: {
   label?: string;
   state?: ExampleState;
   disabled?: boolean;
   readOnly?: boolean;
+  compact?: boolean;
 }) {
   const [value, setValue] = useState<(typeof destinations)[number] | null>(
     null,
@@ -441,6 +476,7 @@ export function WorkspaceCombobox({
       itemToStringLabel={(item) => item.label}
     >
       <Combobox.Control
+        appearance={compact ? "chip" : "field"}
         label={label}
         triggerLabel={`Browse ${label.toLowerCase()}`}
         placeholder="Search workspaces"
@@ -491,12 +527,14 @@ export function ComboboxExamples() {
         title="Searchable choices"
         description="A check marks the selected value; highlighting follows the pointer or keyboard. Try a query with no matches, a long option, and Escape."
         code={`<WorkspaceCombobox />
+<WorkspaceCombobox label="Compact row choice" compact />
 <WorkspaceCombobox label="Read-only choices" readOnly />
 <WorkspaceCombobox label="Disabled choices" disabled />
 
 ${workspaceComboboxCode}`}
       >
         <WorkspaceCombobox />
+        <WorkspaceCombobox label="Compact row choice" compact />
         <WorkspaceCombobox label="Read-only choices" readOnly />
         <WorkspaceCombobox label="Disabled choices" disabled />
       </FormExample>

@@ -44,7 +44,7 @@ async function frame() {
     }
   });
 }
-function mount() {
+function mount(hold?: () => boolean) {
   const request = new AbortController();
   const complete = vi.fn();
   function Surface({
@@ -66,6 +66,7 @@ function mount() {
       ready: true,
       complete,
       ...(prepare ? { prepare } : {}),
+      ...(hold ? { hold } : {}),
     });
     return (
       <>
@@ -258,4 +259,53 @@ it("retries failed focus recovery on a replacement before completing", async () 
   await frame();
   expect(document.activeElement).toBe(replacement);
   expect(complete).toHaveBeenCalledOnce();
+});
+
+it("holds the revealed row through late layout until its owner releases it", async () => {
+  let holding = true;
+  const { row, complete } = mount(() => holding);
+  const container = row.parentElement as HTMLElement;
+  let scrollTop = 0;
+  Object.defineProperty(container, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = value;
+    },
+  });
+  let rowTop = 0;
+  vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(
+    function (this: HTMLElement) {
+      const top = this === row ? rowTop - scrollTop : 0;
+      return {
+        top,
+        left: 0,
+        bottom: top + 100,
+        right: 100,
+        width: 100,
+        height: 100,
+        x: 0,
+        y: top,
+        toJSON() {},
+      };
+    },
+  );
+  await frame(); // Attach observers.
+  await frame(); // Reveal.
+  await frame(); // Verify and start holding.
+  expect(complete).toHaveBeenCalledOnce();
+  // A row above the target measures late and pushes it down by 59px.
+  rowTop = 59;
+  await mutate(row);
+  await frame();
+  expect(scrollTop).toBe(59);
+  expect(row.getBoundingClientRect().top).toBe(0);
+  // Newer reader intent ends the hold; later drift belongs to the reader.
+  holding = false;
+  rowTop = 100;
+  await mutate(row);
+  await frame();
+  expect(scrollTop).toBe(59);
+  await mutate(row);
+  expect(frames.size).toBe(0);
 });

@@ -388,12 +388,12 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     ).toContainEqual(["emoji", "party_parrot", first]);
     await expect(
       row
-        .getByRole("button", { name: /^:party_parrot:: 1 person/ })
+        .getByRole("button", { name: ":party_parrot:: You", exact: true })
         .locator("img"),
     ).toHaveJSProperty("complete", true);
     await expect(
       row
-        .getByRole("button", { name: /^:party_parrot:: 1 person/ })
+        .getByRole("button", { name: ":party_parrot:: You", exact: true })
         .locator("img"),
     ).not.toHaveJSProperty("naturalWidth", 0);
 
@@ -431,7 +431,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     ).toHaveAttribute("src", media(first));
     await expect(
       row
-        .getByRole("button", { name: /^:party_parrot:: 1 person/ })
+        .getByRole("button", { name: ":party_parrot:: You", exact: true })
         .locator("img"),
     ).toHaveAttribute("src", media(first));
     await expect(

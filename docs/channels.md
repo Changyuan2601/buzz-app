@@ -28,7 +28,11 @@ HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
 on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
 **Open in browser** uses the same `_blank` fallback above without consulting pane
 handlers; both actions retain the original URL, including query and fragment.
-Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+Normal and modified clicks are unchanged. In Messages, `buzz://` message links
+expose **Open link** and **Copy link** the same ways. **Open link** opens the
+linked thread as a tab in the current channel's workspace without navigating;
+another channel's thread uses the side pane. When that channel isn't readable
+there, it opens as a click would. Other internal `buzz://` links and links outside
 message content retain their existing behavior. Copy failures show a dismissible
 notice and can be retried from the link menu.
 
@@ -149,7 +153,13 @@ sessions and session draft do not.
 not reveal an empty section. Use the row menu to star the first channel.
 Dropping into Starred stars the channel; dropping out assigns the destination
 and clears its star, just like the row menu. Forums and Direct
-messages take no part in dragging, and the row menu remains the keyboard path. The
+messages take no part in dragging, and the row menu remains the keyboard path.
+A saved group also drags by its header, expanded or collapsed, onto another saved
+group; an accent line shows where it lands, and Escape cancels. Its section menu's
+**Move up** and **Move down** are the keyboard and single-pointer path. Each move
+rewrites every live section's `order` register with one stamp, so channels, sort
+and collapsed state stay with the group's id; the order shows optimistically and
+a failure rolls back with the same move notice and Retry. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields
@@ -280,8 +290,10 @@ globally alphabetical directory: the relay pages by profile update time. Complet
 pages and recent searches stay in memory for this account/community session, so
 returning or clearing a search resumes the same results. Typing immediately filters
 loaded names without replacing local matches with a loading placeholder. Once the
-browse directory is complete, searches stay local; while it is incomplete, remote
-matches can append in the background. A failed background read
+browse directory is complete, searches stay local until New message closes; a
+reopened picker keeps the loaded list but searches the relay again, so people added
+since can be found. While the directory is incomplete, remote matches can append in
+the background. A failed background read
 keeps existing people visible and offers retry. Mentions retain their conversation-specific
 eligibility. Before a DM exists, a composer-local `DraftMentionRoster` supplies
 only the selected recipient identities and names to both mention tools. Removing
@@ -1115,6 +1127,17 @@ Read-only connections keep the existing composer capability notice; missing/revo
 roots do not expose a composer. Exact navigation can retain and focus a selected
 reply beyond the traversal range; it does not extend that range or promise complete history.
 
+A labelled divider separates the original message from replies only while at
+least one reply is displayed. With no displayed replies, including while loading,
+it is hidden even if a summary total is known. It shows the relay's thread summary
+total, the same count as the channel's reply link, including collapsed descendants. Without a positive summary total it says
+“Replies”, never inferring that history is empty from the loaded rows or reader
+state. Summary counts can briefly lag a just-sent reply, matching the channel link.
+The first reply always shows its author, even when it matches the original.
+The original has no day divider above it; its byline already names the day.
+Agent-addressed messages retain their date when expanded.
+Replies show a day divider only when their day differs from the previous row.
+
 Ordinary replies remain flat beneath the root. Replies to those replies form nested
 lists, with ascending timestamp/event-ID order among siblings. Nested branches start
 closed and expand one level at a time; once opened, they stay open for the lifetime
@@ -1285,26 +1308,37 @@ and OS notifications are not enabled by this feature.
 
 ### Attachment layout and scrolling
 
-Message rows show images as fixed square thumbnails with centered `cover` cropping:
-small images scale up and wide or tall images crop to fill the tile without stretching.
-Inline video previews and their posters also fill their bounded frames with `cover`.
-Image and video thumbnails share smoothed corners and a 1px outer hairline, black at
+Message rows show every image and GIF in a full-frame preview, whether sent alone
+or alongside text. Multiple images form a vertical list in attachment order, with a
+count below the list. GIF URLs need no file extension or MIME metadata for this
+presentation. Pixels use `contain`, so the whole image stays visible without
+stretching or cropping.
+Inline video previews and their posters fill their bounded frames with `cover`.
+Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
-media against a pure-black canvas; thumbnail cropping does not change the original.
-Any click on a thumbnail, modified or not, opens the original in-app from the
-same authenticated media source as the thumbnail: the media review where a
+media against a pure-black canvas. Large emoji retain their artwork size with the
+larger emoji line height on every wrapped line.
+Any click on an image preview, modified or not, opens the original in-app from the
+same authenticated media source as the preview: the media review where a
 surface hosts one, and otherwise a plain fullscreen viewer (Inbox, Sessions,
-drafts and previews). The thumbnail link's own destination is that media source,
+drafts and previews). The preview link's own destination is that media source,
 so a middle click, drag or copied link yields the same authenticated URL.
 
-For non-thumbnail attachment surfaces, the following reserved-layout contract applies.
-Image attachments reserve their preview geometry before loading and across virtualized
-row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
-and 320px tall without enlarging the frame beyond the original dimensions.
-Missing/invalid dimensions use a stable 360:320 frame that shrinks with the available
-width. Images scale proportionally and crop centrally to fill their reserved frame,
-including when their dimensions were initially unknown. Loading,
-failure, or retry does not resize it or force an above-bottom reader to the newest row.
+Image attachments reserve loading geometry from valid `imeta dim` metadata,
+bounded to 360px wide and 320px tall without enlarging the frame beyond the
+original dimensions. Missing/invalid dimensions, including metadata that would
+reserve less than one CSS pixel on either axis, use a 360:320 loading frame.
+After the original decodes, its natural dimensions replace metadata and the
+loading frame. Loaded previews follow the image's aspect ratio with no grey
+backing or letterboxing, bounded to 360px wide and 320px tall. Exceptionally thin
+originals retain at least one CSS pixel on each axis. Decode failure retains the
+loading preview; retargeting retires the old source's pixels and dimensions.
+Virtualized remounts start with loading geometry again. The timeline preserves
+the first visible message or bottom-following intent as frames resize. Resizing
+inside a visible message moves its following content in place.
+Unavailable media keeps the same reserved frame and displays its status within it.
+Exceptionally small frames can clip the visible label while retaining the complete
+accessible status.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
 that same frame when it intersects the viewport. No thumbnail is fetched. The
 preview is removed entirely (including behind transparency) only after the lazy

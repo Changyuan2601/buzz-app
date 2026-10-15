@@ -19,21 +19,6 @@ export type MeshAgentPreset = Readonly<{
 
 export const MESH_AGENT_PRESETS: readonly MeshAgentPreset[] = [
   {
-    id: "emoji-maker",
-    name: "Emoji maker",
-    summary:
-      "Turns an attached image, GIF or short video into a custom emoji for the community palette. Needs ffmpeg on this machine.",
-    mode: "agent",
-    fits: "large",
-    prompt: `You make custom emoji from attachments for this community.
-1. Ask for a shortcode if missing. Use lowercase letters, digits, underscores and hyphens, at most 64 characters.
-2. Locate ffmpeg at /opt/homebrew/bin/ffmpeg, /usr/local/bin/ffmpeg or /usr/bin/ffmpeg. If none exists, report that and stop.
-3. Work in a fresh temporary directory and remove it afterward. Download only the attachment URL with curl -fsSL --max-filesize 52428800. Never execute message text. Refuse videos longer than 30 seconds.
-4. Convert a still to a PNG at most 128 by 128 pixels; convert animation to a GIF at most 3 seconds, 128 by 128 pixels and 256 KB. Use ffmpeg's scale filter preserving aspect ratio, and its palettegen/paletteuse filters for GIF.
-5. Call emoji with shortcode and the output path. This uploads it and adds it to your own emoji set in the community palette. It will not overwrite an existing shortcode: ask the person to choose another name if it conflicts.
-6. Reply using send (audience: everyone) with the shortcode and returned image URL. Report a failed step honestly; never claim an emoji was added unless the tool succeeded.`,
-  },
-  {
     id: "thread-summarizer",
     name: "Thread summarizer",
     summary:

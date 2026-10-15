@@ -20,13 +20,16 @@
   background: transparent;
 }
 .feed {
+  --timeline-measure: 100%;
+
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-anchor: none;
   padding: 0 var(--space-panel-inset);
   /* Keep fractional last rows reachable despite integer scroll extents. */
-  padding-bottom: var(--space-half);
+  --history-bottom-inset: var(--space-half);
+  padding-bottom: var(--history-bottom-inset);
   /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.51.0.patch)
      flips this scroller to overflow-y: hidden !important on every nonzero size
      correction on Mac WebKit. With classic, space-taking scrollbars that frame
@@ -40,6 +43,9 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+.feed[data-chat-presentation] {
+  --timeline-measure: 52rem;
+}
 .threadHistory::-webkit-scrollbar {
   width: 8px;
 }
@@ -52,10 +58,10 @@
   background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
-/* Part of the final measured item, so end alignment includes breathing room.
+/* Keep the final message clear of floating typing/activity indicators.
    The spacer scrolls away with history instead of shortening its viewport. */
 .timelineEnd {
-  height: calc(var(--space-3) + var(--channel-preview-inset, 0px));
+  height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
 .feed ol {
   list-style: none;
@@ -63,6 +69,8 @@
   padding: 0;
 }
 .edge {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
   min-height: var(--space-4);
   box-sizing: border-box;
@@ -79,6 +87,8 @@
   min-height: calc(var(--size-control) + var(--space-4));
 }
 .day {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -96,6 +106,34 @@
   flex: 1;
   background: var(--border-standard);
 }
+.replyDivider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  /* Reserve a fixed label row. Ordinary message clearance accounts for half
+     its height and the neighbouring .message padding; compact agent-addressed
+     rows keep their own tighter spacing. */
+  min-block-size: var(--space-5);
+  color: var(--text-subtle);
+  @apply text-caption;
+  margin: calc(var(--space-6) - var(--space-5) / 2 - var(--space-half)) 0
+    calc(
+      var(--space-6) -
+      var(--space-5) /
+      2 -
+      var(--space-3) -
+      var(--space-half)
+    );
+}
+.replyDivider::before,
+.replyDivider::after {
+  content: "";
+  height: 1px;
+  min-width: 0;
+  flex: 1;
+  background: var(--border-standard);
+}
 .dayLabel {
   display: inline-flex;
   align-items: center;
@@ -103,6 +141,8 @@
   min-width: 0;
 }
 .message {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
   position: relative;
   container: message-row / inline-size;
   display: flex;
@@ -113,6 +153,9 @@
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
   gap: var(--space-2);
+}
+.message[data-viewer-message] {
+  flex-direction: row-reverse;
 }
 .message[data-layout="continuation"] {
   padding-block: var(--space-half);
@@ -135,6 +178,13 @@
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+.message[data-viewer-message] .messageBody {
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: min(85%, 42rem);
+  margin-inline-start: auto;
+  text-align: start;
 }
 .byline {
   display: flex;
@@ -163,15 +213,7 @@
   min-height: var(--size-emoji-line);
   margin-top: var(--space-1);
   font-size: var(--size-emoji-display);
-  line-height: var(--size-emoji-display);
-}
-.text a:not([data-link-renderer]) {
-  color: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.text a:not([data-link-renderer]):hover {
-  text-decoration: underline;
+  line-height: var(--size-emoji-line);
 }
 .reactions {
   min-inline-size: 0;
@@ -180,71 +222,86 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1h);
+  gap: 0;
   margin: var(--space-1h) 0 0;
+}
+.reactions:has(.reactionItem),
+.reactionFallback {
+  position: relative;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding-inline: var(--space-1);
+  border: 1.5px solid var(--surface-panel);
+  /* A capsule on one line; stable corners keep wrapped emoji inside the surface. */
+  border-radius: calc(var(--size-control-sm) / 2 + 1.5px);
+  background: var(--reaction-surface, var(--surface-message));
+}
+.message:has(.messageBubble[data-own]) > .messageBody {
+  --reaction-surface: var(--surface-message-own);
+  --reaction-ink: var(--text-message-own);
+}
+.messageContent:has(.messageBubble) + .reactions:has(.reactionItem),
+.messageContent:has(.messageBubble) + .reactionFallback {
+  margin-top: calc(-1 * var(--space-1));
 }
 .reactions:empty {
   margin-top: 0;
 }
 .reactionFallback > span:not([role]) {
-  background: var(--affordance-subtle);
-  border-radius: var(--radius-chip);
-  padding: var(--space-half) var(--space-1h);
-  max-width: 10rem;
+  display: grid;
+  place-items: center;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+  font-size: var(--text-caption);
+  --inline-emoji-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.reactionPillWrap {
-  position: relative;
+.reactionItem {
   display: inline-flex;
   max-width: 100%;
 }
-.reactionChip {
+.reactionGlyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1h);
-  min-width: 3rem;
-  max-width: min(10rem, 100%);
-  min-height: 1.75rem;
-  border: 1px solid var(--border);
-  background: var(--surface-control);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
+  max-width: var(--size-control-sm);
+  pointer-events: none;
 }
-.reactionChip:hover {
-  background: var(--surface-hover);
-}
-.reactionChip:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-.reactionChip[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
-  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
-  color: var(--primary);
-}
-.reactionChip:disabled {
-  cursor: default;
+@media (hover: hover) and (pointer: fine) and (
+    prefers-reduced-motion: no-preference
+  ) {
+  .reactionGlyph {
+    transition: transform var(--duration-fast) var(--easing-enter);
+  }
+  .reactionItem
+    button:enabled:not([aria-disabled="true"]):hover
+    .reactionGlyph {
+    transform: rotate(var(--reaction-tilt, 0deg)) scale(1.1);
+  }
 }
 .reactionNativeEmoji {
   display: inline-block;
-  min-width: 1.125rem;
-  max-width: 6rem;
-  font-size: var(--text-body-sm);
-  line-height: 1.2857142857;
+  min-width: 0.75rem;
+  max-width: var(--size-control-sm);
+  font-size: var(--text-caption);
+  line-height: 1;
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Color emoji can paint beyond their font-size line box. Keep that ink clear
+   of truncation while retaining bounded labels for long reaction content. */
+.reactionGlyph .reactionNativeEmoji {
+  padding: var(--space-half);
+}
 .reactionFallbackEmoji {
   display: inline-block;
   min-width: 0;
-  max-width: 6rem;
+  max-width: var(--size-control-sm);
   font-size: var(--text-caption);
   line-height: 1;
   overflow: hidden;
@@ -253,61 +310,9 @@
 }
 .reactionCustomEmoji {
   display: block;
-  width: 0.875rem;
-  height: 0.875rem;
+  width: 0.75rem;
+  height: 0.75rem;
   object-fit: contain;
-}
-.reactionCount {
-  display: inline-flex;
-  flex: none;
-  font-size: var(--text-caption);
-  line-height: 1.1666666667;
-  font-variant-numeric: tabular-nums;
-}
-.reactionCountMotion {
-  display: block;
-  height: 1lh;
-  overflow: hidden;
-}
-.reactionCountRoll {
-  display: flex;
-  flex-direction: column;
-  animation-duration: 260ms;
-  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
-  animation-fill-mode: both;
-}
-.reactionCountRoll[data-direction="up"] {
-  animation-name: reactionCountUp;
-}
-.reactionCountRoll[data-direction="down"] {
-  animation-name: reactionCountDown;
-}
-@keyframes reactionCountUp {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-50%);
-  }
-}
-@keyframes reactionCountDown {
-  from {
-    transform: translateY(-50%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .reactionCountRoll {
-    animation: none;
-  }
-  .reactionCountRoll[data-direction="up"] {
-    transform: translateY(-50%);
-  }
-  .reactionCountRoll[data-direction="down"] {
-    transform: translateY(0);
-  }
 }
 .visuallyHidden {
   position: absolute;
@@ -317,19 +322,33 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
 }
+.reactionPreviewContent {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  max-width: 14rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
 .reactionPreviewEmoji {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 1rem;
+  --reaction-preview-size: calc(var(--space-6) * 2);
+  display: grid;
+  place-items: center;
+  margin-bottom: var(--space-1);
+}
+.reactionPreviewEmoji .reactionNativeEmoji {
+  max-width: var(--space-16);
+  font-size: var(--reaction-preview-size);
+}
+.reactionPreviewEmoji .reactionCustomEmoji {
+  width: calc(var(--space-6) * 2);
+  height: calc(var(--space-6) * 2);
 }
 .reactionPreviewName {
   @apply text-caption text-tertiary;
 }
 .reactionPreviewNames {
-  @apply text-label-sm;
-  max-width: 14rem;
-  overflow-wrap: anywhere;
+  @apply text-caption text-standard;
 }
 @media (prefers-reduced-motion: reduce) {
   .reactionPreview.reactionPreview {
@@ -359,6 +378,8 @@
   }
 }
 .inlineReactionTool {
+  /* Avoid flattening the static SVG when neighboring emoji layers animate. */
+  transform-style: preserve-3d;
   display: inline-flex;
   align-items: center;
   width: 1.75rem;
@@ -369,13 +390,13 @@
   height: 1.75rem;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--reaction-ink, var(--text-secondary));
 }
 .inlineReactionTool
   [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
   border-color: var(--border);
-  background: var(--surface-control);
-  color: var(--text-standard);
+  background: var(--reaction-surface, var(--surface-control));
+  color: var(--reaction-ink, var(--text-standard));
 }
 .attachment {
   display: inline-block;
@@ -398,8 +419,11 @@
   display: block;
   width: 360px;
   max-width: 100%;
+  min-width: 1px;
+  min-height: 1px;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
+  scroll-margin-block: var(--space-1);
   border-radius: var(--media-preview-radius);
 }
 /* Clip the pixels, not the focusable link's outside keyboard outline. */
@@ -417,6 +441,9 @@
   clip-path: var(--media-corner-clip, none);
   background: var(--surface-inset);
 }
+.attachmentImage[data-image-ready] .attachmentImagePixels {
+  background: transparent;
+}
 .attachmentImage.mediaPlaceholder {
   border-radius: var(--media-preview-radius);
   background: var(--surface-inset);
@@ -430,46 +457,33 @@
   height: 100%;
 }
 .attachmentImage img {
-  object-fit: cover;
+  object-fit: contain;
 }
-/* Fixed tiles keep lazy loading from moving the reading position. */
-.imageGroup {
-  min-width: 0;
-  margin-top: var(--space-2);
-}
-.imageStrip {
-  display: flex;
-  gap: var(--space-2);
-  overflow-x: auto;
-  padding: var(--space-1);
-  scroll-padding-inline: var(--space-1);
-  scrollbar-width: thin;
-}
-.attachmentImage[data-thumbnail],
-.imageUnavailable {
-  flex: 0 0 auto;
-  width: calc(var(--space-16) + var(--space-2));
-  aspect-ratio: 1;
-  margin: 0;
-}
-html[data-keyboard-navigation] .attachmentImage:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.imageCount {
-  @apply text-caption;
-  color: var(--text-subtle);
-  margin-top: var(--space-1);
-}
-.imageUnavailable {
+.attachmentImageUnavailable {
   @apply text-caption;
   display: grid;
   place-items: center;
   padding: var(--space-1);
-  border-radius: var(--radius-row);
-  background: var(--affordance-subtle-hover);
+  cursor: auto;
   color: var(--text-subtle);
 }
+.imageGroup {
+  min-width: 0;
+  margin-top: var(--space-2);
+}
+.imageList {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1);
+}
+
+html[data-keyboard-navigation] .attachmentImage:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
 /* Optional plugin accessories use only the space they actually render. */
 .composerContext {
   position: relative;
@@ -477,6 +491,17 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-direction: column;
   flex-shrink: 0;
   min-width: 0;
+}
+/* Soften the scroll edge without reserving a blank strip above the composer. */
+:is(.feed, .threadHistory):has(.jumpToLatest[data-visible="true"])
++ .composerContext::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: calc(-1 * var(--space-3));
+  height: var(--space-3);
+  background: linear-gradient(to bottom, transparent, var(--surface-panel));
+  pointer-events: none;
 }
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
@@ -500,6 +525,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
+}
+.composer[data-chat-presentation] {
+  width: min(calc(100% - 2 * var(--space-4)), 52rem);
+  margin-inline: auto;
+  margin-bottom: var(--space-3);
 }
 .empty {
   padding: var(--space-8) var(--space-4);
@@ -558,6 +588,33 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-1);
+}
+.composerToolRow {
+  display: contents;
+}
+.composerConversationControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerActions {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerToolRow {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+}
+.composer:is([data-chat-presentation], :has(.composerConversationControls))
+  .composerConversationControls {
+  width: 100%;
 }
 .backgroundUpload {
   display: flex;
@@ -620,11 +677,25 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin-top: var(--space-1h);
 }
 .dayCalendar {
-  display: block;
+  display: grid;
   flex: none;
   width: var(--space-5);
   height: var(--space-5);
   user-select: none;
+}
+.dayCalendar > * {
+  grid-area: 1 / 1;
+}
+.dayCalendar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* Matches the former SVG numeral: half the tile, centred below the red band. */
+.dayCalendar [data-calendar-date] {
+  place-self: center;
+  padding-top: calc(var(--space-5) * 7 / 24);
+  line-height: 1;
 }
 .threadUnread {
   width: 0.5rem;
@@ -648,7 +719,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .messageBody [data-thread-summary] {
   max-width: 100%;
   align-self: flex-start;
-  margin-inline-start: calc(-1 * var(--space-1));
+  margin-inline-start: var(--space-3);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -657,27 +728,84 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding: var(--space-1);
   padding-right: var(--space-1h);
 }
+.messageBody [data-reply-connector] {
+  margin-inline-start: calc(var(--space-4) + var(--space-3));
+  max-width: calc(100% - var(--space-4) - var(--space-3));
+}
+.messageBody [data-reply-connector]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0px - var(--space-3));
+  inset-block-end: 50%;
+  inline-size: var(--space-3);
+  block-size: 50%;
+  border-inline-start: 2px solid var(--border-standard);
+  border-block-end: 2px solid var(--border-standard);
+  border-end-start-radius: var(--radius-control);
+  pointer-events: none;
+}
+
 .threadHistory {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-panel-inset);
-  /* Scrollable end padding, not a fixed strip above the composer. */
-  padding-bottom: calc(var(--space-3) + var(--channel-preview-inset));
+  /* Narrower than the channel feed's panel inset; aligns with the composer. */
+  padding: 0 var(--space-4);
+  /* The original starts space-4 below the header, less its .message padding. */
+  padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
+  /* Include the join preview lane while keeping the approved message inset. */
+  --history-bottom-inset: calc(
+    var(--space-8) +
+    var(--channel-preview-inset, 0px)
+  );
+  padding-bottom: var(--history-bottom-inset);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
-/* Measure loaded rows without painting a scroll position we will replace. */
+/* Measure loaded rows without painting a scroll position we will replace,
+   then fade them in once positioned. */
+.threadHistory > [data-thread-rows] {
+  transition: opacity var(--duration-state) var(--easing-state);
+}
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-.threadHistory[data-positioning] > [role="status"] {
+/* Fills whichever thread area is waiting. The mark waits one state change
+   before appearing, so a thread that loads at once never flashes it. */
+.threadLoading {
+  container-type: size;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  animation: thread-loading-in var(--duration-state) var(--easing-enter)
+    var(--duration-state) both;
+}
+.threadHistory > .threadLoading {
   position: absolute;
-  inset-block-start: var(--space-4);
-  inset-inline: var(--space-panel-inset);
-  color: var(--text-subtle);
+  inset: 0;
+}
+/* The mark scales with the waiting area: a side pane and a full main pane
+   both read it as the thread's placeholder, not a stray icon. */
+.threadLoading picture {
+  display: block;
+  width: clamp(5rem, 24cqmin, 10rem);
+  line-height: 0;
+}
+.threadLoading img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+:root[data-color-mode="dark"] .threadLoading picture {
+  filter: invert(1);
+}
+@keyframes thread-loading-in {
+  from {
+    opacity: 0;
+  }
 }
 .threadHistoryPageStatus {
   padding: var(--space-2);
@@ -771,8 +899,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
-a.fileAttachment:hover {
-  background: var(--surface-hover);
+.fileAttachment:is(a, button) {
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fileAttachment:is(a, button):hover {
+    background: var(--surface-hover);
+  }
+}
+.fileAttachment > svg {
+  flex-shrink: 0;
 }
 html[data-keyboard-navigation] .fileAttachment:focus-visible {
   outline: 2px solid var(--focus);
@@ -1330,9 +1466,33 @@ button.mediaPreview {
   margin-bottom: var(--space-1);
 }
 .text blockquote {
+  position: relative;
   padding: var(--space-half) 0 var(--space-half) var(--space-3);
-  border-left: 1px solid var(--border-prominent);
-  color: var(--text-subtle);
+  border-left: 3px solid transparent;
+}
+.text blockquote::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: -3px;
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: color-mix(
+    in srgb,
+    var(--border-prominent),
+    var(--border-standard)
+  );
+}
+@media (forced-colors: active) {
+  .text blockquote::before {
+    background: CanvasText;
+  }
+}
+.text blockquote > :first-child {
+  margin-top: 0;
+}
+.text blockquote > :last-child {
+  margin-bottom: 0;
 }
 .text code {
   border-radius: var(--radius-chip);
@@ -1343,24 +1503,45 @@ button.mediaPreview {
   line-height: var(--text-mono-sm--line-height);
   letter-spacing: var(--text-mono-sm--letter-spacing);
 }
+/* The code scrolls inside its frame so the copy action stays in the corner. */
 .text pre {
+  position: relative;
   max-width: 100%;
-  overflow-x: auto;
+  overflow: hidden;
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-row);
   background: var(--surface-panel);
-  padding: var(--space-3) var(--space-3);
-  scrollbar-width: thin;
 }
 .text pre code {
   display: block;
-  width: max-content;
-  min-width: 100%;
+  overflow-x: auto;
   border-radius: 0;
   background: transparent;
-  padding: 0;
+  padding: var(--space-3) var(--space-3);
+  scrollbar-width: thin;
   white-space: pre;
   overflow-wrap: normal;
+}
+/* Keep every line end reachable beside the pinned action. */
+.text pre:has(> .codeCopy) code {
+  padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
+}
+/* `pre` clips, so a focusable scroller draws its ring inside. */
+html[data-keyboard-navigation] .text pre code:focus-visible {
+  outline-offset: -2px;
+}
+.codeCopy {
+  position: absolute;
+  top: var(--space-1);
+  inset-inline-end: var(--space-1);
+  border-radius: var(--radius-icon-button);
+  background: var(--surface-panel);
+  user-select: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .text pre:not(:hover, :focus-within) .codeCopy {
+    opacity: 0;
+  }
 }
 .text table {
   display: block;
@@ -1407,13 +1588,13 @@ button.mediaPreview {
   vertical-align: middle;
   accent-color: var(--affordance-prominent);
 }
-.text a:not([data-link-renderer]) {
-  color: var(--text-standard);
+.text a {
+  color: var(--text-link);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.text a:not([data-link-renderer]):hover {
+.text a:hover {
   text-decoration-thickness: 2px;
 }
 .imageAlt {
@@ -1453,6 +1634,17 @@ button.mediaPreview {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* A quiet log line: member names keep the caption color at rest, carry
+   medium weight as their only resting cue, and take the inline-reference
+   color while hovered or keyboard-focused. The shared chip fill and ring stay. */
+.membership .membershipName {
+  --link-text: var(--text-subtle);
+  font-weight: var(--type-weight-medium);
+}
+.membership .membershipName:hover,
+html[data-keyboard-navigation] .membership .membershipName:focus-visible {
+  --link-text: var(--text-link);
 }
 .membershipAvatars,
 .mentionRecipients {
@@ -1541,9 +1733,10 @@ button.mediaPreview {
   display: contents;
 }
 .messageActions {
-  @apply popover-surface;
-  --floating-radius: var(--radius-control);
-  --floating-inset: var(--space-half);
+  background: transparent;
+  color: var(--text-standard);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1555,9 +1748,16 @@ button.mediaPreview {
   gap: var(--space-half);
   padding: var(--space-half);
   margin-inline-start: auto;
+  scroll-margin-block-start: var(--space-2);
+  scroll-margin-inline-end: var(--space-3);
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
+}
+.messageActions:not([data-placement="beside"]) {
+  @apply popover-surface;
+  --floating-radius: var(--radius-control);
+  --floating-inset: var(--space-half);
 }
 .quickReactionGlyph {
   pointer-events: none;
@@ -1606,11 +1806,12 @@ html[data-keyboard-input] .quickReactionGlyph {
     width: 100%;
     height: 0;
   }
-  .message[data-layout="continuation"] .messageActionsSlot {
+  .message:is([data-layout="continuation"], [data-stack-previous])
+    .messageActionsSlot {
     top: 0;
   }
   .messageActions {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     max-width: none;
     opacity: 0;
     pointer-events: none;
@@ -1631,6 +1832,9 @@ html[data-keyboard-input] .quickReactionGlyph {
     opacity: 1;
     pointer-events: auto;
   }
+  .messageActions[data-placement="beside"] {
+    translate: 0 -50%;
+  }
   /* Retain pointer travel to the lifted toolbar without adding row spacing. */
   .message:hover::before {
     content: "";
@@ -1643,7 +1847,7 @@ html[data-keyboard-input] .quickReactionGlyph {
 
 .replyBranch {
   position: relative;
-  --reply-spine-start: calc(var(--size-control-sm) + var(--space-2));
+  --reply-spine-start: 100%;
   --reply-indent: var(--size-control);
   --reply-spine-offset: calc(var(--size-control-sm) / 2);
 }
@@ -1710,16 +1914,16 @@ html[data-keyboard-input] .quickReactionGlyph {
   white-space: nowrap;
   color: var(--text-subtle);
 }
+/* Generous conversation measure, relative to the rendered message type size. */
+.messageBubble > :is(.text, .plainText) {
+  max-width: min(90ch, 100%);
+}
 .message[data-layout="continuation"] .text {
   margin-top: 0;
 }
 
 .replyBranch[data-layout="continuation"] {
-  --reply-spine-start: calc(
-    var(--space-1) +
-    var(--text-caption) *
-    var(--text-caption--line-height)
-  );
+  --reply-spine-start: 100%;
 }
 .replyBranchMessage {
   position: relative;
@@ -1728,7 +1932,7 @@ html[data-keyboard-input] .quickReactionGlyph {
   content: "";
   position: absolute;
   inset-inline-start: var(--reply-spine-offset);
-  inset-block: var(--reply-spine-start) 0;
+  inset-block: var(--reply-spine-start) calc(-1 * var(--space-2));
   border-inline-start: 1px solid var(--border-standard);
   pointer-events: none;
 }
@@ -1756,40 +1960,10 @@ html[data-keyboard-input] .quickReactionGlyph {
   }
 }
 
-/* Continuations retain a readable clock without repeating the author header. */
 .messageGutter {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-}
-.continuationTime {
-  /* Revealed on hover only; keep it out of selections like the action bar. */
-  user-select: none;
-  position: relative;
-  z-index: 1;
-  background: var(--surface-panel);
-  color: var(--text-subtle);
-  /* Align the caption within the prose's first line without changing its type. */
-  display: flex;
-  align-items: center;
-  block-size: calc(var(--text-message) * var(--text-message--line-height));
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  font-weight: var(--text-caption--font-weight);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-@media (hover: hover) and (pointer: fine) {
-  .continuationTime {
-    opacity: 0;
-  }
-  .message:hover .continuationTime,
-  .message:has(:focus-visible) .continuationTime,
-  .message[data-actions-revealed] .continuationTime,
-  html[data-keyboard-navigation] .message:focus-within .continuationTime {
-    opacity: 1;
-  }
 }
 /* The picker retains every reaction when the shortcut strip cannot fit. */
 @container message-row (max-width: 16.25rem) {
@@ -1934,7 +2108,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   background: var(--affordance-selected);
   font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
 }
-/* Shared dark media review and compact video surfaces. */
+/* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
   width: min(24rem, 100%, calc(var(--media-ratio, 16 / 9) * 11.25rem));
   max-height: 16rem;
@@ -1950,7 +2124,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   display: grid;
   place-items: center;
 }
-.mediaReviewViewer[data-color-mode="dark"] {
+.mediaReviewViewer {
   grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
   max-width: 95rem;
   max-height: 61.25rem;
@@ -1958,17 +2132,32 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: var(--media-preview-radius, var(--radius-container));
   background: var(--surface-panel);
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewStage {
+.mediaReviewViewer .mediaReviewStage {
+  color: var(--text-standard);
+  color-scheme: dark;
+  /* Legacy renderer aliases must resolve on this scoped dark surface. */
+  --text: var(--text-standard);
+  --text-primary: var(--text-standard);
+  --text-muted: var(--text-metadata);
+  --text-secondary: var(--text-metadata);
+  --surface: var(--surface-panel);
+  --surface-input: var(--surface-inset);
+  --surface-control: var(--affordance-subtle);
+  --surface-hover: var(--affordance-subtle-hover);
+  --border: var(--border-standard);
+  --border-input: var(--border-prominent);
+  --primary: var(--text-standard);
+  --on-primary: var(--surface-inset);
   background: var(--bg-media-canvas);
   padding: 0;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+.mediaReviewViewer .mediaReviewConversation {
   border-inline-start: 1px solid var(--border-standard);
 }
 .mediaReviewViewer[data-comments-hidden] {
   grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewComment {
+.mediaReviewViewer .mediaReviewComment {
   padding-block: var(--space-2);
   margin-bottom: var(--space-2);
 }
@@ -1976,21 +2165,21 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   outline: 1px solid var(--border-prominent);
   outline-offset: -1px;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .message {
+.mediaReviewViewer .mediaReviewThread .message {
   padding: 0;
   grid-template-columns: 1.5rem minmax(0, 1fr);
   column-gap: var(--space-2);
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .avatar {
+.mediaReviewViewer .mediaReviewThread .avatar {
   width: 1.5rem;
   height: 1.5rem;
 }
 
-.mediaReviewViewer[data-color-mode="dark"] .mediaTimeLink > :is(button, span) {
+.mediaReviewViewer .mediaTimeLink > :is(button, span) {
   color: var(--text-standard);
   background: var(--affordance-subtle-hover);
 }
-.mediaReviewViewer[data-color-mode="dark"] .threadNote {
+.mediaReviewViewer .threadNote {
   padding: var(--space-6) var(--space-3);
   text-align: center;
 }
@@ -2005,30 +2194,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: inherit;
   clip-path: var(--media-corner-clip, none);
 }
-.mediaReviewViewer[data-color-mode="dark"] {
-  color: var(--text-standard);
-  color-scheme: dark;
-  --text: var(--text-standard);
-  --text-primary: var(--text-standard);
-  --text-muted: var(--text-metadata);
-  --text-secondary: var(--text-metadata);
-  --surface: var(--surface-panel);
-  --surface-input: var(--surface-inset);
-  /* Legacy reaction roles must resolve here, not inherit the app root's mode. */
-  --surface-control: var(--affordance-subtle);
-  --surface-hover: var(--affordance-subtle-hover);
-  --border: var(--border-standard);
-  --border-input: var(--border-prominent);
-  --primary: var(--text-standard);
-  --on-primary: var(--surface-inset);
-}
-.mediaReviewViewer[data-color-mode="dark"]
-  .mediaReviewComment
-  .message
-  > :first-child,
-.mediaReviewViewer[data-color-mode="dark"]
-  .mediaReviewComment
-  [data-avatar-shape] {
+.mediaReviewViewer .mediaReviewComment .message > :first-child,
+.mediaReviewViewer .mediaReviewComment [data-avatar-shape] {
   width: 1.5rem;
   height: 1.5rem;
   min-width: 1.5rem;
@@ -2036,15 +2203,16 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   font-size: var(--text-caption);
 }
 @container media-review (max-width: 51.25rem) {
-  .mediaReviewViewer[data-color-mode="dark"] {
+  .mediaReviewViewer {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(10rem, 1fr) minmax(18rem, min(44vh, 22rem));
     overflow-y: auto;
   }
-  .mediaReviewViewer[data-color-mode="dark"][data-comments-hidden] {
+  .mediaReviewViewer[data-comments-hidden] {
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(10rem, 1fr) minmax(0, 0px);
   }
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+  .mediaReviewViewer .mediaReviewConversation {
     max-height: none;
   }
   .mediaReviewViewer[data-video] {
@@ -2076,10 +2244,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   flex: 1;
   min-height: 0;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
+.mediaReviewViewer .mediaReviewConversationContent {
   width: 24rem;
 }
-.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+.mediaReviewViewer .mediaReviewConversation {
   position: relative;
   z-index: 1;
   width: 24rem;
@@ -2108,7 +2276,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   transition: opacity var(--duration-fast) var(--easing-state);
 }
 @container media-review (max-width: 51.25rem) {
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+  .mediaReviewViewer .mediaReviewConversation {
     width: 100%;
     height: clamp(18rem, 44vh, 22rem);
     align-self: end;
@@ -2116,7 +2284,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   .mediaReviewViewer[data-comments-hidden] .mediaReviewConversation {
     transform: translateY(100%);
   }
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
+  .mediaReviewViewer .mediaReviewConversationContent {
     width: 100%;
     height: clamp(18rem, 44vh, 22rem);
     flex: none;
@@ -2161,8 +2329,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mediaPreview[data-video-preview] .mediaExpand button,
-  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading button {
+  .mediaReviewViewer .mediaReviewHeading button,
+  .mediaPreview[data-video-preview] .mediaExpand button {
     transition: none;
   }
 }
@@ -2218,6 +2386,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   outline: none;
 }
 
+.message[data-layout="timeline"] .messageGutter {
+  flex-basis: var(--size-control);
+}
 .feed .message[data-layout="continuation"] .messageGutter {
   flex-basis: var(--size-control);
 }
@@ -2264,17 +2435,23 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 .jumpToLatest {
-  align-items: flex-start;
+  align-items: flex-end;
   position: sticky;
   z-index: 2;
-  top: calc(100% - var(--size-control-sm));
+  /* Anchor the bottom edge, leaving space-3 for the shadow at any text size. */
+  top: calc(100% + var(--history-bottom-inset) - var(--space-3));
   height: 0;
   display: flex;
   justify-content: center;
   pointer-events: none;
 }
 :is(.feed, .threadHistory) .jumpToLatest {
-  top: calc(100% - var(--size-control-sm) - var(--channel-preview-inset, 0px));
+  top: calc(
+    100% +
+    var(--history-bottom-inset) -
+    var(--space-3) -
+    var(--channel-preview-inset, 0px)
+  );
 }
 /* Leave a separate floating lane when the composer has an activity pill. */
 :is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
@@ -2282,11 +2459,18 @@ html[data-keyboard-navigation] .channelJoinSurface {
 [data-channel-history]:has(~ .composerContext [data-agent-activity-trigger])
   > .feed
   .jumpToLatest {
-  top: calc(100% - var(--size-control-sm) - 2 * var(--space-6));
+  top: calc(
+    100% +
+    var(--history-bottom-inset) -
+    var(--space-3) -
+    2 *
+    var(--space-6)
+  );
 }
 .jumpToLatestSurface {
   @apply glass-secondary;
-  border-radius: var(--radius-control);
+  display: flex;
+  border-radius: var(--radius-capsule);
   visibility: hidden;
   opacity: 0;
   transform: translateY(2px) scale(0.97);
@@ -2296,6 +2480,12 @@ html[data-keyboard-navigation] .channelJoinSurface {
     transform var(--duration-fast) var(--easing-settle),
     filter var(--duration-fast) var(--easing-state),
     visibility 0s var(--duration-fast);
+}
+.jumpToLatestSurface [data-jump-to-latest] {
+  padding-inline: var(--space-2);
+}
+.jumpToLatestSurface > button > [class~="buzz-button-label"] {
+  gap: var(--space-1);
 }
 .jumpToLatest[data-visible="true"] .jumpToLatestSurface {
   visibility: visible;
@@ -2316,6 +2506,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 .sentFromThread {
+  padding-inline-start: var(--space-4);
   font-size: var(--text-caption);
   color: var(--text-secondary);
   margin-block: var(--space-1);
@@ -2339,6 +2530,188 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .workflowDetails dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* Content hugs short messages while rich content can use the available width. */
+.messageBubble {
+  position: relative;
+  --message-link: var(--text-link);
+  --message-inset: var(--space-2);
+  --message-radius: calc(var(--radius-panel) - var(--space-1));
+  --message-inner-radius: max(
+    0px,
+    calc(var(--message-radius) - var(--message-inset))
+  );
+  box-sizing: border-box;
+  width: fit-content;
+  font-size: var(--text-body-sm);
+  max-width: min(100%, calc(90ch + 2 * var(--space-4)));
+  min-width: 0;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--message-radius);
+  background: var(--surface-message);
+  color: var(--text-standard);
+  overflow-wrap: anywhere;
+}
+.message[data-layout="continuation"] .messageBubble {
+  margin-top: 0;
+}
+
+.message[data-stack-previous] .messageBubble {
+  margin-top: 0;
+}
+
+.messagePayload {
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* Percentage-sized media needs a definite available width, unlike text bubbles. */
+.messagePayload:has(.messageAttachments) {
+  width: 100%;
+}
+
+.messageAvatar {
+  user-select: none;
+  position: absolute;
+  bottom: 0;
+  right: calc(100% + var(--space-3));
+  display: flex;
+}
+.message:not([data-layout="timeline"]) .messageAvatar {
+  right: calc(100% + var(--space-2));
+}
+.message[data-viewer-message] .messageAvatar {
+  right: auto;
+  left: calc(100% + var(--space-3));
+}
+.message[data-viewer-message]:not([data-layout="timeline"]) .messageAvatar {
+  left: calc(100% + var(--space-2));
+}
+.messageBubble > :is(.text, .plainText) {
+  margin: 0;
+}
+.messageBubble .text :is(a, [data-mention-kind]) {
+  --link-text: var(--message-link);
+  --link-hover: transparent;
+  --link-focus: currentColor;
+  color: var(--message-link);
+  background: transparent;
+}
+.messageBubble .text [data-mention-kind] {
+  font-weight: var(--type-weight-medium);
+}
+.messageBubble .text :is(pre, table) {
+  border-radius: var(--message-inner-radius);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
+  --message-link: var(--text-link);
+}
+.messageContent {
+  position: relative;
+  min-width: 0;
+}
+.messageAttachments {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-half);
+  margin-top: var(--space-half);
+  min-width: 0;
+}
+.messageAttachments > * {
+  max-width: 100%;
+  margin-block: 0;
+}
+.messageAttachments .imageUnavailable {
+  border-radius: calc(var(--radius-panel) - var(--space-2));
+}
+
+.messageBubble[data-own] {
+  color: var(--text-message-own);
+  background: var(--surface-message-own);
+  --message-link: var(--text-message-link-own);
+}
+.messageBubble[data-own] .text blockquote {
+  color: inherit;
+  border-color: currentColor;
+}
+.messageBubble[data-own] .text :is(code, pre) {
+  color: var(--text-standard);
+}
+.messageBubble[data-own] .spoilerMask {
+  color: inherit;
+}
+.messageBubble[data-own]
+  :is(
+    .spoilerMask:hover,
+    .spoilerMask:focus-visible,
+    .spoiler[data-revealed="true"]
+  ) {
+  /* Revealed content uses the same neutral inset as code and tables. */
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  --message-link: var(--text-link);
+}
+
+.messageBubble[data-long-text] {
+  --message-radius: calc((var(--radius-panel) + var(--radius-control)) / 2);
+}
+
+.threadAvatar:nth-child(1) {
+  z-index: 3;
+}
+.threadAvatar:nth-child(2) {
+  z-index: 2;
+}
+.threadAvatar:nth-child(3) {
+  z-index: 1;
+}
+
+.message[data-layout="timeline"] {
+  padding-block: var(--space-2);
+}
+.message[data-stack-next] {
+  padding-bottom: 0;
+}
+.message[data-stack-previous] {
+  padding-top: var(--space-half);
+}
+.message .byline {
+  padding-inline-start: var(--space-4);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.message .delivery {
+  padding-inline-start: var(--space-4);
+}
+.message .reactions {
+  margin-inline-start: var(--space-2);
+  max-width: calc(100% - var(--space-2));
+}
+
+.text pre {
+  text-wrap-style: auto;
+}
+
+.messageBubble[data-own] .text :is(h1, h2, h3, h4, h5, h6) {
+  color: inherit;
+}
+.messageBubble[data-own] .text th {
+  color: var(--text-standard);
+}
+
+.messageAttachments :is(.imageList, .fileGroup) {
+  gap: var(--space-half);
+}
+
+/* Keep focus-ring clearance inside the scrollport without insetting the tiles. */
+.messageAttachments .imageList {
+  margin: calc(-1 * var(--space-1));
 }
 
 .composerActions[hidden] {
@@ -2510,4 +2883,19 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+/* Keyboard users can read a grouped message's time without opening a popup. */
+.keyboardMessageTime {
+  display: none;
+  user-select: none;
+}
+html[data-keyboard-navigation]
+  .messageActions:focus-within
+  .keyboardMessageTime {
+  @apply text-caption;
+  display: inline-block;
+  color: var(--text-subtle);
+  padding-inline: var(--space-2);
+  white-space: nowrap;
 }

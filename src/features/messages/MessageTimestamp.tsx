@@ -1,7 +1,7 @@
+import { useRef, useState, type ReactNode } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
-  formatCompactTime,
   formatFullTimestamp,
   formatItemTimestamp,
 } from "../../shared/datetime";
@@ -19,69 +19,97 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
   return (
     <div className={styles.day}>
       <span className={styles.dayLabel}>
-        {/* Decorative calendar artwork; the adjacent label owns the date. */}
-        <svg
-          className={styles.dayCalendar}
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
-          <path
-            d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
-            fill="#f00"
-          />
-          <rect
-            x="0.5"
-            y="0.5"
-            width="23"
-            height="23"
-            rx="5.5"
-            fill="none"
-            stroke="var(--border-standard)"
-            strokeWidth="0.5"
-          />
-          <text x="12" y="19" textAnchor="middle" fontSize="12" fill="#111">
+        {/* Decorative calendar artwork; the adjacent label owns the date.
+            The numeral is HTML, not SVG <text>: Linux WebKit's SVG text cost
+            doubled every thread-pane interaction in browser journeys. */}
+        <span className={styles.dayCalendar} aria-hidden="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
+            <path
+              d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
+              fill="#f00"
+            />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="23"
+              height="23"
+              rx="5.5"
+              fill="none"
+              stroke="var(--border-standard)"
+              strokeWidth="0.5"
+            />
+          </svg>
+          {/* Artwork ink, like the SVG fills: the tile is white in both themes. */}
+          <span
+            data-calendar-date
+            style={{ color: "#111", fontSize: "calc(var(--space-5) / 2)" }}
+          >
             {date.getDate()}
-          </text>
-        </svg>
+          </span>
+        </span>
         <span data-day={day}>{formatDayGroupLabel(createdAt)}</span>
       </span>
     </div>
   );
 }
 
-/** One date source for the byline and the compact continuation clock. The
- * byline names the day outside today ("Yesterday at 9:05 AM"): a day divider
- * scrolls away, and surfaces such as Activity have none. The continuation
- * clock sits under a byline, so it shows the time only. */
-export function MessageTimestamp({
-  createdAt,
-  compact = false,
-}: {
-  createdAt: number;
-  compact?: boolean;
-}) {
+/** The byline includes a day outside today because its divider can scroll away. */
+export function MessageTimestamp({ createdAt }: { createdAt: number }) {
   useLocalDay();
   const date = new Date(createdAt * 1000);
-  const label = compact
-    ? formatCompactTime(createdAt)
-    : formatItemTimestamp(createdAt, { withTime: true });
   const fullDate = formatFullTimestamp(createdAt);
   return (
-    // The action bar can sit over the byline; keep the date hint non-interactive
-    // so it cannot intercept nearby controls when their paint layers overlap.
     <Tooltip content={fullDate} delay={500} disableHoverablePopup>
-      <time
-        dateTime={date.toISOString()}
-        style={{ cursor: "default" }}
-        className={compact ? styles.continuationTime : undefined}
-      >
-        <span aria-hidden="true">{label}</span>
-        {/* Engines copy visually hidden text; a selection across rows would
-            otherwise repeat every clock as a date the reader never saw. */}
+      <time dateTime={date.toISOString()} style={{ cursor: "default" }}>
+        <span aria-hidden="true">
+          {formatItemTimestamp(createdAt, { withTime: true })}
+        </span>
+        {/* Keep accessible dates out of copied conversation text. */}
         <span className="sr-only select-none">{fullDate}</span>
       </time>
+    </Tooltip>
+  );
+}
+
+/** Grouped messages keep their date available without an inline clock. */
+export function MessageTimestampHint({
+  createdAt,
+  children,
+}: {
+  createdAt: number | undefined;
+  children: ReactNode;
+}) {
+  useLocalDay();
+  const payload = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const fullDate =
+    createdAt === undefined ? undefined : formatFullTimestamp(createdAt);
+  return (
+    <Tooltip
+      content={fullDate}
+      open={createdAt !== undefined && open}
+      onOpenChange={(next) =>
+        setOpen(next && !payload.current?.contains(document.activeElement))
+      }
+      delay={1000}
+      disableHoverablePopup
+    >
+      <div
+        ref={payload}
+        className={styles.messagePayload}
+        onFocusCapture={() => setOpen(false)}
+      >
+        {children}
+        {createdAt !== undefined && (
+          <time
+            dateTime={new Date(createdAt * 1000).toISOString()}
+            className="sr-only select-none"
+          >
+            {fullDate}
+          </time>
+        )}
+      </div>
     </Tooltip>
   );
 }

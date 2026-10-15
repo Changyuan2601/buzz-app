@@ -1,15 +1,23 @@
+import type { BubbleColor } from "../../theme/bubble-color";
 import { Radio, RadioGroup } from "./RadioGroup";
 import { Field } from "./Field";
 
 export type ThemeMode = "system" | "light" | "dark";
 
-function Preview({ tone }: { tone: "light" | "dark" }) {
+function Preview({
+  tone,
+  messageColor,
+}: {
+  tone: "light" | "dark";
+  messageColor: BubbleColor;
+}) {
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 80 56"
       className={`buzz-theme-preview ${tone}`}
       data-tone={tone}
+      data-bubble-color={messageColor}
     >
       <rect
         width="80"
@@ -34,17 +42,17 @@ function Preview({ tone }: { tone: "light" | "dark" }) {
         x="45"
         y="10"
         width="23"
-        height="3"
-        rx="1.5"
-        className="buzz-theme-preview-accent"
+        height="5"
+        rx="2.5"
+        className="buzz-theme-preview-message"
       />
       <rect
         x="49"
         y="32"
         width="19"
-        height="3"
-        rx="1.5"
-        className="buzz-theme-preview-accent"
+        height="5"
+        rx="2.5"
+        className="buzz-theme-preview-message"
       />
       <rect
         x="29"
@@ -62,8 +70,10 @@ function Preview({ tone }: { tone: "light" | "dark" }) {
 export function ThemePicker({
   value,
   onValueChange,
+  messageColor = "neutral",
 }: {
   value: ThemeMode;
+  messageColor?: BubbleColor;
   onValueChange: (value: ThemeMode) => void;
 }) {
   return (
@@ -85,8 +95,12 @@ export function ThemePicker({
                     data-mode={mode}
                     aria-hidden="true"
                   >
-                    {mode !== "dark" && <Preview tone="light" />}
-                    {mode !== "light" && <Preview tone="dark" />}
+                    {mode !== "dark" && (
+                      <Preview tone="light" messageColor={messageColor} />
+                    )}
+                    {mode !== "light" && (
+                      <Preview tone="dark" messageColor={messageColor} />
+                    )}
                   </span>
                   <span className="sr-only">
                     {mode === "system"

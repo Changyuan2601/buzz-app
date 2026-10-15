@@ -69,10 +69,10 @@ struct TurnTools<R: tauri::Runtime> {
 }
 const BUZZ_TOOLS: &[&str] = &[
     "buzz_send",
-    "buzz_emoji",
     "buzz_edit",
     "buzz_react",
     "buzz_channels",
+    "buzz_channel",
     "buzz_dm",
     "buzz_canvas",
     "buzz_media_get",

@@ -916,11 +916,20 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const groups = new Map<string, Evidence[]>();
-        for (const entry of byChannel.get(channel.id) ?? []) {
+        const session = channel.channelType === "session";
+        const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
-          if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
-          const id = dm ? channel.id : (entry.rootId ?? entry.event.id);
+          return entry.event.pubkey !== viewer && !!category(entry, dm);
+        });
+        // A session's top-level timeline is one conversation; its threads,
+        // roots included, stay separate.
+        const roots = new Set(evidence.map((entry) => entry.rootId));
+        const groups = new Map<string, Evidence[]>();
+        for (const entry of evidence) {
+          const id =
+            dm || (session && !entry.parentId && !roots.has(entry.event.id))
+              ? channel.id
+              : (entry.rootId ?? entry.event.id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -937,54 +946,60 @@ export function createUnread({
               a.event.created_at - b.event.created_at ||
               a.event.id.localeCompare(b.event.id),
           );
-          const latest = entries[entries.length - 1];
-          if (!latest) continue;
-          const unread = entries.filter((entry) => isUnread(entry, state, dm));
-          const representative = unread[0] ?? latest;
-          const replies = entries.filter((entry) => entry.rootId !== undefined);
-          const lastReply = replies[replies.length - 1];
-          const target: ReadTarget = dm
-            ? { kind: "channel", channelId: channel.id }
-            : lastReply?.rootId &&
-                events.has(lastReply.rootId) &&
-                !tombstones.has(lastReply.rootId)
-              ? {
+          const project = (
+            entries: readonly Evidence[],
+          ): InboxItem | undefined => {
+            const latest = entries[entries.length - 1];
+            if (!latest) return;
+            const unread = entries.filter((entry) =>
+              isUnread(entry, state, dm),
+            );
+            const representative = unread[0] ?? latest;
+            const replies = entries.filter(
+              (entry) => entry.rootId !== undefined,
+            );
+            const lastReply = replies[replies.length - 1];
+            const target: ReadTarget = dm
+              ? { kind: "channel", channelId: channel.id }
+              : lastReply?.rootId &&
+                  events.has(lastReply.rootId) &&
+                  !tombstones.has(lastReply.rootId)
+                ? {
+                    kind: "thread",
+                    channelId: channel.id,
+                    rootId: lastReply.rootId,
+                  }
+                : {
+                    kind: "message",
+                    channelId: channel.id,
+                    messageId: latest.event.id,
+                  };
+            const readThrough: { target: ReadTarget; messageId: string }[] = dm
+              ? []
+              : entries
+                  .filter(
+                    (entry) =>
+                      !entry.rootId ||
+                      !!reads.localUnread(`msg:${entry.event.id}`),
+                  )
+                  .map((entry) => ({
+                    target: {
+                      kind: "message" as const,
+                      channelId: channel.id,
+                      messageId: entry.event.id,
+                    },
+                    messageId: entry.event.id,
+                  }));
+            if (!dm && lastReply?.rootId)
+              readThrough.push({
+                target: {
                   kind: "thread",
                   channelId: channel.id,
                   rootId: lastReply.rootId,
-                }
-              : {
-                  kind: "message",
-                  channelId: channel.id,
-                  messageId: latest.event.id,
-                };
-          const readThrough: { target: ReadTarget; messageId: string }[] = dm
-            ? []
-            : entries
-                .filter(
-                  (entry) =>
-                    !entry.rootId ||
-                    !!reads.localUnread(`msg:${entry.event.id}`),
-                )
-                .map((entry) => ({
-                  target: {
-                    kind: "message" as const,
-                    channelId: channel.id,
-                    messageId: entry.event.id,
-                  },
-                  messageId: entry.event.id,
-                }));
-          if (!dm && lastReply?.rootId)
-            readThrough.push({
-              target: {
-                kind: "thread",
-                channelId: channel.id,
-                rootId: lastReply.rootId,
-              },
-              messageId: lastReply.event.id,
-            });
-          items.push(
-            Object.freeze({
+                },
+                messageId: lastReply.event.id,
+              });
+            return Object.freeze({
               id: `${channel.id}:${id}`,
               channelId: channel.id,
               target: Object.freeze(target),
@@ -1028,8 +1043,18 @@ export function createUnread({
                   }),
                 ),
               ),
-            }),
-          );
+            });
+          };
+          const item = project(entries);
+          if (item)
+            items.push(
+              Object.freeze({
+                ...item,
+                mention: project(
+                  entries.filter((entry) => category(entry, dm) === "mention"),
+                ),
+              }),
+            );
         }
       }
     items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));

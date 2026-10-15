@@ -13,7 +13,10 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage } from "./InboxPage";
+import { archiveKey, readArchives } from "./archive";
+import { viewRevision } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySnapshot, RelayData } from "../../features/relay/service";
@@ -34,6 +37,7 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
+import { mediaUrl } from "../../features/relay/transport";
 import {
   decodeReadState,
   signReadState,
@@ -43,13 +47,7 @@ import {
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
 beforeEach(() => localStorage.clear());
-vi.stubGlobal(
-  "ResizeObserver",
-  class {
-    observe() {}
-    disconnect() {}
-  },
-);
+stubAvatarBrowserApis();
 HTMLElement.prototype.scrollIntoView = vi.fn();
 afterEach(() => {
   cleanup();
@@ -113,10 +111,10 @@ it.each(["reply", "message", "message after reply"])(
     await chooseFilter("Archived", "Show");
     await waitFor(() => expect(rows()).toHaveLength(0));
     await chooseFilter("Mentions");
-    await waitFor(() => expect(rows()).toHaveLength(1));
-    expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
+    await waitFor(() => expect(rows()).toHaveLength(0));
     await chooseFilter("Inbox", "Show");
     await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).not.toHaveAttribute("data-inbox-row", "dm-room:dm-room");
     await chooseFilter("Archived", "Show");
     const mention = message(
       h.alice,
@@ -129,10 +127,95 @@ it.each(["reply", "message", "message after reply"])(
     act(() => h.emit([mention]));
     await waitFor(() => expect(rows()).toHaveLength(0));
     await chooseFilter("Inbox", "Show");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).not.toHaveAttribute("data-inbox-row", "dm-room:dm-room");
+    await chooseFilter("DMs");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
+    expect(rows()[0]).toHaveTextContent("A direct reply");
+  },
+);
+
+it.each([
+  ["button", 0],
+  ["menu", 0],
+  ["button", 1],
+  ["menu", 1],
+] as const)(
+  "Mentions row Archive via %s retains already-observed replies at cutoff + %s",
+  async (action, offset) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    const h = fixture();
+    if (!h.root) throw new Error("Missing fixture root");
+    const now = Math.floor(Date.now() / 1000);
+    const mention = message(
+      h.alice,
+      "room",
+      "Matching thread mention",
+      now - 1,
+      [
+        ["e", h.root.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ],
+    );
+    const reply = message(
+      h.alice,
+      "room",
+      "Already observed progress",
+      now + offset,
+      [["e", h.root.id, "", "reply"]],
+    );
+    h.addEvent(mention);
+    h.addEvent(reply);
+    act(() => h.emit([mention, reply]));
+    const view = render(h.view);
     await waitFor(() => expect(rows()).toHaveLength(2));
+    await chooseFilter("Mentions");
+    const thread = rows().find((row) =>
+      row.textContent?.includes("Matching thread mention"),
+    );
+    if (!thread) throw new Error("Missing matching-mention row");
+    if (action === "menu") {
+      fireEvent.contextMenu(
+        within(thread).getByRole("button", { name: /^Open / }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Archive conversation" }),
+      );
+    } else {
+      fireEvent.click(
+        within(thread).getByRole("button", { name: /^Archive / }),
+      );
+    }
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
     expect(
-      rows().some((row) => row.dataset.inboxRow === "dm-room:dm-room"),
-    ).toBe(true);
+      screen.queryByRole("region", { name: "Inbox detail" }),
+    ).not.toBeInTheDocument();
+    expect(readArchives(viewRevision(h.session.scope, archiveKey))).toEqual([
+      expect.objectContaining({
+        id: `room:${h.root.id}`,
+        through: now + offset,
+        messageIds: expect.arrayContaining([mention.id, reply.id]),
+      }),
+    ]);
+    await chooseFilter("All activity");
+    expect(rows()).toHaveLength(1);
+    await chooseFilter("Archived", "Show");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveAttribute("data-inbox-row", `room:${h.root.id}`);
+    view.unmount();
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveAttribute("data-inbox-row", `room:${h.root.id}`);
+    await chooseFilter("Mentions");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("Matching thread mention");
   },
 );
 
@@ -426,6 +509,55 @@ it.each([
     );
   },
 );
+
+it("header Archive advances from an ordinary-reply visit after switching to Mentions", async () => {
+  const h = fixture();
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  const mention = message(h.alice, "room", "Decision in our discussion", 23, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const progress = message(h.alice, "room", "Later ordinary progress", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.addEvent(mention);
+  h.addEvent(progress);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  act(() => h.emit([mention, progress]));
+  await act(async () => {
+    await h.owner.session.unread.markThrough(
+      { kind: "thread", channelId: "room", rootId: root.id },
+      progress.id,
+    );
+  });
+  await screen.findByText("Later ordinary progress");
+  const thread = rows().find((row) =>
+    row.textContent?.includes("Later ordinary progress"),
+  );
+  if (!thread) throw new Error("Missing ordinary progress row");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await screen.findByRole("region", { name: "Inbox detail" });
+  await chooseFilter("Mentions");
+  expect(rows().map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Decision in our discussion"),
+    expect.stringContaining("Please review this"),
+  ]);
+  const archive = screen.getByRole("button", { name: "Archive conversation" });
+  await waitFor(() => expect(archive).toBeEnabled());
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  fireEvent.click(archive);
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  expect(
+    screen.getByRole("region", { name: "Inbox detail" }),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
+  );
+});
 
 it.each(["button", "menu"] as const)(
   "unselected-row Archive via %s leaves the reader and its draft alone",
@@ -1199,7 +1331,7 @@ function fixture(
             ...(options.archivedChannel ? [["archived", "true"]] : []),
           ]),
     ]),
-    profile(alice, { name: "Alice" }),
+    profile(alice, { name: "Alice", picture: alicePicture }),
     ...roots,
     mention,
     reply,
@@ -1298,7 +1430,10 @@ function fixture(
         }
         return filters.flatMap(answer);
       },
-      media: () => undefined,
+      // The real sizing rewrite behind a pass-through proxy, so rows resolve
+      // relay-hosted pictures to the variant they actually requested.
+      media: (url, size) =>
+        mediaUrl(url, (proxied) => proxied, "https://relay.test", size),
       ...(options.withWriter
         ? {
             writer: {
@@ -1640,6 +1775,8 @@ function fixture(
     },
   };
 }
+/** Relay-hosted, so `media()` decides which variant the row loads. */
+const alicePicture = `https://relay.test/media/${"a".repeat(64)}.png`;
 const rows = () =>
   within(
     screen.getByRole("list", { name: "Inbox conversations" }),
@@ -1690,6 +1827,100 @@ async function chooseFilter(label: string, control = "Activity type") {
     ).not.toBeInTheDocument(),
   );
 }
+it.each([false, true])(
+  "Mentions excludes ordinary thread progress (selected=%s)",
+  async (selectProgress) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    await act(async () => {
+      await h.owner.session.unread.markThrough(
+        { kind: "message", channelId: "room", messageId: h.mention.id },
+        h.mention.id,
+      );
+    });
+    const response = message(h.viewer, "room", "My answer", 30, [
+      ["e", h.mention.id, "", "reply"],
+    ]);
+    const progress = message(h.alice, "room", "Ordinary progress", 31, [
+      ["e", h.mention.id, "", "reply"],
+    ]);
+    h.addEvent(response);
+    h.addEvent(progress);
+    act(() => h.emit([response, progress]));
+    if (selectProgress) {
+      const progressRow = rows().find((row) =>
+        row.textContent?.includes("Ordinary progress"),
+      );
+      if (!progressRow) throw new Error("Missing ordinary progress row");
+      fireEvent.click(
+        within(progressRow).getByRole("button", { name: /^Open / }),
+      );
+      await screen.findByRole("region", { name: "Inbox detail" });
+      await waitFor(() =>
+        expect(
+          within(progressRow).getByRole("button", { name: /^Open / }),
+        ).toBeEnabled(),
+      );
+    }
+    await chooseFilter("Mentions");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("Please review this");
+    expect(rows()[0]).not.toHaveTextContent("Ordinary progress");
+    await chooseFilter("Unread only", "Attention");
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    const fresh = message(h.alice, "room", "Another decision", 32, [
+      ["e", h.mention.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    act(() => h.emit([fresh]));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Another decision");
+  },
+);
+
+it("Mentions orders and classifies matching senders and reads only through matching messages", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  h.publishAgentProfile();
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  const mention = message(h.agent, "room", "Agent decision", 23, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const progress = message(h.alice, "room", "Later human progress", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.addEvent(mention);
+  h.addEvent(progress);
+  act(() => h.emit([mention, progress]));
+  await chooseFilter("Mentions");
+  expect(rows().map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Agent decision"),
+    expect.stringContaining("Please review this"),
+  ]);
+  await chooseFilter("Humans", "Sender");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  await chooseFilter("Agents", "Sender");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Agent decision");
+  const row = rows()[0];
+  if (!row) throw new Error("Missing agent mention row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  await screen.findByRole("region", { name: "Inbox detail" });
+  await waitFor(() =>
+    expect(h.readSteps.map((step) => step.id)).toEqual([mention.id]),
+  );
+  expect(
+    h.owner.session.unread
+      .inbox()
+      .items.find((item) => item.id.endsWith(root.id)),
+  ).toMatchObject({ messageId: progress.id, unreadCount: 1 });
+});
+
 async function openRowMenu(
   method: "context" | "keyboard" | "contextKey" = "context",
 ) {
@@ -1723,6 +1954,11 @@ it("excludes archived-channel mentions and threads without hiding active DMs", a
   );
   expect(rows()).toHaveLength(1);
   expect(rows()[0]).toHaveTextContent("A direct reply");
+  // The sender avatar reuses the thumbnail message rows load, not the original.
+  expect(rows()[0]?.querySelector("img")).toHaveAttribute(
+    "src",
+    alicePicture.replace(/\.png$/, ".thumb.jpg"),
+  );
   await chooseFilter("Mentions");
   expect(rows()).toHaveLength(0);
   await chooseFilter("Threads");
@@ -2476,7 +2712,8 @@ it("keeps the status choice focused through incoming row updates", async () => {
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
   const trigger = screen.getByRole("button", { name: "Inbox filters" });
-  await user.click(trigger);
+  act(() => trigger.focus());
+  await user.keyboard("{Enter}");
   const archived = await screen.findByRole("menuitemradio", {
     name: "Archived",
   });
@@ -2958,7 +3195,7 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: "Reply to thread",
+      name: sessionChannel ? "Message #Design" : "Reply to thread",
     });
     fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
@@ -2981,7 +3218,10 @@ it.each([true, false])(
     const sent = h.published[0];
     if (!sent) throw Error("Missing publication");
     expect(sent.tags).toContainEqual(["h", "room"]);
-    expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
+    // A session is flat: Inbox replies continue it at the top level.
+    expect(sent.tags.some(([name]) => name === "e")).toBe(!sessionChannel);
+    if (!sessionChannel)
+      expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
     expect(sent.tags.filter(([name]) => name === "p")).toEqual(
       sessionChannel ? [["p", h.agent.pubkey]] : [],
     );
@@ -3000,7 +3240,7 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Reply to thread",
+    name: "Message #Design",
   });
   fireEvent.change(editor, { target: { value: "Choose someone first" } });
   await waitFor(() =>
@@ -3014,6 +3254,46 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
   ).toBeInTheDocument();
   expect(h.published).toEqual([]);
   expect(editor).toHaveValue("Choose someone first");
+});
+
+it("Inbox keeps an open session timeline when a late reply regroups its mention", async () => {
+  const h = fixture({
+    withWriter: true,
+    sessionChannel: true,
+    memberAgents: 1,
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  const editor = await screen.findByRole("textbox", {
+    name: "Message #Design",
+  });
+  fireEvent.change(editor, { target: { value: "Draft in progress" } });
+  act(() =>
+    h.emit([
+      message(h.alice, "room", "Threaded follow-up", 30, [
+        ["e", h.mention.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ]),
+    ]),
+  );
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread
+        .inbox()
+        .items.find((item) => item.messageIds.includes(h.mention.id))?.thread,
+    ).toBe(true),
+  );
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: "Message #Design" })).toHaveValue(
+    "Draft in progress",
+  );
+  expect(
+    screen.queryByRole("textbox", { name: "Reply to thread" }),
+  ).not.toBeInTheDocument();
 });
 
 it.each(["preview", "name", "history"])(

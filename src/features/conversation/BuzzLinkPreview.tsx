@@ -16,6 +16,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
 import { messagePreviewText } from "./message-preview-text";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** Mounted only while a preview is open. The session owns access, edits and deletion. */
 export function BuzzLinkPreview({
@@ -142,9 +143,9 @@ function PreviewContent({
           }
           shape={message.workflowOwnerId ? "squircle" : "circle"}
           src={
-            !message.workflowOwnerId && profile?.picture
-              ? (session.media(profile.picture) ?? null)
-              : null
+            message.workflowOwnerId
+              ? null
+              : avatarMedia(profile?.picture, session.media)
           }
         />
         <span className={styles.metadata}>

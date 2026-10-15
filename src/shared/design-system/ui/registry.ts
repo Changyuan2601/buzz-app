@@ -194,7 +194,15 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
       "Base UI owns focus, positioning, dismissal and transition presence; shared motion tokens animate entry and exit.",
-    variants: ["default", "wide", "expanded", "motion none", "flex body"],
+    variants: [
+      "default",
+      "wide",
+      "expanded",
+      "motion none",
+      "flex body",
+      "stable-tall height",
+      "padded chrome",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Dialog.tsx",
@@ -237,7 +245,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Textarea",
     purpose: "A multiline field with shared label and validation behavior.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "disabled", "invalid"],
+    variants: ["default", "outlined", "panel surface", "disabled", "invalid"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Textarea.tsx",
@@ -248,9 +256,17 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "input",
     name: "Input",
-    purpose: "A single-line text field.",
-    behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "disabled", "invalid"],
+    purpose:
+      "A single-line text field. InputGroup owns the shared frame for leading and trailing content.",
+    behavior:
+      "Base UI owns form and keyboard semantics. InputGroup supports inset and panel surfaces while its native input retains focus.",
+    variants: [
+      "default",
+      "disabled",
+      "invalid",
+      "title",
+      "InputGroup panel surface",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Input.tsx",
@@ -324,7 +340,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "theme-picker",
     name: "ThemePicker",
     purpose:
-      "Choose System, Light, or Dark using miniature interface previews.",
+      "Choose System, Light, or Dark using miniature interface previews with the selected message color.",
     behavior: "Shared radio keyboard navigation and accessible choice labels.",
     variants: ["default"],
     status: "proposed",
@@ -445,7 +461,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "avatar",
       "media",
       "bare (glyph-state toggle, no background in any state; 20px artwork at sm)",
-      "shape: control (default, 10px) | round (avatar default) | row-end",
+      "shape: control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
@@ -596,7 +612,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete. The caller owns selection, retained content, and the next selection after closing.",
     behavior:
-      "Base UI Tabs. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order.",
+      "Base UI Tabs. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order.",
     variants: ["chrome", "panel", "workspace", "navigation"],
     status: "proposed",
     collection: "components",
@@ -706,6 +722,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     variants: [
       "default",
       "form",
+      "settings",
       "navigation",
       "activity",
       "controlled expansion",
@@ -724,7 +741,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Search and choose from a set of options. The field includes a browse control and a shared option popup.",
     behavior:
       "Base UI owns keyboard navigation and selection; callers own filtering, custom values and async discovery.",
-    variants: ["default", "loading", "disabled"],
+    variants: ["default", "compact", "loading", "disabled"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Combobox.tsx",
@@ -794,6 +811,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "field",
       "disabled",
       "align: start | center | end",
+      "compact subtle",
+      "leading icon",
     ],
     status: "proposed",
     collection: "components",

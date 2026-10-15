@@ -29,6 +29,20 @@ export type PortableAgent = Readonly<{
   /** The community it was saved for there, if valid. */
   relay: string;
 }>;
+/** An old Buzz team as old Buzz last saved it, keyed by its old ID. */
+export type OldTeam = Readonly<{
+  id: string;
+  name: string;
+  /** Its shared instructions, "" for none. */
+  instructions: string;
+  /** Each identity on it, named and sourced as the agent list has it, whether
+   * or not it is here already. */
+  members: readonly Readonly<{
+    pubkey: string;
+    name: string;
+    source: PortSource;
+  }>[];
+}>;
 /** What an agent kept in an earlier system that its new type may adopt. */
 export type Carry = Readonly<{
   instructions?: string;
@@ -37,6 +51,8 @@ export type Carry = Readonly<{
 }>;
 export type PortableAgents = Readonly<{
   agents: readonly PortableAgent[];
+  /** Old Buzz's teams with a member, built-in ones left out. */
+  teams: readonly OldTeam[];
   /** A store that could not be read; the others are still listed. */
   warnings: readonly string[];
 }>;

@@ -12,10 +12,17 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 - **Upgrade behavior:** Me starts empty. Existing sessions, including historical
   parent-linked sessions, remain standalone Messages rows. There is no automatic
   migration, membership revocation, nested creation or transcript copy.
-- New conversations use ordinary private channels. The first send freezes the
+- Projects are existing Me groups, and Chats are ordinary private channels. New
+  chats use ordinary private channels. The first send freezes the
   draft, channel ID, Canvas and group defaults in the existing pending-start
   receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
+- New Me conversations add a `personal` line to the session description
+  (`Buzz session (buzz.sessions/v1)`, then optional `parent:<uuid>`, then optional
+  `personal`). It is a routing hint for agents that cannot read the owner's
+  encrypted placement: answer as one channel-scoped, top-level conversation. It is
+  not access authority, and Share clears it with the rest of the session marker.
+  Conversations created before the hint are not backfilled.
 - **Share** is the single Me-to-Messages flow, available in the heading and sidebar
   menus. It defaults to the current name, visibility and duration (new conversations
   are Private/Ongoing), with optional additional people. It preserves the channel
@@ -27,26 +34,37 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   confirms exposure of the full history; Temporary duration automatically archives
   the conversation without deleting its history. Settings changes require verified
   owner/admin authority and a details writer; there is no separate placement-only
-  Move fallback.
+  Move fallback. Later agent conversations use ordinary Messages thread routing;
+  the private provider session used in Me is not transferred by Share.
 - Destination-link sharing in Messages remains a separate flow; see
   [sharing](sharing.md). Neither flow shares owner-private detailed agent activity
   or starts an agent merely by granting membership.
-- Me conversations and drafts use the full conversation pane. Right-click,
+- Me chats and drafts use the full conversation pane. Right-click,
   Shift+F10 and overflow share one sidebar action list: Share, Rename, Move to a Me
-  group, Copy and Session settings. Opening a row menu does not select the row.
-- Me uses the ordinary composer with selectable owner-scoped agent mentions. A
-  send without a mention does not infer an agent. Existing Messages sessions keep
-  their ordinary recipient rules. Saved placement must load before the Me reader
-  enables sending; an unavailable preference read is not evidence of Messages.
+  project, Copy and Chat settings. Opening a row menu does not select the row.
+- Me uses the ordinary composer with a visible selected assistant plus explicit
+  owner-scoped mentions. The selected assistant is device-local view intent keyed
+  by account, community and chat; it is not Canvas, group data or channel metadata.
+  A plain send targets that assistant, while explicit authored mentions override
+  it. Clearing the selection allows an unaddressed message. Me does not apply the
+  global automatic remembered-mention prefill; Messages retains that behavior.
+  The empty picker says “Choose follow-up assistant” so a one-off mention is not
+  mistaken for persistent routing; trials should select the picker before testing
+  an unmentioned follow-up.
+  The selected assistant is revalidated before every send, and a failure keeps the
+  draft. Model and effort controls appear only when the selected or mentioned
+  agent exposes those existing capabilities. Saved placement must load before the
+  Me reader enables sending; an unavailable preference read is not evidence of
+  Messages.
 - Me reuses Messages' sidebar working-agent signal, animated indicator and activity
   popover, including owned-agent typing in threads and unread-thread actions.
-  Agent activity details open in Me's existing per-conversation panel workspace;
+  Agent activity opens the agent's profile in Me's per-conversation panel workspace;
   exact-message/thread actions use the canonical channel reader, as other Me links do.
   Me grouping and row menus remain independent of Messages organization.
 - Me reuses Messages' secondary conversation/tool/panel tabs and pane geometry,
   with separate per-conversation Me persistence. Its main timeline remains flat.
-  A single working agent's Activity indicator opens its Activity panel locally;
-  multiple agents or an unavailable panel retain the chooser. Hover previews are
+  A single working agent's Activity indicator opens its profile's Activity tab
+  locally; multiple agents or an unavailable profile retain the chooser. Hover previews are
   retained; Down Arrow on a single-agent indicator opens the chooser for keyboard
   access to its conversation actions. Secondary conversations placed in Me keep
   owner-scoped explicit recipients and wait for placement readiness before sending.
@@ -56,10 +74,11 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 
 ## Organization, settings and recovery
 
-Me groups, assignments and section defaults never fall back to Messages defaults.
+Me projects, assignments and project defaults never fall back to Messages defaults.
 Workspace folders, optional worktree/base branch and Canvas are instructions saved
 in ordinary Canvas Markdown; saving settings does not create a worktree or change
-an agent process. Templates are copied, not live-linked. Saved conversation
+an agent process. Templates are copied into each new chat, not live-linked. Moving
+a saved chat only changes its project assignment. Saved conversation
 settings retain the existing Canvas revision checks and explicit conflict recovery.
 
 Me uses one bounded 16 KiB recipe record, not unlimited history storage. Admission

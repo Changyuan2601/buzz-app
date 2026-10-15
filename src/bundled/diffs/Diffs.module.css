@@ -4,6 +4,7 @@
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);
   background: var(--surface-panel);
+  color: var(--text-standard);
 }
 .header,
 .fileHeader,
@@ -39,6 +40,7 @@
 }
 .card a,
 .notice a {
+  color: var(--text-link);
   text-decoration: underline;
 }
 .description,

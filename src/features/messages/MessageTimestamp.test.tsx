@@ -1,9 +1,29 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { memo } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
+import {
+  DayDivider,
+  MessageTimestamp,
+  MessageTimestampHint,
+} from "./MessageTimestamp";
+
+function timestamp(createdAt: number, hint = false) {
+  return hint ? (
+    <MessageTimestampHint createdAt={createdAt}>
+      <p>Message body</p>
+    </MessageTimestampHint>
+  ) : (
+    <MessageTimestamp createdAt={createdAt} />
+  );
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -33,20 +53,17 @@ it("names the day outside today while retaining the full accessible date", () =>
     ),
   ).toHaveClass("sr-only");
 });
-it("keeps the continuation clock compact without dropping its accessible date", () => {
+it("keeps a grouped timestamp accessible without a visible clock", () => {
   const date = new Date(2026, 8, 24, 9, 5);
-  const { container } = render(
-    <MessageTimestamp createdAt={date.getTime() / 1000} compact />,
-  );
-  expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
-    /^9:05$/,
-  );
+  const { container } = render(timestamp(date.getTime() / 1000, true));
+  expect(container.querySelector('[aria-hidden="true"]')).toBeNull();
+  expect(container.querySelector("time")).toHaveClass("sr-only");
   expect(container.querySelector(".sr-only")).toHaveTextContent("2026");
 });
 
 it.each([false, true])(
-  "refreshes cached styles after yielding when locale or timezone changes (compact=%s)",
-  async (compact) => {
+  "refreshes cached styles after yielding when locale or timezone changes (hint=%s)",
+  async (hint) => {
     const NativeFormat = Intl.DateTimeFormat;
     let locale = "en-GB";
     let timeZone = "Europe/London";
@@ -62,7 +79,7 @@ it.each([false, true])(
     vi.spyOn(Intl, "DateTimeFormat").mockImplementation(dateTimeFormat);
     const date = new Date("2026-09-24T09:05:00Z");
     const { container, rerender } = render(
-      <MessageTimestamp createdAt={date.getTime() / 1000} compact={compact} />,
+      timestamp(date.getTime() / 1000, hint),
     );
     const assertDate = () => {
       expect(container.querySelector(".sr-only")).toHaveTextContent(
@@ -77,29 +94,20 @@ it.each([false, true])(
         hour: "numeric",
         minute: "2-digit",
       });
-      expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
-        compact
-          ? clock
-              .formatToParts(date)
-              .filter((part) => part.type !== "dayPeriod")
-              .map((part) => part.value)
-              .join("")
-              .trim()
-          : clock.format(date),
-      );
+      if (hint) expect(container.querySelector("time")).toHaveClass("sr-only");
+      else
+        expect(
+          container.querySelector('[aria-hidden="true"]'),
+        ).toHaveTextContent(clock.format(date));
     };
     assertDate();
     await Promise.resolve();
     timeZone = "America/Los_Angeles";
-    rerender(
-      <MessageTimestamp createdAt={date.getTime() / 1000} compact={compact} />,
-    );
+    rerender(timestamp(date.getTime() / 1000, hint));
     assertDate();
     await Promise.resolve();
     locale = "de-DE";
-    rerender(
-      <MessageTimestamp createdAt={date.getTime() / 1000} compact={compact} />,
-    );
+    rerender(timestamp(date.getTime() / 1000, hint));
     assertDate();
   },
 );
@@ -110,7 +118,7 @@ it("updates the visible clock, accessible date and datetime when a mounted row c
   );
   date.setDate(date.getDate() + 1);
   date.setHours(17);
-  rerender(<MessageTimestamp createdAt={date.getTime() / 1000} compact />);
+  rerender(timestamp(date.getTime() / 1000, true));
   expect(container.querySelector("time")).toHaveAttribute(
     "datetime",
     date.toISOString(),
@@ -118,15 +126,46 @@ it("updates the visible clock, accessible date and datetime when a mounted row c
   expect(container.querySelector(".sr-only")).toHaveTextContent(
     date.toLocaleString(undefined, { dateStyle: "full", timeStyle: "long" }),
   );
-  expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
-    new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
-      .formatToParts(date)
-      .filter((part) => part.type !== "dayPeriod")
-      .map((part) => part.value)
-      .join("")
-      .trim(),
-  );
+  expect(container.querySelector("time")).toHaveClass("sr-only");
 });
+it("reveals the grouped date only after a long hover and dismisses on leaving", async () => {
+  const createdAt = new Date(2026, 8, 24, 9, 5).getTime() / 1000;
+  render(timestamp(createdAt, true));
+  const trigger = screen.getByText("Message body").parentElement;
+  if (!trigger) throw new Error("Expected timestamp trigger");
+  fireEvent.mouseEnter(trigger);
+  fireEvent.mouseMove(trigger);
+  await act(async () => {
+    vi.advanceTimersByTime(999);
+  });
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  await act(async () => {
+    vi.advanceTimersByTime(1);
+  });
+  expect(screen.getByRole("tooltip")).toHaveTextContent("2026");
+  fireEvent.mouseLeave(trigger);
+  await act(async () => {
+    vi.runOnlyPendingTimers();
+  });
+  expect(screen.queryByRole("tooltip")).toBeNull();
+});
+
+it("does not open a timestamp when focus returns to a message control", async () => {
+  render(
+    <MessageTimestampHint
+      createdAt={new Date(2026, 8, 24, 9, 5).getTime() / 1000}
+    >
+      <button type="button">Open video fullscreen</button>
+    </MessageTimestampHint>,
+  );
+  act(() => screen.getByRole("button").focus());
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+  });
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(screen.getByRole("button")).toHaveFocus();
+});
+
 // Either side of local midnight; formatDayGroupLabel's ladder is tested in
 // datetime.test.ts.
 it.each([
@@ -141,11 +180,10 @@ it.each([
     expect(container.querySelector(`[data-day="${day}"]`)).toHaveTextContent(
       new RegExp(`^${label}$`),
     );
-    expect(container.querySelector("svg")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(container.querySelector("svg text")).toHaveTextContent(
+    expect(
+      container.querySelector("[data-calendar-date]")?.closest("[aria-hidden]"),
+    ).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector("[data-calendar-date]")).toHaveTextContent(
       new RegExp(`^${date.getDate()}$`),
     );
   },
@@ -167,7 +205,7 @@ function renderQuietRow() {
   const { container } = render(<QuietRow createdAt={createdAt} />);
   const divider = () => container.querySelector("[data-day]");
   const byline = () => container.querySelector('time [aria-hidden="true"]');
-  const calendar = () => container.querySelector("svg text");
+  const calendar = () => container.querySelector("[data-calendar-date]");
   expect(divider()).toHaveTextContent(/^Today$/);
   expect(byline()).toHaveTextContent(/^9:05 AM$/);
   return { divider, byline, calendar };

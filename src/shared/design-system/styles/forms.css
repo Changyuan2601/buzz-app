@@ -71,6 +71,16 @@
     padding: var(--space-control-inset);
     resize: vertical;
   }
+  /* Agent instructions intentionally use one outlined boundary and no inset fill. */
+  .buzz-textarea:where([data-appearance="outlined"]) {
+    --border: var(--border-standard);
+    background: transparent;
+    border-radius: var(--radius-container);
+  }
+  .buzz-textarea[data-surface="panel"],
+  .buzz-input-group[data-surface="panel"] {
+    background: var(--surface-panel);
+  }
   /* Restyle the native grip, retaining the browser's resize hit target. */
   .buzz-textarea::-webkit-resizer {
     background:
@@ -378,20 +388,38 @@
     outline-offset: 2px;
   }
   /* A title field: the value set as a page title, with no field around it. */
-  .buzz-input[data-appearance="title"] {
+  .buzz-input:where([data-appearance="title"]) {
+    --border: transparent;
     @apply text-title;
     min-height: 3.5rem;
     padding-inline: 0;
     border-radius: 0;
     background: transparent;
   }
+  .buzz-input[data-appearance="heading"] {
+    display: block;
+    @apply text-heading;
+    min-height: 0;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: inherit;
+  }
   .buzz-input[data-appearance="title"]::placeholder {
     color: var(--text-unavailable);
   }
 
-  .buzz-input:where(:focus, [data-popup-open]),
+  .buzz-input:where(
+    :not([data-appearance="title"], [data-appearance="heading"])
+  ):where(:focus, [data-popup-open]),
   .buzz-textarea:where(:focus),
   .buzz-input-group:where(:focus-within) {
+    --border: var(--interaction-border);
+  }
+  /* Title edits stay visually inline on pointer/autofocus entry. Keep a
+     perimeter cue when navigating these borderless inputs with the keyboard. */
+  html[data-keyboard-navigation]
+  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):focus {
     --border: var(--interaction-border);
   }
   html[data-keyboard-navigation]

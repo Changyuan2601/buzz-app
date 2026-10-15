@@ -15,12 +15,13 @@ import {
   type ToolServer,
   type TurnPick,
 } from "./claude";
+import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
 
 /** A conversation's process stops after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
 /** How long a one-off turn can run before it is given up; Janet's turn
  * deadline. */
-export const ONCE_DEADLINE_MS = 5 * 60_000;
+export const ONCE_DEADLINE_MS = STANDALONE_DEADLINE_MS;
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -134,6 +135,7 @@ export class AgentSessions {
         const process = await ClaudeProcess.start(this.options.spawn, {
           cwd: launch.cwd,
           ...(launch.model ? { model: launch.model } : {}),
+          ...(launch.effort ? { effort: launch.effort } : {}),
           systemPrompt: "",
         });
         discovery.process = process;
@@ -389,13 +391,15 @@ export class AgentSessions {
   }
 }
 
-/** Where a process runs and its model: all a spare is started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "model">;
-const place = ({ cwd, model }: Where) => JSON.stringify([cwd, model ?? ""]);
+/** Where a process runs, its model and effort: all a spare is started with. */
+type Where = Pick<ClaudeLaunch, "cwd" | "model" | "effort">;
+const place = ({ cwd, model, effort }: Where) =>
+  JSON.stringify([cwd, model ?? "", effort ?? ""]);
 
 /** One process started ahead of need, for whichever agent next starts a
- * conversation where it runs and with its model. Starting is most of the wait
- * before a new conversation's first reply; giving the process its prompt is not.
+ * conversation where it runs and with its model and effort. Starting is most
+ * of the wait before a new conversation's first reply; giving the process its
+ * prompt is not.
  * It is kept only where the runtime's agents run, and follows the latest new
  * conversation among those places, the likeliest place for the next. */
 export class Spare {

@@ -24,9 +24,13 @@ export type Spawn = (
 
 export type ClaudeLaunch = Readonly<{
   cwd: string;
+  /** Read-only catalog probe, without workspace customizations or tools. */
+  discovery?: boolean;
   /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
+  /** The session's own effort level; absent is Claude's default. */
+  effort?: string;
   /** A saved session to continue. */
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
@@ -151,7 +155,8 @@ export class ClaudeProcess {
   }
 
   /** Starts `claude` without its prompt. This is most of what a start costs,
-   * and fixes nothing about the agent it serves but its folder and model. */
+   * and fixes nothing about the agent it serves but its folder, model and
+   * effort. */
   static async spawn(spawn: Spawn, launch: Omit<ClaudeLaunch, "systemPrompt">) {
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
@@ -164,9 +169,17 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
-        "--permission-mode",
-        "bypassPermissions",
+        ...(launch.discovery
+          ? [
+              "--safe-mode",
+              "--tools",
+              "",
+              "--strict-mcp-config",
+              "--no-session-persistence",
+            ]
+          : ["--permission-mode", "bypassPermissions"]),
         ...(launch.model ? ["--model", launch.model] : []),
+        ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
           ? ["--session-id", launch.sessionId]

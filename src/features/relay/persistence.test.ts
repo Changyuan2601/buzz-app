@@ -1,19 +1,25 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createHeadPersistence } from "./persistence";
+import { createHeadPersistence, type HeadPersistence } from "./persistence";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
-function transaction(abort: () => void) {
+type Store = Partial<IDBObjectStore>;
+function transaction(
+  abort: () => void,
+  run: (cache: HeadPersistence) => Promise<unknown> = (cache) =>
+    cache.remove("channel"),
+  store: Store = { delete: vi.fn() },
+) {
   const tx = {
     abort: vi.fn(abort),
     error: null,
     oncomplete: () => {},
     onabort: () => {},
     onerror: () => {},
-    objectStore: () => ({ delete: vi.fn() }),
+    objectStore: () => store,
   };
   const request = {
     onsuccess: () => {},
@@ -21,7 +27,7 @@ function transaction(abort: () => void) {
   };
   vi.stubGlobal("indexedDB", { open: () => request });
   const cache = createHeadPersistence("viewer", "relay");
-  const result = cache.remove("channel");
+  const result = run(cache);
   request.onsuccess();
   return { tx, result };
 }
@@ -57,4 +63,60 @@ it("rejects unexpected abort errors instead of leaving the operation pending", a
   const rejected = expect(result).rejects.toBe(failure);
   await vi.advanceTimersByTimeAsync(2000);
   await rejected;
+});
+
+function inactivating() {
+  const state = { active: true };
+  const get = { onsuccess: () => {}, result: undefined };
+  const store: Store = {
+    get: vi.fn(() => get as unknown as IDBRequest),
+    getAll: vi.fn(),
+    put: vi.fn(() => {
+      if (state.active) return {} as IDBRequest<IDBValidKey>;
+      throw new DOMException(
+        "Failed to store record in an IDBObjectStore: The transaction is inactive or finished.",
+        "TransactionInactiveError",
+      );
+    }),
+  };
+  return { state, get, store };
+}
+const writeStartup = (cache: HeadPersistence) =>
+  cache.writeStartup?.({}) ?? Promise.reject();
+
+it("ignores a request result delivered after the timeout aborted its transaction", async () => {
+  vi.useFakeTimers();
+  const { state, get, store } = inactivating();
+  const { tx, result } = transaction(
+    () => {
+      state.active = false;
+    },
+    writeStartup,
+    store,
+  );
+  const rejected = expect(result).rejects.toThrow("Cache transaction aborted");
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(tx.abort).toHaveBeenCalledOnce();
+  expect(() => get.onsuccess()).not.toThrow();
+  expect(store.put).not.toHaveBeenCalled();
+  tx.onabort();
+  await rejected;
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("swallows a follow-up request thrown by a browser-initiated abort", async () => {
+  vi.useFakeTimers();
+  const { state, get, store } = inactivating();
+  const { tx, result } = transaction(() => {}, writeStartup, store);
+  const rejected = expect(result).rejects.toThrow("Cache transaction aborted");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(store.get).toHaveBeenCalledOnce();
+  state.active = false;
+  expect(() => get.onsuccess()).not.toThrow();
+  expect(store.put).toHaveBeenCalledOnce();
+  expect(store.getAll).not.toHaveBeenCalled();
+  tx.onabort();
+  await rejected;
+  expect(tx.abort).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
 });

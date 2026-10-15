@@ -24,6 +24,8 @@ type Item = {
   label: string;
   icon?: ReactNode;
   content: ReactNode;
+  /** Increment when an opening returns to this existing tab. */
+  attentionRequest?: number | undefined;
   /** Stable for one opening, including retained exit content. */
   instance?: object;
   /** Omit for a permanent tab such as a channel's own conversation. */
@@ -53,6 +55,16 @@ export function usePanelTabTitle(label: string, icon?: ReactNode) {
     title(owner, { label, icon });
     return () => title(owner, undefined);
   }, [title, owner, label, icon]);
+}
+
+// Keyboard opens and reduced motion skip the push. Deciding here, rather than
+// in CSS, keeps a suppressed animation from leaving the pane marked as
+// entering, which would replay the push once those conditions change.
+function suppressPush() {
+  return (
+    document.documentElement.dataset.keyboardInput !== undefined ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
 }
 
 /** The channel owns target tabs; private details retain their feature's lifetime. */
@@ -212,6 +224,9 @@ export function PanelWorkspace({
   const instance = items.find((item) => item.id === selected)?.instance;
   const previousInstance = useRef<object>(focusOnMount ? undefined : instance);
   const adopted = useRef(adoptSelection);
+  // In the main pane, a newly selected closable tab (a thread) slides in over
+  // the tab it replaces; returning to the permanent tab stays immediate.
+  const [motion, setMotion] = useState<{ enter: string; leave: string }>();
   useLayoutEffect(() => {
     if (adopted.current !== adoptSelection) {
       adopted.current = adoptSelection;
@@ -247,6 +262,12 @@ export function PanelWorkspace({
         block: "nearest",
         inline: "nearest",
       });
+      if (main && previous.current && previous.current !== selected)
+        setMotion(
+          items.find((item) => item.id === selected)?.close && !suppressPush()
+            ? { enter: selected, leave: previous.current }
+            : undefined,
+        );
       previous.current = selected;
       previousInstance.current = instance;
       focusTab.current = false;
@@ -302,6 +323,8 @@ export function PanelWorkspace({
               label: tab.label,
               icon: tab.icon,
               panelId: panelId(tab.id),
+              attentionRequest:
+                "attentionRequest" in tab ? tab.attentionRequest : undefined,
               onMove: "move" in tab ? tab.move : undefined,
               draggable: !!drag && "move" in tab && !!tab.move,
               onClose: tab.close
@@ -335,6 +358,15 @@ export function PanelWorkspace({
               aria-labelledby={`${panelId(item.id)}-tab`}
               className={styles.workspacePane}
               data-covered={selected !== item.id || undefined}
+              data-entering={motion?.enter === item.id || undefined}
+              data-leaving={motion?.leave === item.id || undefined}
+              onAnimationEnd={(event) => {
+                if (
+                  event.target === event.currentTarget &&
+                  motion?.enter === item.id
+                )
+                  setMotion(undefined);
+              }}
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >

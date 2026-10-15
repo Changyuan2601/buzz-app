@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
-  fireEvent,
   render,
   screen,
   waitFor,
@@ -18,6 +17,7 @@ import {
   AgentsService,
   type AgentCommunities,
 } from "../../features/agents/service";
+import { AgentDefaults } from "../agents/AgentDefaults";
 import { AgentsPage } from "../agents/AgentsPage";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -116,12 +116,13 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("button", { name: "New agent" }),
+      );
       expect(
-        await screen.findByText("Enable an agent type plugin to make one."),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "New agent" }),
-      ).not.toBeInTheDocument();
+        await screen.findByRole("menuitem", { name: "Create a new agent" }),
+      ).toHaveAttribute("aria-disabled", "true");
     } finally {
       cleanup();
       await runtime.dispose();
@@ -195,6 +196,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
         agent_id: hosted ? "hosted" : "browser",
         agent_pubkey: hosted ? hostedKey : browserKey,
       };
+    } else if (url.endsWith("/nostr-identities/current")) {
+      result = { identity: { pubkey_hex: community.viewer } };
     } else if (url.endsWith("/attest-agent")) {
       result = { status: 1 };
     } else if (url.endsWith("/update-agent")) {
@@ -230,24 +233,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
     expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
-    const picker = render(
-      <AgentsPage agents={agents} relay={community.relay} />,
-    );
+    const picker = render(<AgentDefaults agents={agents} />);
     const providerUser = userEvent.setup();
     await providerUser.click(
-      screen.getByRole("button", { name: "More agent actions" }),
-    );
-    await providerUser.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const providers = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await waitFor(() =>
-      expect(providers).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(providers).getByRole("menuitem", {
+      await screen.findByRole("button", {
         name: "Log in to Builderlab, attention",
       }),
     );
@@ -281,8 +270,15 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
       id: "native-attempt-id",
     });
+    // Sign-in also checks the account's linked Buzz identity.
+    await waitFor(() =>
+      expect(
+        hostRequests()
+          .map((input) => input.request.url.split("/").at(-1))
+          .sort(),
+      ).toEqual(["current", "exchange", "list-agents", "me"]),
+    );
     const requests = hostRequests();
-    expect(requests).toHaveLength(3);
     expect(
       requests.every(
         (input) =>
@@ -392,8 +388,13 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     // preserves the draft and sends no provisioning request; retry completes it.
     render(<AgentsPage agents={agents} relay={community.relay} />);
     await user.click(screen.getByRole("button", { name: "New agent" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Create a new agent" }),
+    );
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
-    expect(within(createDialog).getByText("Builderlab")).toBeInTheDocument();
+    expect(
+      within(createDialog).getByRole("combobox", { name: "Harness" }),
+    ).toHaveTextContent("Builderlab (hosted)");
     expect(
       within(createDialog).getByText(/Its provider keeps its key and runs it/),
     ).toBeInTheDocument();
@@ -483,6 +484,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
 
     // Confirmed deletion waits for login before provider or community removal.
     await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
     await user.click(screen.getByRole("button", { name: "Delete agent" }));
     const deletion = screen.getByRole("dialog", { name: "Delete Browser?" });
     const remove = within(deletion).getByRole("button", { name: "Delete" });

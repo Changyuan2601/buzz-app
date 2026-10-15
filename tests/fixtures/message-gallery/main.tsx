@@ -4,14 +4,21 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { continuesMessageGroup } from "../../../src/features/messages/message-grouping";
 import { MessageRow } from "../../../src/features/messages/MessageRow";
 import { MembershipRow } from "../../../src/features/messages/MembershipRow";
 import { Button } from "../../../src/shared/design-system/ui/Button";
+import { LinkLabel, linkKind } from "../../../src/bundled/links/InlineLink";
+import { DiffMessage } from "../../../src/bundled/diffs/DiffMessage";
+import { parseBubbleColor } from "../../../src/shared/theme/bubble-color";
+import referenceStyles from "../../../src/shared/InlineReference.module.css";
 import { CustomEmoji } from "../../../src/bundled/emoji/CustomEmoji";
 import { emojiMatches } from "../../../src/features/relay/emoji";
 import type {
   ConversationExtensions,
   InlineRenderer,
+  LinkRenderer,
+  MessageRenderer,
 } from "../../../src/features/conversation/contracts";
 import type { Contribution } from "../../../src/plugins/contributions";
 import { useKeyboardFocusVisibility } from "../../../src/shared/design-system/useKeyboardFocusVisibility";
@@ -27,7 +34,7 @@ import {
 } from "./examples";
 import "./styles.css";
 
-// Register only the production emoji renderer against fixed local data. No
+// Register production content renderers against fixed local data. No
 // plugin manager, relay session, identity, persistence, or app startup runs here.
 const inline: readonly Contribution<InlineRenderer>[] = [
   {
@@ -54,10 +61,35 @@ const inline: readonly Contribution<InlineRenderer>[] = [
     },
   },
 ];
+const links: readonly Contribution<LinkRenderer>[] = [
+  {
+    id: "links",
+    key: "gallery/links",
+    pluginId: "gallery",
+    revision: "1",
+    title: "Links",
+    matches: (url) => linkKind(url) !== null,
+    className: referenceStyles.link,
+    component: ({ url }) => <LinkLabel href={url} />,
+  },
+];
+const messages: readonly Contribution<MessageRenderer>[] = [
+  {
+    id: "diff",
+    key: "gallery/diff",
+    pluginId: "gallery",
+    revision: "1",
+    title: "Code diff",
+    matches: (row) => !!row.diff,
+    component: DiffMessage,
+  },
+];
 const emptyTools: ReturnType<ConversationExtensions["tools"]["snapshot"]> = [];
 const subscribe = () => () => {};
 const extensions: ConversationExtensions = {
   inline: { snapshot: () => inline, subscribe },
+  links: { snapshot: () => links, subscribe },
+  messages: { snapshot: () => messages, subscribe },
   tools: { snapshot: () => emptyTools, subscribe },
 };
 const agentPubkeys = new Set([agent]);
@@ -78,8 +110,9 @@ function Specimen({ example }: { example: Example }) {
         <p className="text-body-sm text-tertiary">{example.description}</p>
       </header>
       <div className="message-gallery-frame">
-        {rows.map((row, index) =>
-          row.membership ? (
+        {rows.map((row, index) => {
+          const nextRow = rows[index + 1];
+          return row.membership ? (
             <MembershipRow
               key={row.id}
               row={row}
@@ -93,6 +126,9 @@ function Specimen({ example }: { example: Example }) {
             <MessageRow
               key={row.id}
               row={row}
+              viewer={reader}
+              stackPrevious={continuesMessageGroup(rows[index - 1], row)}
+              stackNext={nextRow ? continuesMessageGroup(row, nextRow) : false}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
@@ -121,8 +157,8 @@ function Specimen({ example }: { example: Example }) {
                   }
                 : {})}
             />
-          ),
-        )}
+          );
+        })}
         {thread && (
           <section
             aria-label="Sample thread replies"
@@ -245,9 +281,9 @@ function Gallery() {
       </div>
       <footer data-buzz-ui="" className="text-body-sm text-tertiary">
         Rendered by MessageRow, MessageMarkdown, MembershipRow, DeliveryNotice,
-        and the app’s attachment components. Composer, presence, unread
-        tracking, history loading, and live plugin behavior are separate
-        surfaces and are not simulated here.
+        the bundled link and diff renderers, and the app’s attachment
+        components. Composer, presence, unread tracking, history loading, and
+        live plugin behavior are separate surfaces and are not simulated here.
       </footer>
     </div>
   );
@@ -257,6 +293,9 @@ const theme =
     ? "dark"
     : "light";
 document.documentElement.dataset.colorMode = theme;
+document.documentElement.dataset.bubbleColor = parseBubbleColor(
+  new URLSearchParams(location.search).get("bubble"),
+);
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing message gallery root");
 createRoot(container).render(

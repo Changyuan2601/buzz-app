@@ -41,7 +41,7 @@ html[data-keyboard-navigation] .link:focus-visible {
 }
 
 [data-link-kind="channel"] .icon,
-[data-mention-kind="person"] > .icon {
+[data-mention-kind] > .icon {
   margin-right: 0;
 }
 

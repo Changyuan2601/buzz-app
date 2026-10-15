@@ -1,61 +1,101 @@
-import { useId, useState, useSyncExternalStore } from "react";
-import type { Agents, AgentCreateProps } from "../../features/agents/service";
-import { AgentCreateDialog } from "../agents/AgentCreateDialog";
+import { useId, useRef, useState, useSyncExternalStore } from "react";
+import { randomAgentAvatar } from "../../features/agents/avatar-packs";
+import type { Agents } from "../../features/agents/service";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
-import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { Select } from "../../shared/design-system/ui/Select";
-import { Input } from "../../shared/design-system/ui/Input";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { DEFAULT_MESH_AGENT_CONFIG, meshAgentConfig } from "./meshAgent";
 import { MESH_AGENT_PRESETS, type MeshAgentPreset } from "./meshAgentPresets";
 
-/** The helper is chosen before creation; the existing dialog owns consent. */
-export function MeshHelpers({
-  agents,
-  community,
-}: {
-  agents: Agents;
-  community: string;
-}) {
+/** Presets use the same creation service as Agents; editing stays in Settings. */
+export function MeshHelpers({ agents }: { agents: Agents }) {
   const state = useSyncExternalStore(agents.subscribe, agents.snapshot);
   const title = useId();
-  const [chosen, setChosen] = useState<MeshAgentPreset | null>();
+  const busy = useRef(false);
+  const [pending, setPending] = useState<string>();
   const [created, setCreated] = useState("");
+  const [error, setError] = useState("");
   const type = agents
     .types()
     .find(
       (item) => item.pluginId === "buzz.mesh-compute" && item.id === "mesh",
     );
+  const existing = (preset: MeshAgentPreset | null) =>
+    state.agents.find(
+      (agent) =>
+        agent.type === type?.key &&
+        (preset
+          ? meshAgentConfig(agent.config).preset === preset.id
+          : !meshAgentConfig(agent.config).preset &&
+            agent.name === "Custom agent"),
+    );
+  const create = async (preset: MeshAgentPreset | null) => {
+    if (busy.current || !type || state.status !== "ready" || existing(preset))
+      return;
+    const name = preset?.name ?? "Custom agent";
+    busy.current = true;
+    setPending(name);
+    setCreated("");
+    setError("");
+    try {
+      const agent = await agents.create({
+        type: type.key,
+        name,
+        picture: randomAgentAvatar().url,
+        config: {
+          ...DEFAULT_MESH_AGENT_CONFIG,
+          ...(preset
+            ? {
+                preset: preset.id,
+                prompt: preset.prompt,
+                mode: preset.mode,
+                buzz: preset.buzz ?? true,
+              }
+            : {}),
+        },
+      });
+      setCreated(agent.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      busy.current = false;
+      setPending(undefined);
+    }
+  };
   return (
     <section aria-labelledby={title} className="grid gap-3">
       <InlineHeader
         id={title}
         title="Helpers"
-        subtitle="Create a helper that runs on this community’s shared compute. Review its name and instructions before creating it."
+        subtitle="Create a helper, then add it to a conversation. Find your helpers in Agents."
       />
       <SettingsGroup>
         {[...MESH_AGENT_PRESETS, null].map((preset) => {
           const name = preset?.name ?? "Custom agent";
+          const made = existing(preset);
+          const mode = preset?.mode ?? DEFAULT_MESH_AGENT_CONFIG.mode;
           return (
             <PreferenceRow
               key={preset?.id ?? "custom"}
-              title={name}
-              subtitle={preset?.summary ?? "Start with your own instructions."}
+              title={made ? `${name} — Created` : name}
+              subtitle={`${preset?.summary ?? "Start with the default assistant instructions."} ${mode === "chat" ? "Chat: no tools." : "Agent: shell and files on this machine, plus Buzz access; workspace ~/.buzz."}`}
               trailing={
                 <Button
                   size="sm"
-                  disabled={!type || state.status !== "ready"}
-                  aria-label={`Set up ${name}`}
-                  onClick={() => {
-                    setCreated("");
-                    setChosen(preset);
-                  }}
+                  disabled={
+                    !type ||
+                    state.status !== "ready" ||
+                    pending !== undefined ||
+                    Boolean(made)
+                  }
+                  loading={pending === name}
+                  aria-label={
+                    made ? `${name} created as ${made.name}` : `Create ${name}`
+                  }
+                  onClick={() => void create(preset)}
                 >
-                  Set up
+                  {made ? "Created" : "Create"}
                 </Button>
               }
             />
@@ -68,120 +108,16 @@ export function MeshHelpers({
             "Waiting for agents to be available in this community."}
         </p>
       )}
-      {created && (
-        <p role="status" className="m-0 text-body-sm text-secondary">
-          {created} created. Open Agents to configure its Attention and add it
-          to a conversation.
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
         </p>
       )}
-      {chosen !== undefined && type && state.status === "ready" && (
-        <AgentCreateDialog
-          agents={agents}
-          detailsLayout="form"
-          types={[{ ...type, Create: MeshHelperCreate }]}
-          community={community}
-          initial={{
-            name: chosen?.name ?? "",
-            config: {
-              ...DEFAULT_MESH_AGENT_CONFIG,
-              ...(chosen
-                ? {
-                    preset: chosen.id,
-                    prompt: chosen.prompt,
-                    mode: chosen.mode,
-                    buzz: chosen.buzz ?? true,
-                  }
-                : {}),
-            },
-          }}
-          onClose={() => setChosen(undefined)}
-          onCreated={(agent) => {
-            setChosen(undefined);
-            setCreated(agent.name);
-          }}
-        />
+      {created && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          {created} created. Find it in Agents and add it to a conversation.
+        </p>
       )}
     </section>
-  );
-}
-
-function MeshHelperCreate({ config, onChange, disabled }: AgentCreateProps) {
-  const draft = meshAgentConfig(config);
-  return (
-    <div className="grid gap-3">
-      <Select
-        label="Mode"
-        variant="field"
-        value={draft.mode}
-        disabled={disabled}
-        groups={[
-          {
-            label: "",
-            options: [
-              { value: "chat", label: "Chat — no tools" },
-              { value: "agent", label: "Agent — goose with shell and files" },
-            ],
-          },
-        ]}
-        onValueChange={(value) =>
-          onChange({
-            ...draft,
-            mode: value === "chat" ? "chat" : "agent",
-          })
-        }
-      />
-      {draft.mode === "agent" && (
-        <Checkbox
-          label="Buzz access: read Buzz and post as it works"
-          checked={draft.buzz}
-          disabled={disabled}
-          onCheckedChange={(buzz) => onChange({ ...draft, buzz })}
-        />
-      )}
-      {draft.mode !== "chat" && (
-        <Field label="Workspace" description="An absolute path, or ~/.buzz.">
-          <Input
-            required
-            pattern="(/.*|[A-Za-z]:[/\\\\].*|~/.buzz)"
-            disabled={disabled}
-            value={draft.workspace}
-            onChange={(event) =>
-              onChange({ ...draft, workspace: event.target.value })
-            }
-          />
-        </Field>
-      )}
-      <Select
-        label="Sessions"
-        variant="field"
-        value={draft.scope}
-        disabled={disabled}
-        groups={[
-          {
-            label: "",
-            options: [
-              { value: "thread", label: "One session per thread" },
-              { value: "channel", label: "One session per channel" },
-            ],
-          },
-        ]}
-        onValueChange={(value) =>
-          onChange({
-            ...draft,
-            scope: value === "channel" ? "channel" : "thread",
-          })
-        }
-      />
-      <Field label="Instructions">
-        <Textarea
-          rows={8}
-          value={draft.prompt}
-          disabled={disabled}
-          onChange={(event) =>
-            onChange({ ...draft, prompt: event.target.value })
-          }
-        />
-      </Field>
-    </div>
   );
 }

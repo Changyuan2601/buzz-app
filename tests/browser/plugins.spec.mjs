@@ -157,7 +157,7 @@ test("Me places companion plugins in its new-conversation state and removes disa
   await page.goto(app.origin);
   await openPage(page, "Me");
   await expect(
-    page.getByRole("heading", { name: "New conversation", exact: true }),
+    page.getByRole("heading", { name: "New chat", exact: true }),
   ).toBeVisible();
   await button(page, "Notes").click();
   await expect(card(page, "Notes")).toHaveCount(1);

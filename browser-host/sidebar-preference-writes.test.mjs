@@ -515,3 +515,56 @@ it("broker removal rejects invalid envelopes and unconfirmed publication", async
     "/query",
   ]);
 });
+
+it("real broker reorders sections through the signed, confirmed narrow command", async () => {
+  const h = await harness();
+  const signal = new AbortController().signal;
+  const ids = Array.from(
+    { length: 100 },
+    (_, i) => `${String(i).padStart(8, "0")}-1111-4111-8111-111111111111`,
+  );
+  for (const id of ids.slice(0, 2))
+    await h.transport.writeSidebarAssignment(
+      { channelId: id, createSection: { id, name: id } },
+      signal,
+    );
+  h.calls.length = 0;
+  for (const intent of [
+    null,
+    [],
+    {},
+    { sectionIds: "work" },
+    { sectionIds: [1] },
+    { sectionIds: ["a", "a"] },
+    { sectionIds: [], extra: true },
+  ])
+    expect(
+      (await h.post(intent, undefined, "sidebar-section-order")).status,
+    ).toBe(400);
+  expect(h.calls).toEqual([]);
+  // A full 100-section order exceeds the 2 KiB budget of single-item intents.
+  const reversed = [...ids].reverse();
+  expect(
+    Buffer.byteLength(JSON.stringify({ sectionIds: reversed })),
+  ).toBeGreaterThan(2048);
+  expect(
+    await h.transport.writeSidebarSectionOrder(reversed, signal),
+  ).toMatchObject({
+    sections: [
+      { id: ids[1], order: 0 },
+      { id: ids[0], order: 1 },
+    ],
+  });
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
+  ]);
+  h.calls.length = 0;
+  await h.transport.writeSidebarSectionOrder([ids[1], ids[0]], signal);
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual(["/query"]);
+  h.conflict();
+  await expect(
+    h.transport.writeSidebarSectionOrder([ids[0], ids[1]], signal),
+  ).rejects.toThrow("Relay request failed (502)");
+});

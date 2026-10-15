@@ -70,7 +70,7 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/        Agents page and agent types (harness plugins register theirs)
 features/agents/       Agents service: saved agents, creation, deletion
 features/agents/        session-owned agent inventory, choices, local agents and activity
-features/agent-harness/ Buzz base prompt and memory reads shared by harness plugins
+features/agent-harness/ Buzz base prompt, memory reads, attention prompts and wakes shared by harness plugins
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
@@ -175,6 +175,21 @@ optional host context. A conversation host may supply
 `canOpen` is advisory active-target availability; `open` re-resolves at click time
 and returns false after the originating opening, channel, session or host
 presentation retires. This is not a global navigation API or an access grant.
+A tab's `open` replaces that tab; a channel drawer or side-column panel's `open`
+opens the target as a new tab.
+
+### Opening targets from channel plugins
+
+Every plugin surface in a channel or thread can open a target, such as a panel
+URL, with the same `canOpen(target)` / `open(target)` pair (`TargetOpener`):
+panels (`context`), channel-header launchers, composer tools and accessories,
+message renderers, message ⋯ action components, attachment renderers and inline
+renderers. The conversation host decides placement: in Channels a panel target
+opens as a side-pane tab, as if the user clicked a link to it in that message or
+composer. `canOpen` is presentation only. `open` re-resolves at click time and
+returns false outside a conversation host, after the contribution is removed or
+after its mount retires. Link renderers keep host-owned link activation;
+reaction choosers and message markers get no opener.
 
 ### Resolution order
 
@@ -337,9 +352,12 @@ This is a host-matched preview addition, not cross-version capability negotiatio
 
 A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
 Channels renders these in its conversation header with public `context`, `pressed`,
-`available()` and `toggle(target)`. The page owns one selected channel panel, placed
+`available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected channel panel, placed
 in the bottom drawer by default or the existing companion column when the contribution
-sets `channelPlacement: "side"`; a launcher
+sets `channelPlacement: "side"`. With `channelPlacement: "tab"` the launcher instead
+opens one tab per channel in the side pane, grouped with thread and other panel tabs;
+a new target replaces that tab, and a link tab already open for the target becomes it.
+The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
 selects its **exact active contribution**, not target matching. `available()` and
 `toggle()` are revoked when the mounted context or contribution is retired. Optional
 `PanelProps.channelContext` carries the current displayed public context to a channel
@@ -790,7 +808,7 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 ## Conversation contributions
 
 `registerMessage({ id, title, matches, component })` contributes an optional whole
-message body. Components receive `{ message: ChannelMessage }`; the first active
+message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the
 host body. Registration uses the same owned contribution lifetime as inline/link
 renderers. The host retains author/time chrome, actions, attachments and session
@@ -800,7 +818,7 @@ admission or cross-version capability negotiation.
 `registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an
 entry to a message's ⋯ menu. `matches(message, session)` decides per row whether
 the entry appears; throwing matchers are skipped. `icon` renders beside the title.
-Choosing the entry mounts `component` with `{ message, session, close }` inside the
+Choosing the entry mounts `component` with `{ message, session, close, canOpen, open }` inside the
 row, typically a dialog; it stays mounted until it calls `close()`. The optional
 `marker` receives `{ message, session }` and renders beside the timestamp, such as a
 state mark. It renders only while `matches` passes, so hiding the menu entry also

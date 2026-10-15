@@ -8,6 +8,7 @@ import type {
 import type { TimelineRow } from "../../../src/features/messages/membership-rows";
 import video from "./assets/sample.mp4";
 import avatar from "../design-system/assets/avatar.png";
+import animatedGif from "../attachment-media/animated.gif";
 
 export const reader = "a".repeat(64);
 export const teammate = "b".repeat(64);
@@ -23,10 +24,15 @@ export const profiles = new Map<string, Profile>([
 ]);
 export const artwork = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e9e8e4"/><circle cx="460" cy="100" r="48" fill="#cda97c"/><path d="M0 360L180 120L390 360M210 360L425 180L640 360" fill="#859e89"/></svg>')}`;
 export const media = (url: string) => {
+  if (url.endsWith("/panorama"))
+    return `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1"><path d="M0 .5H1000" stroke="#859e89"/></svg>')}`;
+  if (url.includes("/gif-")) return animatedGif;
   if (url.endsWith("/video")) return video;
   if (url.endsWith("/avatar")) return avatar;
   if (url.endsWith("/landscape") || url.endsWith("/poster")) return artwork;
   if (url.endsWith("/notes")) return "https://example.com/design-notes.txt";
+  if (url.endsWith("/download"))
+    return `buzz-media://localhost/${encodeURIComponent(`https://fixture.test/media/${"f".repeat(64)}.txt`)}`;
   return undefined;
 };
 export function message(
@@ -69,7 +75,151 @@ const single = (
   content: string,
   patch: Partial<ChannelMessage> = {},
 ): Example => ({ id, title, description, rows: [message(id, content, patch)] });
+const references =
+  "@Sam Rivera and @Studio assistant — check [the design notes](https://example.com/notes), [PR #42](https://github.com/block/buzz/pull/42), and [#design](buzz://channel/gallery).\n\nRaw service link: https://github.com/block/buzz/issues/42\n\n||The surprise is in the [release notes](https://example.com/release).||";
+const patch =
+  "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
+  {
+    id: "references",
+    title: "Links and rich content",
+    description:
+      "Real link and diff renderers, in received and outgoing bubbles.",
+    examples: [
+      single(
+        "references-received",
+        "Received links and mentions",
+        "Links stay recognizable without hover; mentions use the same text color.",
+        references,
+        { authorId: teammate, mentions: [teammate, agent] },
+      ),
+      single(
+        "references-own",
+        "Your links and mentions",
+        "Colored bubbles preserve contrast for links, mentions, and revealed spoilers.",
+        references,
+        { mentions: [teammate, agent] },
+      ),
+      single(
+        "table-links",
+        "Linked table content",
+        "A neutral inset surface owns the text and link colors in a colored bubble.",
+        "| Resource | Status |\n| --- | --- |\n| [Design notes](https://example.com/notes) | Ready |\n| [PR #42](https://github.com/block/buzz/pull/42) | Reviewing |",
+      ),
+      single(
+        "code-diff",
+        "Code diff preview",
+        "The production diff card retains readable text inside an outgoing bubble.",
+        patch,
+        {
+          diff: {
+            filePath: "greeting.ts",
+            repoUrl: "https://github.com/block/buzz",
+            commitSha: "abcdef0",
+            description: "Update the greeting",
+            truncated: false,
+          },
+        },
+      ),
+    ],
+  },
+  {
+    id: "gifs",
+    title: "Sent images and GIFs",
+    description: "Full-frame image previews, with and without message text.",
+    examples: [
+      single(
+        "gif-only",
+        "GIF only",
+        "Known dimensions reserve the full frame.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/gif-landscape.gif",
+              kind: "image",
+              dimensions: { width: 480, height: 320 },
+            },
+          ],
+        },
+      ),
+      single(
+        "gif-caption",
+        "GIF with text",
+        "Missing dimensions retain a stable frame without cropping.",
+        "A little celebration!",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/gif-caption.GIF?version=1",
+              kind: "image",
+            },
+          ],
+        },
+      ),
+      single(
+        "gif-multiple",
+        "Multiple GIFs and a photo",
+        "All images keep full previews in attachment order.",
+        "Both of these made me smile.",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/gif-one.gif",
+              kind: "image",
+              dimensions: { width: 480, height: 320 },
+            },
+            {
+              url: "https://fixture.test/landscape",
+              kind: "image",
+              dimensions: { width: 640, height: 360 },
+            },
+            {
+              url: "https://fixture.test/gif-extensionless",
+              kind: "image",
+            },
+          ],
+        },
+      ),
+      single(
+        "gif-unavailable",
+        "Unavailable GIF",
+        "Unavailable media keeps a readable status.",
+        "This GIF is unavailable.",
+        {
+          attachments: [
+            { url: "https://fixture.test/unavailable.gif", kind: "image" },
+          ],
+        },
+      ),
+      single(
+        "image-panorama",
+        "Thin image in a narrow column",
+        "The preview target retains at least one CSS pixel when it shrinks.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/panorama",
+              kind: "image",
+              dimensions: { width: 360, height: 1 },
+            },
+          ],
+        },
+      ),
+      single(
+        "emoji-wrapped",
+        "Wrapped emoji",
+        "Large emoji have enough line space when they wrap.",
+        "🎉 :landscape: 🚀 👍🏽 :landscape: 👨‍👩‍👧‍👦 🇦🇺 :landscape: 1️⃣ 🎉 :landscape: 🚀 👍🏽 :landscape: 👨‍👩‍👧‍👦 🇦🇺 :landscape: 1️⃣",
+        {
+          emoji: [
+            { shortcode: "landscape", url: "https://fixture.test/landscape" },
+          ],
+        },
+      ),
+    ],
+  },
   {
     id: "workflow",
     title: "Workflow attribution",
@@ -266,6 +416,18 @@ export const groups: Group[] = [
         },
       ),
       single(
+        "sent-from-thread",
+        "Sent from thread",
+        "Thread attribution aligns with the sender above the message bubble.",
+        "Bringing this update back to the channel.",
+        {
+          sentFromThread: {
+            rootId: "thread",
+            excerpt: "Let’s discuss the empty state here.",
+          },
+        },
+      ),
+      single(
         "reply",
         "Thread reply",
         "A reply uses the same row, within its thread context.",
@@ -294,6 +456,21 @@ export const groups: Group[] = [
         "Image attachment",
         "A local illustration renders through the real attachment component.",
         "Here’s the first direction.",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/landscape",
+              kind: "image",
+              dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
+        "image-long-caption",
+        "Image with a long message",
+        "The background hugs the capped text, with the attached image directly below.",
+        "I’m sharing a longer update alongside this image so we can check how the message reads in a wide conversation. The text should wrap at a comfortable measure, and the bubble should stop just beyond that text instead of stretching across the entire window. A small attachment underneath should not change the width of the background.\n\nDoes this direction work for the next review?",
         {
           attachments: [
             {
@@ -372,6 +549,22 @@ export const groups: Group[] = [
               kind: "file",
               name: "design-review-notes.txt",
               mime: "text/plain",
+              size: 12800,
+            },
+          ],
+        },
+      ),
+      single(
+        "file-download",
+        "Downloadable file",
+        "The native download button uses the same file-card treatment.",
+        "A copy of the review notes.",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/download",
+              kind: "file",
+              name: "review-notes.txt",
               size: 12800,
             },
           ],

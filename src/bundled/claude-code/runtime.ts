@@ -1,54 +1,59 @@
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
-// session for its conversation; a watch or timer wake runs as a one-off turn in
-// a new session, in its Interest's lane. The run returns once the turn is handed over,
+// session for its conversation; a standalone turn, such as a watch's or a
+// timer's, runs as a one-off process. The run returns once the turn is handed over,
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import {
-  fromOwner,
-  type Agent,
-  type AgentHandle,
-  type Delivery,
-  type Effort,
-  type Models,
+import { turnNote } from "../../buzz-mcp/session-tools";
+import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import type { AgentReads } from "../../features/agents/reads";
+import type {
+  Agent,
+  AgentHandle,
+  Delivery,
+  Effort,
+  Models,
+  StandaloneTurn,
+  TurnResult,
 } from "../../features/agents/service";
-import { meChat } from "../../features/agents/me-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
-import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { Settled, Spawn, ToolServer } from "./claude";
+import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
 import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
-import { Lanes } from "./lanes";
 import {
-  ATTENTION_REVIEW,
   CONTEXT_LIMIT,
   type Scope,
   steerPrompt,
   systemPrompt,
-  timerPrompt,
   turnPrompt,
-  watchPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { readTranscript, type Conversation } from "./transcript";
 
-/** What a session can switch to between turns. Claude runs `max` as
- * `xhigh` in a stream-json session, so it is not offered. */
-const EFFORTS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra high" },
-];
+/** The effort levels Claude lists, which a session can switch to between
+ * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
+ * offered. */
+export const effortChoices = (levels: readonly string[]): Effort[] =>
+  [...new Set(levels)]
+    .filter((id) => id !== "max")
+    .map((id) => ({ id, label: effortLabel(id) }));
+export const effortLabel = (id: string) =>
+  id === "xhigh" ? "Extra high" : `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+
+/** The effort levels a listed model takes. */
+export const effortLevels = (model: ClaudeModel) =>
+  model.supportsEffort === false ? [] : (model.supportedEffortLevels ?? []);
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude's own default. */
   model: string;
+  /** An effort level the model lists; empty uses Claude's own default. */
+  effort: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
@@ -57,6 +62,7 @@ export type Config = Readonly<{
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
+  effort: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
@@ -86,11 +92,6 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename restarts idle sessions. */
   name?: string;
-  /** Whether the owner has attention on: new sessions get its tools, its
-   * guidance and the end-of-turn review. */
-  attention: boolean;
-  /** Watch and timer turns, one lane per Interest. */
-  lanes: Lanes;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
@@ -103,10 +104,11 @@ type Entry = {
   >;
 };
 
-/** Where an agent's processes run, and with which model. */
-const where = ({ workspace, model }: Config) => ({
+/** Where an agent's processes run, and with which model and effort. */
+const where = ({ workspace, model, effort }: Config) => ({
   cwd: workspace,
   ...(model.trim() ? { model: model.trim() } : {}),
+  ...(effort ? { effort } : {}),
 });
 
 export class ClaudeRuntime {
@@ -127,8 +129,8 @@ export class ClaudeRuntime {
 
   constructor(
     private readonly host: Pick<Host, "spawn">,
-    /** The owner's connection to each agent's own community. */
-    private readonly relay: (pubkey: string) => RelayData | undefined,
+    /** What each agent's turns read of its community, while it can be read. */
+    private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage = globalThis.localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
@@ -148,27 +150,22 @@ export class ClaudeRuntime {
     // processes stop. Saved sessions stay so it resumes when it is back.
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
-        entry.lanes.stop();
         entry.sessions.dispose();
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
       const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry)
-        this.entry(agent.pubkey, next, agent.attentionEnabled).name =
-          agent.name;
-      else if (
+      if (!entry) {
+        this.entry(agent.pubkey, next).name = agent.name;
+        continue;
+      }
+      if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name ||
-        entry.attention !== agent.attentionEnabled
+        entry.name !== agent.name
       ) {
-        // Attention changes what a new session is told and offered. Turned
-        // off, its waiting watch and timer turns are dropped too.
-        if (!agent.attentionEnabled) entry.lanes.clear();
         entry.config = next;
         entry.name = agent.name;
-        entry.attention = agent.attentionEnabled;
         entry.sessions.reconfigure();
       }
     }
@@ -195,40 +192,35 @@ export class ClaudeRuntime {
     const own = configured || reported || "";
     const offered = listed.filter((model) => model.value !== "default");
     const models = offered.map((model) => {
-      const efforts =
-        model.supportsEffort === false
-          ? []
-          : EFFORTS.filter(
-              (level) =>
-                !model.supportedEffortLevels ||
-                model.supportedEffortLevels.includes(level.id),
-            );
+      const offeredEfforts = effortChoices(effortLevels(model));
       return {
         id: model.value,
         label: modelName(model.resolvedModel ?? model.value),
-        efforts,
-        ...resting(efforts),
+        efforts: offeredEfforts,
+        ...resting(offeredEfforts),
       };
     });
     const current =
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
       )?.value ?? own;
-    // An own model Claude does not list is still the one it runs.
-    return models.some((model) => model.id === current)
-      ? { current, models }
-      : {
-          current,
-          models: [
-            {
-              id: current,
-              label: current ? modelName(current) : "Claude",
-              efforts: EFFORTS,
-              ...resting(EFFORTS),
-            },
-            ...models,
-          ],
-        };
+    if (models.some((model) => model.id === current))
+      return { current, models };
+    // An own model Claude does not list is still the one it runs, at any
+    // effort a listed model has.
+    const ownEfforts = effortChoices(offered.flatMap(effortLevels));
+    return {
+      current,
+      models: [
+        {
+          id: current,
+          label: current ? modelName(current) : "Claude",
+          efforts: ownEfforts,
+          ...resting(ownEfforts),
+        },
+        ...models,
+      ],
+    };
   }
 
   /** Conversations each agent has running, for its status view. */
@@ -242,16 +234,12 @@ export class ClaudeRuntime {
   }
   /** The agent's saved sessions, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    const channels =
-      snapshot?.status === "ready"
-        ? snapshot.session.channels.list().channels
-        : [];
+    const reads = this.reads(pubkey);
     return localSessions(this.storage, pubkey)
       .list()
       .map(([key, saved]) => {
         const [channelId = key, root] = key.split("/");
-        const name = channels.find((row) => row.id === channelId)?.name;
+        const name = reads?.channelName(channelId);
         return {
           key,
           agent: pubkey,
@@ -289,7 +277,7 @@ export class ClaudeRuntime {
     );
     const last = transcript?.turns.at(-1);
     if (!last?.sessionId) return undefined;
-    const name = this.channelName(pubkey, place.channelId);
+    const name = this.reads(pubkey)?.channelName(place.channelId);
     return {
       key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
       agent: pubkey,
@@ -298,14 +286,6 @@ export class ClaudeRuntime {
       ...(name ? { name } : {}),
       at: last.endedAt ?? last.startedAt,
     };
-  }
-  private channelName(pubkey: string, channelId: string) {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    return snapshot?.status === "ready"
-      ? snapshot.session.channels
-          .list()
-          .channels.find((row) => row.id === channelId)?.name
-      : undefined;
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -320,10 +300,7 @@ export class ClaudeRuntime {
 
   dispose() {
     this.spare.dispose();
-    for (const entry of this.agents.values()) {
-      entry.lanes.stop();
-      entry.sessions.dispose();
-    }
+    for (const entry of this.agents.values()) entry.sessions.dispose();
     this.agents.clear();
   }
 
@@ -341,52 +318,35 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
-    current,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
+    // Watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention") return ignored?.();
     // Claude runs commands as you; mentions need owner or delegated authority.
-    // A watch is the agent's own attention: its event is observed data,
-    // framed as such, from anyone.
-    if (trigger.type === "mention") {
-      const snapshot = this.relay(agent.pubkey)?.snapshot();
-      if (
-        !(await fromOwner(trigger.event, agent.owner, {
-          agent: agent.pubkey,
-          authority:
-            snapshot?.status === "ready"
-              ? snapshot.session.workflowAuthority
-              : undefined,
-          profiles:
-            snapshot?.status === "ready"
-              ? snapshot.session.profiles
-              : undefined,
-        }))
-      ) {
-        ignored?.();
-        return;
-      }
-      signal.throwIfAborted();
-    }
-    const entry = this.entry(agent.pubkey, settings, agent.attention.enabled());
-    entry.handle = agent;
-    entry.team = team ?? "";
-    if (trigger.type !== "mention") {
-      workingUntil(this.wake(entry, agent, trigger, current));
+    if (
+      !(await fromOwner(
+        trigger.event,
+        agent.owner,
+        workflowOf(this.reads(agent.pubkey), agent.pubkey),
+      ))
+    ) {
+      ignored?.();
       return;
     }
+    signal.throwIfAborted();
+    const entry = this.entry(agent.pubkey, settings);
+    entry.handle = agent;
+    entry.team = team ?? "";
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
-    const topLevel = await meChat(
-      () => this.relay(agent.pubkey),
-      agent.owner,
-      channel,
-      signal,
-    );
+    const topLevel =
+      (await this.reads(agent.pubkey)?.meChat(agent.owner, channel, signal)) ??
+      false;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const key = this.key(entry, agent.pubkey, event, channel, topLevel);
+    const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) =>
       this.review(
@@ -463,106 +423,26 @@ export class ClaudeRuntime {
     });
   }
 
-  /** A watch or timer wake: a one-off turn in its Interest's lane, as in
-   * Janet. It joins no conversation, and nothing about it is saved. The host
-   * says whether it is still `current`, asked when its lane starts it and
-   * again once it has a process: a wake whose watch or timer was disabled or
-   * removed, whose watch changed or no longer matches, or whose agent's
-   * attention went off, while it waited does not run. Its prompt is built
-   * then, from the attention as it is. */
-  private wake(
-    entry: Entry,
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    current: () => boolean,
-  ): Promise<Settled> {
-    const { slug } = trigger;
-    const id = slug.replace(/^watch\//, "");
-    const lane = (trigger.type === "watch" ? trigger.watch : trigger.timer)
-      .interest_id;
-    let settle!: (result: Settled) => void;
-    const settled = new Promise<Settled>((resolve) => {
-      settle = resolve;
-    });
-    const dropped = (why: string) => {
-      console.warn(`Claude dropped a ${trigger.type} turn: ${why}`);
-      settle({ ok: true });
-    };
-    const queued = entry.lanes.add(
-      lane,
-      async () => {
-        try {
-          if (!current()) return settle({ ok: true });
-          const done = entry.sessions.runOnce(`${trigger.type}/${id}`, () =>
-            this.wakePrompt(agent, trigger, id, current),
-          );
-          this.notify();
-          const result = await done;
-          this.notify();
-          if (!result.ok)
-            console.warn(
-              `Claude ${trigger.type} turn failed: ${id}`,
-              result.error,
-            );
-          settle(result);
-        } finally {
-          // Settled already, unless something above threw.
-          settle({ ok: false, error: "The turn failed" });
-        }
-      },
-      () => dropped("attention was turned off or the agent stopped"),
-    );
-    if (queued !== "queued")
-      dropped(
-        queued === "full"
-          ? `too many are waiting (Interest ${lane})`
-          : "the agent stopped",
-      );
-    return settled;
+  /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
+   * process: a new session that is not saved. */
+  async runOnce({
+    delivery,
+    key,
+    prompt,
+  }: StandaloneTurn): Promise<TurnResult> {
+    const { agent, team } = delivery;
+    const entry = this.entry(agent.pubkey, this.resolveConfig(delivery.config));
+    entry.handle = agent;
+    entry.team = team ?? "";
+    const done = entry.sessions.runOnce(key, prompt);
+    this.notify();
+    return done.finally(() => this.notify());
   }
 
-  /** The prompt for a wake as its watch now is, or undefined when it should
-   * no longer run. */
-  private async wakePrompt(
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    id: string,
-    stillCurrent: () => boolean,
-  ) {
-    const { attention } = agent;
-    if (!stillCurrent()) return undefined;
-    const current = (await attention.show(trigger.slug)).object;
-    const type = trigger.type === "watch" ? "event" : "timer";
-    if (!current || current.type !== type) return undefined;
-    const interest = (await attention.show(`interest/${current.interest_id}`))
-      .object;
-    const instructions =
-      interest?.type === "interest"
-        ? { instructions: interest.instructions }
-        : {};
-    const text =
-      trigger.type === "watch"
-        ? watchPrompt({
-            id,
-            interest: current.interest_id,
-            ...instructions,
-            event: trigger.event,
-            ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
-          })
-        : timerPrompt({
-            id,
-            interest: current.interest_id,
-            prompt: current.type === "timer" ? current.prompt : "",
-            ...instructions,
-            spent: trigger.spent,
-          });
-    // Asked again: the attention can change while it is read.
-    return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
-  }
-
-  /** `text` with Janet's end-of-turn attention review, when attention is on. */
+  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
   private review(entry: Entry, text: string) {
-    return entry.attention ? `${text}\n\n${ATTENTION_REVIEW}` : text;
+    const note = turnNote(entry.handle);
+    return note ? `${text}\n\n${note}` : text;
   }
 
   private watch(
@@ -604,27 +484,17 @@ export class ClaudeRuntime {
 
   /** The conversation the event's turn goes to: a Me chat or DM is one
    * conversation, as is a channel for an agent with channel scope. */
-  private key(
+  private async key(
     entry: Entry,
     self: string,
     event: EventData,
     channelId: string,
     topLevel: boolean,
   ) {
-    const summary = this.summary(self, channelId);
-    return topLevel ||
-      summary?.channelType === "dm" ||
-      entry.config.scope === "channel"
+    const summary = await this.reads(self)?.channel(channelId);
+    return topLevel || summary?.dm === true || entry.config.scope === "channel"
       ? channelId
       : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
-  }
-  private summary(self: string, channelId: string) {
-    const snapshot = this.relay(self)?.snapshot();
-    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    return (
-      session?.channels.list().channels.find((item) => item.id === channelId) ??
-      session?.channels.get?.(channelId)
-    );
   }
 
   /** Where the event's turn goes, and what its prompt needs. */
@@ -637,26 +507,25 @@ export class ClaudeRuntime {
     topLevel: boolean,
     fresh = false,
   ) {
-    const snapshot = this.relay(self)?.snapshot();
-    const session = snapshot?.status === "ready" ? snapshot.session : undefined;
-    const summary = this.summary(self, channelId);
-    const dm = summary?.channelType === "dm";
+    const reads = this.reads(self);
+    const summary = await reads?.channel(channelId);
+    const dm = summary?.dm === true;
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm || topLevel))
+    if (reads && (thread || dm || topLevel))
       try {
-        const events = await session.read(
+        const events = await reads.read(
           thread && !topLevel
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          { signal: AbortSignal.timeout(NAMES_TIMEOUT_MS * 2) },
+          AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
         );
         earlier = events
           .filter(
@@ -682,9 +551,9 @@ export class ClaudeRuntime {
           .map((tag) => tag[1] ?? ""),
       ]),
     ].filter(Boolean);
-    if (session)
+    if (reads)
       await Promise.race([
-        session.profiles.ensure(pubkeys, "foreground").catch(() => undefined),
+        reads.profiles(pubkeys).catch(() => undefined),
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
@@ -701,21 +570,16 @@ export class ClaudeRuntime {
       ...(thread ? { thread } : {}),
       context: unseen,
       total: earlier.length + 1,
-      name: (pubkey: string) =>
-        session?.names.resolve(pubkey, undefined, members) ??
-        session?.profiles.snapshot().get(pubkey)?.name ??
-        undefined,
+      name: (pubkey: string) => reads?.name(pubkey, members),
     };
   }
 
-  private entry(pubkey: string, initial: Config, attention: boolean): Entry {
+  private entry(pubkey: string, initial: Config): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
-      attention,
-      lanes: new Lanes(),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
@@ -723,7 +587,7 @@ export class ClaudeRuntime {
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.
     const tools =
-      (cwd: string, attention: boolean): ToolServer =>
+      (cwd: string): ToolServer =>
       async (conversation, message) => {
         const handle = entry.handle;
         const client =
@@ -736,10 +600,7 @@ export class ClaudeRuntime {
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, {
-          offered: attention,
-          ...(handle ? { api: handle.attention } : {}),
-        });
+        return respond(client, context, message);
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -749,27 +610,25 @@ export class ClaudeRuntime {
       fingerprint: () =>
         JSON.stringify([
           entry.config.model,
+          entry.config.effort,
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
           entry.team,
           entry.name,
-          entry.attention,
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
-        const { attention } = entry;
         const memory = await this.core(pubkey);
         return {
           ...where(entry.config),
-          tools: tools(workspace, attention),
+          tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
             ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
             instructions,
             team: entry.team,
-            attention,
             ...(memory === undefined ? {} : { memory }),
           }),
         };
@@ -779,13 +638,12 @@ export class ClaudeRuntime {
     return entry;
   }
 
-  /** The agent's memory, read back through the owner's session. */
+  /** The agent's memory, as its community's reads give it. */
   private memories(pubkey: string) {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status !== "ready")
-      return Promise.reject(new Error("Buzz is not connected"));
+    const reads = this.reads(pubkey);
+    if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
-      snapshot.session,
+      reads,
       pubkey,
       AbortSignal.timeout(MEMORY_TIMEOUT_MS),
     );
@@ -802,9 +660,8 @@ export class ClaudeRuntime {
     }
   }
   private forget(pubkey: string) {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    if (snapshot?.status === "ready")
-      this.memoryReads.forget(snapshot.session, pubkey);
+    const reads = this.reads(pubkey);
+    if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
 

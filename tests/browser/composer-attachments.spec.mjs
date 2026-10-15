@@ -847,16 +847,20 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect
       .poll(() => video.evaluate((el) => el.readyState))
       .toBeGreaterThanOrEqual(2);
-    await dialog
-      .getByRole("button", { name: "Play video", exact: true })
-      .click();
-    await expect
-      .poll(() => video.evaluate((el) => el.currentTime))
-      .toBeGreaterThan(0);
+    // Own the playback boundary; the short fixture's autoplay may still be
+    // running or may already have ended when WebKit reaches this assertion.
     await video.evaluate((el) => {
       window.openDraftVideo = el;
       el.loop = true;
+      el.pause();
     });
+    await dialog
+      .getByRole("button", { name: "Play video", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("button", { name: "Pause video", exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => video.evaluate((el) => el.paused)).toBe(false);
     const openedSource = await video.getAttribute("src");
     // Finish the held eager queue while the local video is actually playing.
     release();
@@ -973,6 +977,17 @@ test("local previews stay interactive during eager upload and removal collapses 
         });
         await retry.click({ trial: true });
         await failedRemove.click({ trial: true });
+        // Error actions must stay clear of the following image, at any UI size.
+        expect(
+          await failedRemove.evaluate((el) => {
+            const item = el.closest("li");
+            const next = item.nextElementSibling;
+            return (
+              next.getBoundingClientRect().left -
+              el.getBoundingClientRect().right
+            );
+          }),
+        ).toBeGreaterThanOrEqual(0);
       }
     }
     await page.evaluate(() => {
@@ -1026,8 +1041,19 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "0");
     await clipRemove.focus();
     await expect(clipRemove.locator("..")).toHaveCSS("opacity", "1");
+    const firstSlot = await photoRemove.evaluate(
+      (el) => el.getBoundingClientRect().left,
+    );
     await photoRemove.click();
-    await form.getByRole("button", { name: "Remove clip.mp4" }).click();
+    await expect(photoRemove).toHaveCount(0);
+    // The removed tile leaves the accessibility tree when its exit starts but
+    // keeps its slot until the exit finishes; only then does the clip slide
+    // left. Press the clip only once it has settled into the first slot.
+    await expect
+      .poll(() => clipRemove.evaluate((el) => el.getBoundingClientRect().left))
+      .toBe(firstSlot);
+    await clipRemove.click();
+    await expect(clipRemove).toHaveCount(0);
     await expect(form.getByRole("region", { name: "Attachments" })).toHaveCount(
       0,
     );
@@ -1040,6 +1066,111 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect(editor).toHaveText("Preserve this draft");
   } finally {
     release();
+    await server.close();
+  }
+});
+
+// Canvas encoders add platform-specific metadata; a mock cannot prove cleanup.
+test("PNG and JPEG preparation uploads metadata-free browser-encoded bytes", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`);
+    const results = await page.evaluate(async () => {
+      const { prepareAttachment } = await import(
+        "/src/features/messages/prepare-attachment.ts"
+      );
+      const { hostUpload } = await import("/src/features/relay/attachments.ts");
+      const { pngChunks, isPngRenderingChunk } = await import(
+        "/src/features/messages/image-metadata.ts"
+      );
+      const results = [];
+      for (const type of ["image/png", "image/jpeg"]) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 20;
+        canvas.height = 10;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#de4620";
+        context.fillRect(0, 0, 10, 10);
+        const blob = await new Promise((resolve) =>
+          canvas.toBlob(resolve, type),
+        );
+        const original = new Uint8Array(await blob.arrayBuffer());
+        const file = new File(
+          [blob],
+          `photo.${type === "image/png" ? "png" : "jpg"}`,
+          { type },
+        );
+        const signal = new AbortController().signal;
+        const prepared = await prepareAttachment(file, signal);
+        const uploaded = await hostUpload(async (sent) => {
+          const bytes = new Uint8Array(await sent.arrayBuffer());
+          if (type === "image/png") {
+            if (pngChunks(bytes).some(({ kind }) => !isPngRenderingChunk(kind)))
+              return new Response("metadata forbidden", { status: 422 });
+          } else {
+            // Independent relay-style check of JPEG headers before the first scan.
+            let offset = 2;
+            while (offset < bytes.length) {
+              if (bytes[offset++] !== 255) throw new Error("Invalid JPEG");
+              const marker = bytes[offset++];
+              if (marker === 0xda || marker === 0xd9) break;
+              if (
+                (marker >= 0xe1 && marker <= 0xed) ||
+                marker === 0xef ||
+                marker === 0xfe
+              )
+                return new Response("metadata forbidden", { status: 422 });
+              offset += (bytes[offset] << 8) | bytes[offset + 1];
+            }
+          }
+          const hash = Array.from(
+            new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+            (b) => b.toString(16).padStart(2, "0"),
+          ).join("");
+          return Response.json({
+            url: `/media/${hash}`,
+            sha256: hash,
+            size: sent.size,
+            type: sent.type,
+          });
+        }, "https://relay.test")(prepared, signal);
+        const bitmap = await createImageBitmap(prepared);
+        context.clearRect(0, 0, 20, 10);
+        context.drawImage(bitmap, 0, 0);
+        const sourceAfter = new Uint8Array(await file.arrayBuffer());
+        results.push({
+          type: uploaded.type,
+          size: uploaded.size,
+          preparedSize: prepared.size,
+          dimensions: [bitmap.width, bitmap.height],
+          alpha: context.getImageData(15, 5, 1, 1).data[3],
+          originalUnchanged: original.every(
+            (value, i) => value === sourceAfter[i],
+          ),
+        });
+        bitmap.close();
+      }
+      return results;
+    });
+    expect(results.map((result) => result.type)).toEqual([
+      "image/png",
+      "image/jpeg",
+    ]);
+    for (const result of results) {
+      expect(result.dimensions).toEqual([20, 10]);
+      expect(result.size).toBe(result.preparedSize);
+      expect(result.originalUnchanged).toBe(true);
+    }
+    expect(results[0].alpha).toBe(0);
+  } finally {
     await server.close();
   }
 });

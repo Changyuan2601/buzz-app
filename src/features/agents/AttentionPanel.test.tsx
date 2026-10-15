@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { describeWatch } from "./attention";
@@ -195,6 +201,12 @@ it("keeps an Interest in use, shows skipped objects, and rearms a spent timer", 
 
   expect(screen.getByText(/Done, ran 1 of 1 time/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /^Actions for Every/ }));
+  await user.click(await screen.findByRole("menuitem", { name: "Edit JSON" }));
+  expect(
+    screen.getByText(/A changed interval_secs starts after the next run\./),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: /^Actions for Every/ }));
   await user.click(await screen.findByRole("menuitem", { name: "Run again" }));
   expect(save).toHaveBeenLastCalledWith({
     attention: {
@@ -238,3 +250,70 @@ it("never names a new object after a skipped one it would replace", async () => 
     attention: { "watch/messages-2": expect.any(Object) },
   });
 });
+
+it("adds an interest in a modal and retains the draft after a save error", async () => {
+  const user = userEvent.setup();
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Try again"))
+    .mockResolvedValue(undefined);
+  render(<AttentionPanel agent={agent} save={save} channels={[]} />);
+  await user.click(screen.getByRole("button", { name: "Add interest" }));
+  const dialog = screen.getByRole("dialog", { name: "Add interest" });
+  await user.type(within(dialog).getByLabelText("Interest name"), "Releases");
+  await user.type(
+    within(dialog).getByPlaceholderText(
+      "What should the agent do for this task?",
+    ),
+    "Track releases.",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Add interest" }),
+  );
+  expect(await within(dialog).findByText("Try again")).toBeVisible();
+  expect(within(dialog).getByLabelText("Interest name")).toHaveValue(
+    "Releases",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Add interest" }),
+  );
+  expect(save).toHaveBeenLastCalledWith({
+    attention: {
+      "interest/releases": {
+        type: "interest",
+        instructions: "Track releases.",
+      },
+    },
+  });
+});
+
+it.each(["cancel", "escape", "save"])(
+  "restores Add interest focus after %s",
+  async (way) => {
+    const user = userEvent.setup();
+    render(<AttentionPanel agent={agent} save={vi.fn(async () => {})} />);
+    await user.click(screen.getByRole("button", { name: "Add interest" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add interest" });
+    if (way === "cancel")
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    else if (way === "escape") await user.keyboard("{Escape}");
+    else {
+      await user.type(
+        within(dialog).getByLabelText("Interest name"),
+        "New topic",
+      );
+      await user.type(
+        within(dialog).getByLabelText("Instructions"),
+        "Watch updates.",
+      );
+      await user.click(
+        within(dialog).getByRole("button", { name: "Add interest" }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add interest" }),
+      ).toHaveFocus(),
+    );
+  },
+);

@@ -1,7 +1,8 @@
-import type {
-  SidebarAssignmentIntent,
-  SidebarGroups,
-  SidebarSortMode,
+import {
+  projectSidebarPreferences,
+  type SidebarAssignmentIntent,
+  type SidebarGroups,
+  type SidebarSortMode,
 } from "./sidebar-preferences.ts";
 import {
   editSidebarRecord,
@@ -27,6 +28,28 @@ export function editSidebarSectionRemoval(
   return editSidebarRecord("channel-sections", current, createdAt, writes, now);
 }
 
+/** Requested live sections first, then unlisted live ones; every order is restamped. */
+export function editSidebarSectionOrder(
+  current: Record<string, unknown>,
+  createdAt: number,
+  sectionIds: readonly string[],
+  now = Date.now(),
+): Record<string, unknown> {
+  const live = projectSidebarPreferences(current, undefined).sections.map(
+    ({ id }) => id,
+  );
+  const wanted = new Set(sectionIds.filter((id) => live.includes(id)));
+  const ids = [...wanted, ...live.filter((id) => !wanted.has(id))];
+  return editSidebarRecord(
+    "channel-sections",
+    current,
+    createdAt,
+    ids.map((id, index) => [["s", id, "order"], index]),
+    now,
+    true,
+  );
+}
+
 // Typed intent policy; host adapters retain untrusted-envelope validation.
 export function validSidebarChannelId(channelId: string): boolean {
   return !!channelId.trim() && channelId.length <= 256;
@@ -48,6 +71,16 @@ export function validSidebarAssignment(
 
 export function validSidebarSectionRemoval(sectionId: string): boolean {
   return validSidebarChannelId(sectionId);
+}
+
+export function validSidebarSectionOrder(
+  sectionIds: readonly string[],
+): boolean {
+  return (
+    sectionIds.length <= 100 &&
+    sectionIds.every(validSidebarChannelId) &&
+    new Set(sectionIds).size === sectionIds.length
+  );
 }
 
 export function validSidebarSort(

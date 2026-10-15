@@ -22,6 +22,8 @@ export type ConversationTab =
       channelId: string;
       messageId: string;
       replyRequest?: number | undefined;
+      /** Transient visual cue when an opening reuses this tab. */
+      attentionRequest?: number | undefined;
       /** Threads live in the side pane unless moved or opened into main. */
       pane?: TabPane | undefined;
       /** The reader's verified root, which may differ from a link's hint. */
@@ -95,6 +97,7 @@ function withThread(
   rootId: string,
   intent: "reply" | "select" | undefined,
   pane: TabPane,
+  attention = false,
 ): State {
   const existing = state.tabs.find(
     (tab) =>
@@ -116,6 +119,10 @@ function withThread(
     kind: "thread",
     channelId,
     messageId,
+    attentionRequest:
+      prior && attention
+        ? (prior.attentionRequest ?? 0) + 1
+        : prior?.attentionRequest,
     replyRequest:
       intent === "reply"
         ? (prior?.replyRequest ?? 0) + 1
@@ -169,6 +176,7 @@ export function useChannelTabState(
     sessions.set(session, store);
   }
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
+  const snapshot = store.snapshot;
   const setChannels = store.update;
   const key = JSON.stringify([page, channelId ?? ""]);
   const state = channels[key] ?? empty;
@@ -220,7 +228,7 @@ export function useChannelTabState(
       pane: TabPane = threadPlacementPreference(),
     ) =>
       update((state) =>
-        withThread(state, channelId, messageId, rootId, intent, pane),
+        withThread(state, channelId, messageId, rootId, intent, pane, true),
       ),
     [update],
   );
@@ -438,6 +446,8 @@ export function useChannelTabState(
   return useMemo(
     () => ({
       ...state,
+      // Synchronous actions need the selection before React rerenders.
+      getSelected: () => snapshot()[key]?.selected ?? empty.selected,
       setEntries,
       retireMenuEntries,
       setTabs,
@@ -455,6 +465,8 @@ export function useChannelTabState(
     }),
     [
       state,
+      snapshot,
+      key,
       setEntries,
       retireMenuEntries,
       setTabs,

@@ -27,18 +27,10 @@ for (const direction of ["forward", "backward"]) {
       "[Before](https://example.com/before)",
     );
     const target = app.append("primary", "alpha", "Untouched continuation");
-    const after = app.append(
-      "primary",
-      "alpha",
-      "Following author",
-      true,
-      false,
-    );
+    const after = app.append("primary", "alpha", "Following continuation");
     const row = (event) =>
       page.locator(`[data-channel-timeline] [data-message-id="${event.id}"]`);
-    await expect(
-      row(target).locator('[data-layout="continuation"]'),
-    ).toBeVisible();
+    await expect(row(target).locator("[data-stack-previous]")).toBeVisible();
     await expect(row(after)).toBeVisible();
     await settle(page);
     const actions = row(target).getByRole("group", {
@@ -68,6 +60,7 @@ for (const direction of ["forward", "backward"]) {
         exact: true,
       }),
     ).toBeFocused();
+    await expect(actions.locator("[data-message-keyboard-time]")).toBeVisible();
     await page.keyboard.press(direction === "forward" ? "Tab" : "Shift+Tab");
     await expect(
       actions.getByRole("button", {
@@ -206,21 +199,23 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     .click();
   await expect(
     root.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     row.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
-  await root
-    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
-    .click();
-  await expect(root.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await root.getByRole("button", { name: "👍: You", exact: true }).click();
+  await expect(
+    root.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>
@@ -385,14 +380,14 @@ test("DM actions open the correct reply thread", async ({ page, app }) => {
   await row.getByRole("button", { name: "React with 👍", exact: true }).click();
   await expect(
     row.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
-  await row
-    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
-    .click();
-  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await row.getByRole("button", { name: "👍: You", exact: true }).click();
+  await expect(
+    row.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>
@@ -467,30 +462,16 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   const following = page.locator(
     `[data-channel-timeline] [data-message-id="${next.id}"]`,
   );
-  await expect(row.locator('[data-layout="continuation"]')).toBeVisible();
+  await expect(row.locator("[data-stack-previous]")).toBeVisible();
   await expect(following).toBeVisible();
   const actions = row.getByRole("group", { name: "Message actions" });
   const link = row.getByRole("link", { name: /this reference/ });
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
   await settle(page);
-  const expectClockAligned = async () => {
-    // The caption-sized clock is centered beside the first prose line, including
-    // when interface scaling changes their independently owned type roles.
-    await expect
-      .poll(() =>
-        row.evaluate((element) => {
-          const clock = element
-            .querySelector('time > span[aria-hidden="true"]')
-            .getBoundingClientRect();
-          const prose = element.querySelector("p");
-          const firstLineCenter =
-            prose.getBoundingClientRect().top +
-            Number.parseFloat(getComputedStyle(prose).lineHeight) / 2;
-          return Math.abs(clock.top + clock.height / 2 - firstLineCenter);
-        }),
-      )
-      .toBeLessThan(0.5);
+  const expectClockHidden = async () => {
+    await expect(row.locator("time")).toHaveClass(/sr-only/);
+    await expect(row.locator("time")).toHaveCSS("position", "absolute");
   };
   const baseline = await following.boundingBox();
   for (const mode of ["hover", "focus"]) {
@@ -502,10 +483,13 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     await expect(actions).toHaveCSS("opacity", "1");
     const prose = await row.locator("p").first().boundingBox();
     const toolbar = await actions.boundingBox();
-    expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(prose.y);
+    expect(
+      toolbar.y + toolbar.height <= prose.y ||
+        toolbar.x >= prose.x + prose.width,
+    ).toBe(true);
     await expect(actions).toHaveCSS("position", "fixed");
     expect((await following.boundingBox()).y).toBe(baseline.y);
-    await expectClockAligned();
+    await expectClockHidden();
     await expect
       .poll(() =>
         link.evaluate((node) => {
@@ -525,7 +509,12 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   );
   await row.scrollIntoViewIfNeeded();
   await settle(page);
-  await expectClockAligned();
+  await expectClockHidden();
+  await row.locator("[data-message-action-anchor]").hover();
+  const timestampHint = page.getByRole("tooltip").filter({ hasText: "2023" });
+  await expect(timestampHint).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(timestampHint).toHaveCount(0);
 });
 
 test("historical single-day DMs and their threads expose dates without hover", async ({
@@ -562,5 +551,73 @@ test("historical single-day DMs and their threads expose dates without hover", a
     name: "Thread",
     exact: true,
   });
-  await expect(thread.locator(`[data-day="${day}"]`)).toBeVisible();
+  // The original's byline names its day; the thread has no leading day divider.
+  const original = thread.locator(`[data-message-id="${event.id}"]`);
+  const timestamp = original.locator('time > span[aria-hidden="true"]');
+  await expect(timestamp).toHaveText(/ at /);
+  await expect(timestamp).toBeVisible();
+  await expect(original.locator("[data-day]")).toHaveCount(0);
+});
+
+// Browser-only: live timeline/thread grouping must preserve real native focus
+// and Tab's next destination while the focused avatar retires on blur.
+test("live grouped appends preserve avatar focus in channel and thread", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  for (const mode of ["channel", "thread"]) {
+    let container = page.locator("[data-channel-timeline]");
+    let composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    if (mode === "thread") {
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      container = panel;
+      composer = panel.getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      });
+    }
+    const append = (text) =>
+      app.append(
+        "primary",
+        "alpha",
+        text,
+        true,
+        true,
+        mode === "thread" ? root.id : undefined,
+      );
+    const first = append(`Focused ${mode} message`);
+    const row = container.locator(`[data-message-id="${first.id}"]`);
+    const avatar = row
+      .getByRole("button", { name: /^View .* profile$/ })
+      .first();
+    await avatar.focus();
+    const second = append(`Next ${mode} message`);
+    await expect(row.locator("[data-stack-next]")).toBeVisible();
+    await expect(avatar).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      row.getByRole("button", { name: "React with 👍", exact: true }),
+    ).toBeFocused();
+    await expect(avatar).toHaveCount(0);
+    await composer.focus();
+    append(`Another ${mode} message`);
+    await expect(
+      container.locator(`[data-message-id="${second.id}"] [data-stack-next]`),
+    ).toBeVisible();
+    await expect(composer).toBeFocused();
+  }
 });

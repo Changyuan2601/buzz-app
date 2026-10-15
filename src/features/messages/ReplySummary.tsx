@@ -1,6 +1,7 @@
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** Shared summary contents for channel threads and collapsed reply branches. */
 export function ReplySummary({
@@ -31,7 +32,7 @@ export function ReplySummary({
           return {
             id,
             name: resolveName(id, profile?.name ?? id.slice(0, 10)),
-            src: profile?.picture ? media(profile.picture, "small") : undefined,
+            src: avatarMedia(profile?.picture, media),
             shape: agentPubkeys?.has(id) ? "squircle" : "circle",
           };
         })}

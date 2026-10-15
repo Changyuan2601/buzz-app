@@ -53,6 +53,7 @@ import {
 import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** How a name matches typed text: the shared person name rule, the same as
  * mentions and New message. */
@@ -95,7 +96,7 @@ function MemberAvatar({
       <Avatar
         alt=""
         fallback={name}
-        src={picture ? session.media(picture, "small") : undefined}
+        src={avatarMedia(picture, session.media)}
         size="default"
         shape={agent ? "squircle" : "circle"}
         statusBadge={presence === "unknown" ? undefined : presence}
@@ -1094,11 +1095,7 @@ export function ChannelMembersDialog({
             <Avatar
               alt=""
               fallback={label(selection.pubkey)}
-              src={
-                selectedPicture
-                  ? session.media(selectedPicture, "small")
-                  : undefined
-              }
+              src={avatarMedia(selectedPicture, session.media)}
               size="small"
               shape={selectedAgent ? "squircle" : "circle"}
             />

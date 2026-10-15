@@ -142,7 +142,7 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_update",
-    "Change only the fields given; clear removes optional fields.",
+    "Change only the fields given; clear removes optional fields. A timer keeps its next run when its interval changes; use watch_rearm to schedule it from now.",
     {
       id,
       interest: scope,

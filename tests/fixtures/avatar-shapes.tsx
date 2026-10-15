@@ -13,13 +13,16 @@ import artwork from "./design-system/assets/avatar.png";
 
 const agent = "a".repeat(64),
   human = "b".repeat(64);
-// Flat color lets the paint test distinguish clipping from photo texture.
+// Flat color lets the paint test distinguish clipping from photo texture. The
+// shared sanitiser only passes `https:` pictures to `media`, so profiles carry
+// a remote URL and the fixture's `media` serves the inline artwork for it.
+const insetPicture = "https://artwork.test/inset.svg";
 const insetArtwork = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><path fill="#ff00ff" d="M0 0h32v32H0z"/></svg>',
 )}`;
 const profiles = new Map([
-  [agent, { name: "Agent", picture: insetArtwork }],
-  [human, { name: "Human", picture: insetArtwork }],
+  [agent, { name: "Agent", picture: insetPicture }],
+  [human, { name: "Human", picture: insetPicture }],
 ]);
 const agentPubkeys = new Set([agent]);
 const row: ChannelMessage = {
@@ -38,6 +41,8 @@ function Fixture() {
   useKeyboardFocusVisibility();
   const [opened, setOpened] = useState(false);
   const [pictures, setPictures] = useState(true);
+  const media = (url: string) =>
+    pictures ? (url === insetPicture ? insetArtwork : url) : undefined;
   return (
     // Match the message panel's opaque surface so clipped pixels have the same
     // backdrop as the overlap border in either theme, not the document canvas.
@@ -86,7 +91,7 @@ function Fixture() {
         profile={profiles.get(agent)}
         participantProfiles={profiles}
         agentPubkeys={agentPubkeys}
-        media={(url) => (pictures ? url : undefined)}
+        media={media}
         canOpenLink={() => true}
         onOpenLink={() => {
           setOpened(true);
@@ -106,7 +111,7 @@ function Fixture() {
           }}
           profiles={profiles}
           agentPubkeys={agentPubkeys}
-          media={(url) => (pictures ? url : undefined)}
+          media={media}
           day={false}
         />
       ))}

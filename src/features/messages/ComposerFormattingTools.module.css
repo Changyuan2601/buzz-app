@@ -18,6 +18,11 @@
   min-width: 0;
   flex-wrap: wrap;
 }
+.tools[data-single-row] .ingress {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
 .expanded {
   min-width: 0;
   flex: 1;

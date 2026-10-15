@@ -24,6 +24,7 @@ function Example({
   informational = false,
   height,
   bodyLayout,
+  chromeSpacing,
   size,
   children,
 }: {
@@ -34,7 +35,8 @@ function Example({
   intro?: string;
   action?: string;
   informational?: boolean;
-  height?: "content" | "stable";
+  height?: "content" | "stable" | "stable-tall";
+  chromeSpacing?: "default" | "padded";
   bodyLayout?: "flow" | "flex";
   size?: "default" | "wide" | "expanded";
   children: ReactNode;
@@ -60,7 +62,7 @@ const id = useId();
 <Dialog
   open={open}
   onOpenChange={setOpen}
-  title=${JSON.stringify(title)}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
+  title=${JSON.stringify(title)}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
   actions={${
     informational
       ? '<Button variant="prominent" onClick={() => setOpen(false)}>Done</Button>'
@@ -84,6 +86,7 @@ ${informational ? "" : `  <form id={id} className="space-y-section-gap" onSubmit
         {...(size ? { size } : {})}
         {...(height ? { height } : {})}
         {...(bodyLayout ? { bodyLayout } : {})}
+        {...(chromeSpacing ? { chromeSpacing } : {})}
         {...(intro ? { description: intro } : {})}
         actions={
           informational ? (
@@ -140,6 +143,18 @@ export function DialogSpecimens() {
             Choose a harness to see its setup details.
           </p>
         </div>
+      </Example>
+      <Example
+        label="Tall creation surface"
+        description="Proposed stable-tall height and padded chrome, as used by agent creation."
+        title="Create an item"
+        height="stable-tall"
+        chromeSpacing="padded"
+        code={'<Field label="Name"><Input placeholder="Name" /></Field>'}
+      >
+        <Field label="Name">
+          <Input placeholder="Name" />
+        </Field>
       </Example>
       <Example
         label="Simple message"

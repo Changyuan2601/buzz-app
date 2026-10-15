@@ -1061,7 +1061,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
- "uds_windows",
  "url",
  "user-idle",
  "uuid",
@@ -1134,6 +1133,20 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "buzz-nsec-backup"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+ "zeroize",
 ]
 
 [[package]]

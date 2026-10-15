@@ -1,7 +1,7 @@
+import { profileActivityViewTarget } from "../../features/profiles/target";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import type { Agents } from "../../features/agents/service";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
@@ -37,6 +37,7 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import {
   useCallback,
   useEffect,
@@ -73,12 +74,16 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
-import type { Attachment } from "../../features/relay/contracts";
+import type {
+  Attachment,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function ChannelsPage({
   extensions,
@@ -639,20 +644,13 @@ function ChannelWorkspace({
     ],
   );
   const conversationIcon = (item: (typeof channels)[number]) => {
-    const Icon = channelIcon(item);
     const person = item.participants?.[0];
-    const picture = person ? profiles.get(person)?.picture : undefined;
-    return item.channelType === "dm" ? (
-      <span className={tabStyles.icon}>
-        <Avatar
-          alt=""
-          fallback={item.name}
-          size="fill"
-          src={picture ? queries.media(picture) : null}
-        />
-      </span>
-    ) : (
-      <Icon size="1rem" />
+    return (
+      <ConversationIcon
+        item={item}
+        picture={person ? profiles.get(person)?.picture : undefined}
+        media={queries.media}
+      />
     );
   };
   const channelConversation = useRef<HTMLDivElement>(null);
@@ -757,12 +755,9 @@ function ChannelWorkspace({
     }
     const activityAgent = handoff?.activityAgent.current;
     if (activityAgent && activityAgent.channelId === current?.id) {
-      const target = activityTarget(
-        activityAgent.agent,
-        activityAgent.channelId,
-      );
-      const panel = panels.resolve(target);
-      if (panel) {
+      const target = profileActivityViewTarget(activityAgent.agent);
+      const panel = target && panels.resolve(target);
+      if (target && panel) {
         panelTrigger.current = activityAgent.trigger;
         open({ channelId: activityAgent.channelId, panel, target }, true);
       }
@@ -849,6 +844,20 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
@@ -1201,10 +1210,12 @@ function ChannelWorkspace({
       {!cached && (
         <LiveStatus
           live={queries.live}
+          recovery={queries.recovery}
           channelId={current?.id}
           partialRoster={list.coverage === "partial"}
-          // Retry removes this control; previews have no composer.
-          onRetry={
+          // Recovery removes the focused retry control. Hand focus on
+          // explicitly; previews have no composer, so use their history.
+          onRecovered={
             current
               ? () => {
                   if (current.readOnly && !current.cached) {
@@ -1610,7 +1621,9 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
+      <LinkThreadTabContext value={openLinkedThread}>
+        {workspace}
+      </LinkThreadTabContext>
     </MessageManagement>
   );
 }
@@ -1627,4 +1640,30 @@ export function mediaReviewForDestination<
     (review.entryId === undefined || review.entryId === entryId)
     ? review
     : undefined;
+}
+
+/** A DM tab shows the other participant in a 1rem slot, so it asks for the
+ * relay thumbnail message rows already loaded rather than the original. */
+export function ConversationIcon({
+  item,
+  picture,
+  media,
+}: {
+  item: Pick<ChannelSummary, "name" | "channelType" | "private">;
+  picture: string | undefined;
+  media: RelaySession["media"];
+}) {
+  const Icon = channelIcon(item);
+  return item.channelType === "dm" ? (
+    <span className={tabStyles.icon}>
+      <Avatar
+        alt=""
+        fallback={item.name}
+        size="fill"
+        src={avatarMedia(picture, media)}
+      />
+    </span>
+  ) : (
+    <Icon size="1rem" />
+  );
 }

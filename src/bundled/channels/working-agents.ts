@@ -42,9 +42,7 @@ export function workingAgentDetails(
   snapshot: Snapshot,
   channelId: string,
   agent: string,
-):
-  | { startedAt: number; messageId?: string; label?: string; local?: boolean }
-  | undefined {
+): { startedAt: number; messageId?: string; label?: string } | undefined {
   const work = localActivity(snapshot, channelId).get(agent);
   if (work) {
     if (work.state !== "waiting" && work.state !== "working") return;
@@ -58,7 +56,6 @@ export function workingAgentDetails(
       startedAt: Math.min(...active.map((row) => row.startedAt)),
       ...(active.length === 1 ? { messageId: work.messageId } : {}),
       label: localWorkLabel(work),
-      local: true,
     };
   }
   if (snapshot.status !== "listening") return;

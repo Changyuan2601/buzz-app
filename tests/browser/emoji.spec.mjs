@@ -54,7 +54,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBeVisible();
     const sentSingleEmoji = page.locator("p[data-single-emoji]");
     await expect(sentSingleEmoji).toHaveCSS("font-size", "42px");
-    await expect(sentSingleEmoji).toHaveCSS("margin-top", "4px");
+    await expect(sentSingleEmoji).toHaveCSS("margin-top", "0px");
     await expect(sentSingleEmoji.locator('img[alt=":party:"]')).toHaveCSS(
       "width",
       "42px",
@@ -65,10 +65,10 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     );
     expect(
       await sentSingleEmoji.evaluate((message) => {
-        const byline = message.previousElementSibling;
-        const emoji = message.querySelector("img");
+        const bubble = message.closest("[data-message-action-anchor]");
+        const byline = bubble.parentElement.previousElementSibling;
         return (
-          emoji.getBoundingClientRect().top -
+          bubble.getBoundingClientRect().top -
           byline.getBoundingClientRect().bottom
         );
       }),

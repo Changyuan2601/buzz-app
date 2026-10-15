@@ -19,7 +19,7 @@ const choices = (
 });
 
 afterEach(cleanup);
-it("retries the failed library and updates the picker when a second agent joins", async () => {
+it("keeps selection explicit while the library and channel membership change", async () => {
   const viewer = "a".repeat(64),
     agent = "b".repeat(64),
     other = "c".repeat(64);
@@ -73,15 +73,22 @@ it("retries the failed library and updates the picker when a second agent joins"
     />,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Choose an agent" }));
+  await user.click(
+    screen.getByRole("button", { name: "Choose follow-up assistant" }),
+  );
   await user.click(
     await screen.findByRole("button", { name: "Retry agent list" }),
   );
   await user.keyboard("{Escape}");
   expect(refresh).toHaveBeenCalledOnce();
+  const picker = await screen.findByRole("button", {
+    name: "Choose follow-up assistant",
+  });
+  await user.click(picker);
   expect(
-    await screen.findByRole("button", { name: "Change agent: Helper" }),
+    await screen.findByRole("button", { name: "Helper" }),
   ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
   act(() => {
     roster = {
       channels: [
@@ -91,7 +98,7 @@ it("retries the failed library and updates the picker when a second agent joins"
     for (const listener of listeners) listener();
   });
   expect(
-    await screen.findByRole("button", { name: "Choose an agent" }),
+    await screen.findByRole("button", { name: "Choose follow-up assistant" }),
   ).toBeInTheDocument();
   expect(ensure).toHaveBeenCalledWith([viewer, agent, other], "background");
 });

@@ -1,4 +1,5 @@
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { SidebarList } from "../../features/channel-navigation/SidebarList";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   ArrowDownIcon,
@@ -166,77 +167,72 @@ export function SidebarUnread({
       row.focus({ preventScroll: true });
     });
   };
-  return (
-    <div className={styles.channelListFrame}>
-      <nav
-        ref={list}
-        className={styles.channelList}
-        aria-label="Subscribed channels"
+  const edgeCues = (["above", "below"] as const).map((edge) => {
+    const count = edges[edge].length;
+    const nearestFirst =
+      edge === "above" ? [...edges[edge]].reverse() : edges[edge];
+    const previews = nearestFirst
+      .flatMap(({ channelId }) => {
+        const preview = dmPreviews?.get(channelId);
+        return preview ? [{ channelId, ...preview }] : [];
+      })
+      .slice(0, 3);
+    const Icon = edge === "above" ? ArrowUpIcon : ArrowDownIcon;
+    return (
+      <div
+        className={styles.unreadEdge}
+        data-edge={edge}
+        key={edge}
+        data-visible={count > 0}
+        inert={count === 0}
+        aria-hidden={count === 0}
       >
-        <div ref={content} className={styles.channelListContent}>
-          {children}
-        </div>
-      </nav>
-      {(["above", "below"] as const).map((edge) => {
-        const count = edges[edge].length;
-        const nearestFirst =
-          edge === "above" ? [...edges[edge]].reverse() : edges[edge];
-        const previews = nearestFirst
-          .flatMap(({ channelId }) => {
-            const preview = dmPreviews?.get(channelId);
-            return preview ? [{ channelId, ...preview }] : [];
-          })
-          .slice(0, 3);
-        const Icon = edge === "above" ? ArrowUpIcon : ArrowDownIcon;
-        return (
-          <div
-            className={styles.unreadEdge}
-            data-edge={edge}
-            key={edge}
-            data-visible={count > 0}
-            inert={count === 0}
-            aria-hidden={count === 0}
-          >
-            <Button
-              variant="prominent"
-              aria-label={`${count} unread ${count === 1 ? "conversation" : "conversations"} ${edge}`}
-              data-edge={edge}
-              data-attention={edges[edge].some(({ attention }) => attention)}
-              size="sm"
-              shape="control"
-              type="button"
-              title={`Reveal the nearest unread channel ${edge} without opening it`}
-              onClick={() => reveal(edge)}
-            >
-              <Icon size={15} aria-hidden="true" />
-              {previews.length > 0 && (
-                <span className={styles.unreadDmPreviews} aria-hidden="true">
-                  <span className={styles.unreadDmStack}>
-                    {previews.map((preview, index) => (
-                      <span
-                        key={preview.channelId}
-                        className={styles.unreadDmAvatar}
-                        data-unread-dm={preview.channelId}
-                        style={{ zIndex: previews.length - index }}
-                      >
-                        <Avatar
-                          src={preview.src}
-                          alt=""
-                          fallback={preview.name}
-                          size="fill"
-                          shape={preview.isAgent ? "squircle" : "circle"}
-                        />
-                      </span>
-                    ))}
+        <Button
+          variant="prominent"
+          aria-label={`${count} unread ${count === 1 ? "conversation" : "conversations"} ${edge}`}
+          data-edge={edge}
+          data-attention={edges[edge].some(({ attention }) => attention)}
+          size="xs"
+          shape="capsule"
+          type="button"
+          onClick={() => reveal(edge)}
+        >
+          <Icon size={15} aria-hidden="true" />
+          {previews.length > 0 && (
+            <span className={styles.unreadDmPreviews} aria-hidden="true">
+              <span className={styles.unreadDmStack}>
+                {previews.map((preview, index) => (
+                  <span
+                    key={preview.channelId}
+                    className={styles.unreadDmAvatar}
+                    data-unread-dm={preview.channelId}
+                    style={{ zIndex: previews.length - index }}
+                  >
+                    <Avatar
+                      src={preview.src}
+                      alt=""
+                      fallback={preview.name}
+                      size="fill"
+                      shape={preview.isAgent ? "squircle" : "circle"}
+                    />
                   </span>
-                  <span>·</span>
-                </span>
-              )}
-              <span className={styles.unreadEdgeLabel}>{count} unread</span>
-            </Button>
-          </div>
-        );
-      })}
-    </div>
+                ))}
+              </span>
+              <span>·</span>
+            </span>
+          )}
+          <span className={styles.unreadEdgeLabel}>{count} unread</span>
+        </Button>
+      </div>
+    );
+  });
+  return (
+    <SidebarList
+      navigation={{ label: "Subscribed channels", ref: list }}
+      contentRef={content}
+      overlay={edgeCues}
+    >
+      {children}
+    </SidebarList>
   );
 }

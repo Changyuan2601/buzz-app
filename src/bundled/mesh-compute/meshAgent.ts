@@ -3,7 +3,6 @@
 // No helper process, ACP session, MCP bridge or alternate inference provider.
 // Final prose is posted independently of optional Buzz tool sends.
 import type { Delivery } from "../../features/agents/service";
-import type { EventWatch } from "../../features/agents/attention";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -194,20 +193,6 @@ async function conversationMessages(
     .slice(-50);
 }
 
-/** Chat alone may follow one sender explicitly selected by the owner's watch.
- * More general predicates do not grant non-owner triggering. */
-export function allowMeshAgentWatch(
-  config: unknown,
-  watch: EventWatch,
-  event: EventData,
-) {
-  return (
-    meshAgentConfig(config).mode === "chat" &&
-    /^\s*author\s*==\s*"([0-9a-f]{64})"\s*$/.exec(watch.filter ?? "")?.[1] ===
-      event.pubkey
-  );
-}
-
 /** Turns in each agent conversation run in order; follow-ups queue, not steer. */
 export class MeshAgentRuntime {
   private readonly lanes = new Map<string, Promise<void>>();
@@ -221,16 +206,8 @@ export class MeshAgentRuntime {
     if (trigger.type === "timer" || !channelId) return Promise.resolve();
     const event = trigger.event;
     const config = meshAgentConfig(delivery.config);
-    // Tool-enabled turns remain owner-only. Chat may follow a selected sender;
-    // neither a broad watch nor a non-owner mention grants that permission.
-    if (
-      event.pubkey === agent.pubkey ||
-      (event.pubkey !== agent.owner &&
-        !(
-          trigger.type === "watch" &&
-          allowMeshAgentWatch(config, trigger.watch, event)
-        ))
-    )
+    // Both modes retain owner-only admission; watches do not grant authority.
+    if (event.pubkey === agent.pubkey || event.pubkey !== agent.owner)
       return Promise.resolve();
     const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
     const conversation = conversationKey(channelId, event, dm, config.scope);
