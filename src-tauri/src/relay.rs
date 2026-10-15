@@ -638,17 +638,31 @@ async fn channel_creation_supported(community: &str) -> Result<bool> {
 }
 
 fn client() -> Result<&'static reqwest::Client> {
-    static CLIENT: OnceLock<std::result::Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
+    static CLIENT: OnceLock<Result<reqwest::Client>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            let mut builder = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(30));
+            if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
+                let pem = std::fs::read(path)
+                    .map_err(|_| "Configured relay CA file could not be read".to_string())?;
+                let certificates = reqwest::Certificate::from_pem_bundle(&pem)
+                    .map_err(|_| "Configured relay CA file is invalid".to_string())?;
+                if certificates.is_empty() {
+                    return Err("Configured relay CA file contains no certificates".into());
+                }
+                for certificate in certificates {
+                    builder = builder.add_root_certificate(certificate);
+                }
+            }
+            builder
                 .build()
+                .map_err(|_| "Relay network client is unavailable".into())
         })
         .as_ref()
-        .map_err(|_| "Relay network client is unavailable".into())
+        .map_err(Clone::clone)
 }
 
 #[tauri::command]
