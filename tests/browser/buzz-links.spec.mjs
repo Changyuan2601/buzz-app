@@ -206,11 +206,19 @@ test("a message link's context menu opens its thread as a tab without leaving th
   await expect(link).toBeVisible();
   await virtuaIdle(page);
   const before = (await state(page)).entry;
-  // Target the link itself instead of a cached coordinate: under load WebKit can
-  // spend the first pointer move opening the preview and toolbar, shifting the
-  // actionable point before the contextmenu event. The test is about the link's
-  // composed context-menu owner, not stale coordinate hit-testing.
-  await link.click({ button: "right" });
+  // Finish hover-triggered layout before taking coordinates. Locator.click can
+  // scroll again on a retry, restarting Virtua's pointer-event hold mid-click.
+  await link.hover();
+  await expect(
+    page.getByLabel("Message preview", { exact: true }),
+  ).toBeVisible();
+  await virtuaIdle(page);
+  const bounds = await link.boundingBox();
+  await page.mouse.click(
+    bounds.x + bounds.width / 2,
+    bounds.y + bounds.height / 2,
+    { button: "right" },
+  );
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Open link",
