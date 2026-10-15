@@ -1160,7 +1160,9 @@ plugin keeps registering its default and never sees, stores or re-registers for
 an override; the override follows the plugin across disable, re-enable and
 replacement, and an override whose owner is no longer installed is ignored rather
 than deleted. Rebinding replaces an alias set with the single chosen chord; reset
-restores every alias. Host chords stay reserved: the page refuses to assign a chord
+restores every alias. On Apple platforms a binding may add Control (`ctrl`) beside
+Command, as in Me's ⌃⌘A Archive chat; elsewhere Control is `mod`, so a `ctrl`
+binding never matches there and capture never records one. Host chords stay reserved: the page refuses to assign a chord
 that another listed shortcut already uses, host or plugin, refuses the copy, cut,
 paste and select-all chords (and close-window/quit in the desktop build) because a
 match would prevent their default everywhere, and warns when a chord is one the

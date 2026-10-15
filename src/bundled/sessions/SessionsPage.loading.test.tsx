@@ -22,7 +22,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { writeView } from "../../shared/view-state";
 import { meTarget } from "../me/routes";
-import { SessionsPage } from "./SessionsPage";
+import { SessionsPage, type ArchiveShortcut } from "./SessionsPage";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -169,6 +169,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
+  const archive: ArchiveShortcut = {};
   const page = () => (
     <SessionsPage
       relay={relay}
@@ -176,6 +177,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
       extensions={extensions}
       navigation={navigation}
       navigator={{ open } as unknown as Navigation}
+      archive={archive}
     />
   );
   const mount = () => render(page());
@@ -183,6 +185,7 @@ function fixture(status: KitSnapshot["status"] = "ready", retained = true) {
     mount,
     page,
     abort,
+    archive,
     set,
     run,
     refresh,
@@ -321,6 +324,36 @@ it.each([
     expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
   },
 );
+
+it("confirms Archive from the shortcut, then leaves the archived chat", async () => {
+  const f = fixture();
+  f.mount();
+  expect(f.archive.current?.available()).toBe(true);
+  act(() => f.archive.current?.run());
+  const dialog = screen.getByRole("dialog", {
+    name: "Archive channel: Planning",
+  });
+  expect(f.run).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Archive channel" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(f.run).toHaveBeenCalledExactlyOnceWith(
+    "archive",
+    id,
+    expect.any(AbortSignal),
+  );
+  expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
+  expect(f.archive.current).toBeUndefined();
+});
+
+it("stops offering the Archive shortcut when its visit ends", () => {
+  const f = fixture();
+  f.mount();
+  f.abort.abort();
+  expect(f.archive.current?.available()).toBe(false);
+});
 
 it("drops a pending Delete confirmation when its visit ends", async () => {
   const f = fixture();

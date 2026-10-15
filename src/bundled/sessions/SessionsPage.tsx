@@ -84,6 +84,11 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import styles from "../../features/sessions/Sessions.module.css";
 
+/** The open chat's Archive, published for the Me shortcut while its visit is live. */
+export type ArchiveShortcut = {
+  current?: { available(): boolean; run(): void } | undefined;
+};
+
 export function SessionsPage({
   relay,
   panels,
@@ -91,6 +96,7 @@ export function SessionsPage({
   extensions,
   navigator,
   navigation,
+  archive,
 }: {
   relay: RelayData;
   panels: Panels;
@@ -98,6 +104,7 @@ export function SessionsPage({
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
@@ -111,6 +118,7 @@ export function SessionsPage({
       extensions={extensions}
       navigator={navigator}
       navigation={navigation?.forSession(relay, connection)}
+      archive={archive}
     />
   ) : (
     <PanelFrame companion={companion}>
@@ -144,6 +152,7 @@ type LiveProps = {
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
+  archive?: ArchiveShortcut | undefined;
 };
 type Lifecycle = {
   channel: ChannelSummary;
@@ -191,6 +200,7 @@ function SessionsView({
   extensions,
   navigator,
   navigation,
+  archive,
   chooseLifecycle,
 }: LiveProps & { chooseLifecycle(lifecycle: Lifecycle): void }) {
   const list = useChannelList(session.channels);
@@ -206,6 +216,36 @@ function SessionsView({
   const select = (id: string) => {
     void navigator?.open(meTarget(scope, id));
   };
+  // Mail's Archive chord opens the same confirmation as the Session actions menu.
+  const archivable =
+    selected !== "new" &&
+    !pendingDraft &&
+    !selectedSession?.readOnly &&
+    !selectedSession?.cached &&
+    !selectedSession?.archived
+      ? selectedSession
+      : undefined;
+  useLayoutEffect(() => {
+    if (!archive || !archivable) return;
+    const signal = navigation?.signal;
+    const current = {
+      available: () => !signal?.aborted,
+      run: () =>
+        chooseLifecycle({
+          channel: archivable,
+          action: "archive",
+          trigger:
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : undefined,
+          origin: signal,
+        }),
+    };
+    archive.current = current;
+    return () => {
+      if (archive.current === current) archive.current = undefined;
+    };
+  }, [archive, archivable, navigation, chooseLifecycle]);
   if (selected === "new" || pendingDraft)
     return (
       <PanelFrame companion={companion}>

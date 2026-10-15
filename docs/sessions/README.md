@@ -42,6 +42,10 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
 - Me chats and drafts use the full conversation pane. Right-click,
   Shift+F10 and overflow share one sidebar action list: Share, Rename, Move to a Me
   project, Copy and Chat settings. Opening a row menu does not select the row.
+- **Archive chat** (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in
+  Settings → Shortcuts) opens the Session actions Archive confirmation for the open
+  chat, including from the composer. Success returns to Me. Archived chats are
+  restored from search and Channel Settings, as before.
 - Me uses the ordinary composer with a visible selected assistant plus explicit
   owner-scoped mentions. The selected assistant is device-local view intent keyed
   by account, community and chat; it is not Canvas, group data or channel metadata.
