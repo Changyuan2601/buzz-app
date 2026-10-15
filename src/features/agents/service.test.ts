@@ -2778,6 +2778,71 @@ it("a failed read of the key's status does not stop a saved key from classifying
   expect(service.classifier()).toBe("available");
 });
 
+it("keeps a key removed while a call that used it ran shown as missing", async () => {
+  const jev = fakeJev();
+  let answer!: (value: Answer) => void;
+  jev.classify.mockImplementationOnce(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const { service, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() =>
+    expect(service.snapshot().classifierKey).toBe("saved"),
+  );
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await service.clearClassifierKey();
+  answer(yes);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(service.snapshot().classifierKey).toBe("missing");
+  expect(service.classifier()).toBe("unavailable");
+});
+
+it("keeps a key saved while an old key's call ran shown as saved, though the old one was refused", async () => {
+  const jev = fakeJev();
+  let answer!: (value: Answer) => void;
+  jev.classify.mockImplementationOnce(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const { service, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() =>
+    expect(service.snapshot().classifierKey).toBe("saved"),
+  );
+  emit({ events: [event("w")] });
+  await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+  await service.setClassifierKey("new");
+  answer({ outcome: "failed", reason: "unauthorized" });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(service.snapshot().classifierKey).toBe("saved");
+});
+
+it("keeps a key saved before the first status read answers shown as saved", async () => {
+  const jev = fakeJev(false);
+  let known!: (value: boolean) => void;
+  jev.status.mockImplementationOnce(
+    () => new Promise<boolean>((resolve) => (known = resolve)),
+  );
+  const { service } = await classifiedAgent(jev);
+  await service.setClassifierKey("tk");
+  known(false);
+  await settle();
+  expect(service.snapshot().classifierKey).toBe("saved");
+});
+
+it("classifies a watched event of an agent whose community is not selected", async () => {
+  const jev = fakeJev();
+  const { service, run, emit, second, select } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  select(second.origin);
+  expect(service.find(bot)).toBeUndefined();
+  emit({ events: [event("w", { content: "shipping v2" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(jev.classify).toHaveBeenCalledOnce();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    slug: "watch/channel",
+    classifier: { outcome: "passed" },
+  });
+});
+
 it("classifies a reply without its parent when the parent lookup does not answer", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
@@ -3091,6 +3156,21 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
   // New events still wake the replacement.
   emit({ events: [event("five", { content: "deploy" })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+});
+
+it("tells a run whose type queued its work that it is current while another community is selected", async () => {
+  const { service, run, emit, second, select } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  select(second.origin);
+  expect(service.find(bot)).toBeUndefined();
+  emit({ events: [event("one", { content: "deploy" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0] as Delivery;
+  await settle();
+  expect(delivery.current()).toBe(true);
+  await service.save(bot, { attentionEnabled: false });
+  expect(delivery.current()).toBe(false);
 });
 
 it("tells a run whose type queued its work whether that work is still current", async () => {

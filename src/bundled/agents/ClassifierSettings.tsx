@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import type { Agents, AgentsSnapshot } from "../../features/agents/service";
+import { isApplePlatform } from "../../features/shortcuts/format";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -19,12 +20,16 @@ const STATUS: Record<AgentsSnapshot["classifierKey"], string> = {
 export function ClassifierSettings({
   agents,
   active,
+  apple = isApplePlatform(navigator.platform),
 }: {
   agents: Pick<
     Agents,
     "snapshot" | "subscribe" | "setClassifierKey" | "clearClassifierKey"
   >;
   active(): boolean;
+  /** Whether the key goes to the macOS Keychain, which keeps it from other
+   * programs; Windows and Linux stores do not. */
+  apple?: boolean;
 }) {
   const state = useSyncExternalStore(
     agents.subscribe,
@@ -58,8 +63,10 @@ export function ClassifierSettings({
         <p className="mt-2 text-body-sm text-secondary">
           An agent's watch can ask Jev whether an event is relevant before the
           agent wakes. Without a key, those watches still wake the agent, and
-          the agent is told the classifier did not run. The key is kept in this
-          device's secure storage, where agents cannot read it.
+          the agent is told the classifier did not run.{" "}
+          {apple
+            ? "The key is kept in this Mac's Keychain, where only Buzz can read it."
+            : "The key is kept in this device's credential store. Other programs you run, agent shells included, can read it there."}
         </p>
         <p className="mt-2 text-body-sm text-secondary">
           For each event a classified watch matches, Buzz sends TypeSafe

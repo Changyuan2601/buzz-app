@@ -740,6 +740,10 @@ export class AgentsService extends Service implements Agents {
   /** Settles once the saved key's status is known; until then a classified
    * event waits rather than pass unchecked. */
   private jevStatus: Promise<void> | undefined;
+  /** Goes up when a save or remove of the key starts and when it ends, so
+   * that what a read or classifier call found under an older key is not
+   * shown over the newer one. */
+  private keyGeneration = 0;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
@@ -815,7 +819,6 @@ export class AgentsService extends Service implements Agents {
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
-      find: (pubkey) => this.find(pubkey),
       member: (agent, event) => this.member(agent, event),
       dm: (agent, event) => this.dm(agent, event),
       scope: (agent) => this.bindingOf(agent)?.scope,
@@ -854,7 +857,10 @@ export class AgentsService extends Service implements Agents {
       jev: () => this.jev,
       jevStatus: () => this.jevStatus,
       classifierKey: () => this.state.classifierKey,
-      setClassifierKey: (key) => this.setKey(key),
+      classifierKeyGeneration: () => this.keyGeneration,
+      setClassifierKey: (key, generation) => {
+        if (generation === this.keyGeneration) this.setKey(key);
+      },
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
@@ -875,12 +881,16 @@ export class AgentsService extends Service implements Agents {
       ];
       this.watch();
       void this.refresh();
+      const generation = this.keyGeneration;
+      const found = (key: ClassifierKey) => {
+        if (generation === this.keyGeneration) this.setKey(key);
+      };
       this.jevStatus = this.jev
         ?.status()
-        .then((configured) => this.setKey(configured ? "saved" : "missing"))
+        .then((configured) => found(configured ? "saved" : "missing"))
         .catch((error) => {
           console.warn("The classifier key could not be read", error);
-          this.setKey("unreadable");
+          found("unreadable");
         });
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
@@ -1009,16 +1019,26 @@ export class AgentsService extends Service implements Agents {
     return this.state.classifier;
   }
   async setClassifierKey(key: string) {
-    if (!this.jev)
-      throw new Error("The classifier runs only in the desktop app");
-    await this.jev.setKey(key);
+    const jev = this.jev;
+    if (!jev) throw new Error("The classifier runs only in the desktop app");
+    await this.changeKey(() => jev.setKey(key));
     this.setKey("saved");
   }
   async clearClassifierKey() {
-    if (!this.jev)
-      throw new Error("The classifier runs only in the desktop app");
-    await this.jev.clearKey();
+    const jev = this.jev;
+    if (!jev) throw new Error("The classifier runs only in the desktop app");
+    await this.changeKey(() => jev.clearKey());
     this.setKey("missing");
+  }
+  /** Saves or removes the key. A read or classifier call that started before
+   * it ends may have used the old key, so its finding is ignored. */
+  private async changeKey(change: () => Promise<void>) {
+    this.keyGeneration++;
+    try {
+      await change();
+    } finally {
+      this.keyGeneration++;
+    }
   }
   /** Agents are told a classifier can run only while a key is known to be
    * saved. A key the service refused still runs, and each event reports why

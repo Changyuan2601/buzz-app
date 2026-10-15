@@ -176,8 +176,6 @@ export type RunnerHost = {
   ready(pubkey: string): Agent | undefined;
   /** A running agent, in any community. */
   agent(pubkey: string): Agent | undefined;
-  /** The agent as `Agents.find` gives it. */
-  find(pubkey: string): Agent | undefined;
   /** Whether the agent is in the event's channel. */
   member(agent: Agent, event: RelayEvent): boolean;
   /** Whether the event's channel is a DM between the agent and one other. */
@@ -203,8 +201,11 @@ export type RunnerHost = {
   jevStatus(): Promise<void> | undefined;
   /** What is known about the saved classifier key. */
   classifierKey(): ClassifierKey;
-  /** What a classifier call found out about the saved key. */
-  setClassifierKey(key: ClassifierKey): void;
+  /** Changes each time the owner saves or removes the key. */
+  classifierKeyGeneration(): number;
+  /** What a classifier call that started under `generation` found out about
+   * the saved key; ignored once the key has changed since. */
+  setClassifierKey(key: ClassifierKey, generation: number): void;
   /** The event's surroundings for the classifier. */
   context(agent: Agent, event: RelayEvent): Promise<ClassifierContext>;
   /** A person's name as the agent's community shows it. */
@@ -459,6 +460,7 @@ export class AgentRunners {
       const context = await this.host.context(agent, trigger.event);
       // Stopped or changed while its context was looked up: nothing is sent.
       if (!live()) return undefined;
+      const generation = this.host.classifierKeyGeneration();
       const { pass, result } = await classify(jev, {
         // Checked as non-null by the caller.
         classifier: trigger.watch.classifier as NonNullable<
@@ -473,10 +475,12 @@ export class AgentRunners {
       });
       // The key was removed outside the app since it was read, the service
       // refused it, or native found one the failed status read could not.
-      if (result.outcome === "not-run") this.host.setClassifierKey("missing");
-      else if (result.outcome === "passed") this.host.setClassifierKey("saved");
+      if (result.outcome === "not-run")
+        this.host.setClassifierKey("missing", generation);
+      else if (result.outcome === "passed")
+        this.host.setClassifierKey("saved", generation);
       else if (result.reason === "unauthorized")
-        this.host.setClassifierKey("refused");
+        this.host.setClassifierKey("refused", generation);
       return pass ? result : undefined;
     })().catch((error) => {
       console.warn(`Agent ${agent.name} could not classify an event`, error);
@@ -563,7 +567,7 @@ export class AgentRunners {
   /** Whether `job`, already started, should still run: the rule `current()`
    * applies to a queued job, asked again for work a type queued itself. */
   private stillCurrent(runner: Runner, job: Job) {
-    const agent = this.host.find(runner.pubkey);
+    const agent = this.host.agent(runner.pubkey);
     if (!agent) return false;
     const { trigger } = job;
     if (trigger.type === "mention") return true;

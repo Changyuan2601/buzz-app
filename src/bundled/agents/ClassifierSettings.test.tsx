@@ -114,3 +114,13 @@ it("does not call a key missing until its status is read, or when it cannot be",
   );
   expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
 });
+
+it.each([
+  [true, /this Mac's Keychain, where only Buzz can read it/],
+  [false, /Other programs you run, agent shells included, can read it there/],
+])("says who can read the key (Keychain: %s)", (apple, text) => {
+  render(
+    <ClassifierSettings agents={fake()} active={() => true} apple={apple} />,
+  );
+  expect(screen.getByText(text)).toBeInTheDocument();
+});
