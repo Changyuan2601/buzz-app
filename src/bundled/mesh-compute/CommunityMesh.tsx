@@ -3,6 +3,7 @@ import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { communityDestination } from "../../features/communities/destination";
 import type { RelayData } from "../../features/relay/service";
 import styles from "./Compute.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { UsersIcon } from "../../shared/design-system/icons";
@@ -151,11 +152,7 @@ export function CommunityMesh({
                   <Avatar
                     alt=""
                     fallback={memberName(device.memberPubkey)}
-                    src={
-                      picture
-                        ? snapshot.session.media(picture, "small")
-                        : undefined
-                    }
+                    src={avatarMedia(picture, snapshot.session.media)}
                     size="default"
                   />
                   <div className={styles.deviceBody}>
