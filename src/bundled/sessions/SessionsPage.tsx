@@ -225,8 +225,14 @@ function SessionsView({
       ? selectedSession
       : undefined;
   const lifecycle = session.channelLifecycle;
+  // Chat activity replaces the summary; a pending request belongs to the chat.
+  const latest = useRef(archivable);
   useLayoutEffect(() => {
-    if (!archive || !archivable || !lifecycle.available) return;
+    latest.current = archivable;
+  });
+  const archivableId = archivable?.id;
+  useLayoutEffect(() => {
+    if (!archive || !archivableId || !lifecycle.available) return;
     const signal = navigation?.signal;
     const current = {
       available: () => !signal?.aborted,
@@ -237,11 +243,16 @@ function SessionsView({
             ? document.activeElement
             : undefined;
         const settings = await lifecycle
-          .load(archivable.id, signal)
+          .load(archivableId, signal)
           .catch(() => undefined);
-        if (settings?.canArchive && archive.current === current)
+        const channel = latest.current;
+        if (
+          settings?.canArchive &&
+          archive.current === current &&
+          channel?.id === archivableId
+        )
           chooseLifecycle({
-            channel: archivable,
+            channel,
             action: "archive",
             trigger,
             origin: signal,
@@ -252,7 +263,7 @@ function SessionsView({
     return () => {
       if (archive.current === current) archive.current = undefined;
     };
-  }, [archive, archivable, lifecycle, navigation, chooseLifecycle]);
+  }, [archive, archivableId, lifecycle, navigation, chooseLifecycle]);
   if (selected === "new" || pendingDraft)
     return (
       <PanelFrame companion={companion}>
