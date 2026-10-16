@@ -270,6 +270,11 @@ export function ChannelNavigationProvider({
             action={state.lifecycleDialog.action}
             lifecycle={connection.session.channelLifecycle}
             onSubmit={value.beginLifecycle}
+            finalFocus={() =>
+              state.lifecycleDialog?.trigger?.isConnected
+                ? state.lifecycleDialog.trigger
+                : (state.lifecycleDialog?.focusFallback ?? true)
+            }
             close={() => {
               (
                 state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -327,6 +327,59 @@ it("returns keyboard focus to the trigger while confirmed work continues in a to
   try {
     await screen.findByRole("dialog", { name: "Deleting channel…" });
     await waitFor(() => expect(trigger).toHaveFocus());
+  } finally {
+    await act(async () => gate.resolve());
+  }
+});
+
+it("returns submission focus to the surviving Settings control when its trigger remounts", async () => {
+  const lifecycle = capability();
+  const gate = deferred<void>();
+  lifecycle.run.mockReturnValueOnce(gate.promise);
+  function Host() {
+    const [open, setOpen] = useState(false);
+    const [restored, setRestored] = useState(false);
+    const close = useRef<HTMLButtonElement>(null);
+    const trigger = useRef<HTMLButtonElement>(null);
+    return (
+      <ToastProvider>
+        <button type="button" ref={close}>
+          Close Channel settings tab
+        </button>
+        {!restored && (
+          <button type="button" ref={trigger} onClick={() => setOpen(true)}>
+            Restore channel
+          </button>
+        )}
+        {open && (
+          <ChannelLifecycleDialog
+            channelId="id"
+            channelName="Fixture"
+            action="unarchive"
+            lifecycle={lifecycle}
+            onSubmit={() => setRestored(true)}
+            finalFocus={() => trigger.current ?? close.current}
+            close={() => setOpen(false)}
+            completed={() => setOpen(false)}
+          />
+        )}
+      </ToastProvider>
+    );
+  }
+  render(<Host />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Restore channel" }));
+  await user.click(screen.getByRole("button", { name: "Unarchive channel" }));
+  try {
+    await screen.findByRole("dialog", { name: "Unarchiving channel…" });
+    expect(
+      screen.queryByRole("button", { name: "Restore channel" }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Close Channel settings tab" }),
+      ).toHaveFocus(),
+    );
   } finally {
     await act(async () => gate.resolve());
   }

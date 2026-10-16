@@ -771,9 +771,14 @@ it.each([true, false])(
   },
 );
 
-it.each(["archive", "delete"] as const)(
+it.each(["archive", "unarchive", "delete"] as const)(
   "%s completion preserves focus moved during pending work and retains required navigation",
   async (action) => {
+    const label = {
+      archive: "Archive channel",
+      unarchive: "Unarchive channel",
+      delete: "Delete channel",
+    }[action];
     const h = fixture();
     const channel = h.list.channels[1];
     assert(channel);
@@ -823,12 +828,16 @@ it.each(["archive", "delete"] as const)(
     await user.click(screen.getByRole("button", { name: "Start action" }));
     await user.click(
       await screen.findByRole("button", {
-        name: action === "archive" ? "Archive channel" : "Delete channel",
+        name: label,
       }),
     );
     try {
       await screen.findByRole("dialog", {
-        name: action === "archive" ? "Archiving channel…" : "Deleting channel…",
+        name: {
+          archive: "Archiving channel…",
+          unarchive: "Unarchiving channel…",
+          delete: "Deleting channel…",
+        }[action],
       });
       act(() => origin.abort());
       expect(run.mock.calls[0]?.[2]?.aborted).toBe(false);
@@ -840,10 +849,11 @@ it.each(["archive", "delete"] as const)(
       await act(async () => finish());
     }
     await screen.findByRole("dialog", {
-      name:
-        action === "archive"
-          ? "Channel archived: beta"
-          : "Channel deleted: beta",
+      name: {
+        archive: "Channel archived: beta",
+        unarchive: "Channel unarchived: beta",
+        delete: "Channel deleted: beta",
+      }[action],
     });
     expect(screen.getByRole("button", { name: "Other control" })).toHaveFocus();
     if (action === "delete")
