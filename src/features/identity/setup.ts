@@ -1,12 +1,16 @@
 import type { Identity } from "./service";
 
 export type SetupStep = Readonly<{ label: string; run: () => Promise<void> }>;
+/** Where setup rests for a decision: the key-management choice, or the nsec reveal. */
+export type SetupPause = "key-choice" | "key-reveal";
 export type SetupSnapshot = Readonly<
   | { status: "idle" }
   | { status: "running"; label: string }
+  | { status: "paused"; at: SetupPause }
   | { status: "failed"; error: string }
   | { status: "done" }
 >;
+type Resting = Extract<SetupSnapshot, { status: "paused" | "done" }>;
 
 export const wait = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -23,28 +27,51 @@ async function createKey(identity: Identity) {
 }
 
 /**
- * First-run steps, in order. `[TODO]` steps have no backend yet and only wait;
- * replace their `run` with the real call and drop the marker from the label.
- * The key download/upload placeholders are Builderlab key backup, so key-only
- * setup (a community no Builderlab tenant hosts) omits them. Setup started from
- * a community URL already knows which community to join, so it skips "Finding
- * communities".
+ * TODO(kgoose): look up a key Builderlab backed up for the signed-in account.
+ * Always answers "none" until that endpoint exists. When real: take the
+ * Builderlab credential (`login.credential()` in Welcome), and let a found key
+ * import through `identity.importKey(nsec)` and skip the choice page — that
+ * needs the step to pick the resting state, e.g. `run` returning `Resting | void`.
  */
-export function setupSteps(
-  identity: Identity,
+export async function lookupBackedUpKey(
   delay = wait,
-  { findCommunities = true, builderlab = true } = {},
-): SetupStep[] {
-  const placeholder = (label: string) => ({ label, run: () => delay(2000) });
-  return [
-    ...(builderlab ? [placeholder("Downloading keys… [TODO]")] : []),
-    { label: "Creating keys…", run: () => createKey(identity) },
-    ...(builderlab ? [placeholder("Uploading keys… [TODO]")] : []),
-    ...(findCommunities ? [placeholder("Finding communities… [TODO]")] : []),
-  ];
+): Promise<{ found: false }> {
+  await delay(2000);
+  return { found: false };
 }
 
-/** Runs the given steps once, stopping at the first failure. */
+/** TODO(kgoose): upload the key for the signed-in account; only waits for now. */
+export const backUpKey = (delay = wait) => delay(2000);
+
+/**
+ * The first-run steps `Welcome` composes into phases. `[TODO]` steps have no
+ * backend yet and only wait; replace their `run` with the real call and drop
+ * the marker from the label. Everything but `createKey` needs a Builderlab
+ * account, so key-only setup (a community no tenant hosts) runs that alone.
+ */
+export function firstRunSteps(identity: Identity, delay = wait) {
+  return {
+    findCommunities: {
+      label: "Finding communities… [TODO]",
+      run: () => delay(2000),
+    },
+    checkBackup: {
+      label: "Checking for a backed-up key… [TODO]",
+      run: () => lookupBackedUpKey(delay).then(() => {}),
+    },
+    createKey: { label: "Creating keys…", run: () => createKey(identity) },
+    backUp: {
+      label: "Backing up your key… [TODO]",
+      run: () => backUpKey(delay),
+    },
+  } satisfies Record<string, SetupStep>;
+}
+
+/**
+ * Runs steps in order, stopping at the first failure, then rests at `then`: done,
+ * or a pause the caller resumes with another `start`. No steps means "nothing
+ * more to do" and rests at once.
+ */
 export function createSetup() {
   let state: SetupSnapshot = { status: "idle" };
   const listeners = new Set<() => void>();
@@ -60,8 +87,11 @@ export function createSetup() {
         listeners.delete(listener);
       };
     },
-    async start(steps: readonly SetupStep[]) {
-      if (state.status !== "idle") return;
+    async start(
+      steps: readonly SetupStep[],
+      then: Resting = { status: "done" },
+    ) {
+      if (state.status !== "idle" && state.status !== "paused") return;
       for (const step of steps) {
         publish({ status: "running", label: step.label });
         try {
@@ -77,7 +107,7 @@ export function createSetup() {
           return;
         }
       }
-      publish({ status: "done" });
+      publish(then);
     },
     reset() {
       if (state.status === "running") return;

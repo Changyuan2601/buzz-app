@@ -114,7 +114,9 @@ agents are not migrated into this type.
   the welcome screen passes that deployment's origin and `browserCredential`
   runs the whole round-trip there; the Settings card always uses the build URL.
   A successful first-run sign-in continues into the app-owned setup steps
-  described in [identity](../../../docs/identity.md), which create the device key.
+  described in [identity](../../../docs/identity.md): a backed-up-key lookup
+  and a key backup are placeholders until Builderlab serves them; the user
+  chooses who keeps the device key before it is created.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

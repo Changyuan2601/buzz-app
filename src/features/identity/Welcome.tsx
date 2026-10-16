@@ -26,9 +26,11 @@ import {
 } from "./builderlab-tenants";
 import { CommunityUrlField } from "./CommunityUrlField";
 import { JoinCommunity } from "./JoinCommunity";
+import { KeyChoice } from "./KeyChoice";
+import { KeyReveal } from "./KeyReveal";
 import { ProfileStep } from "./ProfileStep";
 import type { Identity } from "./service";
-import { createSetup, setupSteps, wait } from "./setup";
+import { createSetup, firstRunSteps, wait } from "./setup";
 import { SetupWindowHeader } from "./SetupWindowHeader";
 
 /**
@@ -86,12 +88,23 @@ export function Welcome({
     [login],
   );
   if (state.status === "ready" && progress.status === "idle") return children;
-  /** `findCommunities` is false when a landing-page URL already names the community. */
+  const steps = firstRunSteps(identity, delay);
+  /**
+   * `findCommunities` is false when a landing-page URL already names the
+   * community. Sign-in leads to the backed-up-key lookup, then pauses for the
+   * key choice; each choice below resumes setup with its own steps.
+   */
   const signIn = async (findCommunities: boolean, origin?: string) => {
     loginOrigin.current = origin;
     await login.signIn();
     if (login.snapshot().status === "signed-in")
-      void setup.start(setupSteps(identity, delay, { findCommunities }));
+      void setup.start(
+        [
+          ...(findCommunities ? [steps.findCommunities] : []),
+          steps.checkBackup,
+        ],
+        { status: "paused", at: "key-choice" },
+      );
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
@@ -228,6 +241,27 @@ export function Welcome({
               {progress.label}
             </p>
           </>
+        ) : progress.status === "paused" ? (
+          progress.at === "key-choice" ? (
+            <KeyChoice
+              email={auth.account?.email}
+              onManaged={() =>
+                void setup.start([steps.createKey, steps.backUp])
+              }
+              onOwn={() =>
+                void setup.start([steps.createKey], {
+                  status: "paused",
+                  at: "key-reveal",
+                })
+              }
+            />
+          ) : (
+            <KeyReveal
+              identity={identity}
+              onBackUp={() => void setup.start([steps.backUp])}
+              onContinue={() => void setup.start([])}
+            />
+          )
         ) : progress.status === "failed" ? (
           <Failure
             title="Couldn’t finish setup"
@@ -252,13 +286,8 @@ export function Welcome({
               const method = discoverAuthentication(found, tenants);
               if (method.kind === "builderlab")
                 void signIn(false, method.origin);
-              else
-                void setup.start(
-                  setupSteps(identity, delay, {
-                    findCommunities: false,
-                    builderlab: false,
-                  }),
-                );
+              // Key-only: no account to look a backup up in or back up to.
+              else void setup.start([steps.createKey]);
             }}
             titleId="welcome-title"
           />

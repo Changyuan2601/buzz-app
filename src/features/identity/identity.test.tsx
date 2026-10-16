@@ -731,6 +731,7 @@ function landingRelay(
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "identity_restore") return null;
     if (command === "identity_create") return created;
+    if (command === "identity_export") return key;
     if (command !== "relay_http")
       throw new Error(`Unexpected command ${command}`);
     relayCalls.push(args);
@@ -755,6 +756,11 @@ function landingRelay(
 }
 const urlField = () => screen.getByRole("textbox", { name: "Community URL" });
 const urlJoin = () => screen.getByRole("button", { name: "Join" });
+/** The key choice every Builderlab setup pauses on; Manage creates and backs up the key. */
+const manageKeysForMe = async (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(
+    await screen.findByRole("button", { name: "Manage my keys for me" }),
+  );
 /** The test table: relay.example.com (any subdomain, default port) signs in at tenant.example. */
 const tenants = [
   { relayHost: "relay.example.com", loginOrigin: "https://tenant.example" },
@@ -816,11 +822,16 @@ it("a landing URL is looked up before sign-in, a tenant's relay signs in at that
   await act(async () => released.resolve(credential));
   // Setup skips "Finding communities": the URL already names the community.
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Downloading keys… [TODO]",
+    "Checking for a backed-up key… [TODO]",
   );
   await release(0);
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  await manageKeysForMe(user);
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Uploading keys… [TODO]",
+    "Backing up your key… [TODO]",
   );
   await release(1);
   expect(delay.mock.calls).toEqual([[2000], [2000]]);
@@ -1082,11 +1093,29 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
     screen.getByRole("heading", { name: "Setting up Buzz" }),
   ).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Downloading keys… [TODO]",
+    "Finding communities… [TODO]",
   );
   expect(screen.queryByRole("button")).toBeNull();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await release(0);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Checking for a backed-up key… [TODO]",
+  );
+  await release(1);
+  // The lookup found nothing, so setup pauses for the key choice before any
+  // key exists. The import choice has no backend yet.
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  expect(screen.getByText(/backed-up key for a@example\.com/)).toBeVisible();
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  expect(
+    screen.getByRole("button", { name: "I already have a key — Coming soon" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "I want to manage my own key" }),
+  ).toBeEnabled();
+  await manageKeysForMe(user);
   expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
   expect(invoke).toHaveBeenCalledWith("identity_create", {});
   await act(async () => created.resolve(viewer));
@@ -1094,11 +1123,7 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Uploading keys… [TODO]",
-  );
-  await release(1);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Finding communities… [TODO]",
+    "Backing up your key… [TODO]",
   );
   await release(2);
   expect(
@@ -1151,6 +1176,7 @@ it("Join a community checks the typed URL, opens Finding community, and Cancel k
   await user.click(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
+  await manageKeysForMe(user);
   await screen.findByRole("heading", { name: "Join a community" });
   const field = () => screen.getByRole("textbox", { name: "Community URL" });
   // The page remounts after Cancel, so look the button up each time.
@@ -1240,6 +1266,7 @@ it("a found community shows Join Community after exactly the two unauthenticated
   await user.click(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
+  await manageKeysForMe(user);
   await screen.findByRole("heading", { name: "Join a community" });
   await user.type(
     screen.getByRole("textbox", { name: "Community URL" }),
@@ -1299,6 +1326,7 @@ function nativeRelay(member: ReturnType<typeof keypair>) {
       created = true;
       return member.pubkey;
     }
+    if (command === "identity_export") return key;
     if (command === "relay_sign")
       return signed(member, (args as { event: EventTemplate }).event);
     if (command !== "relay_http")
@@ -1356,6 +1384,7 @@ async function joinCommunityPage(identity: Identity, openRelay = "") {
   await user.click(
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
+  await manageKeysForMe(user);
   await screen.findByRole("heading", { name: "Join a community" });
   await user.type(
     screen.getByRole("textbox", { name: "Community URL" }),
@@ -1715,22 +1744,213 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
   expect(await screen.findByRole("status")).toHaveTextContent(
-    "Downloading keys… [TODO]",
+    "Finding communities… [TODO]",
   );
   await release(0);
+  await release(1);
+  await manageKeysForMe(user);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Keychain refused to save the key",
   );
   expect(
     screen.getByRole("heading", { name: "Couldn’t finish setup" }),
   ).toBeVisible();
-  // Later placeholder steps never run after the failure.
-  expect(delay).toHaveBeenCalledTimes(1);
+  // The backup step never runs after the failure.
+  expect(delay).toHaveBeenCalledTimes(2);
   expect(identity.snapshot().status).toBe("missing");
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(welcomeHeading()).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(connectButton()).toBeEnabled();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_create",
+  ]);
+  identity.dispose();
+});
+
+it("managing my own key shows the nsec on arrival with Copy, hides it on blur, and continues only once the backup box is ticked", async () => {
+  const created = deferred<string>();
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create") return created.promise;
+    if (command === "identity_export") return Promise.resolve(key);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const { delay, release } = gatedDelay();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={delay}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await release(0);
+  await release(1);
+  await user.click(
+    screen.getByRole("button", { name: "I want to manage my own key" }),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Creating keys…");
+  expect(invoke).toHaveBeenCalledWith("identity_create", {});
+  // The clicked button is gone, and jsdom then aims the next focus move's
+  // blur at `window`, which would hide the key. Park focus on the body first.
+  act(() => {
+    document.body.tabIndex = -1;
+    document.body.focus();
+    document.body.removeAttribute("tabindex");
+  });
+  await act(async () => created.resolve(viewer));
+  // The reveal page fetches the key once on arrival and shows the nsec in the
+  // well; the app stays hidden behind the pause.
+  expect(
+    await screen.findByRole("heading", { name: "Your private identity key" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(await screen.findByText(key)).toHaveClass("font-mono");
+  expect(screen.getByText("Private key (nsec)")).toBeVisible();
+  expect(screen.queryByText(viewer)).toBeNull();
+  const saved = () =>
+    screen.getByRole("checkbox", {
+      name: "I’ve saved my private key somewhere safe",
+    });
+  const proceed = () =>
+    screen.getByRole("button", { name: "Continue without backing up" });
+  expect(saved()).toBeEnabled();
+  expect(proceed()).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Please back this up for me" }),
+  ).toBeEnabled();
+  // Copy reuses the shown key rather than exporting again.
+  await user.click(screen.getByRole("button", { name: "Copy private key" }));
+  expect(write).toHaveBeenCalledWith(key);
+  expect(screen.getByRole("status")).toHaveTextContent("Private key copied.");
+  expect(
+    vi.mocked(invoke).mock.calls.filter(([c]) => c === "identity_export"),
+  ).toHaveLength(1);
+  // Window blur hides it, as everywhere else, and Reveal is offered again.
+  fireEvent(window, new Event("blur"));
+  expect(screen.queryByText(key)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Reveal private key" }),
+  ).toBeEnabled();
+  await user.click(saved());
+  expect(proceed()).toBeEnabled();
+  await user.click(proceed());
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  // No backup ran: only the two lookup placeholders waited.
+  expect(delay.mock.calls).toEqual([[2000], [2000]]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_create",
+    "identity_export",
+  ]);
+  identity.dispose();
+});
+
+it("Please back this up for me on the reveal page runs the backup step and lands on Join Community for a landing URL", async () => {
+  const relay = landingRelay("https://relay.example.com");
+  relay.info.resolve();
+  const { delay, release } = gatedDelay();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      tenants={tenants}
+      delay={delay}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await user.type(urlField(), "relay.example.com{Enter}");
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Checking for a backed-up key… [TODO]",
+  );
+  await release(0);
+  await user.click(
+    screen.getByRole("button", { name: "I want to manage my own key" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Your private identity key" }),
+  ).toBeVisible();
+  expect(await screen.findByText(key)).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Please back this up for me" }),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Backing up your key… [TODO]",
+  );
+  expect(screen.queryByText(key)).toBeNull();
+  await release(1);
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(delay.mock.calls).toEqual([[2000], [2000]]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "relay_http",
+    "relay_http",
+    "identity_create",
+    "identity_export",
+    "relay_http",
+    "relay_http",
+  ]);
+  identity.dispose();
+});
+
+it("a key creation failure on the own-key path stops setup before any reveal, and Back returns to the first-launch screen", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_create")
+      return Promise.reject("Keychain refused to save the key");
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={vi.fn().mockResolvedValue(undefined)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "I want to manage my own key" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Keychain refused to save the key",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(identity.snapshot().status).toBe("missing");
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(connectButton()).toBeEnabled();
+  expect(invoke).not.toHaveBeenCalledWith("identity_export");
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",

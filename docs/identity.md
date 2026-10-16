@@ -28,17 +28,30 @@ or setup failure, return to the welcome screen with the address kept and do not
 look it up again. A community no row hosts is not known to be Builderlab-hosted,
 so it skips sign-in entirely and goes straight to setup with the key alone.
 
-Success continues to a **Setting up Buzz** page that runs its steps in order,
-showing the current label with a spinner: *Downloading keys*, *Creating keys*,
-*Uploading keys*, and — only when no community URL was supplied on the welcome
-screen — *Finding communities*. Only **Creating keys** does real work: it
-generates a Nostr key through the same native create command as the key setup
-screen, so the next launch opens as a returning user. The others are
-placeholders marked `[TODO]` that wait two seconds each until their backends
-exist (`src/features/identity/setup.ts`); the key download and upload ones are
-Builderlab key backup, so key-only setup runs **Creating keys** alone. A failed
-step shows **Couldn’t finish setup** with the error and **Back** to the welcome
-screen. Setup then lands on
+Success continues to a **Setting up Buzz** page that shows the current step
+beside a spinner. It runs *Finding communities* — only when no community URL
+was supplied on the welcome screen — and then *Checking for a backed-up key*;
+both are placeholders marked `[TODO]` that wait two seconds each until their
+backends exist (`src/features/identity/setup.ts`), and the lookup always
+answers that no key was found. Setup then pauses on **Set up your key**: it
+says no backed-up key was found for the signed-in email and that Builderlab
+can keep a copy so you can sign in on other devices, and offers **Manage my
+keys for me**, a smaller **I want to manage my own key**, and **I already have
+a key**, disabled as *Coming soon*. Manage runs **Creating keys** — the only
+step that does real work: it generates a Nostr key through the same native
+create command as the key setup screen, so the next launch opens as a
+returning user — then *Backing up your key*, a `[TODO]` placeholder; nothing
+is uploaded yet. Managing your own key runs **Creating keys** alone and pauses
+on **Your private identity key**: the nsec, shown on arrival (see [UI and
+sensitive data](#ui-and-sensitive-data)) with **Copy private key**, a checkbox
+*I’ve saved my private key somewhere safe*, and two actions — **Please back
+this up for me**, which runs the backup placeholder, and **Continue without
+backing up**, enabled only once the box is ticked. The page reads the key
+through the same `identity_export` command Settings → Profile uses; there is no
+save-to-file. Key-only setup (a community no tenant hosts) has no account to
+look a backup up in or back up to, so it runs **Creating keys** alone with no
+choice or reveal page. A failed step shows **Couldn’t finish setup** with the
+error and **Back** to the welcome screen. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
 a **Community URL** field with **Join** beside it, and **Scan a QR code** and
@@ -253,7 +266,11 @@ if the community profile cannot load. The full npub and hex public key can be
 copied. The nsec is absent from the rendered field until Reveal; Copy can fetch it without revealing it. Hide, leaving Identity,
 window blur and document hiding retire pending reveals and clear the displayed
 secret. Failed private-key actions report fixed errors. Copy deliberately leaves
-the key on the OS clipboard; the UI warns about that.
+the key on the OS clipboard; the UI warns about that. The one exception is the
+first-run **Your private identity key** page, which fetches and shows the nsec on
+arrival (`PrivateKey` with `initiallyRevealed`): choosing to keep the only copy
+is the gesture. The same Hide, blur, hiding and unmount rules clear it there,
+and Reveal is offered again once it is hidden.
 
 The app UI passes a private string through IPC only during explicit import/export
 interaction. JavaScript/IPC string memory is not guaranteed zeroized. Native

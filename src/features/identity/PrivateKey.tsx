@@ -1,16 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { Identity } from "./service";
+
+const MASK = "••••••••••••••••";
 
 // Mount only while Profile is active. Late native results must never repopulate a hidden key.
 export function PrivateKey({
   identity,
   onInteraction,
+  initiallyRevealed = false,
 }: {
   identity: Identity;
   /** Called once the key was revealed or copied, e.g. to gate Sign out. */
   onInteraction?: () => void;
+  /**
+   * First-run backup page: fetch and show the key on mount in a large well,
+   * with Copy as the primary action. Hiding on blur, document hiding and
+   * unmount is unchanged, and Reveal is offered again once hidden.
+   */
+  initiallyRevealed?: boolean;
 }) {
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +43,12 @@ export function PrivateKey({
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("blur", clear);
     };
+  }, []);
+  const revealOnMount = useEffectEvent(() => {
+    if (initiallyRevealed) void access(false);
+  });
+  useEffect(() => {
+    revealOnMount();
   }, []);
   function hide() {
     generation.current++;
@@ -71,24 +86,32 @@ export function PrivateKey({
     }
   }
   return (
-    <div className="mt-6">
+    <div className={initiallyRevealed ? undefined : "mt-6"}>
       <label
         className="mb-2 block text-label-sm"
-        htmlFor="identity-private-key"
+        htmlFor={initiallyRevealed ? undefined : "identity-private-key"}
       >
         Private key (nsec)
       </label>
       <p className="text-body-sm text-muted">
         Anyone with this key can act as you. Never share it.
       </p>
-      <Input
-        id="identity-private-key"
-        readOnly
-        value={secret || "••••••••••••••••"}
-        onFocus={(event) => {
-          if (secret) event.currentTarget.select();
-        }}
-      />
+      {initiallyRevealed ? (
+        // The key well. No mono role is larger than 12px yet, so the body-lg
+        // size carries the mono face until one exists.
+        <code className="my-3 block select-text break-all font-mono text-body-lg text-primary">
+          {secret || MASK}
+        </code>
+      ) : (
+        <Input
+          id="identity-private-key"
+          readOnly
+          value={secret || MASK}
+          onFocus={(event) => {
+            if (secret) event.currentTarget.select();
+          }}
+        />
+      )}
       <div className="mt-3 flex flex-wrap gap-3">
         <Button
           type="button"
@@ -97,7 +120,12 @@ export function PrivateKey({
         >
           {secret ? "Hide private key" : "Reveal private key"}
         </Button>
-        <Button type="button" disabled={busy} onClick={() => void access(true)}>
+        <Button
+          type="button"
+          variant={initiallyRevealed ? "primary" : "subtle"}
+          disabled={busy}
+          onClick={() => void access(true)}
+        >
           Copy private key
         </Button>
         {busy && (
