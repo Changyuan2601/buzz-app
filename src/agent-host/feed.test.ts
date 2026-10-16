@@ -356,3 +356,57 @@ it("hears channels in batches the relay accepts, asking again only for the batch
   expect(statuses.at(-1)).toBe(false);
   feed.stop();
 });
+
+it("gives on what open subscriptions heard while another was asked for again, once listening", async () => {
+  const { feed, socket, pubkey, statuses, heard, sign, roster } = loggedIn();
+  socket.receive(["EVENT", "rosters", roster("room", [pubkey])]);
+  socket.receive(["EOSE", latest(socket, "metadata:0")]);
+  expect(statuses.at(-1)).toBe(true);
+  socket.receive(["CLOSED", "rosters", "error: busy"]);
+  expect(statuses.at(-1)).toBe(false);
+  // The channel's subscription is still open, but the host takes nothing
+  // while the feed is not listening.
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:0"),
+    sign(9, [["h", "room"]], "meanwhile", 150),
+  ]);
+  expect(heard).toEqual([]);
+  const at = statuses.length;
+  await vi.advanceTimersByTimeAsync(1_000);
+  // Listening again, then given on.
+  expect(statuses.slice(at)).toEqual([true]);
+  expect(heard).toEqual(["meanwhile:false"]);
+  feed.stop();
+});
+
+it("asks a stream it lost for what it missed, though other streams heard on", async () => {
+  const { feed, socket, pubkey, sign, roster } = loggedIn();
+  const start = Math.floor(Date.now() / 1000);
+  for (let index = 0; index <= CHANNEL_BATCH; index++)
+    socket.receive(["EVENT", "rosters", roster(`c${index}`, [pubkey])]);
+  const since = (key: string) =>
+    (
+      socket
+        .reqs()
+        .find((message) => message[1] === latest(socket, key))?.[2] as
+        | { since?: number }
+        | undefined
+    )?.since;
+  socket.receive(["CLOSED", latest(socket, "channels:0"), "error: busy"]);
+  // The second batch hears on, well past the overlap.
+  socket.receive([
+    "EVENT",
+    latest(socket, "channels:1"),
+    sign(9, [["h", `c${CHANNEL_BATCH}`]], "later", start + 300),
+  ]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  // The first batch asks again from where it stopped.
+  expect(since("channels:0")).toBe(start - 30);
+  // Once it has sent what it missed, it hears on as the others do.
+  socket.receive(["EOSE", latest(socket, "channels:0")]);
+  socket.receive(["CLOSED", latest(socket, "channels:0"), "error: busy"]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(since("channels:0")).toBe(start + 270);
+  feed.stop();
+});

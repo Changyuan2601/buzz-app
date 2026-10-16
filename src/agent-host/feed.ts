@@ -1,7 +1,8 @@
 // The agent's live feed on a standalone host: one WebSocket to its community,
 // logged in as the agent (NIP-42, carrying its owner's attestation), that
 // hears what names the agent and everything in the channels it is in. It
-// reconnects after a drop and picks up from the last event it heard.
+// reconnects after a drop, and each subscription picks up from where it
+// stopped hearing.
 import { finalizeEvent } from "nostr-tools/pure";
 import { CHAT_KINDS } from "../features/agents/attention";
 import { eventsDto, type RelayEvent } from "../features/relay/events";
@@ -15,7 +16,8 @@ const OVERLAP_S = 30;
  * (buzz-relay `MAX_EXPLICIT_CHANNEL_VALUES`), so channels are heard in
  * batches of this many, each its own subscription. */
 export const CHANNEL_BATCH = 128;
-/** The most events held for one channel while its metadata loads. */
+/** The most events held for one channel while its metadata loads, and
+ * while the feed is not live. */
 const HELD_LIMIT = 500;
 /** Why a relay closes a subscription that asking again will not change: it
  * stays closed until the next connection. Other closes are tried again. */
@@ -27,7 +29,8 @@ export type FeedOptions = Readonly<{
   pubkey: string;
   /** The owner's NIP-OA `auth` tag. */
   auth?: readonly string[];
-  /** Live events, one batch per event, with the event's channel. */
+  /** Live events, one batch per event, with the event's channel. Only while
+   * the feed is live: ones heard meanwhile come once it is live again. */
   onEvents(batch: LiveBatch): void;
   /** Whether the feed is live now: the relay keeps its subscriptions open. */
   onStatus(live: boolean): void;
@@ -50,8 +53,18 @@ export class AgentFeed {
    * events heard in them meanwhile. Whether a channel is a DM decides how
    * its messages wake the agent, so they wait until it is known. */
   private readonly loading = new Map<string, LiveBatch[]>();
+  /** Events heard while the feed was not live, as while one subscription is
+   * asked for again and the others are still open. The host takes events
+   * only while it is listening, so they wait until then. */
+  private paused: LiveBatch[] = [];
+  private live = false;
   private socket: WebSocket | undefined;
+  /** The newest event heard: an open subscription has heard to here. */
   private since = Math.floor(Date.now() / 1000);
+  /** Where each closed subscription stopped hearing, until a new request
+   * for it has sent what it missed (EOSE). Others go on meanwhile, and move
+   * `since` past what it missed. */
+  private readonly pinned = new Map<string, number>();
   private attempt = 0;
   private stopped = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -78,6 +91,32 @@ export class AgentFeed {
     this.cleanup?.();
     this.socket?.close();
     this.socket = undefined;
+    this.paused = [];
+  }
+
+  private setLive(live: boolean) {
+    this.live = live;
+    this.options.onStatus(live);
+    if (!live) return;
+    const paused = this.paused;
+    this.paused = [];
+    for (const batch of paused) this.options.onEvents(batch);
+  }
+  /** Gives the event on now, or once the feed is live. */
+  private deliver(batch: LiveBatch) {
+    if (this.live) return this.options.onEvents(batch);
+    // Heard again, as after a reconnect, it waits once.
+    const id = batch.events[0]?.id;
+    if (this.paused.some((paused) => paused.events[0]?.id === id)) return;
+    this.paused.push(batch);
+    if (this.paused.length > HELD_LIMIT) {
+      this.paused.shift();
+      this.options.log?.("Dropped an event heard while not listening");
+    }
+  }
+  /** Marks where `key`'s stream stopped, unless it already stopped. */
+  private pin(key: string) {
+    if (!this.pinned.has(key)) this.pinned.set(key, this.since);
   }
 
   private connect() {
@@ -123,7 +162,10 @@ export class AgentFeed {
       return !!id && open.has(id);
     };
     const filter = (key: string): Record<string, unknown> => {
-      const since = Math.max(0, this.since - OVERLAP_S);
+      const since = Math.max(
+        0,
+        (this.pinned.get(key) ?? this.since) - OVERLAP_S,
+      );
       const [kind, index] = key.split(":");
       if (kind === "mentions")
         return { kinds: KINDS, "#p": [this.options.pubkey], since };
@@ -158,7 +200,7 @@ export class AgentFeed {
     // Live while the relay keeps the mentions, rosters and every channel
     // batch's subscription.
     const status = () =>
-      this.options.onStatus(
+      this.setLive(
         all()
           .filter((key) => !key.startsWith("metadata:"))
           .every(isOpen),
@@ -229,7 +271,11 @@ export class AgentFeed {
       if (type === "EOSE") {
         const id = String(data[1]);
         const key = keys.get(id);
-        if (key) retries.delete(key);
+        if (key) {
+          retries.delete(key);
+          // Its missed events are sent: it hears on from here.
+          this.pinned.delete(key);
+        }
         for (const channel of settles.get(id) ?? []) this.settle(channel);
         settles.delete(id);
         return;
@@ -242,6 +288,7 @@ export class AgentFeed {
         if (!key || current.get(key) !== id) return;
         log?.(`Subscription ${key} closed: ${reason}`);
         open.delete(id);
+        this.pin(key);
         if (!authed && reason.startsWith("auth-required:")) {
           // Opens again once the agent has logged in.
         } else if (DENIED.test(reason)) {
@@ -314,7 +361,7 @@ export class AgentFeed {
       };
       const held = channelId && this.loading.get(channelId);
       if (!held) {
-        this.options.onEvents(live);
+        this.deliver(live);
         return;
       }
       // Heard again, as after a reconnect, it is held once.
@@ -329,7 +376,9 @@ export class AgentFeed {
       if (this.socket === socket) this.socket = undefined;
       for (const retry of retries.values()) clearTimeout(retry.timer);
       retries.clear();
-      this.options.onStatus(false);
+      // Each open one stopped here; a closed one stopped earlier.
+      for (const key of current.keys()) this.pin(key);
+      this.setLive(false);
       if (this.stopped) return;
       const wait =
         RETRY_MS[Math.min(this.attempt++, RETRY_MS.length - 1)] ?? 30_000;
@@ -344,6 +393,6 @@ export class AgentFeed {
     const held = this.loading.get(channel);
     if (!held) return;
     this.loading.delete(channel);
-    for (const batch of held) this.options.onEvents(batch);
+    for (const batch of held) this.deliver(batch);
   }
 }
