@@ -11,9 +11,9 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
-import { Lanes } from "../../features/agent-harness/lanes";
+import { config } from "./config";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
 
@@ -45,6 +45,7 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
+  configured: { model?: string; model_reasoning_effort?: string } = {},
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -117,6 +118,7 @@ function fixture(
       if (request.method === "config/read")
         result = {
           config: {
+            ...configured,
             mcp_servers: {
               "company.tools": {
                 command: "secret-tool",
@@ -268,10 +270,23 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
+  // The host's copy of `core` memory, which needs no relay read.
+  const core = vi.fn(
+    async (
+      _pubkey: string,
+      _signal?: AbortSignal,
+    ): Promise<string | null | undefined> =>
+      memories.find((memory) => memory.slug === "core")?.body ?? null,
+  );
+  /** The tools plugins add, as the runtime reads them at each use. */
+  const added: AddedTool[] = [];
   const runtime = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
+    core,
     store,
+    config,
+    () => added,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -370,7 +385,7 @@ function fixture(
       workingUntil,
       current: () => true,
     };
-    if (result.trigger.type !== "timer")
+    if ("event" in result.trigger)
       events.push(result.trigger.event as EventData);
     return result;
   };
@@ -388,6 +403,8 @@ function fixture(
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
+        core,
+        tools: () => added,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -462,16 +479,13 @@ function fixture(
       },
     });
   };
-  // The runner's lanes for this agent.
-  const lanes = new Lanes();
   /** Hands over a watch or timer as the agent runner does: a standalone turn
-   * in its Interest's lane. */
+   * in its Interest's lane, which the runner holds. */
   const wakeTurn = (delivery: Delivery) => {
     const { trigger } = delivery;
     if (trigger.type === "mention") throw new Error("Expected a wake");
     delivery.workingUntil(
       wake(
-        lanes,
         delivery.agent,
         trigger,
         delivery.current,
@@ -483,6 +497,7 @@ function fixture(
   };
   return {
     runtime,
+    added,
     wake: wakeTurn,
     tool,
     attention,
@@ -492,6 +507,7 @@ function fixture(
     fileReads,
     memoryOpen,
     memoryRead,
+    core,
     memoryView,
     remember,
     upload,
@@ -810,6 +826,7 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   expect(one).toBe(two);
   await expect(one).resolves.toEqual({
     current: "test-model",
+    sendDefaults: true,
     models: [
       {
         id: "test-model",
@@ -842,6 +859,36 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   f.spawn.mockRejectedValueOnce(new Error("offline"));
   await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
 });
+it("refreshes model discovery only when effective model or effort changes", async () => {
+  const f = fixture();
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  const one = f.runtime.preview(agent);
+  await one;
+  expect(
+    f.runtime.preview({ ...agent, config: { workspace: "/tmp/other" } }),
+  ).toBe(one);
+  const two = f.runtime.preview({ ...agent, config: { model: "deep-model" } });
+  expect(two).not.toBe(one);
+  await expect(two).resolves.toMatchObject({ current: "deep-model" });
+  const three = f.runtime.preview({
+    ...agent,
+    config: { model: "deep-model", effort: "xhigh" },
+  });
+  expect(three).not.toBe(two);
+  await expect(three).resolves.toMatchObject({
+    current: "deep-model",
+    models: expect.arrayContaining([
+      expect.objectContaining({ id: "deep-model", effort: "xhigh" }),
+    ]),
+  });
+  expect(
+    f.runtime.preview({
+      ...agent,
+      config: { model: "deep-model", effort: "xhigh" },
+    }),
+  ).toBe(three);
+  expect(f.sent.filter((wire) => wire.method === "model/list")).toHaveLength(3);
+});
 it("shares model discovery with active turns and another agent", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -855,6 +902,14 @@ it("shares model discovery with active turns and another agent", async () => {
   expect(f.process.end).not.toHaveBeenCalled();
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("ignores changes to local Codex model preferences in the composer", async () => {
+  const configured = { model: "deep-model" };
+  const f = fixture([], undefined, false, configured);
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
+  configured.model = "test-model";
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
 });
 it("still offers the listed models when the configured one is not listed", async () => {
   const f = fixture();
@@ -879,6 +934,41 @@ it("previews each model at the configured effort when it has it", async () => {
   const { models } = await f.runtime.preview(agent);
   expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
 });
+it.each([
+  ["", "", "test-model", "medium"],
+  ["test-model", "high", "test-model", "high"],
+  ["deep-model", "", "deep-model", "high"],
+  ["deep-model", "xhigh", "deep-model", "xhigh"],
+])(
+  "resolves Buzz model %s and thinking %s independently of local Codex preferences",
+  async (model, effort, expected, expectedEffort) => {
+    const f = fixture([], undefined, false, {
+      model: "deep-model",
+      model_reasoning_effort: "xhigh",
+    });
+    const delivery = {
+      ...f.delivery("work"),
+      config: { workspace: "/tmp/codex-test", model, effort },
+    };
+    const preview = await f.runtime.preview({
+      pubkey,
+      config: delivery.config,
+    } as Agent);
+    expect(preview.current).toBe(expected);
+    expect(preview.models.find((row) => row.id === expected)?.effort).toBe(
+      expectedEffort,
+    );
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({
+      model: expected,
+      effort: expectedEffort,
+    });
+    expect(
+      f.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({ model: expected });
+  },
+);
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
@@ -1042,7 +1132,7 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
 it("cuts delayed history off before the request, including same-second messages and edits", async () => {
   const f = fixture();
   const first = f.delivery("CURRENT_REQUEST");
-  if (first.trigger.type === "timer") throw new Error("Expected a mention");
+  if (!("event" in first.trigger)) throw new Error("Expected a mention");
   first.trigger.event.tags.push(["ms", "300"]);
   const gate = deferred<EventData[]>();
   const previous: EventData = {
@@ -1073,7 +1163,7 @@ it("cuts delayed history off before the request, including same-second messages 
     ]);
   await f.runtime.run(first);
   const later = f.delivery("LATER_REQUEST");
-  if (later.trigger.type === "timer") throw new Error("Expected a mention");
+  if (!("event" in later.trigger)) throw new Error("Expected a mention");
   later.trigger.event.tags.push(["ms", "400"]);
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
@@ -1212,8 +1302,7 @@ it("closes a native process returned after runtime disposal", async () => {
 it("ignores non-owner messages without spawning", async () => {
   const f = fixture();
   const other = f.delivery("work");
-  if (other.trigger.type !== "timer")
-    other.trigger.event.pubkey = "f".repeat(64);
+  if ("event" in other.trigger) other.trigger.event.pubkey = "f".repeat(64);
   const ignored = vi.fn();
   await f.runtime.run({ ...other, ignored });
   expect(ignored).toHaveBeenCalledOnce();
@@ -1337,6 +1426,7 @@ it("starts no work when the agent stops while its channel is read", async () => 
         }
       );
     },
+    async () => undefined,
     { getItem: () => null, setItem: () => {} } as unknown as Storage,
   );
   runtimes.push(runtime);
@@ -1391,7 +1481,7 @@ it("answers another agent its owner attested, telling the owner of failures", as
     .update(`nostr:agent-auth:${sibling}:`)
     .digest();
   const ask = f.delivery("work");
-  if (ask.trigger.type !== "timer") {
+  if ("event" in ask.trigger) {
     ask.trigger.event.pubkey = sibling;
     ask.trigger.event.tags.push([
       "auth",
@@ -1902,82 +1992,31 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish).toHaveBeenCalledTimes(count);
 });
 
-it("gives each turn the agent's current core memory, and goes on without it when unreadable", async () => {
+it("starts each turn from the host's core memory, reading none from the relay", async () => {
   const f = fixture();
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const memory = (index: number) =>
-    (
-      f.starts()[index]?.params as
-        | { additionalContext?: Record<string, { value: string }> }
-        | undefined
-    )?.additionalContext?.["buzz.instructions"]?.value;
-  await f.runtime.run(f.delivery("@Codex first"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(memory(0)).toContain(
-    "Current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
-  );
-  f.complete(0, "FIRST");
-  await f.remember("core", "I am Codex.", 0);
-  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(memory(1)).toContain(
-    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
-  );
-  f.complete(1, "SECOND");
-  f.memoryRead.mockRejectedValueOnce(new Error("offline"));
-  await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-  expect(memory(2)).toContain("TEST_INSTRUCTIONS");
-  expect(memory(2)).not.toContain("<core-memory>");
-  expect(warn).toHaveBeenCalledWith(
-    "Codex could not read the agent's memory",
-    expect.any(Error),
-  );
-  f.complete(2, "THIRD");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
-  warn.mockRestore();
-});
-
-it("gives a turn no memory read through a connection that was replaced", async () => {
-  const f = fixture();
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  type Listing = Awaited<ReturnType<typeof f.memoryRead>>;
-  let release!: (listing: Listing) => void;
-  f.memoryRead.mockImplementationOnce(
-    () =>
-      new Promise<Listing>((resolve) => {
-        release = resolve;
-      }),
-  );
   const instructions = (index: number) =>
     (
       f.starts()[index]?.params as
         | { additionalContext?: Record<string, { value: string }> }
         | undefined
     )?.additionalContext?.["buzz.instructions"]?.value;
+  f.core.mockResolvedValueOnce("I am Codex.");
   await f.runtime.run(f.delivery("@Codex first"));
-  await vi.waitFor(() => expect(f.memoryRead).toHaveBeenCalledTimes(1));
-  const freshRead = vi.fn(async () => ({
-    entries: [{ slug: "core", body: "I am the new owner's.", createdAt: 1 }],
-    partial: false,
-  }));
-  f.snapshot.session = {
-    ...f.snapshot.session,
-    agentMemories: { ...f.snapshot.session.agentMemories, read: freshRead },
-  };
-  release({
-    entries: [{ slug: "core", body: "I am the old owner's.", createdAt: 1 }],
-    partial: false,
-  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(instructions(0)).not.toContain("old owner");
-  expect(instructions(0)).not.toContain("<core-memory>");
+  expect(instructions(0)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  expect(f.core).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
+  expect(f.memoryRead).not.toHaveBeenCalled();
   f.complete(0, "FIRST");
+  // The host could not read it: the turn goes on without it.
+  f.core.mockResolvedValueOnce(undefined);
   await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(freshRead).toHaveBeenCalledTimes(1);
-  expect(instructions(1)).toContain("I am the new owner's.");
-  warn.mockRestore();
+  expect(instructions(1)).toContain("TEST_INSTRUCTIONS");
+  expect(instructions(1)).not.toContain("<core-memory>");
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
 });
 
 it("splits turn context into ordered values that Codex does not truncate", async () => {
@@ -2051,66 +2090,6 @@ it("gives a resumed conversation the agent's current name", async () => {
   });
 });
 
-it("does not declare core missing when the owner listing is partial", async () => {
-  const f = fixture();
-  f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
-  await f.runtime.run(f.delivery("partial"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const start = f.starts()[0];
-  expect(start).toBeDefined();
-  const instructions = (
-    start?.params as {
-      additionalContext?: Record<string, { value: string }>;
-    }
-  )?.additionalContext?.["buzz.instructions"]?.value;
-  expect(instructions).toContain("TEST_INSTRUCTIONS");
-  expect(instructions).not.toContain("No core memory found");
-  expect(instructions).not.toContain("<core-memory>");
-});
-
-it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
-  const f = fixture();
-  const gate = deferred<void>();
-  const read = vi.fn(async () => {
-    await gate.promise;
-    return {
-      entries: [
-        {
-          slug: "core",
-          body: "CONCURRENT CORE",
-          eventId: "6".repeat(64),
-          createdAt: 1,
-        },
-      ],
-      partial: false,
-    };
-  });
-  const memories = createAgentMemories(read, owner, () => true);
-  f.snapshot.session.agentMemories =
-    memories.capability as unknown as typeof f.snapshot.session.agentMemories;
-
-  await Promise.all(
-    Array.from({ length: 5 }, (_, index) =>
-      f.runtime.run(
-        f.delivery(`concurrent ${index}`, index.toString(16).repeat(64)),
-      ),
-    ),
-  );
-  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
-  expect(f.starts()).toHaveLength(0);
-
-  gate.resolve();
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(5));
-  for (const start of f.starts())
-    expect(start.params).toMatchObject({
-      additionalContext: {
-        "buzz.instructions": {
-          value: expect.stringContaining("CONCURRENT CORE"),
-        },
-      },
-    });
-});
-
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -2140,10 +2119,15 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     ],
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
-  expect(f.memoryRead).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  // The turn's own `core` read, then mem_set's read and a fresh post-write read.
-  expect(f.memoryRead).toHaveBeenCalledTimes(3);
+  // mem_set's read and a fresh post-write read, each of one entry by its slug;
+  // the turn's `core` came from the host.
+  expect(
+    f.memoryRead.mock.calls.map((call: unknown[]) => [call[0], call[2]]),
+  ).toEqual([
+    [pubkey, "mem/test"],
+    [pubkey, "mem/test"],
+  ]);
   expect(
     (
       await f.tool("send", {
@@ -2627,6 +2611,65 @@ it("always offers the attention tools and guidance, keeps the thread when attent
   await f.complete(1);
 });
 
+it("offers the tools plugins add, runs them as the agent here, and starts a new thread when they change", async () => {
+  const f = fixture();
+  const call = vi.fn(async () => "created");
+  f.added.push({
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object", properties: { title: { type: "string" } } },
+    call,
+  });
+  await f.runtime.run(f.delivery("@Codex make a task"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const names = (index: number) =>
+    (
+      f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
+        | { dynamicTools: { tools: { name: string }[] }[] }
+        | undefined
+    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
+  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+  const reply = await f.tool("tasks_create", { title: "Ship it" });
+  expect(JSON.stringify(reply?.result)).toContain("created");
+  expect(call).toHaveBeenCalledWith(
+    expect.objectContaining({ pubkey }),
+    { channel: "channel", root },
+    { title: "Ship it" },
+  );
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Unchanged, the thread resumes with the tools it has.
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  const saved = JSON.parse(
+    f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+  );
+  expect(Object.values(saved)).toEqual([
+    expect.objectContaining({ tools: expect.any(String) }),
+  ]);
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Removed, resuming would keep the old tool, so a new thread starts.
+  f.added.length = 0;
+  await f.runtime.run(f.delivery("@Codex once more"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  expect(names(1)).not.toContain("tasks_create");
+  const gone = await f.tool("tasks_create", { title: "Late" });
+  expect(JSON.stringify(gone)).toContain("No active Buzz tool");
+  expect(call).toHaveBeenCalledTimes(1);
+  await f.complete();
+});
+
 it("runs a watch or timer as a one-off ephemeral turn with the attention tools, and saves nothing", async () => {
   const f = fixture();
   f.attention.on = true;
@@ -2729,7 +2772,7 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
   });
 });
 
-it("drops a waiting wake that is no longer current, and queues wakes per Interest", async () => {
+it("drops a wake that is no longer current", async () => {
   const f = fixture();
   f.attention.on = true;
   const watch = {
@@ -2759,17 +2802,11 @@ it("drops a waiting wake that is no longer current, and queues wakes per Interes
       },
     });
   };
-  let second = true;
-  const secondCurrent = vi.fn(() => second);
   await deliver(() => true);
-  await deliver(secondCurrent);
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  // The second waits in the Interest's lane while the first runs: a free
-  // lane would have asked it at once whether it is still current ...
-  expect(secondCurrent).not.toHaveBeenCalled();
-  // ... and is dropped once its watch is no longer wanted.
-  second = false;
   await f.complete(0, "");
+  // One whose watch is no longer wanted does not run.
+  await deliver(() => false);
   await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual({
     ok: true,
   });

@@ -28,6 +28,20 @@ export type PreviewCardProps = {
   actionRef?: RefObject<HTMLButtonElement | null>;
 };
 
+/** Whether a point lies on one of the element's line boxes, 1px inside. */
+function isOver(element: Element, x: number, y: number) {
+  for (const box of element.getClientRects()) {
+    if (
+      x >= box.left + 1 &&
+      x <= box.right - 1 &&
+      y >= box.top + 1 &&
+      y <= box.bottom - 1
+    )
+      return true;
+  }
+  return false;
+}
+
 /**
  * A non-modal, portal-rendered preview of a resolved object.
  *
@@ -54,6 +68,10 @@ export function PreviewCard({
   const popupRef = useRef<HTMLDivElement>(null);
   // Where the trigger was when opening began, or at the last scroll since.
   const triggerPlace = useRef<DOMRect | null>(null);
+  // The latest pointer position while the preview is mounted.
+  const pointer = useRef<{ x: number; y: number; time: number } | null>(null);
+  // A hover close was refused because the pointer never left the trigger.
+  const heldLeave = useRef(false);
   const promote = useCallback((positioner: HTMLDivElement) => {
     // Join the top layer after the hovered row's floating actions, but not
     // above a modal the trigger is outside. The portal is never inside one.
@@ -93,13 +111,39 @@ export function PreviewCard({
       )
         actions.current?.close();
     };
+    // While hit-testing is suppressed, the trigger cannot hear the pointer
+    // leave. Close a held preview once the pointer is off both surfaces.
+    const trackPointer = (event: PointerEvent) => {
+      pointer.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: event.timeStamp,
+      };
+      const trigger = triggerRef.current;
+      if (
+        heldLeave.current &&
+        trigger &&
+        !isOver(trigger, event.clientX, event.clientY) &&
+        !(event.target instanceof Node && positioner.contains(event.target))
+      ) {
+        heldLeave.current = false;
+        actions.current?.close();
+      }
+    };
     document.addEventListener("scroll", closeOnScroll, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("pointermove", trackPointer, {
       capture: true,
       passive: true,
     });
     return () => {
       stopObserving();
+      heldLeave.current = false;
+      pointer.current = null;
       document.removeEventListener("scroll", closeOnScroll, true);
+      document.removeEventListener("pointermove", trackPointer, true);
     };
   }, []);
   const focusedTrigger = useRef<HTMLElement | null>(null);
@@ -126,6 +170,31 @@ export function PreviewCard({
       open={open}
       actionsRef={actions}
       onOpenChange={(next, details) => {
+        // Scrolling can briefly stop the trigger from hit-testing under a
+        // still pointer: the virtualized timeline sets pointer-events: none
+        // while it scrolls. WebKit then reports a mouseleave that the
+        // pointer never made. Keep the preview while the pointer is still
+        // on the trigger, as Base UI once did for Safari (mui/base-ui#869).
+        const event = details.event;
+        const trigger = triggerRef.current;
+        const last = pointer.current;
+        const point =
+          last && event && last.time >= event.timeStamp
+            ? last
+            : event instanceof MouseEvent
+              ? { x: event.clientX, y: event.clientY }
+              : null;
+        heldLeave.current =
+          !next &&
+          details.reason === "trigger-hover" &&
+          event?.type === "mouseleave" &&
+          !!trigger &&
+          !!point &&
+          isOver(trigger, point.x, point.y);
+        if (heldLeave.current) {
+          details.cancel();
+          return;
+        }
         onOpenChange?.(next, details);
         if (details.isCanceled) return;
         triggerPlace.current = next
@@ -157,6 +226,9 @@ export function PreviewCard({
         delay={actionRef ? 0 : delay}
         closeDelay={150}
         ref={triggerRef}
+        onMouseEnter={() => {
+          heldLeave.current = false;
+        }}
         onFocus={(event) => {
           focusedTrigger.current = event.target as HTMLElement;
         }}

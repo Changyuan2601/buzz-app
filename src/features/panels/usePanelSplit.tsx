@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { ResizeHandle } from "./ResizeHandle";
 import styles from "./Panels.module.css";
 
@@ -9,9 +15,41 @@ export function usePanelSplit(
   primary?: { defaultWidth: number; maxRatio: number },
 ) {
   const ref = useRef<HTMLDivElement>(null);
-  const [available, setAvailable] = useState(0);
   const [preferred, setPreferred] = useState<number>();
-  useLayoutEffect(() => {
+  return {
+    ref,
+    style: undefined,
+    handle: (
+      <PanelSplitHandle
+        target={ref}
+        preferred={preferred}
+        setPreferred={setPreferred}
+        defaultWidth={defaultWidth}
+        min={min}
+        primary={primary}
+      />
+    ),
+  };
+}
+
+// Container reflow updates the grip and CSS width, not the page and its messages.
+function PanelSplitHandle({
+  target: ref,
+  preferred,
+  setPreferred,
+  defaultWidth,
+  min,
+  primary,
+}: {
+  target: RefObject<HTMLDivElement | null>;
+  preferred: number | undefined;
+  setPreferred(width: number | undefined): void;
+  defaultWidth: number | undefined;
+  min: number;
+  primary: { defaultWidth: number; maxRatio: number } | undefined;
+}) {
+  const [available, setAvailable] = useState(0);
+  useEffect(() => {
     const element = ref.current;
     if (!element) return;
     const measure = () => setAvailable(element.clientWidth);
@@ -19,7 +57,7 @@ export function usePanelSplit(
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [ref]);
   const minimum = Math.max(min, available * (1 - (primary?.maxRatio ?? 1)));
   const max = Math.max(minimum, available - 320);
   const clamp = (width: number) => Math.min(max, Math.max(minimum, width));
@@ -28,24 +66,25 @@ export function usePanelSplit(
       defaultWidth ??
       (primary ? available - primary.defaultWidth : available / 2.1),
   );
-  return {
-    ref,
-    style: (preferred === undefined && primary === undefined
-      ? {}
-      : {
-          "--secondary-panel-width": `${width}px`,
-        }) as CSSProperties,
-    handle: (
-      <ResizeHandle
-        label="Resize main and secondary panels"
-        direction={-1}
-        width={width}
-        min={minimum}
-        max={max}
-        setWidth={(next) => setPreferred(clamp(next))}
-        reset={() => setPreferred(undefined)}
-        className={styles.resize}
-      />
-    ),
-  };
+  const automatic = preferred === undefined && primary === undefined;
+  useLayoutEffect(() => {
+    if (!available) return;
+    const style = ref.current?.style;
+    if (automatic) style?.removeProperty("--secondary-panel-width");
+    else style?.setProperty("--secondary-panel-width", `${width}px`);
+  }, [ref, available, width, automatic]);
+  return (
+    <ResizeHandle
+      label="Resize main and secondary panels"
+      direction={-1}
+      target={ref}
+      property="--secondary-panel-width"
+      width={width}
+      min={minimum}
+      max={max}
+      setWidth={(next) => setPreferred(clamp(next))}
+      reset={() => setPreferred(undefined)}
+      className={styles.resize}
+    />
+  );
 }

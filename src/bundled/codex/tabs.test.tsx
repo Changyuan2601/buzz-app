@@ -56,12 +56,14 @@ function fixture({
   saved = {},
   turns = () => ({ result: { data: [] } }),
   threads = [],
+  configured = {},
 }: {
   signedIn?: boolean;
   installed?: boolean;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
+  configured?: { model?: string; model_reasoning_effort?: string };
 } = {}) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   // Buzz's copy, as its launcher answers: `codex login` runs until it ends.
@@ -99,6 +101,7 @@ function fixture({
           return;
         }
         let result: unknown = {};
+        if (wire.method === "config/read") result = { config: configured };
         if (wire.method === "thread/list") {
           if (typeof threads === "string") {
             options?.onStdout?.(
@@ -179,6 +182,7 @@ function fixture({
   const runtime = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
+    async () => undefined,
     sessions,
     (raw) => provider.resolve(raw),
   );
@@ -514,6 +518,69 @@ it("applies provider precedence without rewriting records and falls back for inc
   const invalid = new CodexProvider(f.spawn, localStorage);
   expect(invalid.resolve(defaults)).toEqual(defaults);
 });
+it("offers recommendation and explicit models without inheriting local Codex preferences", async () => {
+  const configured = { model: "model-b", model_reasoning_effort: "high" };
+  const f = fixture({ configured });
+  await f.provider.check();
+  const user = userEvent.setup();
+  const view = render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(screen.getByLabelText("Default model")).toHaveTextContent(
+    "Codex default (Model A)",
+  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
+  await user.click(screen.getByLabelText("Default model"));
+  const options = await screen.findAllByRole("option");
+  expect(options).toHaveLength(3);
+  for (const [index, name] of [
+    "Codex default (Model A)",
+    "Model A",
+    "Model B",
+  ].entries())
+    expect(options[index]).toHaveAccessibleName(name);
+  await user.click(screen.getByRole("option", { name: "Model B" }));
+  await user.click(screen.getByRole("button", { name: "Save defaults" }));
+  expect(f.provider.resolve(defaults).model).toBe("model-b");
+  expect(
+    (
+      await f.runtime.preview({
+        pubkey: "a".repeat(64),
+        config: { ...defaults, workspace: "/tmp/codex-test" },
+      } as Parameters<CodexRuntime["preview"]>[0])
+    ).current,
+  ).toBe("model-b");
+  const reopened = new CodexProvider(f.spawn, localStorage);
+  expect(reopened.resolve(defaults).model).toBe("model-b");
+  expect(f.provider.resolve({ ...defaults, model: "model-b" }).model).toBe(
+    "model-b",
+  );
+  view.unmount();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(screen.getByLabelText("Default model")).toHaveTextContent("Model B");
+  await user.click(screen.getByLabelText("Default model"));
+  await user.click(
+    await screen.findByRole("option", { name: "Codex default (Model A)" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save defaults" }));
+  expect(f.provider.resolve(defaults).model).toBe("");
+  expect(
+    (
+      await f.runtime.preview({
+        pubkey: "a".repeat(64),
+        config: { ...defaults, workspace: "/tmp/codex-test" },
+      } as Parameters<CodexRuntime["preview"]>[0])
+    ).current,
+  ).toBe("model-a");
+  expect(new CodexProvider(f.spawn, localStorage).resolve(defaults).model).toBe(
+    "",
+  );
+  configured.model = "model-a";
+  await f.provider.check();
+  await waitFor(() =>
+    expect(screen.getByLabelText("Default model")).toHaveTextContent(
+      "Codex default (Model A)",
+    ),
+  );
+});
 it("falls back for an unavailable provider default and restores it when the catalog recovers", async () => {
   localStorage.setItem(
     "buzz.codex.provider-defaults.v1",
@@ -574,7 +641,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   const view = render(<f.tabs.ProviderDialogBody onClose={onClose} />);
   const user = userEvent.setup();
 
-  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("High");
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(/^High$/);
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
     await screen.findByRole("option", { name: "Low · Default" }),
@@ -595,6 +662,15 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
+});
+it("shows the recommended model and default thinking despite different local Codex preferences", async () => {
+  const f = fixture({
+    configured: { model: "model-b", model_reasoning_effort: "high" },
+  });
+  render(<f.tabs.SettingsTab {...f.props()} />);
+  await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+  expect(screen.getByLabelText("Model")).toHaveTextContent("Model A");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
   const f = fixture();
@@ -999,6 +1075,68 @@ it("keeps sign-in available after a failed Codex login without showing models", 
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
+});
+
+it("offers to install Codex from its card when Buzz has no copy", async () => {
+  const f = fixture({ installed: false });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Install Codex" }));
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  // A failed download leaves the offer in place, with what went wrong.
+  expect(
+    await screen.findByRole("log", { name: "Setup output" }),
+  ).toHaveTextContent("Codex downloads need the desktop app");
+  expect(
+    await screen.findByRole("button", { name: "Install Codex" }),
+  ).toBeEnabled();
+
+  f.disk.installed = true;
+  await f.provider.check();
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toHaveTextContent("Model A");
+});
+
+it("moves the card from Install Codex to Sign in once the install succeeds", async () => {
+  const f = fixture({ installed: false, signedIn: false });
+  // Stands in for the download, which setup.test.ts covers.
+  const download = deferred<void>();
+  vi.spyOn(
+    f.setup as unknown as { install(): Promise<void> },
+    "install",
+  ).mockImplementation(async () => {
+    await download.promise;
+    f.disk.installed = true;
+  });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  const install = await screen.findByRole("button", { name: "Install Codex" });
+  install.focus();
+  fireEvent.click(install);
+  expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
+  download.resolve();
+  // The same button, so keyboard focus stays on it.
+  const signIn = await screen.findByRole("button", { name: "Sign in" });
+  expect(signIn).toBe(install);
+  expect(signIn).toHaveFocus();
+  fireEvent.click(signIn);
+  await waitFor(() => expect(f.logins).toHaveLength(1));
+  f.disk.signedIn = true;
+  f.logins[0]?.resolve(0);
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toHaveTextContent("Model A");
 });
 
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {

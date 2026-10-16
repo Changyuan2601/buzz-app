@@ -113,7 +113,7 @@ function ValueSwatch({ value }: { value: string }) {
 
 const VIEWS = [
   { value: "roles", label: "Roles" },
-  { value: "choices", label: "Backdrop choices" },
+  { value: "choices", label: "Legacy backdrops" },
   { value: "ramps", label: "Palette & ramps" },
 ] as const;
 
@@ -180,9 +180,9 @@ export function ColorTablePage() {
           <Note>
             Each numbered token pairs a light scene with a dark scene:
             <code className="text-mono"> gradient-1 </code> resolves to Sky
-            field in light mode and Night garden in dark. Product surfaces keep
-            using <code className="text-mono">bg-app</code>; the token mapping
-            chooses the treatment for the active mode.
+            field in light mode and Night garden in dark. These are historical
+            glass-study samples, not app themes. Product surfaces use the solid
+            <code className="text-mono"> bg-app </code> role instead.
           </Note>
 
           <Section

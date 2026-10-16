@@ -20,7 +20,7 @@
   color: var(--text-subtle);
 }
 .turnHeader [data-state="working"] {
-  color: var(--affordance-accent-prominent);
+  color: var(--text-accent);
 }
 .turnHeader [data-state="error"],
 .error {

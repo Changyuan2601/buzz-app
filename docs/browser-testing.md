@@ -486,11 +486,22 @@ Keep import failures visible; retries or longer UI waits do not repair module
 loading.
 
 A server must not scan or bundle dependencies inside a test's navigation budget.
-Playwright's `globalSetup` runs `vite-server.mjs` once per run: it scans every
-HTML page under `tests/` and bundles their dependencies. Each fixture server
-starts from its own copy of that cache. Vite reuses a cache only when the root,
-plugin names and `optimizeDeps` match, so the helper fixes all three. Fixture
+Playwright's `globalSetup` runs `vite-server.mjs` once per run: it scans
+`index.html` and every HTML page under `tests/` and `src/`, and bundles their
+dependencies. A Playwright config that runs fixture servers must use the same
+`globalSetup`. Each fixture server starts from its own copy of that cache. Vite
+reuses a cache only when the root, plugin names and `optimizeDeps` match, so the
+helper fixes all three. Fixture
 plugins may only add server middleware (`configureServer`) or rewrite index HTML
 (`transformIndexHtml`), and the helper runs them as one plugin. Fixtures cannot
 set `optimizeDeps`; if a test imports a dependency that no fixture page reaches,
 add it to `fixtureOptimizeDeps.include` in the helper.
+
+Vite's cache match also includes `NODE_ENV`, and Vite's `build()`, `preview()`
+and `createServer()` set `NODE_ENV` for the rest of the worker when it is unset.
+Import `build` and `preview` from `vite-server.mjs`, not from `vite`: the helper
+restores `NODE_ENV` after each call. Without this, a production build earlier in
+the worker makes later fixture servers optimize again inside a test. Separately,
+`postcss.config.js` passes Tailwind's `optimize` option explicitly:
+Tailwind caches compiled CSS by the option it receives, not by `NODE_ENV`, so a
+dev server after a production build in one process would otherwise get empty CSS.

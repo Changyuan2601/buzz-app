@@ -91,6 +91,9 @@ it.each([0, 1])(
   (index) => {
     const t = resolvedPalette(index === 0 ? "light" : "dark");
     const textPairs: [string, string][] = [
+      ["--text-standard", "--bg-app"],
+      ["--text-subtle", "--bg-app"],
+      ["--text-metadata", "--bg-app"],
       ...[
         "--surface",
         "--surface-accent",

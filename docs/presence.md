@@ -3,8 +3,9 @@
 Avatars show presence through a badge that uses the observed value. Pending,
 failed, stale, or unavailable evidence renders no status; it is not relabeled
 Offline.
-People's message and thread bylines omit presence badges and custom status symbols.
-One-to-one DM avatars retain them. Agent message avatars retain presence
+People's message and thread bylines omit presence badges. Custom status emoji
+appear beside author names, with the status text shown on hover. One-to-one DM
+avatars retain presence badges. Agent message avatars retain presence
 badges and demand presence when mounted. Their online badge morphs into a centered
 three-dot pill while the existing agent activity feed reports working or typing;
 activity is scoped to the displayed conversation when one is supplied. The same

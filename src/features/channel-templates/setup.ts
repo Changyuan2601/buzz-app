@@ -4,6 +4,7 @@ export type ChannelSetup = {
   canvas: string;
   agents: string[];
   groupId: string;
+  starred?: boolean;
   templateId: string;
 };
 export type ChannelCreationInput = Readonly<{
@@ -52,6 +53,7 @@ export function createChannelSetup({
   refresh,
   canvasHead,
   place,
+  star,
   preflight,
   signal,
   changed,
@@ -71,6 +73,7 @@ export function createChannelSetup({
   refresh(id: string, member: string): Promise<void>;
   canvasHead(id: string): Promise<string | undefined>;
   place(id: string, group: string): Promise<void>;
+  star(id: string): Promise<void>;
   preflight(input: ChannelCreationInput): Promise<void>;
   signal: AbortSignal;
   changed(): void;
@@ -179,7 +182,7 @@ export function createChannelSetup({
         await save(checking);
         if (checking.input.setup)
           throw new Error(
-            "Channel confirmed. Template setup was not continued; check its group, Canvas and members before finishing them manually.",
+            "Channel confirmed. Template setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
           );
         await retire(checking);
         return;
@@ -273,7 +276,8 @@ export function createChannelSetup({
           const setup = p.input.setup;
           let placementError: unknown;
           try {
-            if (setup?.groupId) await place(p.id, setup.groupId);
+            if (setup?.starred) await star(p.id);
+            else if (setup?.groupId) await place(p.id, setup.groupId);
           } catch (error) {
             placementError = error;
           }

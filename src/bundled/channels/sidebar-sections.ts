@@ -57,7 +57,7 @@ export function sidebarSections<T extends ChannelSummary>(
     {
       key: "starred",
       title: "Starred",
-      icon: "★",
+      icon: undefined,
       rows: sort(
         movable.filter((channel) => stars.has(channel.id)),
         "starred",

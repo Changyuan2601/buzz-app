@@ -36,6 +36,29 @@ export type ChannelTemplate = Readonly<{
   canvas: string;
   agents: readonly string[];
 }>;
+/** Memory entries, and whether some may be missing: a read cut short by a
+ * limit, a deadline or the relay's rate limit. */
+export type Memories = Readonly<{
+  entries: readonly Memory[];
+  partial: boolean;
+}>;
+
+/** The owner's tabs on this device for a channel's own threads, in that
+ * channel's workspace. `shown` is a tab the viewer sees, which `close` leaves
+ * open. */
+export type ThreadTabs = Readonly<{
+  list(channel: string): readonly Readonly<{
+    root: string;
+    pane: string;
+    name?: string | undefined;
+    shown: boolean;
+  }>[];
+  /** False when the thread already has a tab there. */
+  open(channel: string, root: string): boolean;
+  close(channel: string, root: string): "closed" | "missing" | "shown";
+  /** An empty name restores the automatic title; false when it has no tab. */
+  rename(channel: string, root: string, name: string): boolean;
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -46,6 +69,13 @@ export interface BuzzClient {
   readonly pubkey: string;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Finds profiles whose `name` or `display_name` matches `query`, best
+   * match first. `undefined` when the community has no profile name search;
+   * NIP-50 search, which matches the whole profile, is the fallback. */
+  searchProfiles?(
+    query: string,
+    limit: number,
+  ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
   publish(event: Template): Promise<BuzzEvent>;
   upload(data: Uint8Array, mime: string): Promise<Upload>;
@@ -54,8 +84,8 @@ export interface BuzzClient {
   media(url: string): Promise<string>;
   /** A local file's bytes, for tools that take a `path`. */
   read(path: string): Promise<Uint8Array>;
-  /** The agent's memory entries, decrypted. */
-  memories(): Promise<readonly Memory[]>;
+  /** The agent's memory entries, decrypted; only entry `slug` when given. */
+  memories(slug?: string): Promise<Memories>;
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
   remember(slug: string, body: string, after: number): Promise<void>;
   /** The owner's channel templates, where the host has them. */
@@ -63,6 +93,8 @@ export interface BuzzClient {
   /** The agent's attention, where its host keeps one. Without it the
    * attention tools have nothing to act on. */
   readonly attention?: AgentAttention;
+  /** The owner's thread tabs, where the host shows them. */
+  tabs?: ThreadTabs;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

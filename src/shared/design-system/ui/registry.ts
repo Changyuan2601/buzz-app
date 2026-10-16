@@ -278,7 +278,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "field",
     name: "Field",
-    purpose: "Label, description and error for a form control.",
+    purpose:
+      "Label, description and error for a form control; `optional` marks fields a form doesn't require.",
     behavior: "Base UI owns form and keyboard semantics.",
     variants: ["default", "disabled", "invalid"],
     status: "proposed",
@@ -369,10 +370,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "settings-group",
     name: "SettingsGroup",
     purpose:
-      "A subtle bordered container for related settings rows or form fields.",
+      "A subtle bordered container for related settings rows or form fields, or a stack of individually bordered cards.",
     behavior:
       "Presentation only; children retain their labels, state, and interactions.",
-    variants: ["rows", "form"],
+    variants: ["rows", "form", "cards"],
     status: "proposed",
     collection: "components",
     owner: "Buzz Settings",
@@ -613,7 +614,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "tabs",
     name: "Tabs",
     purpose:
-      "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete. The caller owns selection, retained content, and the next selection after closing.",
+      "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
     behavior:
       "Base UI Tabs. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order.",
     variants: ["chrome", "panel", "workspace", "navigation"],

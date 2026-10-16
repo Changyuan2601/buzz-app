@@ -1,6 +1,6 @@
 import { fixtureRelayUrl, fixtureAliases } from "../relay-config.ts";
 import { test as base, expect, stopRoutes } from "./playwright-test.mjs";
-import { preview } from "vite";
+import { preview } from "./vite-server.mjs";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -806,6 +806,7 @@ export const test = base.extend({
         build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; no native; no real relay`,
       },
       queries: [],
+      profileSearches: [],
       publications: [],
       readPublications: [],
       sessions: [],
@@ -824,6 +825,66 @@ export const test = base.extend({
     const send = (response, body, status = 200) => {
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(JSON.stringify(body));
+    };
+    // Relay `POST /profiles/search`: the NIP-50 prefix rule (every word but
+    // the last equals a name word, the last is a word prefix, any order) over
+    // `name` and `display_name` only, then equal, prefix, later-word prefix.
+    // Unlike NIP-50 kind:0 search, other profile text such as avatar data
+    // never matches.
+    const searchProfiles = (community, { query, limit, page = 1 }) => {
+      const typed = query.trim().toLowerCase().split(/\s+/);
+      const needle = typed.join(" ");
+      const field = (value) =>
+        typeof value === "string" ? value.toLowerCase().trim() : "";
+      const tier = (value) =>
+        !value
+          ? 3
+          : value === needle
+            ? 0
+            : value.startsWith(needle)
+              ? 1
+              : value.includes(` ${needle}`)
+                ? 2
+                : 3;
+      report.profileSearches.push({ community, query, limit, page });
+      return [
+        ...new Map(
+          [
+            profiles.get(community),
+            ...servedProfiles.values(),
+            ...(ownerAgentProfile ? [ownerAgentProfile] : []),
+          ]
+            .filter(Boolean)
+            .map((event) => [event.pubkey, event]),
+        ).values(),
+      ]
+        .flatMap((event) => {
+          const { name, display_name: display } = JSON.parse(event.content);
+          const words = `${field(name)} ${field(display)}`
+            .split(/[^\p{L}\p{N}]+/u)
+            .filter(Boolean);
+          const matches = typed.every((word, index) =>
+            index === typed.length - 1
+              ? words.some((candidate) => candidate.startsWith(word))
+              : words.includes(word),
+          );
+          return matches
+            ? [
+                {
+                  event,
+                  rank: Math.min(tier(field(name)), tier(field(display))),
+                },
+              ]
+            : [];
+        })
+        .sort(
+          (a, b) =>
+            a.rank - b.rank ||
+            b.event.created_at - a.event.created_at ||
+            a.event.id.localeCompare(b.event.id),
+        )
+        .slice((page - 1) * limit, page * limit)
+        .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
       if (filter.kinds?.includes(13535)) {
@@ -855,10 +916,12 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
+      // Me read state shares id lookups with the messages a review resolves.
       if (meChannels.length > 0 && filter.ids)
-        return [...readEvents.get(community).values()].filter((event) =>
-          filter.ids.includes(event.id),
-        );
+        return [
+          ...readEvents.get(community).values(),
+          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+        ].filter((event) => filter.ids.includes(event.id));
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(
@@ -1040,6 +1103,16 @@ export const test = base.extend({
             ) ||
             filter["#d"]?.includes(event.tags.find(([k]) => k === "d")?.[1]),
         );
+      }
+      if (filter.kinds?.includes(30174)) {
+        // A local agent's memory, read by its owner: these agents have none.
+        expect(filter).toEqual({
+          kinds: [30174],
+          authors: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+          "#p": [viewer],
+          limit: 256,
+        });
+        return [];
       }
       if (filter.kinds?.includes(30315)) {
         expect(filter).toEqual({
@@ -1708,6 +1781,7 @@ export const test = base.extend({
           viewer,
           relayAuthor: getPublicKey(relayKey),
           answer,
+          searchProfiles,
           report,
           pending,
           // The production broker advertises read-state writes for every session,
@@ -1904,6 +1978,8 @@ export const test = base.extend({
           // Deliberately no live echo: Save must confirm through a signed read.
           return send(response, { accepted: true, event_id: event.id });
         }
+        if (route === "profile-search" && request.method === "POST")
+          return send(response, searchProfiles(community, body));
         if (route !== "query" || request.method !== "POST")
           throw new Error(
             `Unexpected fixture request: ${request.method} ${request.url}`,

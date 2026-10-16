@@ -95,9 +95,17 @@ export function useMentionModels(
         const type = agent && types?.find((item) => item.key === agent.type);
         if (!agent || !type?.models) return [];
         try {
-          const { current, models } = await type.models(agent);
+          const { current, models, sendDefaults } = await type.models(agent);
           return models.length > 1 || models.some((m) => m.efforts.length)
-            ? [{ pubkey, name: agent.name, current, models }]
+            ? [
+                {
+                  pubkey,
+                  name: agent.name,
+                  current,
+                  models,
+                  ...(sendDefaults ? { sendDefaults: true } : {}),
+                },
+              ]
             : [];
         } catch (error) {
           console.warn(

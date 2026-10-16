@@ -1,0 +1,7 @@
+{
+  "id": "buzz.relay-staff",
+  "name": "Relay admin",
+  "apiVersion": 1,
+  "description": "Review reports and moderate the relay as relay staff.",
+  "discovery": { "category": "people-and-communities" }
+}

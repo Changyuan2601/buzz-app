@@ -41,7 +41,10 @@ import type { LocalAgents } from "../agents/local";
 import { localAgentsFixture } from "../agents/local-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import type { OutgoingEvent } from "../relay/outbox";
+import type { Outbox, OutgoingEvent } from "../relay/outbox";
+import { createMessages } from "../relay/messages";
+import { ClaudeProcess } from "../../bundled/claude-code/claude";
+import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
@@ -536,6 +539,36 @@ it("autofocuses each selected conversation once without stealing focus on update
   }
 });
 
+it("defers initial focus until a loading conversation enables its composer", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({ disabled: false });
+  expect(h.input()).toHaveFocus();
+});
+
+it("does not redo initial focus when a focused composer is disabled and enabled again", () => {
+  writeView("scope", "draft:channel", "Saved draft");
+  const h = mount({ autoFocus: true });
+  act(() => h.input().setSelectionRange(1, 4));
+  h.retarget({ disabled: true });
+  h.retarget({ disabled: false });
+  expect(h.input().selectionStart).toBe(1);
+  expect(h.input().selectionEnd).toBe(4);
+});
+
+it("does not take focus when the composer is enabled after another control takes it", () => {
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true, disabled: true });
+    other.focus();
+    h.retarget({ disabled: false });
+    expect(other).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
 it("defers initial focus until an inert startup ancestor is revealed", async () => {
   document.body.setAttribute("inert", "");
   try {
@@ -594,6 +627,20 @@ it.each([
     expect(owner).toHaveFocus();
   } finally {
     owner.remove();
+  }
+});
+
+it("takes focus from a row whose hover preview is open when the conversation mounts", () => {
+  const row = document.createElement("button");
+  row.setAttribute("data-popup-open", "");
+  row.setAttribute("data-popup-preview", "");
+  document.body.append(row);
+  try {
+    row.focus();
+    const h = mount({ autoFocus: true });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    row.remove();
   }
 });
 
@@ -2262,6 +2309,288 @@ it("opens the model picker while discovery is pending, then fills its controls",
     screen.queryByText("Loading model and effort…"),
   ).not.toBeInTheDocument();
 });
+
+it.each([
+  "claude-sonnet-4-5@20250929",
+  "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5",
+])(
+  "sends an untouched Claude cloud model without an override: %s",
+  async (current) => {
+    const snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+    };
+    const types = [
+      {
+        key: "claude",
+        models: () => ({
+          current,
+          models: [
+            { id: current, label: "Configured Claude", efforts: [] },
+            { id: "haiku", label: "Haiku", efforts: [] },
+          ],
+        }),
+      },
+    ];
+    const agents = {
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    const publish = vi.fn<Outbox["send"]>(() => "sent");
+    const messages = createMessages(
+      { supports: () => true, send: publish } as unknown as Outbox,
+      first.pubkey,
+      () => undefined,
+      () => [],
+      () => {},
+    );
+    h.messages.send.mockImplementation(messages.send);
+    await h.user.type(h.input(), "use the configured model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    ).toHaveTextContent("Configured Claude");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: [
+        ["h", "channel"],
+        ["p", first.pubkey],
+      ],
+    });
+  },
+);
+
+it("keeps an active Claude model when a follow-up composer picker is untouched", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    cwd: "~/.buzz",
+    systemPrompt: "test",
+    model: "opus",
+    sessionId: "s1",
+  });
+  onTestFinished(() => claude.kill());
+  await claude.send("plain");
+  const fake = processes[0];
+  if (!fake) throw new Error("Expected Claude process");
+  fake.hold = true;
+  const quick = claude.send("quick", { model: "haiku" });
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+  };
+  const types = [
+    {
+      key: "claude",
+      models: () => ({
+        current: "opus",
+        models: [
+          { id: "opus", label: "Opus", efforts: [] },
+          { id: "haiku", label: "Haiku", efforts: [] },
+        ],
+      }),
+    },
+  ];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  let steered: ReturnType<ClaudeProcess["send"]> | undefined;
+  h.messages.send.mockImplementation(
+    (
+      _channel,
+      content,
+      _mentions,
+      _attachments,
+      _recovery,
+      _references,
+      picks,
+    ) => {
+      steered = claude.send(content, picks?.[first.pubkey]);
+      return "sent";
+    },
+  );
+  try {
+    await h.user.type(h.input(), "keep working");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    ).toHaveTextContent("Opus");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    await waitFor(() => expect(fake.prompts).toHaveLength(3));
+    expect(fake.models).toEqual(["opus", "haiku", "haiku"]);
+  } finally {
+    fake.finish();
+    await Promise.all([quick, steered]);
+  }
+});
+
+it("sends the model and effort shown by an untouched agent picker", async () => {
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const models = {
+    current: "gpt-6.1-sol",
+    sendDefaults: true,
+    models: [
+      {
+        id: "gpt-6.1-sol",
+        label: "GPT-6.1-Sol",
+        effort: "high",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      { id: "other", label: "Other", efforts: [] },
+    ],
+  };
+  const types = [{ key: "test/agent", models: () => models }];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "use what you show");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: "Model for Honey's next run",
+    }),
+  ).toHaveTextContent("GPT-6.1-Sol");
+  expect(
+    await screen.findByLabelText("Effort for Honey's next run"),
+  ).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("use what you show"),
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { model: "gpt-6.1-sol", effort: "high" } },
+  );
+});
+
+it.each(["settings refresh", "model pick"])(
+  "follows the new model's effort after %s without inheriting an untouched effort",
+  async (change) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    let current = "fast";
+    const models = [
+      {
+        id: "fast",
+        label: "Fast",
+        effort: "medium",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      {
+        id: "deep",
+        label: "Deep",
+        effort: "high",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ];
+    const listeners = new Set<() => void>();
+    const types = [
+      {
+        key: "test/agent",
+        models: () => ({ current, models, sendDefaults: true }),
+      },
+    ];
+    const agents = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "follow the shown defaults");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    const trigger = await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    });
+    await h.user.click(trigger);
+    expect(
+      await screen.findByLabelText("Effort for Honey's next run"),
+    ).toHaveAttribute("aria-valuetext", "Medium");
+    expect(trigger).not.toHaveAttribute("data-selected");
+    if (change === "settings refresh") {
+      await act(async () => {
+        current = "deep";
+        snapshot = { ...snapshot };
+        for (const listener of listeners) listener();
+      });
+    } else {
+      await h.user.click(
+        screen.getByRole("button", { name: "Model for Honey's next run" }),
+      );
+      await h.user.click(
+        await screen.findByRole("menuitemradio", { name: "Deep" }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "Model for Honey's next run",
+        }),
+      ).toHaveTextContent("Deep"),
+    );
+    expect(
+      await screen.findByLabelText("Effort for Honey's next run"),
+    ).toHaveAttribute("aria-valuetext", "High");
+    if (change === "settings refresh")
+      expect(trigger).not.toHaveAttribute("data-selected");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenLastCalledWith(
+      "channel",
+      expect.stringContaining("follow the shown defaults"),
+      [first.pubkey],
+      [],
+      undefined,
+      [],
+      { [first.pubkey]: { model: "deep", effort: "high" } },
+    );
+  },
+);
 
 it("asks a mentioned agent of the viewer's for a model and effort on the next run only", async () => {
   // Snapshots are stable, as the service's are.
@@ -5467,6 +5796,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
         ensure: async () => {},
         refresh: async () => {},
         writable: false,
+        supported: true,
         consent: vi.fn(),
         request: vi.fn(),
       },

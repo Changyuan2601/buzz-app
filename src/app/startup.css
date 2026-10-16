@@ -5,7 +5,7 @@
 
 @layer base {
   html {
-    background: var(--workspace);
+    background: var(--bg-app);
     color: var(--text);
   }
   body {
@@ -17,7 +17,7 @@
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  background: var(--workspace);
+  background: var(--bg-app);
 }
 
 #buzz-launch {

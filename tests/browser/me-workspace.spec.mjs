@@ -12,6 +12,60 @@ test.use({
   meChannels: [id, other],
   historyCounts: { [id]: 2, [other]: 1, gamma: 1 },
 });
+// Browser-only: Sessions shares Channels' review, with real portalled dismissal.
+test("Me opens video review and Escape returns to its opener", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/message-gallery/assets/sample.mp4",
+      contentType: "video/mp4",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me video", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.mp4", "m video/mp4"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  await work.locator("[data-video-preview]").hover();
+  const opener = work.getByRole("button", { name: "Open video fullscreen" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Video review" });
+  await expect(review.locator("video")).toBeVisible();
+  await review.getByRole("button", { name: "Close fullscreen viewer" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+test("Me opens image review with its comments", async ({ page, app }) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/attachment-media/still.png",
+      contentType: "image/png",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me image", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.png", "m image/png"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  const opener = work.getByRole("link", { name: "Open image attachment" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Image viewer" });
+  await expect(
+    review.getByRole("button", { name: "Show comments" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
 // Activity opens the agent's profile, where its type's Activity tab lives.
 const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });
@@ -219,6 +273,83 @@ test("Me hides the empty pane launcher until content opens it", async ({
     0,
   );
   await expect(composer).toHaveText("Keep this draft");
+});
+
+// Reading needs real focus inside the chat; a pointer selection leaves it on the row.
+test.describe("reading", () => {
+  test.use({ readState: true });
+  const bold = (row) => row.locator('[data-channel-unread-title="true"]');
+  test("Me reads a chat opened from the sidebar, so it stays unbolded after leaving", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+    const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
+    // Startup shows Alpha in Multiplayer first, so read Beta, which only Solo shows.
+    await expect(bold(beta)).toHaveCount(1);
+    await beta.click();
+    // The dwell policy reads the visible bottom without any further input,
+    // because selection hands focus to the chat's composer.
+    await expect(bold(beta)).toHaveCount(0);
+    await expect(
+      page.getByRole("textbox", { name: "Message your agents", exact: true }),
+    ).toBeFocused();
+    await alpha.click();
+    // Unselected, Beta's row shows its saved read state rather than selection.
+    await expect(alpha).toHaveAttribute("aria-current", "page");
+    await expect(bold(beta)).toHaveCount(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
+
+  // Hover opens the row's activity preview; clicking keeps it open, so focus
+  // starts on a trigger with an open popup.
+  test("Me focuses and reads a chat clicked while its activity preview is open", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+    const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
+    await alpha.click();
+    await expect(bold(beta)).toHaveCount(1);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    app.observer(
+      {
+        kind: "turn_liveness",
+        seq: 1,
+        timestamp: new Date().toISOString(),
+        channelId: other,
+        sessionId: "S",
+        turnId: "preview-focus",
+      },
+      generateSecretKey(),
+    );
+    await expect(
+      beta.getByRole("img", { name: /working in Beta$/ }),
+    ).toBeVisible();
+    await beta.hover();
+    await expect(
+      page.getByRole("dialog", { name: "Activity in Beta", exact: true }),
+    ).toBeVisible();
+    await beta.click();
+    await expect(beta).toHaveAttribute("aria-current", "page");
+    await expect(
+      page.getByRole("textbox", { name: "Message your agents", exact: true }),
+    ).toBeFocused();
+    await expect(bold(beta)).toHaveCount(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
 });
 
 // Real PersonalComposer -> signing boundary remains covered through the main reader.

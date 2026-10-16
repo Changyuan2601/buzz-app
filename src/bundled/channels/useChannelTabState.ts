@@ -1,5 +1,10 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { PanelOpening } from "../../features/panels/service";
 
@@ -17,6 +22,8 @@ export type ConversationTab =
       pane?: TabPane | undefined;
       /** The reader's verified root, which may differ from a link's hint. */
       rootId?: string | undefined;
+      /** A name given to the tab, shown instead of its root's text. */
+      name?: string | undefined;
     };
 export type TabPane = "main" | "side";
 export const tabPane = (tab: ConversationTab): TabPane =>
@@ -41,6 +48,8 @@ type State = {
   paneOpen: boolean;
   thread: { channelId: string; messageId: string } | undefined;
   settings: { id: string; channelId: string | undefined } | undefined;
+  /** A launcher's side panel shows in the pane; the page owns that panel. */
+  sidePanel?: boolean;
 };
 // Apply one history visit once. Leaving a visit remembers its selection, so
 // Back/Forward restore which tabs were selected and never close any.
@@ -77,6 +86,14 @@ const empty: State = {
 };
 export const panelTabId = (entry: PanelOpening) =>
   `${entry.panel.key}:${entry.target}`;
+export const selectedTabId = (selected: string, ids: readonly string[]) =>
+  ids.includes(selected) ? selected : (ids[0] ?? "");
+const sideSelection = (state: State) =>
+  selectedTabId(state.selected, [
+    ...(state.settings ? ["settings"] : []),
+    ...state.tabs.filter((tab) => tabPane(tab) === "side").map((tab) => tab.id),
+    ...state.entries.map(panelTabId),
+  ]);
 
 /** Opening a thread selects its existing tab or adds one in `pane`. */
 function withThread(
@@ -121,6 +138,7 @@ function withThread(
     // An already-open thread stays wherever it was placed.
     pane: prior ? tabPane(prior) : pane,
     rootId: prior?.rootId,
+    name: prior?.name,
   };
   const tabs = existing
     ? state.tabs.map((tab) => (tab.id === id ? next : tab))
@@ -136,7 +154,17 @@ const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
 function createTabStore() {
   let channels: Record<string, State> = {};
   const listeners = new Set<() => void>();
+  const mounts = new Map<string, number>();
   return {
+    visible: (key: string) => mounts.has(key),
+    mount(key: string) {
+      mounts.set(key, (mounts.get(key) ?? 0) + 1);
+      return () => {
+        const remaining = (mounts.get(key) ?? 1) - 1;
+        if (remaining) mounts.set(key, remaining);
+        else mounts.delete(key);
+      };
+    },
     snapshot: () => channels,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -144,11 +172,125 @@ function createTabStore() {
         listeners.delete(listener);
       };
     },
-    update(change: (previous: Record<string, State>) => Record<string, State>) {
-      const next = change(channels);
-      if (next === channels) return;
-      channels = next;
+    /** Changes one page's channel workspace. */
+    update(key: string, change: (previous: State) => State) {
+      const previous = channels[key] ?? empty;
+      const next = change(previous);
+      if (next === previous) return;
+      channels = { ...channels, [key]: next };
       for (const listener of listeners) listener();
+    },
+  };
+}
+const keyOf = (page: string, channelId: string) =>
+  JSON.stringify([page, channelId]);
+function storeOf(session: RelaySession) {
+  let store = sessions.get(session);
+  if (!store) {
+    store = createTabStore();
+    sessions.set(session, store);
+  }
+  return store;
+}
+
+/** A blank name restores the tab's automatic title. */
+const named = (tab: ConversationTab, name: string): ConversationTab =>
+  tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;
+// Until its reader verifies the root, a tab's id holds the root it was opened
+// with, before any disambiguating suffix.
+const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
+  tab.rootId ??
+  (tab.id.slice(`thread:${tab.channelId}:`.length).split(":")[0] as string);
+/** A channel's own thread tabs in its workspace, changed from outside the
+ * page. Tabs the viewer opened for other channels' threads are left alone.
+ * Opening never moves the viewer's selection or focus, and closing refuses
+ * the tab the viewer sees, so no selection needs repair. */
+export function channelTabs(session: RelaySession) {
+  const store = storeOf(session);
+  const stateOf = (channelId: string) =>
+    store.snapshot()[keyOf("messages", channelId)] ?? empty;
+  const threads = (channelId: string) => {
+    const state = stateOf(channelId);
+    const visible = store.visible(keyOf("messages", channelId));
+    const selected = sideSelection(state);
+    return state.tabs.flatMap((tab) =>
+      tab.kind === "thread" && tab.channelId === channelId
+        ? [
+            {
+              tab,
+              root: rootOfTab(tab),
+              pane: tabPane(tab),
+              name: tab.name,
+              shown:
+                visible &&
+                (tabPane(tab) === "main"
+                  ? state.mainSelected === tab.id
+                  : state.paneOpen && selected === tab.id),
+            },
+          ]
+        : [],
+    );
+  };
+  return {
+    list: (channelId: string) =>
+      threads(channelId).map(({ tab: _, ...thread }) => thread),
+    /** Opens thread `rootId` of `channelId` in its workspace; false when it
+     * already has a tab there. */
+    open(channelId: string, rootId: string) {
+      const channel = session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      if (!channel || channel.readOnly || channel.archived || channel.cached)
+        throw new Error("Your owner cannot open threads in this channel.");
+      if (threads(channelId).some((thread) => thread.root === rootId))
+        return false;
+      store.update(keyOf("messages", channelId), (state) => {
+        const pane = threadPlacementPreference();
+        const opened = withThread(
+          state,
+          channelId,
+          rootId,
+          rootId,
+          undefined,
+          pane,
+        );
+        // An empty side pane stays closed; its toggle offers the new tab.
+        const sideEmpty =
+          !state.sidePanel &&
+          !state.settings &&
+          !state.entries.length &&
+          !state.tabs.some((tab) => tabPane(tab) === "side");
+        return {
+          ...opened,
+          selected: sideSelection(state) || state.selected,
+          mainSelected: state.mainSelected,
+          paneOpen: pane === "side" && sideEmpty ? false : state.paneOpen,
+        };
+      });
+      return true;
+    },
+    close(channelId: string, rootId: string): "closed" | "missing" | "shown" {
+      const thread = threads(channelId).find((item) => item.root === rootId);
+      if (!thread) return "missing";
+      if (thread.shown) return "shown";
+      store.update(keyOf("messages", channelId), (state) => ({
+        ...state,
+        tabs: state.tabs.filter((tab) => tab !== thread.tab),
+      }));
+      return "closed";
+    },
+    /** Names thread `rootId`'s tab; an empty name restores its automatic
+     * title. False when it has no tab there. */
+    rename(channelId: string, rootId: string, name: string) {
+      const thread = threads(channelId).find((item) => item.root === rootId);
+      if (!thread) return false;
+      store.update(keyOf("messages", channelId), (state) => ({
+        ...state,
+        tabs: state.tabs.map((tab) =>
+          tab === thread.tab ? named(tab, name) : tab,
+        ),
+      }));
+      return true;
     },
   };
 }
@@ -159,25 +301,16 @@ export function useChannelTabState(
   channelId: string | undefined,
   page = "messages",
 ) {
-  let store = sessions.get(session);
-  if (!store) {
-    store = createTabStore();
-    sessions.set(session, store);
-  }
+  const store = storeOf(session);
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const snapshot = store.snapshot;
-  const setChannels = store.update;
-  const key = JSON.stringify([page, channelId ?? ""]);
+  const key = keyOf(page, channelId ?? "");
+  // Retain descriptors across navigation, but protect only a mounted workspace.
+  useLayoutEffect(() => store.mount(key), [key, store]);
   const state = channels[key] ?? empty;
   const update = useCallback(
-    (change: (previous: State) => State) => {
-      setChannels((all) => {
-        const previous = all[key] ?? empty;
-        const next = change(previous);
-        return next === previous ? all : { ...all, [key]: next };
-      });
-    },
-    [key, setChannels],
+    (change: (previous: State) => State) => store.update(key, change),
+    [key, store],
   );
   const setEntries = useCallback(
     (entries: PanelOpening[]) => update((s) => ({ ...s, entries })),
@@ -358,9 +491,11 @@ export function useChannelTabState(
         // or retargets another reader after the user has left this provisional tab.
         const foreground =
           selected && (tabPane(tab) === "main" || state.paneOpen);
+        // A name given to the provisional tab survives an unnamed owner.
+        const name = owner.name ?? tab.name;
         const merged = foreground
-          ? { ...owner, messageId: tab.messageId, rootId }
-          : owner;
+          ? { ...owner, messageId: tab.messageId, rootId, name }
+          : { ...owner, name };
         const tabs = state.tabs
           .filter((item) => item !== tab)
           .map((item) => (item === owner ? merged : item));
@@ -434,6 +569,19 @@ export function useChannelTabState(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
   );
+  const renameTab = useCallback(
+    (id: string, name: string) =>
+      update((s) => ({
+        ...s,
+        tabs: s.tabs.map((tab) => (tab.id === id ? named(tab, name) : tab)),
+      })),
+    [update],
+  );
+  const setSidePanel = useCallback(
+    (sidePanel: boolean) =>
+      update((s) => (!!s.sidePanel === sidePanel ? s : { ...s, sidePanel })),
+    [update],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
@@ -455,6 +603,8 @@ export function useChannelTabState(
       setThread,
       setSettings,
       setPaneOpen,
+      setSidePanel,
+      renameTab,
     }),
     [
       state,
@@ -474,6 +624,8 @@ export function useChannelTabState(
       setThread,
       setSettings,
       setPaneOpen,
+      setSidePanel,
+      renameTab,
     ],
   );
 }

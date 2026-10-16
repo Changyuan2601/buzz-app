@@ -679,15 +679,18 @@ export function createTabs({
       (fallback ? `goose default (${fallback})` : "goose default");
     return (
       <>
-        <Button
-          size="sm"
-          variant={modelAppearance === "subtle" ? "ghost" : "outline"}
-          disabled={disabled}
-          title="Choose provider and model"
-          onClick={() => setOpen(true)}
-        >
-          {label}
-        </Button>
+        {/* The compact select recipe ellipsizes long model names in cards. */}
+        <div className="buzz-select" data-variant="compact">
+          <Button
+            size="sm"
+            variant={modelAppearance === "subtle" ? "ghost" : "outline"}
+            disabled={disabled}
+            title="Choose provider and model"
+            onClick={() => setOpen(true)}
+          >
+            <span className="buzz-select-value">{label}</span>
+          </Button>
+        </div>
         {open && (
           <ChooseDialog
             value={current}

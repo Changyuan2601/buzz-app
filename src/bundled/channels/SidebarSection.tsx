@@ -37,6 +37,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import type { RelaySession } from "../../features/relay/session";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
+import { SidebarStarIcon } from "./SidebarStarIcon";
 import styles from "./Channels.module.css";
 
 export function SidebarSection({
@@ -165,9 +166,11 @@ export function SidebarSection({
             }}
           >
             <span className={styles.sectionLabel}>
-              {icon && session && (
+              {sectionKey === "starred" ? (
+                <SidebarStarIcon />
+              ) : icon && session ? (
                 <SidebarGroupIcon icon={icon} session={session} />
-              )}
+              ) : null}
               <FadingLabel className={styles.sectionTitle}>{title}</FadingLabel>
             </span>
             <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>

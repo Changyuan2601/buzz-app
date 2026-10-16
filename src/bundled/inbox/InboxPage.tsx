@@ -146,16 +146,21 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
+/** The open conversation's Archive/Restore, published for the Inbox shortcut. */
+export type ArchiveShortcut = { current?: (() => void) | undefined };
+
 export function InboxPage({
   relay,
   navigator,
   extensions,
   host,
+  archive,
 }: {
   relay: RelayData;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
   host: ConversationHostServices;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const { viewer, scope } = connection;
@@ -175,6 +180,7 @@ export function InboxPage({
             navigator={navigator}
             extensions={extensions}
             host={host}
+            archive={archive}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -210,12 +216,14 @@ export function InboxView({
   navigator,
   extensions,
   host,
+  archive: archiveShortcut,
 }: {
   session: RelaySession;
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
   host: ConversationHostServices;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const split = usePanelSplit(undefined, 316, {
     defaultWidth: 420,
@@ -1192,6 +1200,7 @@ export function InboxView({
                 disabled: pending,
                 run: () => archive(selected, !archived(selected)),
               }}
+              archiveShortcut={archiveShortcut}
               onBack={() => {
                 setRestoringFocus(true);
                 cancelRetry();

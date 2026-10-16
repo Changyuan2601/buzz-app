@@ -207,6 +207,13 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+.authorWithStatus {
+  --user-status-emoji-size: var(--text-body-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
 .author {
   font-weight: var(--type-weight-medium);
   min-width: 0;
@@ -809,7 +816,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
    both read it as the thread's placeholder, not a stray icon. */
 .threadLoading picture {
   display: block;
-  width: clamp(5rem, 24cqmin, 10rem);
+  width: clamp(3.35rem, 16cqmin, 6.7rem);
   line-height: 0;
 }
 .threadLoading img {

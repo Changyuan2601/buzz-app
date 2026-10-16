@@ -65,6 +65,7 @@ const agents = {
     snapshot.agents.find((agent) => agent.pubkey === pubkey),
   relay: () => undefined,
   save: async () => {},
+  classifier: () => "unavailable",
 } as unknown as Agents;
 const disconnected = { status: "disconnected", generation: 0 };
 const relay = {

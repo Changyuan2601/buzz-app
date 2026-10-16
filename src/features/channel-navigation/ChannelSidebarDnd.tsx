@@ -161,6 +161,12 @@ export function DroppableSidebarSection({
     id: section.sectionKey,
     data: { groupIndex },
     disabled,
+    // dnd-kit queues a re-measure of only the droppable that resized and clears
+    // that queue after each render, losing ids queued in between: a section
+    // resized mid-drag (text size) could keep a stale drop target. An empty list
+    // keeps dnd-kit's drag-start queue: any section's resize re-measures every
+    // enabled droppable.
+    resizeObserverConfig: { updateMeasurementsFor: [] },
   });
   const drag = useDraggable({
     id: section.sectionKey,

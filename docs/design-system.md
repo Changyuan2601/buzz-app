@@ -24,6 +24,14 @@ System, follows the computer’s color scheme as it changes. The choice is store
 device under `buzz-appearance.v1` in browser-origin localStorage. It does not sync
 through community profiles or relay events, and no theme marketplace is available.
 
+The app shell uses a solid neutral background with one continuous dot grid;
+reading panes remain opaque. The shared texture derives its color from the shell
+at the root in each mode. Startup, color-mode thumbnails and runtime browser
+appearance metadata use that same solid shell color; the HTML metadata uses the
+light shell as its initial fallback. Chrome navigation is flat rather than glass.
+Historical gradients remain only as design-viewer glass-study samples, not
+selectable product themes.
+
 Other same-origin windows observe saved changes without rebuilding pages or relay
 services. Failed reads and invalid values fall back to System. Failed saves keep the
 selection for the current session and show a retry in Appearance.
@@ -380,7 +388,7 @@ measures its rem-sized leading region for the virtualizer’s pixel start margin
 ## Preference rows
 
 `PreferenceRow` owns settings layout: an optional decorative Tabler `icon`,
-`title`, optional `subtitle`, and `trailing` content. Titles use `text-label-sm`;
+`title`, optional `subtitle`, and `trailing` content. Titles use Regular `text-body-sm` (14px);
 subtitles use `text-body-sm`. Text wraps and controls retain their own interaction,
 focus, disabled, and pending behavior. The row itself is not an action target.
 

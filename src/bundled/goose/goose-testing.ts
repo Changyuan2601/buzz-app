@@ -39,6 +39,10 @@ export type FakeGoose = {
   closed: string[];
   cancelled: string[];
   deleted: string[];
+  /** Each `session/set_config_option`, as `sessionId configId=value`. */
+  configured: string[];
+  /** When set, `session/set_config_option` fails with it. */
+  configError?: string;
   /** The environment it started with. */
   env: Readonly<Record<string, string | null>>;
   /** When set, a turn stays open until it is finished. */
@@ -177,6 +181,7 @@ export function fakeSpawn(
       closed: [],
       cancelled: [],
       deleted: [],
+      configured: [],
       env: process.env ?? {},
       hold: options.hold ?? false,
       endOnSteer: false,
@@ -296,6 +301,17 @@ export function fakeSpawn(
           if (fake.endOnSteer) turn.finish();
           return reply(id, { runId: turn.runId, messageId: "m" });
         }
+        case "session/set_config_option":
+          if (fake.configError)
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: fake.configError },
+            });
+          fake.configured.push(
+            `${sessionId} ${String(params.configId)}=${String(params.value)}`,
+          );
+          return reply(id, { configOptions: [] });
         case "session/cancel":
           fake.cancelled.push(sessionId);
           running.get(sessionId)?.finish("cancelled");

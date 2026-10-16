@@ -88,7 +88,7 @@
   :root {
     font-family: var(--font-legacy-sans);
     color: var(--text);
-    background: var(--workspace);
+    background: var(--bg-app);
     font-synthesis: none;
     -webkit-font-smoothing: antialiased;
     /* Keep wheel/trackpad gestures from rubber-banding the whole app. */
@@ -183,7 +183,8 @@
     box-shadow: var(--elevation-surface);
   }
   .shell-background {
-    background: var(--bg-app);
+    background-color: var(--bg-app);
+    @apply texture-dots;
   }
 
   .shell-header {
@@ -196,7 +197,8 @@
     padding-left: var(--space-4);
     padding-right: var(--space-2);
     gap: var(--space-2);
-    background: color-mix(in srgb, var(--bg-app) 72%, var(--surface-panel));
+    /* The shell owns one continuous dot grid, including beneath this header. */
+    background: transparent;
   }
   @media (min-width: 40rem) {
     .shell-header {
@@ -313,8 +315,8 @@
   .shell-sidebar,
   .shell-sidebar-default {
     @apply flex min-h-0 shrink-0;
-    /* Keep the surface gap inside the animated sidebar track. */
-    margin-inline-end: var(--space-1);
+    /* Keep the shared panel gap inside the animated sidebar track. */
+    margin-inline-end: var(--space-panel-gap);
     /* Coupled to the sidebar's persisted pixel width and resize limits. */
     width: 260px;
     min-width: 220px;

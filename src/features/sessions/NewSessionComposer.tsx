@@ -17,7 +17,12 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  writeView,
+  subscribeView,
+  viewRevision,
+} from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
 import { AgentChoice } from "./AgentChoice";
 import { SessionProjectControl } from "./SessionProjectControl";
@@ -27,6 +32,43 @@ import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
+
+/** Starting a new chat from a project starts it in that project, even when an
+ * earlier draft there was switched to another one. */
+function readDraftSettings(scope: string, draftKey: string) {
+  const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
+  if (typeof saved === "string") return { canvas: saved, name: "" };
+  const settings = saved && typeof saved === "object" ? saved : {};
+  return {
+    name: "name" in settings ? (settings.name as string) : "",
+    canvas:
+      "canvas" in settings && typeof settings.canvas === "string"
+        ? settings.canvas
+        : undefined,
+    // Preserve malformed lifetime input for the existing visible validation.
+    ttlSeconds: ("ttlSeconds" in settings ? settings.ttlSeconds : undefined) as
+      | number
+      | undefined,
+  };
+}
+
+export function resetNewChatProject(
+  scope: string,
+  personal: boolean,
+  sectionId: string,
+) {
+  const key = `${personal ? "me" : "sessions"}:section:${sectionId}`;
+  // A submitted start owns its frozen project and must remain recoverable.
+  if (readPending(scope, key)) return;
+  const selected = readView<unknown>(scope, `${key}:new-project`, sectionId);
+  // Instructions belong to the previous project; name and lifetime stay.
+  if (selected !== sectionId)
+    writeView(scope, `${key}:settings`, {
+      ...readDraftSettings(scope, key),
+      canvas: undefined,
+    });
+  writeView(scope, `${key}:new-project`, null);
+}
 
 export function NewSessionComposer({
   session,
@@ -81,23 +123,34 @@ export function NewSessionComposer({
     return typeof saved === "string" ? saved : (sectionId ?? "");
   });
   const settingsTrigger = useRef<HTMLButtonElement>(null);
-  const [draftSettings, setDraftSettings] = useState(() => {
-    const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
-    if (typeof saved === "string") return { canvas: saved, name: "" };
-    const settings = saved && typeof saved === "object" ? saved : {};
-    return {
-      name: "name" in settings ? (settings.name as string) : "",
-      canvas:
-        "canvas" in settings && typeof settings.canvas === "string"
-          ? settings.canvas
-          : undefined,
-      // Preserve malformed lifetime input for the existing visible validation.
-      ttlSeconds: ("ttlSeconds" in settings
-        ? settings.ttlSeconds
-        : undefined) as number | undefined,
-    };
-  });
+  const [draftSettings, setDraftSettings] = useState(() =>
+    readDraftSettings(scope, draftKey),
+  );
   const draftCanvas = draftSettings.canvas;
+  // Project entry can reset this draft while the composer stays mounted.
+  // Observe only changed revisions so unrelated writes don't discard local edits
+  // when ordinary view persistence is unavailable.
+  useEffect(() => {
+    const projectKey = `${draftKey}:new-project`;
+    const settingsKey = `${draftKey}:settings`;
+    let projectRevision = viewRevision(scope, projectKey);
+    let settingsRevision = viewRevision(scope, settingsKey);
+    return subscribeView(scope, () => {
+      const nextProject = viewRevision(scope, projectKey);
+      const nextSettings = viewRevision(scope, settingsKey);
+      if (nextProject !== undefined && nextProject !== projectRevision) {
+        projectRevision = nextProject;
+        const project = readView<unknown>(scope, projectKey, sectionId ?? "");
+        setSelectedProject(
+          typeof project === "string" ? project : (sectionId ?? ""),
+        );
+      }
+      if (nextSettings !== undefined && nextSettings !== settingsRevision) {
+        settingsRevision = nextSettings;
+        setDraftSettings(readDraftSettings(scope, draftKey));
+      }
+    });
+  }, [scope, draftKey, sectionId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focusRequest)

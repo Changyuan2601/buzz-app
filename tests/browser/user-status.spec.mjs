@@ -88,9 +88,9 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       page.getByRole("button", { name: "Your profile", exact: true }),
     ).toBeFocused();
-    await expect(chat.locator('[aria-label="💬 Design meeting"]')).toHaveCount(
-      0,
-    );
+    await expect(
+      chat.locator('[aria-label="💬 Design meeting"]'),
+    ).toBeVisible();
     await expect(chat.getByText("Design meeting", { exact: true })).toHaveCount(
       0,
     );
@@ -144,7 +144,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     ).toBeVisible();
     await expect(
       chat.getByRole("img", { name: ":party:", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await open();
     await editor.getByRole("button", { name: "Clear status" }).click();
     await expect(editor).toBeHidden();
@@ -222,7 +222,11 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       .locator("..");
     await expect(
       bobByline.locator('[aria-label="🏠 Working remotely"]'),
-    ).toHaveCount(0);
+    ).toBeVisible();
+    await bobByline.locator('[aria-label="🏠 Working remotely"]').hover();
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Working remotely",
+    );
     await expect(bobByline.locator("[tabindex]")).toHaveCount(0);
     await page.getByRole("button", { name: "Replay older Bob" }).click();
     await expect(
@@ -238,7 +242,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expectStatusBesideName();
     await expect(
       bobByline.getByRole("img", { name: ":party: Celebrating", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await page
       .getByRole("button", { name: "Text-only Bob", exact: true })
       .click();
@@ -247,7 +251,11 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
       "Buzzy",
     );
-    await expect(bobByline.locator('[aria-label="Buzzy"]')).toHaveCount(0);
+    await expect(bobByline.locator('[aria-label="Buzzy"]')).toHaveText("💬");
+    await bobByline.locator('[aria-label="Buzzy"]').hover();
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Buzzy",
+    );
     await expect(navigation.getByText("Buzzy", { exact: true })).toHaveCount(0);
     await expect(
       page

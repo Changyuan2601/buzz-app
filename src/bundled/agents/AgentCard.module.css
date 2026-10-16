@@ -183,7 +183,7 @@
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-pill);
   color: var(--text-inverse);
-  background: var(--text-standard);
+  background: var(--affordance-prominent);
 }
 
 @media (max-width: 560px) {

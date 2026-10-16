@@ -1,7 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
-import { preview } from "vite";
+import { preview } from "./vite-server.mjs";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
 import { brokerSocket } from "../broker-socket.mjs";
@@ -83,7 +83,7 @@ const test = base.extend({
       authority: async () => ({ relayAuthor: author }),
       socketFactory: socket.factory,
       upstreamFetch: async (url, init) => {
-        const body = init?.body ? JSON.parse(init.body) : undefined;
+        let body = init?.body ? JSON.parse(init.body) : undefined;
         if (String(url).endsWith("/events")) {
           commands.push(body);
           if (failOpen) {
@@ -119,7 +119,19 @@ const test = base.extend({
             message: `response:${JSON.stringify({ channel_id: channel })}`,
           });
         }
-        if (String(url).endsWith("/query")) {
+        // Relay name search: record and answer it as the equivalent kind:0
+        // search read, so the people gates and read counts cover both.
+        const profileSearch = String(url).endsWith("/profiles/search");
+        if (profileSearch || String(url).endsWith("/query")) {
+          if (profileSearch)
+            body = [
+              {
+                kinds: [0],
+                search: body.query,
+                limit: body.limit,
+                page: body.page ?? 1,
+              },
+            ];
           reads.push(...body);
           if (body.some((filter) => filter.kinds?.includes(0) && filter.page))
             await directoryReady;

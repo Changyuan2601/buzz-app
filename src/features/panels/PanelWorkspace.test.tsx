@@ -104,6 +104,34 @@ test("switches retained panels, associates their tabs, and closes inactive or ac
   expect(screen.getByText("No open panels")).toBeVisible();
 });
 
+test("middle-click closes inactive tabs without taking draft focus", async () => {
+  const user = userEvent.setup();
+  render(<Fixture />);
+  const draft = screen.getByRole("textbox", { name: "Thread draft" });
+  await user.type(draft, "Keep this draft");
+
+  await user.pointer({ target: tab("Ada"), keys: "[MouseRight]" });
+  expect(tab("Ada")).toBeInTheDocument();
+  draft.focus();
+  await user.pointer({ target: tab("Ada"), keys: "[MouseMiddle]" });
+  expect(within(tabs()).queryByRole("tab", { name: "Ada" })).toBeNull();
+  expect(draft).toHaveFocus();
+  expect(draft).toHaveValue("Keep this draft");
+
+  await user.pointer({ target: tab("Thread"), keys: "[MouseMiddle]" });
+  expect(screen.getByText("No open panels")).toBeVisible();
+});
+
+test("middle-clicking the active tab recovers focus to its selected neighbor", async () => {
+  const user = userEvent.setup();
+  render(<Fixture />);
+  await user.click(tab("Ada"));
+  await user.pointer({ target: tab("Ada"), keys: "[MouseMiddle]" });
+  expect(within(tabs()).queryByRole("tab", { name: "Ada" })).toBeNull();
+  expect(tab("Thread")).toHaveAttribute("aria-selected", "true");
+  expect(tab("Thread")).toHaveFocus();
+});
+
 test("local details are retained sibling tabs and close without dismissing the profile", async () => {
   const user = userEvent.setup();
   render(
@@ -534,4 +562,108 @@ test("background tab selection does not take focus from a modal", () => {
   );
   expect(search).toHaveFocus();
   expect(tab("two")).toHaveAttribute("aria-selected", "true");
+});
+
+test("a tab is renamed in place by double-click, F2 or its menu", async () => {
+  const user = userEvent.setup();
+  const renamed = vi.fn();
+  function Renamable() {
+    const [name, setName] = useState<string>();
+    return (
+      <PanelWorkspace
+        value="thread"
+        select={() => {}}
+        items={[
+          {
+            id: "thread",
+            label: name ?? "Root text",
+            close() {},
+            rename(next) {
+              renamed(next);
+              setName(next.trim() || undefined);
+            },
+            content: <input aria-label="Thread draft" />,
+          },
+        ]}
+      />
+    );
+  }
+  render(<Renamable />);
+  const field = () => screen.getByRole("textbox", { name: "Tab name" });
+  await user.dblClick(tab("Root text"));
+  expect(field()).toHaveFocus();
+  expect(field()).toHaveValue("Root text");
+  await user.keyboard("Launch plan{Enter}");
+  expect(renamed).toHaveBeenLastCalledWith("Launch plan");
+  expect(tab("Launch plan")).toHaveFocus();
+  // Escape keeps the name and the tab; keeping the text changes nothing.
+  await user.keyboard("{F2}");
+  expect(field()).toHaveFocus();
+  expect(field()).toHaveValue("Launch plan");
+  await user.keyboard("Draft{Escape}");
+  expect(tab("Launch plan")).toHaveFocus();
+  await user.keyboard("{F2}{Enter}");
+  expect(renamed).toHaveBeenCalledTimes(1);
+  // The menu opens the same field; leaving it saves, and blank restores.
+  await user.pointer({ keys: "[MouseRight]", target: tab("Launch plan") });
+  await user.click(screen.getByRole("menuitem", { name: "Rename tab" }));
+  await user.clear(field());
+  await user.click(screen.getByRole("textbox", { name: "Thread draft" }));
+  expect(renamed).toHaveBeenLastCalledWith("");
+  expect(tab("Root text")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Thread draft" })).toHaveFocus();
+});
+
+test("the tab name field keeps its keys, ignores IME commits and newer titles, and ends with its tab", async () => {
+  const user = userEvent.setup();
+  const renamed = vi.fn();
+  const closed = vi.fn();
+  const workspace = (labels: Record<string, string>) => (
+    <PanelWorkspace
+      value="a"
+      select={() => {}}
+      items={Object.entries(labels).map(([id, label]) => ({
+        id,
+        label,
+        close: () => closed(id),
+        rename: (name: string) => renamed(id, name),
+        content: <input aria-label={`${id} draft`} />,
+      }))}
+    />
+  );
+  const field = () => screen.queryByRole("textbox", { name: "Tab name" });
+  const view = render(workspace({ a: "Alpha", b: "Beta" }));
+  // Arrows at either end of the text stay in the field.
+  await user.dblClick(tab("Alpha"));
+  await user.keyboard("{End}{ArrowRight}{Home}{ArrowLeft}");
+  expect(field()).toHaveFocus();
+  // App shortcuts still reach the window from the field.
+  const shortcut = vi.fn();
+  window.addEventListener("keydown", shortcut);
+  fireEvent.keyDown(field() as HTMLElement, { key: "k", metaKey: true });
+  window.removeEventListener("keydown", shortcut);
+  expect(shortcut).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "k", metaKey: true }),
+  );
+  // Middle-click in the field keeps its paste and does not close the tab.
+  expect(fireEvent.mouseDown(field() as HTMLElement, { button: 1 })).toBe(true);
+  await user.pointer({ target: field() as HTMLElement, keys: "[MouseMiddle]" });
+  expect(closed).not.toHaveBeenCalled();
+  expect(field()).toHaveFocus();
+  // The Enter that commits an IME composition does not save.
+  fireEvent.keyDown(field() as HTMLElement, { key: "Enter", keyCode: 229 });
+  expect(field()).toHaveFocus();
+  // A title that changed while editing is not overwritten by untouched text,
+  // and trailing space alone is no change.
+  view.rerender(workspace({ a: "Agent name", b: "Beta" }));
+  await user.keyboard("{End} {Enter}");
+  expect(renamed).not.toHaveBeenCalled();
+  // An editor whose tab closes does not return, or take focus, with the tab.
+  await user.pointer({ keys: "[MouseRight]", target: tab("Beta") });
+  await user.click(screen.getByRole("menuitem", { name: "Rename tab" }));
+  view.rerender(workspace({ a: "Agent name" }));
+  screen.getByRole("textbox", { name: "a draft" }).focus();
+  view.rerender(workspace({ a: "Agent name", b: "Beta" }));
+  expect(field()).toBeNull();
+  expect(renamed).not.toHaveBeenCalled();
 });

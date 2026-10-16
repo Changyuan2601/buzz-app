@@ -7,7 +7,13 @@ plaintext decryption to the renderer.
 
 The caller supplies only an exact agent public key. The host captures the current
 relay and fixes the owner to the authenticated viewer, querying kind 30174 with
-`authors=[agent]`, `#p=[viewer]`. Self-profile requests are unsupported: being the
+`authors=[agent]`, `#p=[viewer]`. A read of one entry (`core` at session start,
+`mem_get <slug>`, `mem_set`'s lookup) adds `#d=[address]`, the HMAC address of
+the slug, so it never depends on the size of the rest of the memory. The native
+host pages the full listing newest first with an `(until, before_id)` cursor
+taken from the last event of each page, matching the relay's
+`created_at DESC, id ASC` order; the development broker
+answers one page and the session narrows it to the requested entry. Self-profile requests are unsupported: being the
 viewed agent does not identify its owner. No inventory, name, avatar shape or
 profile marker grants access. Remote-owned agents need no local instance.
 
@@ -28,20 +34,38 @@ credential loader is copied into the plugin.
 
 ## Budgets and lifetime
 
-- 256 returned envelopes; hitting the cap marks the result potentially incomplete.
-- 2 MiB streamed upstream/DTO response; 1 MiB retained decoded entry data.
-- Ten-second fetch/decode deadline, plus a ten-second incoming upload deadline.
-- Four mounted views per session; no periodic refresh or startup requests.
+- Native reads ask for 16 envelopes a page (a body is at most 64 KiB, so a page
+  of ordinary memory events fits the 2 MiB response cap; a larger page fails
+  the read) and decode each page as it arrives.
+- One native read makes at most 64 queries, about a fifth of the relay's 300
+  per owner per minute, so 1,024 entries is the practical listing limit. It
+  also stops at 4096 envelopes, 16 MiB of raw responses and 8 MiB of retained
+  decoded entry data.
+- One nine-second deadline covers the whole native read from its first key
+  operation; a page fetched in time may finish decoding up to half a second
+  later. That native budget of 9.5 seconds sits under the frontend's
+  ten-second timeout; it is a budget, not a measured end-to-end time.
+- Any of these limits, the deadline, a 429, or a full page that brings nothing
+  new returns the entries decoded so far marked partial; nothing decoded is
+  dropped. The development broker still answers one 256-envelope query with a
+  2 MiB response and 1 MiB of decoded data.
+- Agent tools keep the partial mark: `mem_get` says a list is incomplete and
+  reports an unread entry as unreadable rather than absent, and `mem_set`
+  refuses to write unless its lookup found the entry or confirmed it missing.
+  The standalone MCP client asks for 1,000 events, the most the relay returns
+  to one query, and marks a full answer partial.
+- Ten-second incoming upload deadline.
+- Four mounted views per session; views make no periodic or startup requests.
 - Oversized input fails closed, not silently truncated before head selection.
 
 A session owns each explicitly opened view; its consumer releases it on unmount.
 Refresh drops the previous plaintext rather than displaying stale contents during
 errors. Access purge, disconnect, cache clear and disposal clear snapshots and
-abort/fence pending work. Reconnection does not automatically reload sensitive data.
+abort/fence pending work. Reconnection does not automatically reload a view.
 For hosts with a live stream, connected live updates are an intentional revocation
 fence even though the memory read uses HTTP. Reads before connection or during
 reconnection/cache clearing report blocked, not a failed HTTP request. Manual
-retry after recovery is required; reconnecting never reloads plaintext automatically.
+retry after recovery is required; reconnecting never reloads a view's plaintext.
 Read failure, blocked admission, denied access, unsupported host/target, partial result and successful
 empty remain distinct. Session copies are RAM only; trusted plugin copies cannot
 be revoked or zeroized. The host zeroes its derived conversation-key byte array,
@@ -64,9 +88,20 @@ not production memory reads or packaged-native acceptance.
 ## Consumers
 
 No plugin shows memories in a UI now: the Profiles plugin and its Memories tab
-were removed. The Claude and Codex bundled runtimes open a view through
-`session.agentMemories.open(pubkey)` to read the agent's own memories for its Buzz
-tools; Claude also reads the `core` memory for a new session and reuses a
-read for five minutes. Each read refreshes one view and disposes it when settled,
-and fails unless the view's status is `ready`. Without a ready relay connection
-no view is opened.
+were removed. The Claude Code, Codex and Goose bundled runtimes read the agent's
+own memories for their Buzz tools through `session.agentMemories.read(pubkey,
+signal, slug?)`, the paged native read described above, and pass its partial
+status through to the tool result. Without a ready relay connection the read
+fails instead of being attempted.
+
+The `core` memory a new session starts with comes from one host-owned cache per
+agent (`CoreMemoryCache`, owned by the agents service), not from each runtime.
+The service reads `core` alone, by its address, when the agent's community
+connects and when that connection recovers. A start uses the cached copy
+without a relay request; if neither read has finished, it waits up to five
+seconds on one by-address read. A successful `mem_set` of `core` updates the
+cache ahead of any read still under way, and each finished turn refreshes it in
+the background for the next start. A failed read, or a partial read that
+misses `core`, keeps the cached copy. The copy lives only in memory and is never saved to web storage or disk,
+so a restart starts empty and reads `core` again. Leaving a community purges its
+cached copies and fences reads still under way; a disconnect alone keeps them.

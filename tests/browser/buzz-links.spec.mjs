@@ -314,6 +314,116 @@ test("a hovered message preview survives scroll anchoring and closes when its li
   await expect(preview).toHaveCount(0);
 });
 
+// Browser-only: real hit-testing and boundary events under a still pointer.
+test("a hovered message preview survives the timeline's scroll-time pointer-events and closes when the pointer leaves", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const target = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Broadcast reply");
+  const message = app.append(
+    "primary",
+    "alpha",
+    `Open <buzz://message?channel=alpha&id=${target.id}>.`,
+  );
+  const link = page
+    .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
+    .getByRole("link", { name: "Alpha", exact: true });
+  await expect(link).toBeVisible();
+  await virtuaIdle(page);
+  const preview = page.getByLabel("Message preview", { exact: true });
+  await link.hover();
+  await expect(
+    preview.getByText("Broadcast reply", { exact: true }),
+  ).toBeVisible();
+  const closed = await preview.evaluateHandle((popup) => {
+    const seen = { closed: false };
+    new MutationObserver(() => {
+      if (!popup.isConnected || !popup.hasAttribute("data-open"))
+        seen.closed = true;
+    }).observe(popup, { attributes: true });
+    return seen;
+  });
+  // Virtua stops the list hit-testing until 150ms after each scroll. When
+  // the browser hit-tests the still pointer in that time, as WebKit does
+  // after a scroll, it reports a mouseleave from the link. A 1px move that
+  // stays on the link makes that hit-test happen now; WebKit can ignore a
+  // move to the unchanged position.
+  const list = page.locator('[data-channel-timeline="alpha"] ol');
+  const box = await link.boundingBox();
+  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const hitTest = async (pointerEvents) => {
+    await list.evaluate((element, value) => {
+      element.style.pointerEvents = value;
+    }, pointerEvents);
+    point.x += pointerEvents ? 1 : -1;
+    await page.mouse.move(point.x, point.y);
+  };
+  // Listen at the document so a re-rendered link is still heard.
+  const boundary = await page.evaluateHandle((id) => {
+    const seen = { closeDelayEnded: false, enter: false };
+    const isLink = (target) =>
+      target instanceof Element &&
+      target.matches(`[data-message-id="${id}"] a`);
+    document.addEventListener(
+      "mouseleave",
+      ({ target }) => {
+        if (!isLink(target)) return;
+        // Added now, this listener runs after the preview's own one on the
+        // link. Its timer starts after the preview's 150ms close delay and,
+        // being no shorter, fires after it.
+        target.addEventListener(
+          "mouseleave",
+          () => {
+            setTimeout(() => {
+              seen.closeDelayEnded = true;
+            }, 150);
+          },
+          { once: true },
+        );
+      },
+      true,
+    );
+    document.addEventListener(
+      "mouseenter",
+      ({ target }) => {
+        if (isLink(target)) seen.enter = true;
+      },
+      true,
+    );
+    return seen;
+  }, message.id);
+  const saw = (key) =>
+    boundary.evaluate(
+      (seen, { key, id, point }) => {
+        const link = document.querySelector(`[data-message-id="${id}"] a`);
+        const hit = document.elementFromPoint(point.x, point.y);
+        return {
+          [key]: seen[key],
+          hit: hit && `${hit.tagName}.${hit.className}`,
+          onLink: !!link?.contains(hit),
+          list: getComputedStyle(link?.closest("ol") ?? document.body)
+            .pointerEvents,
+        };
+      },
+      { key, id: message.id, point },
+    );
+  await hitTest("none");
+  await expect
+    .poll(() => saw("closeDelayEnded"))
+    .toMatchObject({ closeDelayEnded: true });
+  await hitTest("");
+  await expect.poll(() => saw("enter")).toMatchObject({ enter: true });
+  expect(await closed.evaluate(({ closed }) => closed)).toBe(false);
+  await expect(preview).toHaveAttribute("data-open", "");
+  // The link cannot hear a real leave while the list ignores the pointer.
+  await hitTest("none");
+  await page.mouse.move(point.x, box.y - 120, { steps: 4 });
+  await expect(preview).toHaveCount(0);
+});
+
 // Retained DOM, scroll geometry, focus, and CSS motion need a real browser.
 test("thread and detail tabs preserve drafts, scroll, focus and local-detail lifetime", async ({
   page,

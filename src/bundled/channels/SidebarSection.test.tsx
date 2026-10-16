@@ -14,6 +14,41 @@ import { afterEach, expect, it, vi } from "vitest";
 import { SidebarSection } from "./SidebarSection";
 
 afterEach(cleanup);
+
+it.each([true, false])(
+  "keeps Starred creation independent of collapse and respects availability (%s)",
+  async (available) => {
+    const user = userEvent.setup();
+    const open = vi.fn();
+    const toggle = vi.fn();
+    render(
+      <SidebarSection
+        sectionKey="starred"
+        title="Starred"
+        open={false}
+        onToggle={toggle}
+        createChannel={{ available, open }}
+      >
+        <button type="button">General</button>
+      </SidebarSection>,
+    );
+    const trigger = screen.getByRole("button", { name: "Create channel" });
+    if (available) {
+      trigger.focus();
+      await user.keyboard("{Enter}");
+      expect(open).toHaveBeenCalledExactlyOnceWith(trigger);
+    } else {
+      expect(trigger).toBeDisabled();
+      await user.click(trigger);
+      expect(open).not.toHaveBeenCalled();
+    }
+    expect(toggle).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText("Starred").closest("details"),
+    ).not.toHaveAttribute("open");
+  },
+);
+
 function Section({
   sort,
 }: {

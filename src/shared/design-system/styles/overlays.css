@@ -7,7 +7,7 @@
   }
   .buzz-dialog {
     @apply interaction-floating;
-    --dialog-padding: var(--space-6);
+    --dialog-padding: var(--space-5);
     position: fixed;
     top: 50%;
     left: 50%;

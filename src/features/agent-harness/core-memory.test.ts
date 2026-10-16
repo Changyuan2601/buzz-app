@@ -69,6 +69,23 @@ it("does not share a read that started before a write", async () => {
   ]);
 });
 
+it("shares reads per slug, and a write forgets every read of the agent", async () => {
+  const s = session();
+  const reads = new MemoryReads();
+  const signal = new AbortController().signal;
+  void reads.read(s.source, agent, signal, "core");
+  void reads.read(s.source, agent, signal);
+  void reads.read(s.source, agent, signal, "core");
+  expect(s.read.mock.calls.map((call) => call.at(1))).toEqual([
+    "core",
+    undefined,
+  ]);
+  reads.forget(s.source.connection, agent);
+  void reads.read(s.source, agent, signal, "core");
+  void reads.read(s.source, agent, signal);
+  expect(s.read).toHaveBeenCalledTimes(4);
+});
+
 it("stops waiting when the caller aborts, even if the read does not", async () => {
   const s = session();
   const reads = new MemoryReads();

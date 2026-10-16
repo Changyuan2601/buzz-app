@@ -3,8 +3,8 @@
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
 use buzz_agent_controller::{
-    AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
-    Published, Secret, CREDENTIALS_BUSY,
+    inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
+    PortSource, Portables, Published, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -241,6 +241,8 @@ pub(crate) struct AppAgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<String>,
     deleted: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    deleting: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -252,6 +254,7 @@ impl From<AppAgent> for AppAgentSummary {
             name: agent.name,
             picture: agent.picture,
             deleted: agent.deleted,
+            deleting: agent.deleting,
         }
     }
 }
@@ -261,6 +264,9 @@ impl From<AppAgent> for AppAgentSummary {
 pub(crate) struct Ported {
     agent: AppAgentSummary,
     carry: Carry,
+    /// What did not come over, said to the person importing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<String>,
 }
 
 #[tauri::command]
@@ -346,24 +352,57 @@ pub(crate) async fn app_agent_port(
         &agent_type,
         key,
         &found.name,
-        found.picture,
-        found.about,
+        found.picture.clone(),
+        found.about.clone(),
     )?;
     let auth = identity
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
         .await?;
     let host = state.inner().clone();
-    blocking(move || {
+    let (mut agent, key) = blocking(move || {
         let mut keys = host.keys();
         let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
-        keys.insert(agent.pubkey.clone(), Arc::new(key));
-        Ok(Ported {
-            agent: agent.into(),
-            carry: found.carry,
-        })
+        let key = Arc::new(key);
+        keys.insert(agent.pubkey.clone(), key.clone());
+        Ok((agent, key))
     })
-    .await
+    .await?;
+    let mut notes = vec![];
+    // Old Buzz kept some pictures inline; the community serves the upload. The
+    // agent comes over without it if that fails, which the import reports.
+    let inline = found
+        .picture
+        .as_deref()
+        .filter(|url| url.starts_with("data:"));
+    if inline.is_some_and(|url| inline_picture(url).is_none()) {
+        notes.push(format!(
+            "{} came over without its picture, which isn't a PNG, JPEG, GIF or WebP image under 6 MB.",
+            agent.name
+        ));
+    }
+    if let Some((mime, bytes)) = inline.and_then(inline_picture) {
+        let agents = state.agents.clone()?;
+        let uploaded = async {
+            let receipt = upload(&agent, &key, bytes, mime).await?;
+            let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
+            let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
+            blocking(move || agents.set_picture(&pubkey, picture)).await?;
+            Ok::<_, String>(url.to_owned())
+        };
+        match uploaded.await {
+            Ok(url) => agent.picture = Some(url),
+            Err(error) => {
+                eprintln!("Imported agent picture was not saved: {error}");
+                notes.push(format!("{} came over without its picture.", agent.name));
+            }
+        }
+    }
+    Ok(Ported {
+        agent: agent.into(),
+        carry: found.carry,
+        notes,
+    })
 }
 
 #[tauri::command]
@@ -402,6 +441,15 @@ pub(crate) async fn app_agent_delete(
     pubkey: String,
 ) -> Result<(), String> {
     state.delete(pubkey).await
+}
+
+#[tauri::command]
+pub(crate) async fn app_agent_begin_delete(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.begin_delete(&pubkey)).await
 }
 
 #[tauri::command]
@@ -501,21 +549,7 @@ pub(crate) async fn app_agent_query(
 
 async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value, String> {
     let bytes = serde_json::to_vec(filters).map_err(|_| "Could not encode agent read")?;
-    let response = client()?
-        .post(agent.query_url())
-        .timeout(Duration::from_secs(20))
-        .header("Content-Type", "application/json")
-        .header(
-            "Authorization",
-            authorization(agent.http_auth(key, &agent.query_url(), &bytes)?)?,
-        )
-        .header("x-auth-tag", &agent.auth)
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|_| "Agent read failed")?;
-    let status = response.status();
-    let body = bounded(response, 8 * 1024 * 1024).await?;
+    let (status, body) = signed_read(agent, key, agent.query_url(), bytes).await?;
     if !status.is_success() {
         return Err(format!(
             "The community refused the agent read: {}",
@@ -523,6 +557,72 @@ async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value
         ));
     }
     serde_json::from_slice(&body).map_err(|_| "Invalid agent read".into())
+}
+
+/// Posts a read body to one of the agent's community endpoints, signed as the
+/// agent, and returns the status and bounded body.
+async fn signed_read(
+    agent: &AppAgent,
+    key: &Secret,
+    url: String,
+    bytes: Vec<u8>,
+) -> Result<(reqwest::StatusCode, Vec<u8>), String> {
+    let response = client()?
+        .post(&url)
+        .timeout(Duration::from_secs(20))
+        .header("Content-Type", "application/json")
+        .header(
+            "Authorization",
+            authorization(agent.http_auth(key, &url, &bytes)?)?,
+        )
+        .header("x-auth-tag", &agent.auth)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|_| "Agent read failed")?;
+    let status = response.status();
+    Ok((status, bounded(response, 8 * 1024 * 1024).await?))
+}
+
+/// Searches the agent's community for profiles whose `name` or `display_name`
+/// matches `query`, best match first, as the agent. `None` means the community
+/// has no profile name search (it answered 404 or 405), so the caller uses
+/// NIP-50 search instead.
+#[tauri::command]
+pub(crate) async fn app_agent_search_profiles(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    query: String,
+    limit: u32,
+) -> Result<Option<Value>, String> {
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    search_profiles(&agent, &key, &query, limit).await
+}
+
+async fn search_profiles(
+    agent: &AppAgent,
+    key: &Secret,
+    query: &str,
+    limit: u32,
+) -> Result<Option<Value>, String> {
+    let bytes = serde_json::to_vec(&serde_json::json!({ "query": query, "limit": limit }))
+        .map_err(|_| "Could not encode profile search")?;
+    let (status, body) = signed_read(agent, key, agent.profile_search_url(), bytes).await?;
+    if matches!(
+        status,
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+    ) {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(format!(
+            "The community refused the profile search: {}",
+            reason(status, &body)
+        ));
+    }
+    serde_json::from_slice(&body)
+        .map(Some)
+        .map_err(|_| "Invalid profile search".into())
 }
 
 /// Media an agent may upload, as the community accepts them.
@@ -545,7 +645,6 @@ pub(crate) async fn app_agent_upload(
     mime: String,
 ) -> Result<Value, String> {
     use base64::Engine;
-    use sha2::{Digest, Sha256};
     if !UPLOAD_TYPES.contains(&mime.as_str()) || data.len() > UPLOAD_LIMIT / 3 * 4 + 4 {
         return Err("Agents upload images or MP4 video up to 50 MB".into());
     }
@@ -553,13 +652,25 @@ pub(crate) async fn app_agent_upload(
         .decode(data)
         .map_err(|_| "Invalid upload data")?;
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    upload(&agent, &key, bytes, &mime).await
+}
+
+/// Uploads one blob to the agent's community as the agent.
+async fn upload(
+    agent: &AppAgent,
+    key: &Secret,
+    bytes: Vec<u8>,
+    mime: &str,
+) -> Result<Value, String> {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let auth = serde_json::to_vec(&agent.upload_auth(&key, &sha256)?)
+    let auth = serde_json::to_vec(&agent.upload_auth(key, &sha256)?)
         .map_err(|_| "Could not authorize upload")?;
     let response = client()?
         .put(agent.upload_url())
         .timeout(Duration::from_secs(120))
-        .header("Content-Type", &mime)
+        .header("Content-Type", mime)
         .header("X-SHA-256", &sha256)
         .header(
             "Authorization",
@@ -771,6 +882,7 @@ mod tests {
             profile: None,
             about: None,
             deleted: false,
+            deleting: false,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());
@@ -797,6 +909,103 @@ mod tests {
         assert!(tokio::time::timeout(waited, &mut deleting).await.is_err());
         drop(publishing);
         deleting.await.unwrap().unwrap();
+    }
+
+    /// Answers one HTTP request with `status` and `body`, and returns the
+    /// request it read.
+    async fn answer_once(
+        status: &'static str,
+        body: &'static str,
+    ) -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 4096];
+            loop {
+                let read = socket.read(&mut chunk).await.unwrap();
+                request.extend_from_slice(&chunk[..read]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .map(str::to_owned)
+                        })
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if rest.len() >= length {
+                        break;
+                    }
+                }
+            }
+            let reply = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(reply.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (origin, served)
+    }
+
+    fn agent_at(relay: String, key: &Secret) -> AppAgent {
+        AppAgent {
+            pubkey: key.pubkey().into(),
+            relay,
+            owner: "a".repeat(64),
+            auth: "[]".into(),
+            agent_type: "p/t".into(),
+            name: "Ada".into(),
+            picture: None,
+            profile: None,
+            about: None,
+            deleted: false,
+            deleting: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_search_posts_the_query_signed_and_returns_the_ranked_events() {
+        let key = Secret::generate().unwrap();
+        let (origin, served) = answer_once("200 OK", r#"[{"kind":0}]"#).await;
+        let found = search_profiles(&agent_at(origin, &key), &key, "wes", 40)
+            .await
+            .unwrap();
+        assert_eq!(found, Some(serde_json::json!([{ "kind": 0 }])));
+        let request = served.await.unwrap();
+        assert!(request.starts_with("POST /profiles/search HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: nostr "));
+        let body: Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body, serde_json::json!({ "query": "wes", "limit": 40 }));
+    }
+
+    #[tokio::test]
+    async fn profile_search_reports_a_missing_endpoint_and_fails_on_other_errors() {
+        let key = Secret::generate().unwrap();
+        for status in ["404 Not Found", "405 Method Not Allowed"] {
+            let (origin, served) = answer_once(status, "").await;
+            let found = search_profiles(&agent_at(origin, &key), &key, "wes", 40).await;
+            assert_eq!(found, Ok(None), "{status}");
+            served.await.unwrap();
+        }
+        let (origin, served) = answer_once(
+            "500 Internal Server Error",
+            r#"{"error":"profile search error"}"#,
+        )
+        .await;
+        let failed = search_profiles(&agent_at(origin, &key), &key, "wes", 40).await;
+        assert_eq!(
+            failed,
+            Err("The community refused the profile search: profile search error".into())
+        );
+        served.await.unwrap();
     }
 
     fn hosting(dir: Result<PathBuf, String>, packaged: bool) -> Hosting {

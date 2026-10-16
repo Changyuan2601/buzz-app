@@ -21,7 +21,7 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import type { Panels } from "../../features/panels/service";
+import { panelOpening, type Panels } from "../../features/panels/service";
 import { SidebarRightIcon } from "../../shared/design-system/icons";
 import { channelIcon } from "../../features/channels/channel-icon";
 import channelStyles from "../channels/Channels.module.css";
@@ -69,13 +69,14 @@ import {
   useChannelWindow,
   useRelayConnection,
 } from "../../features/relay/react";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
-import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
+  ConversationChannel,
+  ConversationComposer,
+  ConversationTimeline,
+  useMediaReview,
+} from "../../features/conversation/Conversation";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
@@ -394,6 +395,7 @@ function SessionWork({
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
+  const media = useMediaReview();
   const [convertOpen, setConvertOpen] = useState(false);
   const shareAttempts = useSessionShareAttempts(session);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
@@ -486,18 +488,13 @@ function SessionWork({
       void navigator.open(target);
       return true;
     }
-    const panel = panels.resolve(url);
-    if (!panel) return false;
+    const next = panelOpening(panels, channel.id, url, origin?.rootId);
+    if (!next) return false;
     secondary.panelTrigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    secondary.open({
-      channelId: channel.id,
-      ...(origin && { rootId: origin.rootId }),
-      panel,
-      target: url,
-    });
+    secondary.open(next);
     return true;
   }
   useEffect(
@@ -663,24 +660,16 @@ function SessionWork({
                   Loading messages…
                 </p>
               ) : (
-                <ChannelTimeline
+                <ConversationTimeline
                   chatPresentation={personalChat}
                   historyControl="scroll"
-                  extensions={extensions}
-                  queries={session}
-                  viewer={session.viewer}
-                  scope={scope}
-                  channelId={channel.id}
                   window={window}
                   revealMessageId={sent}
-                  onOpenLink={openLink}
-                  canOpenLink={canOpenLink}
                 />
               )}
             </div>
-            <MessageComposer
+            <ConversationComposer
               chatPresentation={personalChat}
-              sessionConversation={channel.channelType === "session"}
               activityClickOpensPanel
               personalConversation={
                 channel.channelType === "session" &&
@@ -710,23 +699,17 @@ function SessionWork({
                 ) : undefined
               }
               onSend={setSent}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              channelId={channel.id}
-              channelName={channel.name}
               label={
                 channel.channelType === "session"
                   ? "Message your agents"
                   : undefined
               }
+              autoFocus={navigation?.focus !== "preserve"}
               disabled={
                 !!channel.archived ||
                 window.status !== "ready" ||
                 placement.status !== "ready"
               }
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
             />
           </SessionColumn>
           {drawer.content}
@@ -784,9 +767,20 @@ function SessionWork({
     </div>
   );
   return (
-    <MessageManagement session={session} channelId={channel.id}>
+    <ConversationChannel
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      channel={channel}
+      interactions={{
+        onOpenLink: openLink,
+        canOpenLink,
+        onOpenMediaReview: media.open,
+      }}
+      mediaReview={media.review}
+    >
       {workspace}
-    </MessageManagement>
+    </ConversationChannel>
   );
 }
 
