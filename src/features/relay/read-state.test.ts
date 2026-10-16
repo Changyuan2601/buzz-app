@@ -20,13 +20,14 @@ import {
   type ReadStateSigning,
 } from "./read-state-host";
 import { acceptReadStatePublish } from "./transport";
+import vectors from "../../../tests/fixtures/read-state-vectors.json";
 
 const owners: ReturnType<typeof createReadState>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.useRealTimers();
 });
-function fixture() {
+function fixture(now = 100) {
   const key = keypair();
   let journal: ReadJournal | undefined;
   const storage: ReadStateStorage = {
@@ -42,10 +43,12 @@ function fixture() {
       decodeReadState(events, key.secret),
     ),
     sign: vi.fn(async (intent: ReadStateSigning) =>
-      signReadState(intent, key.secret, 100),
+      signReadState(intent, key.secret, now),
     ),
+    // A relay keeps the newest event at each coordinate.
     publish: vi.fn(async (event: RelayEvent) => {
-      remote = [event];
+      const d = (item: RelayEvent) => item.tags.find(([n]) => n === "d")?.[1];
+      remote = [...remote.filter((item) => d(item) !== d(event)), event];
     }),
   };
   const reader = { read: vi.fn(async () => remote) };
@@ -55,7 +58,7 @@ function fixture() {
     reader,
     storage,
     lock: async (_signal: AbortSignal, work: () => Promise<void>) => work(),
-    now: () => 100,
+    now: () => now,
     debounceMs: 60000,
   };
   const make = (
@@ -71,6 +74,31 @@ function fixture() {
     reader,
     storage,
     make,
+    /** Every context the relay holds across this device's blobs. */
+    published: (): Record<string, number> =>
+      Object.assign(
+        {},
+        ...decodeReadState(remote, key.secret).map(
+          (item: { blob: { contexts: Record<string, number> } }) =>
+            item.blob.contexts,
+        ),
+      ),
+    /** This device's own published contexts, by slot. */
+    own: (): Record<string, Record<string, number>> => {
+      const d = (item: RelayEvent) => item.tags.find(([n]) => n === "d")?.[1];
+      const slots = [journal?.slot, ...(journal?.spill ?? [])];
+      return Object.fromEntries(
+        remote
+          .filter((item) => slots.includes(d(item)?.slice(11)))
+          .map((item) => [
+            d(item)?.slice(11),
+            decodeReadState([item], key.secret)[0].blob.contexts,
+          ]),
+      );
+    },
+    setNow: (value: number) => {
+      now = value;
+    },
     journal: () => journal,
     setJournal: (value: ReadJournal) => {
       journal = value;
@@ -681,7 +709,7 @@ describe("durable read-state owner", () => {
     await owner.read("room", 12, () => true, true);
     expect(owner.localUnread("room")).toBeUndefined();
   });
-  it("keeps an evicted message receipt locally across publication and restart", async () => {
+  it("keeps an evicted message receipt locally and never publishes message marks", async () => {
     const f = fixture();
     const owner = f.make();
     const old = `msg:${"a".repeat(64)}`;
@@ -700,14 +728,7 @@ describe("durable read-state owner", () => {
     expect(owner.state().frontiers[old]).toBe(1);
     await owner.flush();
     expect(owner.snapshot().status).toBe("reconciled");
-    const blob = decodeReadState(
-      [f.host.publish.mock.calls.at(-1)?.[0]],
-      f.key.secret,
-    )[0].blob;
-    expect(blob.contexts[old]).toBeUndefined();
-    expect(
-      new TextEncoder().encode(JSON.stringify(blob)).length,
-    ).toBeLessThanOrEqual(40 * 1024);
+    expect(f.host.publish).not.toHaveBeenCalled();
     owner.dispose();
     const restarted = f.make();
     await restarted.ready;
@@ -805,35 +826,46 @@ describe("durable read-state owner", () => {
       ),
     ).toThrow("reserve");
   });
-  it("keeps ordinary reads publishing across growth, old-history reads and restart", async () => {
+  it("publishes every frontier across further blobs, rewriting only changed ones", async () => {
     const f = fixture(),
       first = f.make();
     await first.ready;
-    const id = (n: number) => `msg:${n.toString(16).padStart(64, "0")}`;
-    for (let n = 0; n < 700; n++) await first.read(id(n), 50 + n, () => true);
+    const id = (n: number) => `thread:${n.toString(16).padStart(64, "0")}`;
+    await first.readMessages(
+      Array.from({ length: 1600 }, (_, n) => ({
+        key: id(n),
+        timestamp: 50 + n,
+        channelId: "room",
+      })),
+      undefined,
+      () => true,
+    );
+    await first.read(`msg:${"a".repeat(64)}`, 60, () => true);
     await first.flush();
     expect(first.snapshot().status).toBe("reconciled");
-    expect(f.host.publish).toHaveBeenCalledTimes(1);
-    const published = () =>
-      decodeReadState([f.host.publish.mock.calls.at(-1)?.[0]], f.key.secret)[0]
-        .blob.contexts;
-    expect(Object.keys(published()).length).toBeLessThan(600);
-    expect(published()[id(699)]).toBe(749);
-    expect(f.journal()?.state.frontiers[id(0)]).toBe(50); // Larger local cache than the wire.
+    const blobs = f.host.publish.mock.calls.length;
+    expect(blobs).toBeGreaterThan(1);
+    for (const [event] of f.host.publish.mock.calls) {
+      const blob = decodeReadState([event], f.key.secret)[0].blob;
+      expect(
+        new TextEncoder().encode(JSON.stringify(blob)).length,
+      ).toBeLessThanOrEqual(40 * 1024);
+    }
+    const published = f.published();
+    for (let n = 0; n < 1600; n++) expect(published[id(n)]).toBe(50 + n);
+    expect(Object.keys(published).some((key) => key.startsWith("msg:"))).toBe(
+      false,
+    );
+    expect(f.journal()?.spill).toHaveLength(blobs - 1);
     first.dispose();
     const second = f.make();
     await second.ready;
-    await second.read(id(800), 1, () => true); // Old history, newly read.
+    await second.read(id(1599), 5000, () => true);
     await second.flush();
     expect(second.snapshot().status).toBe("reconciled");
-    expect(published()[id(800)]).toBe(1);
-    expect(published()[id(699)]).toBe(749);
-    for (let n = 801; n < 1600; n++) await second.read(id(n), 1, () => true);
-    await second.flush();
-    expect(second.snapshot().status).toBe("reconciled");
-    expect(f.journal()?.state.frontiers[id(1599)]).toBe(1);
-    expect(f.journal()?.state.frontiers[id(0)]).toBeUndefined();
-    expect(published()[id(1599)]).toBe(1);
+    expect(f.host.publish).toHaveBeenCalledTimes(blobs + 1);
+    expect(f.published()[id(1599)]).toBe(5000);
+    expect(f.published()[id(0)]).toBe(50);
   }, 15000);
   it("a fresh read stays read, locally and published, when a peer's thread mark covers it", async () => {
     const hex = (prefix: string, n: number) =>
@@ -883,11 +915,7 @@ describe("durable read-state owner", () => {
         (marks[read] ?? 0) >= 50 || (marks[cover] ?? 0) >= 50;
       expect(stillRead(f.journal()?.state.frontiers ?? {})).toBe(true);
       await owner.flush();
-      const published = decodeReadState(
-        [f.host.publish.mock.calls.at(-1)?.[0]],
-        f.key.secret,
-      )[0].blob.contexts;
-      expect(stillRead(published)).toBe(true);
+      expect(stillRead(f.published())).toBe(true);
     }
   }, 15000);
   it("keeps saved mark channels only for messages a kept mark names", () => {
@@ -986,3 +1014,164 @@ it.each([false, true])(
     });
   },
 );
+
+/** The owner half of the shared NIP-RS vectors (pure halves live in
+ * read-state-vectors.test.ts). */
+describe("NIP-RS shared vectors: owner", () => {
+  const T = vectors.now;
+  const peer = (
+    secret: Uint8Array,
+    contexts: Record<string, number>,
+    createdAt = T,
+  ) =>
+    signReadState(
+      {
+        slot: "f".repeat(32),
+        createdAt,
+        blob: { v: 1, client_id: "peer", contexts },
+      },
+      secret,
+      createdAt,
+    );
+  const merged = (owned: Record<string, Record<string, number>>) =>
+    Object.assign({}, ...Object.values(owned));
+  const thread = (n: number) => `thread:${n.toString(16).padStart(64, "0")}`;
+  const many = (count: number, at: (n: number) => number, from = 0) =>
+    Array.from({ length: count }, (_, n) => ({
+      key: thread(from + n),
+      timestamp: at(from + n),
+      channelId: "room",
+    }));
+
+  it.each(vectors.ownership)("ownership $id", async (v) => {
+    const f = fixture(T);
+    const owner = f.make();
+    await owner.ready;
+    for (const [key, at] of Object.entries(v.local))
+      await owner.read(key, at, () => true);
+    await owner.flush();
+    for (const contexts of v.remote)
+      await f.host.publish(peer(f.key.secret, contexts));
+    await owner.refresh();
+    for (const [key, at] of Object.entries(v.localAdvance ?? {}))
+      await owner.read(key, at, () => true);
+    await owner.flush();
+    expect(owner.state().frontiers).toEqual(v.expectedMerged);
+    expect(merged(f.own())).toEqual(v.expectedPublished);
+  });
+  it.each(vectors.pruning)("pruning $id", async (v) => {
+    const f = fixture(T);
+    const owner = f.make();
+    await owner.ready;
+    for (const [key, at] of Object.entries(v.frontiers))
+      await owner.read(key, at, () => true);
+    await owner.flush();
+    const published = merged(f.own());
+    for (const key of v.expectedRequiredKeys)
+      expect(published).toHaveProperty(key);
+    for (const key of v.expectedAbsentKeys)
+      expect(published).not.toHaveProperty(key);
+  });
+  it.each(vectors.writePolicy)("writePolicy $id", async (v) => {
+    const f = fixture(T);
+    const owner = f.make();
+    await owner.ready;
+    for (const [key, at] of Object.entries(v.localObserved))
+      await owner.read(key, at, () => true);
+    await owner.flush();
+    expect(merged(f.own())).toEqual(v.expectedPublished);
+  });
+  it("lifecycle partial-publish-restart", async () => {
+    const f = fixture(T);
+    const first = f.make();
+    await first.ready;
+    await first.readMessages(
+      many(600, (n) => T - n),
+      undefined,
+      () => true,
+    );
+    const publish = f.host.publish.getMockImplementation();
+    f.host.publish.mockImplementationOnce(async (event) => publish?.(event));
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await first.flush();
+    const unknown = f.journal()?.pending?.event;
+    expect(unknown).toBeDefined();
+    expect(Object.keys(f.own())).toHaveLength(1);
+    // Accepting the first coordinate does not acknowledge the revision.
+    expect(f.journal()?.acceptedRevision).toBeLessThan(
+      f.journal()?.revision ?? 0,
+    );
+    first.dispose();
+    const second = f.make();
+    await second.ready;
+    for (let n = 0; n < 600; n++)
+      expect(second.state().frontiers[thread(n)]).toBe(T - n);
+    await second.flush();
+    expect(f.host.publish.mock.calls[2]?.[0]).toEqual(unknown);
+    expect(f.host.publish).toHaveBeenCalledTimes(3);
+    expect(ownerStatus(second)).toBe("reconciled");
+    const published = merged(f.own());
+    for (let n = 0; n < 600; n++) expect(published[thread(n)]).toBe(T - n);
+  }, 15000);
+  it("lifecycle shrink-and-slot-reuse", async () => {
+    const f = fixture(T);
+    const first = f.make();
+    await first.ready;
+    // Some of the first blob's keys stay fresh; all of the second's fall
+    // below the floor.
+    const old = T - vectors.retentionSeconds + 60;
+    await first.readMessages(
+      many(600, (n) => (n < 400 ? T : old)),
+      undefined,
+      () => true,
+    );
+    await first.flush();
+    const slots = [f.journal()?.slot, ...(f.journal()?.spill ?? [])];
+    expect(slots).toHaveLength(2);
+    const second = f.own()[slots[1] ?? ""];
+    first.dispose();
+    const later = T + 120;
+    f.setNow(later);
+    const owner = f.make();
+    await owner.ready;
+    await owner.read("room", later, () => true);
+    await owner.flush();
+    expect(f.host.publish).toHaveBeenCalledTimes(3);
+    // The inert old blob is left alone, not retired: another device may
+    // still hold nothing newer for its keys.
+    expect(f.own()[slots[1] ?? ""]).toEqual(second);
+    await owner.readMessages(
+      many(200, () => later, 600),
+      undefined,
+      () => true,
+    );
+    await owner.flush();
+    expect([f.journal()?.slot, ...(f.journal()?.spill ?? [])]).toEqual(slots);
+    expect(Object.keys(f.own()).sort()).toEqual([...slots].sort());
+    expect(f.own()[slots[1] ?? ""]?.[thread(799)]).toBe(later);
+    expect(ownerStatus(owner)).toBe("reconciled");
+  }, 15000);
+  it("lifecycle old-event-new-frontier", async () => {
+    const v = vectors.lifecycle.find(
+      ({ id }) => id === "old-event-new-frontier",
+    );
+    const f = fixture(T);
+    await f.host.publish(
+      peer(
+        f.key.secret,
+        { ...v?.frontiers, "ov_c:side": 7 },
+        v?.eventCreatedAt,
+      ),
+    );
+    const owner = f.make();
+    await owner.ready;
+    await owner.refresh();
+    expect(owner.state().frontiers).toEqual(v?.frontiers);
+    expect(owner.state().overrides.side).toBeDefined();
+    // Full-state loads never use `since`: an old carrier is still current.
+    for (const [filters] of f.reader.read.mock.calls as unknown as [
+      Record<string, unknown>[],
+    ][])
+      for (const filter of filters) expect(filter).not.toHaveProperty("since");
+  });
+});

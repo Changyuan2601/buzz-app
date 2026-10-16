@@ -71,6 +71,7 @@ async function setup() {
   };
   let journal: ReadJournal | undefined;
   const reads = createReadState({
+    floor: () => 0,
     viewer,
     reader,
     host: undefined,

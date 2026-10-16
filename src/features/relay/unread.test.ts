@@ -111,6 +111,7 @@ function setup(
       },
     },
     {
+      readStateFloor: () => 0,
       ...options,
       readStateStorage: storage,
       readPublisherLock: async (_signal, work) => work(),
@@ -3571,6 +3572,7 @@ function sharedWindows(preloaded: (journal: ReadJournal) => ReadJournal) {
         },
       },
       {
+        readStateFloor: () => 0,
         readStateStorage: storage,
         readPublisherLock: async (_signal, work) => work(),
       },

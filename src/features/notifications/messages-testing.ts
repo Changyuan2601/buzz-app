@@ -135,6 +135,7 @@ export async function setup(
       },
     },
     {
+      readStateFloor: () => 0,
       identityNames: {
         register() {},
         bind: (source) =>

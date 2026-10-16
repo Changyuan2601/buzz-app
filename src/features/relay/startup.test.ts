@@ -115,6 +115,7 @@ function setup(
         : {}),
     },
     {
+      readStateFloor: () => 0,
       persistence: storage,
       prepared: true,
       cachedOnly,

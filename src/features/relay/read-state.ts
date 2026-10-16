@@ -2,10 +2,11 @@ import { newer, type RelayEvent } from "./events";
 import {
   markMessage,
   retainLocalRead,
-  retainReadState,
   type CoveredFrontier,
 } from "./read-state-retention";
 import {
+  READ_SNAPSHOT_BYTES,
+  READ_SNAPSHOT_EVENTS,
   ReadStateTimestampRejected,
   type ReadStateHost,
 } from "./read-state-host";
@@ -13,11 +14,13 @@ import {
   effectiveFrontier,
   EMPTY_READ_STATE,
   mergeReadStates,
+  packReadState,
   parseReadBlob,
   readBlob,
   readCoordinate,
   readVersion,
-  READ_STATE_PLAINTEXT_BYTES,
+  READ_RETENTION_SECONDS,
+  READ_STATE_SLOTS,
   contextId,
   uint32,
   type ReadState,
@@ -25,6 +28,7 @@ import {
 } from "./read-state-model";
 import {
   newReadJournal,
+  newSlotId,
   type ReadJournal,
   type ReadStateStorage,
 } from "./read-state-storage";
@@ -64,6 +68,11 @@ export function browserReadPublisherLock(
       work,
     );
 }
+const encoder = new TextEncoder();
+const encodedBytes = (event: RelayEvent) =>
+  encoder.encode(JSON.stringify(event)).byteLength;
+const dTag = (event: RelayEvent) =>
+  event.tags.find(([name]) => name === "d")?.[1] ?? "";
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Read state unavailable";
 /** The reader left before the save ran: the caller's intent, not sync health. */
@@ -86,15 +95,19 @@ const same = (a: unknown, b: unknown): boolean => {
     )
   );
 };
-/** Reserve and journal are disjoint; only the journal is eligible for sync. */
-const localState = (journal: ReadJournal): ReadState =>
-  Object.freeze({
-    frontiers: Object.freeze({
-      ...journal.reserve,
-      ...journal.state.frontiers,
-    }),
+/** Reserve and journal are disjoint; only own values are published. */
+const localState = (journal: ReadJournal): ReadState => {
+  const frontiers: Record<string, number> = {
+    ...journal.reserve,
+    ...journal.state.frontiers,
+  };
+  for (const [key, value] of Object.entries(journal.own ?? {}))
+    frontiers[key] = Math.max(frontiers[key] ?? 0, value);
+  return Object.freeze({
+    frontiers: Object.freeze(frontiers),
     overrides: journal.state.overrides,
   });
+};
 /** Which broader mark covers a mark, as in `CoveredFrontier`. `home` gives
  * the channel of a message when it is known: from a loaded message, or from
  * a channel saved with the mark. */
@@ -118,6 +131,7 @@ export function createReadState({
   now = () => Math.floor(Date.now() / 1000),
   debounceMs = 5000,
   broadcastName,
+  floor = () => now() - READ_RETENTION_SECONDS,
 }: {
   viewer: string;
   reader: RelayReader;
@@ -128,6 +142,8 @@ export function createReadState({
   now?: () => number;
   debounceMs?: number;
   broadcastName?: string | undefined;
+  /** Every message at or before this time counts as read. */
+  floor?: (() => number) | undefined;
 }) {
   let closed = false;
   const lifetime = new AbortController();
@@ -149,6 +165,9 @@ export function createReadState({
     string,
     { event: RelayEvent; parsed: ParsedReadBlob }
   >();
+  // Encoded size of each own kind-30078 coordinate in the last complete
+  // snapshot, so a publication cannot make the next snapshot impossible.
+  let snapshotSizes: Map<string, number> | undefined;
   const capability = !host
     ? "unsupported"
     : !host.sign || !host.publish || !lock
@@ -184,6 +203,21 @@ export function createReadState({
     work = next.catch(() => {});
     return next;
   }
+  /** Own values advanced by `frontiers`, without message marks or anything
+   * the retention floor already reads. */
+  const advanceOwn = (
+    own: Readonly<Record<string, number>> = {},
+    frontiers: Readonly<Record<string, number>> = {},
+  ) => {
+    const next: Record<string, number> = {};
+    for (const [key, value] of [
+      ...Object.entries(own),
+      ...Object.entries(frontiers),
+    ])
+      if (!key.startsWith("msg:") && value > floor())
+        next[key] = Math.max(next[key] ?? 0, value);
+    return next;
+  };
   const homeLookup =
     (saved: Readonly<Record<string, string>> = {}) =>
     (id: string) =>
@@ -393,6 +427,10 @@ export function createReadState({
               );
         await ingest(events, signal, generation);
         if (closed || generation !== epoch) return;
+        if (complete)
+          snapshotSizes = new Map(
+            events.map((event) => [dTag(event), encodedBytes(event)]),
+          );
         health({
           status:
             journal.pending || journal.revision > journal.acceptedRevision
@@ -467,6 +505,10 @@ export function createReadState({
             recent: kept.recent,
             reserve: kept.reserve,
             homes: kept.homes,
+            own: advanceOwn(
+              current.own,
+              timestamp === undefined ? {} : { [key]: timestamp },
+            ),
             localUnread,
             acceptedRevision:
               timestamp === undefined &&
@@ -519,65 +561,142 @@ export function createReadState({
           // Unknown outcomes retry exact bytes; only expired, rejected state may be renewed.
           if (journal.pending) await publishPending(signal, true);
           if (journal.revision <= journal.acceptedRevision) return;
-          const coordinate = `read-state:${journal.slot}`;
+          const owned = [journal.slot, ...(journal.spill ?? [])];
           const events = await reader.read(
             [
               {
                 kinds: [30078],
                 authors: [viewer],
-                "#d": [coordinate],
-                limit: 500,
+                "#d": owned.map((slot) => `read-state:${slot}`),
+                limit: owned.length,
               },
             ],
             { signal, priority: "background", fresh: true },
           );
           await ingest(events, signal);
-          const own = slots.get(coordinate);
-          if (own && own.parsed.clientId !== journal.clientId)
+          const seen = owned.map((slot) => slots.get(`read-state:${slot}`));
+          if (
+            seen.some((own) => own && own.parsed.clientId !== journal?.clientId)
+          )
             throw new Error("Read-state slot conflict; publication blocked");
-          // This first release does not canonicalize peer overrides on a bounded load.
-          if (Object.keys(journal.state.overrides).length)
-            throw new Error("Synchronized override publication is not enabled");
-          const publishingState = retainReadState(
-            [journal.state],
-            journal.recent ?? {},
+          // Only own frontiers are published; peers' overrides stay in their blobs.
+          const plan = packReadState(
             journal.clientId,
-            READ_STATE_PLAINTEXT_BYTES,
-            coveredWith(homeLookup(journal.homes)),
+            advanceOwn(journal.own),
+            owned.map((slot, index) => ({
+              slot,
+              carried: Object.keys(seen[index]?.parsed.state.frontiers ?? {}),
+            })),
+            newSlotId,
           );
-          const payload = readBlob(journal.clientId, publishingState, (key) =>
-            effectiveFrontier(publishingState, key),
-          );
-          const createdAt = readVersion(
-            now(),
-            Math.max(journal.lastCreatedAt, own?.event.created_at ?? 0),
-          );
+          if (plan.length > READ_STATE_SLOTS)
+            throw new Error(
+              "Read-state publication capacity reached; saved intent retained",
+            );
+          // New slots are owned before anything is published to them.
+          if (plan.length > owned.length)
+            await save((current) => ({
+              ...current,
+              spill: plan.slice(1).map(({ slot }) => slot),
+            }));
+          // Only slots missing one of their own values are written: an
+          // unchanged blob keeps its event, and an emptied one stays inert.
+          // A blob that drops a key it carries goes last, after the key's new
+          // home, so no frontier is ever off the relay.
+          const drops = (index: number) =>
+            Object.keys(seen[index]?.parsed.state.frontiers ?? {}).some(
+              (key) => !(key in (plan[index]?.frontiers ?? {})),
+            );
+          const changed = plan
+            .map((blob, index) => ({ ...blob, index }))
+            .filter(({ frontiers, index }) =>
+              Object.entries(frontiers).some(
+                ([key, value]) =>
+                  (seen[index]?.parsed.state.frontiers[key] ?? -1) < value,
+              ),
+            )
+            .sort((a, b) => Number(drops(a.index)) - Number(drops(b.index)));
           const revision = journal.revision;
           attemptedRevision = revision;
-          const event = await sign(
-            { slot: journal.slot, createdAt, blob: payload },
-            signal,
-          );
-          signal.throwIfAborted();
-          if (
-            event.pubkey !== viewer ||
-            readCoordinate(event) !== coordinate ||
-            event.created_at !== createdAt
-          )
-            throw new Error("Read-state signer changed identity or version");
-          // Decode signed output too: a host response cannot acknowledge a different plaintext.
-          const decoded = await decode([event], signal);
-          if (
-            decoded[0]?.parsed.clientId !== journal.clientId ||
-            !same(decoded[0]?.parsed.state, parseReadBlob(payload).state)
-          )
-            throw new Error("Read-state signer changed the payload");
-          await save((current) => ({
-            ...current,
-            lastCreatedAt: createdAt,
-            pending: { event, revision },
-          }));
-          await publishPending(signal);
+          if (!changed.length) {
+            const expired = journal.pending?.event.id;
+            await save((current) => {
+              // An expired envelope whose values the relay already holds
+              // needs no replacement.
+              const { pending, ...rest } = current;
+              return {
+                ...(pending?.event.id === expired ? rest : current),
+                acceptedRevision: Math.max(current.acceptedRevision, revision),
+              };
+            });
+            health({ status: "reconciled", error: undefined });
+            return;
+          }
+          const signed: RelayEvent[] = [];
+          for (const { slot, frontiers } of changed) {
+            const coordinate = `read-state:${slot}`;
+            const state = { frontiers, overrides: {} };
+            const payload = readBlob(journal.clientId, state, () => undefined);
+            // Above every version this installation ever signed, so a
+            // successor always supersedes a pending event the relay missed.
+            const createdAt = readVersion(
+              now(),
+              Math.max(
+                journal.lastCreatedAt,
+                slots.get(coordinate)?.event.created_at ?? 0,
+              ),
+            );
+            const event = await sign(
+              { slot, createdAt, blob: payload },
+              signal,
+            );
+            signal.throwIfAborted();
+            if (
+              event.pubkey !== viewer ||
+              readCoordinate(event) !== coordinate ||
+              event.created_at !== createdAt
+            )
+              throw new Error("Read-state signer changed identity or version");
+            // Decode signed output too: a host response cannot acknowledge a different plaintext.
+            const decoded = await decode([event], signal);
+            if (
+              decoded[0]?.parsed.clientId !== journal.clientId ||
+              !same(decoded[0]?.parsed.state, parseReadBlob(payload).state)
+            )
+              throw new Error("Read-state signer changed the payload");
+            signed.push(event);
+          }
+          // A local projection, not a reservation: other devices can still
+          // grow the snapshot concurrently.
+          if (snapshotSizes) {
+            const projected = new Map(snapshotSizes);
+            for (const event of signed)
+              projected.set(dTag(event), encodedBytes(event));
+            let total = 2 + Math.max(0, projected.size - 1);
+            for (const size of projected.values()) total += size;
+            if (
+              projected.size > READ_SNAPSHOT_EVENTS ||
+              total > READ_SNAPSHOT_BYTES
+            )
+              throw new Error(
+                "Read-state snapshot capacity reached; saved intent retained",
+              );
+          }
+          for (const [index, event] of signed.entries()) {
+            // Only the last blob acknowledges the revision: a partial
+            // publication never marks local intent as synchronized.
+            const last = index === signed.length - 1;
+            await save((current) => ({
+              ...current,
+              lastCreatedAt: Math.max(current.lastCreatedAt, event.created_at),
+              pending: {
+                event,
+                revision: last ? revision : current.acceptedRevision,
+              },
+            }));
+            await publishPending(signal);
+            snapshotSizes?.set(dTag(event), encodedBytes(event));
+          }
         });
       } catch (error) {
         if (!closed) {
@@ -621,19 +740,21 @@ export function createReadState({
     // Acknowledgement is not coordinate observation. An expired retry may also
     // have been stored before its original response was lost.
     if (!expired) health({ status: "accepted" });
+    const coordinate = readCoordinate(pending.event);
+    if (!coordinate) throw new Error("Read-state coordinate missing");
     const events = await reader.read(
       [
         {
           kinds: [30078],
           authors: [viewer],
-          "#d": [`read-state:${before.slot}`],
+          "#d": [coordinate],
           limit: 500,
         },
       ],
       { signal, priority: "background", fresh: true },
     );
     await ingest(events, signal);
-    const own = slots.get(`read-state:${before.slot}`);
+    const own = slots.get(coordinate);
     const payload = (await decode([pending.event], signal))[0]?.parsed;
     if (!payload) throw new Error("Saved read-state decode missing");
     if (own && own.parsed.clientId !== before.clientId)
@@ -657,6 +778,7 @@ export function createReadState({
             [current.state, payload.state],
             current.recent ?? {},
           ),
+          own: advanceOwn(current.own, payload.state.frontiers),
         };
       });
       return;
@@ -681,6 +803,8 @@ export function createReadState({
     state: () => state,
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
+    /** Every message at or before this time counts as read. */
+    floor,
     /** Lets the next save drop marks that broader marks already cover. */
     setCoverage(next: MarkCoverage | undefined) {
       coverage = next;
@@ -790,6 +914,7 @@ export function createReadState({
               recent: kept.recent,
               reserve: kept.reserve,
               homes: kept.homes,
+              own: advanceOwn(current.own, frontiers),
               localUnread,
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision

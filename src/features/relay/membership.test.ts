@@ -97,7 +97,7 @@ it.each([false, true])(
           return { update() {}, retry() {}, dispose() {} };
         },
       },
-      { prepared },
+      { readStateFloor: () => 0, prepared },
     );
     const q = owner.session.channels;
     try {
@@ -201,7 +201,7 @@ it("live activity obeys the same retained row budget as messages", async () => {
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { maxHistoryRows: 2 },
+    { readStateFloor: () => 0, maxHistoryRows: 2 },
   );
   try {
     live.receive([roster(relay, "a", [viewer.pubkey])]);
@@ -238,6 +238,7 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
   };
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const first = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
     prepared: true,
     persistence: disk,
   });
@@ -269,6 +270,7 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
   }
   const secondWire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const second = createRelaySession(secondWire.transport, {
+    readStateFloor: () => 0,
     prepared: true,
     persistence: disk,
   });

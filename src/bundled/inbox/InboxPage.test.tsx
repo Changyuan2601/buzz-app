@@ -1552,6 +1552,7 @@ function fixture(
           }),
     },
     {
+      readStateFloor: () => 0,
       outboxStorage: { load: () => [], save: () => {} },
       readStateStorage: {
         async update(change) {
