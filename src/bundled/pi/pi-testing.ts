@@ -138,8 +138,3 @@ export function deferred<T = void>() {
   });
   return { promise, resolve, reject };
 }
-
-export const flush = async (times = 5) => {
-  for (let index = 0; index < times; index++) await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-};

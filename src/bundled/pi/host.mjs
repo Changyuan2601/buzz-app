@@ -44,7 +44,7 @@ const Places = defineDoc({
   initial: () => ({}),
 });
 /** Messages that arrive while Pi works join its run at the next boundary. */
-const SETTINGS = { steeringMode: "all", followUpMode: "all" };
+const SETTINGS = { steeringMode: "all" };
 /** Pi's own default thinking level, for a model that thinks. */
 const THINKING = "medium";
 /** A lock left by a host that was killed is taken over after this long. */
@@ -57,7 +57,7 @@ const PREFIX = "buzz_";
 const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your instructions name a Buzz tool such as \`send\` or \`read\`, call \`${PREFIX}send\` or \`${PREFIX}read\`. The unprefixed \`read\`, \`write\`, \`edit\` and \`bash\` work on files in the workspace.`;
 
 /** Pi's folder, shared with the `pi` command: its keys and settings. */
-export const piDir = () => {
+const piDir = () => {
   const dir = process.env.PI_CODING_AGENT_DIR;
   return dir
     ? dir.replace(/^~(?=$|\/)/, homedir())
@@ -393,7 +393,11 @@ export function serve({
           event.record.status === "placed" &&
           event.record.requestId
         )
-          send({ type: "placed", request: event.record.requestId });
+          send({
+            type: "placed",
+            request: event.record.requestId,
+            entry: event.record.entry,
+          });
         else if (event.type === "tool_execution_start")
           send({
             type: "step",
@@ -461,10 +465,10 @@ export function serve({
   }
 
   /** Starts a request in a conversation configured for this turn. One that
-   * steers a working run changes only what its owner picked, as in Claude. */
-  async function submit(opened, conversation, turn) {
-    const watched = await watch(opened, conversation.id);
-    const steers = watched.busy && turn.steer;
+   * steers a run working in it, `busy`, changes only what its owner picked,
+   * as in Claude. */
+  async function submit(conversation, turn, busy) {
+    const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers
       ? {
@@ -509,6 +513,10 @@ export function serve({
       }
       providers.sort((a, b) => a.name.localeCompare(b.name));
       return { providers, defaults: await piDefaults(dir) };
+    },
+    /** What Pi's settings pick now, which the `pi` command changes. */
+    defaults() {
+      return piDefaults(dir);
     },
     models({ provider }) {
       return models.getModels(provider).map((model) => ({
@@ -627,6 +635,11 @@ export function serve({
             { ownership: { kind: "ownerless" } },
             context,
           ));
+        opened.contexts.set(conversation.id, tools);
+        const { busy } = await watch(opened, conversation.id);
+        const submitted = await submit(conversation, turn, busy);
+        // Recorded once Pi has the turn: one that could not start leaves the
+        // messages it would have been shown for the next.
         await harness.commit(async (tx) => {
           const places = await tx.doc(Places);
           places[key] = {
@@ -635,8 +648,7 @@ export function serve({
             seen: Math.max(at, places[key]?.seen ?? 0),
           };
         }, context);
-        opened.contexts.set(conversation.id, tools);
-        return submit(opened, conversation, turn);
+        return submitted;
       })();
       opened.queues.set(key, delivered);
       const done = () => {
@@ -646,14 +658,15 @@ export function serve({
       return delivered;
     },
     /** A one-off turn in a conversation of its own, with no default
-     * destination for its tools. */
+     * destination for its tools. Nothing watches it: it has no other
+     * requests, and no Activity. */
     async once({ agent, ...turn }) {
       const opened = await agentOf(agent);
       const conversation = await opened.harness.createConversation(
         { ownership: { kind: "ownerless" } },
         context,
       );
-      return submit(opened, conversation, turn);
+      return submit(conversation, turn, false);
     },
     /** How a request settled: its answer's text, or why it has none. */
     async wait({ agent, submission }) {

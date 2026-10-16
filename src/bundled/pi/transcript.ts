@@ -50,7 +50,7 @@ type Conversation = Readonly<{
   channelId: string;
   root?: string;
 }>;
-export type PiTranscript = Transcript & { more: boolean };
+type PiTranscript = Transcript & { more: boolean };
 
 const text = (content: Message["content"]) =>
   typeof content === "string"

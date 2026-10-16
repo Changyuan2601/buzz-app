@@ -34,7 +34,7 @@ installs work.
    in some other way (OAuth, cloud credentials) says to run `pi`, then `/login`.
    Choose a model, click **Test connection**, then **Use**. Name the agent and
    click **Create agent**. Its library card shows the same control.
-3. Open the agent. Its **Identity** tab has the **Model provider**, **Model**,
+3. Open the agent. Its **Identity** tab has the **Provider**, **Model**,
    **Thinking** level (Pi's default, or one the model has) and
    **Instructions**. Its **Settings** tab has the provider's key with **Test
    connection**, the **Workspace** (default `~/.buzz`), and thread or channel

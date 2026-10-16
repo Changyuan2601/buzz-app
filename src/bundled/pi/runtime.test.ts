@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
@@ -46,7 +47,10 @@ const reply = (id: string, content: string, created_at = 110) =>
     ],
   });
 
-function setup(handlers: Readonly<Record<string, Handler>> = {}) {
+function setup(
+  handlers: Readonly<Record<string, Handler>> = {},
+  added: readonly AddedTool[] = [],
+) {
   let submissions = 0;
   const host = fakeHost({
     deliver: () => ({
@@ -84,7 +88,7 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
     mePlacement: {
       snapshot: () => ({ status: "ready" }),
       refresh: vi.fn(async () => {}),
-      has: () => false,
+      has: vi.fn((_id: string) => false),
     },
   };
   const relay = {
@@ -95,6 +99,7 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
     { spawn: host.spawn },
     (pubkey) => ownerReads(relay, pubkey),
     core,
+    () => added,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -208,6 +213,24 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
   expect(published).toEqual([]);
 });
 
+it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
+  const { host, deliver, session } = setup({ place: () => ({ seen: 105 }) });
+  const later = (id: string, content: string, pubkey: string, at: number) => ({
+    ...reply(id, content, at),
+    pubkey,
+  });
+  session.read.mockResolvedValue([
+    root,
+    later("5", "Earlier from Pi", self, 107),
+    later("6", "Bob checked it", bob, 108),
+  ]);
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const text = String(host.requests("deliver")[0]?.params.text);
+  expect(text).toContain("Bob checked it");
+  expect(text).not.toContain("Build is red");
+  expect(text).not.toContain("Earlier from Pi");
+});
+
 it("ignores a mention from someone who is not the owner", async () => {
   const { host, deliver } = setup();
   const turn = deliver({
@@ -220,6 +243,7 @@ it("ignores a mention from someone who is not the owner", async () => {
 });
 
 it("shows a conversation's activity on the request Pi took last", async () => {
+  let entries = 0;
   const { host, deliver } = setup({
     // Pi says it took each request before it answers.
     deliver: (params, process) => {
@@ -230,6 +254,7 @@ it("shows a conversation's activity on the request Pi took last", async () => {
           conversation: CONVERSATION,
           type: "placed",
           request: params.request,
+          entry: ++entries,
         },
       });
       return { submission: 1, conversation: CONVERSATION };
@@ -268,6 +293,7 @@ it("says which conversations a request works in, and lists the agent's places", 
           conversation: CONVERSATION,
           type: "placed",
           request: params.request,
+          entry: 1,
         },
       });
       return { submission: 1, conversation: CONVERSATION };
@@ -345,7 +371,8 @@ it("posts a run's answer for a request it took after a send", async () => {
   await first.run;
   const steer = reply("3", "@Pi also");
   const second = deliver({ type: "mention", event: steer });
-  await vi.waitFor(() => expect(second.workingUntil).toHaveBeenCalled());
+  // Its receipt is known once it is handed over.
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
   // The run sends for the first request, then takes the second.
   await host.processes[0]?.tool({
     agent: self,
@@ -361,6 +388,7 @@ it("posts a run's answer for a request it took after a send", async () => {
       conversation: CONVERSATION,
       type: "placed",
       request: steer.id,
+      entry: 3,
     },
   });
   await vi.waitFor(() => expect(second.acknowledged).toHaveBeenCalled());
@@ -370,6 +398,56 @@ it("posts a run's answer for a request it took after a send", async () => {
   expect(published.map((event) => event.content)).toEqual([
     "On it",
     "The build is green.",
+  ]);
+});
+
+it("posts a run's answer where the latest request it took is, not one placed after it", async () => {
+  const answered = deferred();
+  let submissions = 0;
+  const { deliver, settled, published } = setup({
+    // Requests are placed at entries 10, 20 and 30; the run that took the
+    // first two answers at 25.
+    deliver: (params, process) => {
+      const submission = ++submissions;
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation: CONVERSATION,
+          type: "placed",
+          request: params.request,
+          entry: submission * 10,
+        },
+      });
+      return { submission, conversation: CONVERSATION };
+    },
+    wait: async ({ submission }) => {
+      if (submission === 3) return new Promise(() => {});
+      await answered.promise;
+      return { status: "done", answer: 25, text: "Both done." };
+    },
+  });
+  // One conversation for the channel, each message its own thread.
+  const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+  const top = (id: string, created_at: number) =>
+    message(id, "@Pi", { created_at, tags: [["h", channel]] });
+  const latest = top("3", 120);
+  const first = deliver({ type: "mention", event: top("2", 110) }, { config });
+  const second = deliver({ type: "mention", event: latest }, { config });
+  const third = deliver({ type: "mention", event: top("4", 130) }, { config });
+  await vi.waitFor(() => expect(third.acknowledged).toHaveBeenCalled());
+  answered.resolve();
+  await expect(settled(first)).resolves.toEqual({ ok: true });
+  await expect(settled(second)).resolves.toEqual({ ok: true });
+  expect(published).toEqual([
+    {
+      kind: 9,
+      content: "Both done.",
+      tags: [
+        ["h", channel],
+        ["e", latest.id, "", "reply"],
+      ],
+    },
   ]);
 });
 
@@ -400,6 +478,46 @@ it("runs Pi's Buzz tools in the conversation's thread, and posts nothing more af
   expect(published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
 });
 
+it("lists the tools plugins add, and runs them for Pi", async () => {
+  const lookup = vi.fn<AddedTool["call"]>(async (_client, _context, args) => {
+    if (args.q === "bad") throw new Error("No such thing");
+    return `found ${String(args.q)}`;
+  });
+  const { host, deliver } = setup({}, [
+    {
+      name: "lookup",
+      description: "Look it up",
+      inputSchema: { type: "object" },
+      call: lookup,
+    },
+  ]);
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const listed = host.requests("open")[0]?.params.tools as { name: string }[];
+  expect(listed.at(-1)?.name).toBe("lookup");
+  const call = async (q: string) =>
+    (
+      await host.processes[0]?.tool({
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel, root: root.id },
+        name: "lookup",
+        arguments: { q },
+      })
+    )?.result;
+  await expect(call("logs")).resolves.toEqual({
+    content: [{ type: "text", text: "found logs" }],
+  });
+  expect(lookup).toHaveBeenCalledWith(
+    expect.anything(),
+    { channel, root: root.id },
+    { q: "logs" },
+  );
+  await expect(call("bad")).resolves.toEqual({
+    content: [{ type: "text", text: "No such thing" }],
+    isError: true,
+  });
+});
+
 it("reports a turn Pi left unanswered to the owner, in its thread", async () => {
   const { deliver, settled, published } = setup({
     wait: () => ({
@@ -424,6 +542,41 @@ it("reports a turn Pi left unanswered to the owner, in its thread", async () => 
       ["p", alice],
     ],
   });
+});
+
+it("continues an owner's Me chat at the top level, answers and failures alike", async () => {
+  const { host, deliver, settled, published, session } = setup({
+    wait: ({ submission }) =>
+      submission === 1
+        ? { status: "done", answer: 5, text: "Here it is." }
+        : { status: "unanswered", reason: "model_error", detail: "Overloaded" },
+  });
+  session.mePlacement.has.mockReturnValue(true);
+  const me = (id: string) => message(id, "@Pi", { tags: [["h", "me-1"]] });
+  const answered = deliver(
+    { type: "mention", event: me("2") },
+    { channelId: "me-1" },
+  );
+  await answered.run;
+  await expect(settled(answered)).resolves.toEqual({ ok: true });
+  expect(host.requests("deliver")[0]?.params).toMatchObject({
+    key: "me-1",
+    context: { channel: "me-1", topLevel: true },
+  });
+  const failed = deliver(
+    { type: "mention", event: me("3") },
+    { channelId: "me-1" },
+  );
+  await vi.waitFor(() => expect(failed.workingUntil).toHaveBeenCalled());
+  await expect(settled(failed)).resolves.toMatchObject({ ok: false });
+  await vi.waitFor(() => expect(published).toHaveLength(2));
+  expect(published.map((event) => event.tags)).toEqual([
+    [["h", "me-1"]],
+    [
+      ["h", "me-1"],
+      ["p", alice],
+    ],
+  ]);
 });
 
 it("waits for a turn again in a new host when the host stops", async () => {
@@ -512,11 +665,9 @@ it("stops a standalone turn's conversation when its signal aborts", async () => 
 });
 
 it("offers the provider's models with the thinking levels each supports", async () => {
+  let defaults = { provider: "anthropic", model: "claude-x", thinking: "high" };
   const { runtime } = setup({
-    providers: () => ({
-      providers: [{ id: "anthropic", name: "Anthropic", key: true }],
-      defaults: { provider: "anthropic", model: "claude-x", thinking: "high" },
-    }),
+    defaults: () => defaults,
     models: () => [
       { id: "claude-x", name: "Claude X", thinking: ["off", "low", "high"] },
       { id: "claude-y", name: "Claude Y", thinking: ["off"] },
@@ -553,6 +704,12 @@ it("offers the provider's models with the thinking levels each supports", async 
     (model) => model.effort,
   );
   expect(efforts).toEqual(["high", "off"]);
+  // Pi's settings as they are now: the pi command changes them.
+  defaults = { provider: "anthropic", model: "claude-y", thinking: "low" };
+  await expect(runtime.models(agent)).resolves.toMatchObject({
+    current: "claude-y",
+    models: [{ effort: "low" }, { effort: "off" }],
+  });
 });
 
 it("runs a turn at the agent's saved thinking level, apart from a pick", async () => {

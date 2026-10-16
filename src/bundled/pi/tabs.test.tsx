@@ -183,7 +183,7 @@ async function openChoices() {
 
 it("starts New agent's Model field on Pi's default, with the provider kept to its dialog", async () => {
   created();
-  expect(screen.queryByRole("combobox", { name: "Model provider" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
   await waitFor(() =>
     expect(modelButton()).toHaveTextContent(
       "Pi default (Anthropic · Claude X)",
@@ -200,15 +200,13 @@ it("saves a provider's key with Pi's login, needs a model for it, and tests it",
   const dialog = await openChoices();
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("combobox", { name: "Model provider" }),
+      within(dialog).getByRole("combobox", { name: "Provider" }),
     ).toHaveTextContent("From Pi settings (Anthropic)"),
   );
   expect(within(dialog).getByText("Anthropic is set up in Pi.")).toBeVisible();
 
   // Providers Buzz has a mark for show it.
-  await user.click(
-    within(dialog).getByRole("combobox", { name: "Model provider" }),
-  );
+  await user.click(within(dialog).getByRole("combobox", { name: "Provider" }));
   const anthropic = await screen.findByRole("option", { name: /^Anthropic/ });
   expect(anthropic.querySelector("svg")).not.toBeNull();
   const copilot = screen.getByRole("option", { name: "GitHub Copilot" });
@@ -261,10 +259,10 @@ it("sends a provider that signs in without a key to the pi command", async () =>
   const dialog = await openChoices();
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("combobox", { name: "Model provider" }),
+      within(dialog).getByRole("combobox", { name: "Provider" }),
     ).toBeEnabled(),
   );
-  await choose("Model provider", "GitHub Copilot");
+  await choose("Provider", "GitHub Copilot");
   expect(
     within(dialog).getByText(/GitHub Copilot signs in through Pi/),
   ).toBeVisible();
@@ -287,9 +285,12 @@ it("says why Pi could not start, and tries again", async () => {
     .click(within(dialog).getByRole("button", { name: "Try again" }));
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("combobox", { name: "Model provider" }),
+      within(dialog).getByRole("combobox", { name: "Provider" }),
     ).toHaveTextContent("From Pi settings (Anthropic)"),
   );
+  // The card and its dialog read Pi's providers once, so neither still fails.
+  expect(screen.queryByText(/Pi needs Node\.js/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 });
 
 it("says Buzz can't use a default provider that a Pi package adds", async () => {
@@ -301,7 +302,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
   expect(modelButton().querySelectorAll("svg")).toHaveLength(1);
   const dialog = await openChoices();
   const provider = within(dialog).getByRole("combobox", {
-    name: "Model provider",
+    name: "Provider",
   });
   await waitFor(() => expect(provider).toBeEnabled());
   expect(provider).toHaveAccessibleDescription(
@@ -313,7 +314,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
     within(dialog).getByRole("button", { name: "Test connection" }),
   ).toBeDisabled();
 
-  await choose("Model provider", "Anthropic");
+  await choose("Provider", "Anthropic");
   expect(provider).not.toHaveAccessibleDescription(/built-in providers/);
   await choose("Model", "Claude X");
   expect(use).not.toHaveAttribute("aria-disabled", "true");
@@ -338,7 +339,7 @@ it("keeps Try again's providers for what the dialog's Use allows", async () => {
     .click(within(dialog).getByRole("button", { name: "Try again" }));
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("combobox", { name: "Model provider" }),
+      within(dialog).getByRole("combobox", { name: "Provider" }),
     ).toHaveAccessibleDescription(/databricks isn't one/),
   );
   expect(within(dialog).getByRole("button", { name: "Use" })).toHaveAttribute(
@@ -357,7 +358,7 @@ it("shows the provider, model and thinking level in Identity, and the provider's
   const { rerender } = render(
     <SettingsTab agent={AGENT} save={save} settingsSection="identity" />,
   );
-  const provider = screen.getByRole("combobox", { name: "Model provider" });
+  const provider = screen.getByRole("combobox", { name: "Provider" });
   await waitFor(() => expect(provider).toHaveTextContent("Anthropic"));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
   // Pi's medium is high on a model without it.
@@ -396,11 +397,9 @@ it("saves a key on Enter without saving the agent's settings", async () => {
   const save = vi.fn();
   render(<SettingsTab agent={AGENT} save={save} />);
   await waitFor(() =>
-    expect(
-      screen.getByRole("combobox", { name: "Model provider" }),
-    ).toBeEnabled(),
+    expect(screen.getByRole("combobox", { name: "Provider" })).toBeEnabled(),
   );
-  await choose("Model provider", "OpenAI");
+  await choose("Provider", "OpenAI");
   const user = userEvent.setup();
   await user.type(await screen.findByLabelText("API key"), "sk-test{Enter}");
   expect(await screen.findByText("OpenAI is set up in Pi.")).toBeVisible();
@@ -446,4 +445,12 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
     }),
   );
   expect(await screen.findByText("Hello from other")).toBeVisible();
+
+  // A refresh that fails says so, and keeps the transcript it has.
+  runtime.transcript.mockRejectedValueOnce(new Error("Pi stopped"));
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not read the Pi conversation: Pi stopped",
+  );
+  expect(screen.getByText("Hello from other")).toBeVisible();
 });

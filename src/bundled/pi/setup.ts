@@ -62,28 +62,31 @@ export class PiSetup {
     return listing;
   }
 
+  /** What Pi's settings pick now, which the `pi` command changes. */
+  defaults(): Promise<Providers["defaults"]> {
+    return this.pi.request<Providers["defaults"]>("defaults");
+  }
+
   /** A provider's models, from Pi's catalog. */
   models(id: string): Promise<readonly PiModel[]> {
-    let models = this.listed.get(id);
-    if (!models) {
-      models = this.pi
-        .request<{ id: string; name: string; thinking: string[] }[]>("models", {
-          provider: id,
-        })
-        .then((models) =>
-          models.map((model) => ({
-            id: model.id,
-            label: model.name || model.id,
-            thinking: model.thinking,
-          })),
-        );
-      const listing = models;
-      listing.catch(() => {
-        if (this.listed.get(id) === listing) this.listed.delete(id);
-      });
-      this.listed.set(id, listing);
-    }
-    return models;
+    const listed = this.listed.get(id);
+    if (listed) return listed;
+    const listing = this.pi
+      .request<{ id: string; name: string; thinking: string[] }[]>("models", {
+        provider: id,
+      })
+      .then((models) =>
+        models.map((model) => ({
+          id: model.id,
+          label: model.name || model.id,
+          thinking: model.thinking,
+        })),
+      );
+    this.listed.set(id, listing);
+    listing.catch(() => {
+      if (this.listed.get(id) === listing) this.listed.delete(id);
+    });
+    return listing;
   }
 
   /** Saves a provider's API key with Pi's own login. */

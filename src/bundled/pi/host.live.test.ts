@@ -15,6 +15,7 @@ const run = promisify(execFile);
 
 /** Serves the plugin's side over in-process streams, as Buzz would. */
 const DRIVER = `
+import { writeFile } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -83,7 +84,7 @@ const c1 = await pi.rpc("deliver", turn("C1", "third"));
 await started(pi.events, "C1");
 const c2 = await pi.rpc("deliver", turn("C2", "fourth"));
 c.release();
-out.c = { waits: await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))), saw, placed: pi.events.filter((e) => e.type === "placed").map((e) => e.request), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
+out.c = { waits: await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))), saw, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
 // A run the host stops in continues in the next host.
 const d = held(), calling = held();
 faux.setResponses([
@@ -107,6 +108,12 @@ const e2 = await pi.rpc("deliver", turn("E2", "seventh"));
 e.release();
 out.e = await Promise.all([e1, e2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
 out.place = await pi.rpc("place", { agent, key: "chan/root" });
+// A turn Pi could not start leaves what the conversation was shown.
+out.unstarted = await pi.rpc("deliver", { ...turn("F", "eighth"), at: 200, model: "nope" }).catch((error) => error.message);
+out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
+// Pi's settings as they are now, which the pi command changes.
+await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
+out.defaults = await pi.rpc("defaults", {});
 await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
@@ -178,7 +185,18 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(first).toMatchObject({ status: "done", text: "Answer to both" });
     expect(second).toEqual(first);
     expect(out.c.saw.slice(-2)).toEqual(["third", "steer: fourth"]);
-    expect(out.c.placed).toEqual(["A", "B", "C1", "C2"]);
+    expect(out.c.placed.map(([request]: [string]) => request)).toEqual([
+      "A",
+      "B",
+      "C1",
+      "C2",
+    ]);
+    // Each placed at an entry before the run's answer, which the runtime
+    // compares to find the latest request a run took.
+    const [, c1] = out.c.placed[2];
+    const [, c2] = out.c.placed[3];
+    expect(c1).toBeLessThan(c2);
+    expect(c2).toBeLessThan(first.answer);
     expect(out.c.steps).toContain("send");
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.resumed).toMatchObject({
@@ -192,6 +210,9 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     });
     expect(withdrawn).toEqual(failed);
     expect(out.place).toEqual({ seen: 100 });
+    expect(out.unstarted).toMatch(/Pi has no model nope/);
+    expect(out.unstartedPlace).toEqual({ seen: 100 });
+    expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
   }, 90_000);

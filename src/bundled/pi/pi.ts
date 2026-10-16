@@ -31,7 +31,7 @@ export type ToolResult = Readonly<{
 }>;
 export type PiEvent = Readonly<
   { agent: string; conversation: number } & (
-    | { type: "placed"; request: string }
+    | { type: "placed"; request: string; entry: number }
     | { type: "step"; tool: string; target?: string }
   )
 >;
@@ -45,6 +45,17 @@ export class PiStopped extends Error {}
 
 /** What the host's stderr says last, for an error that names a cause. */
 const TAIL = 2_000;
+/** The line of the host's stderr that says why it stopped: Node's error,
+ * else its last line, past Node's version and npm's log path. */
+const cause = (stderr: string) => {
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) => line && !/^Node\.js v|^npm error A complete log/.test(line),
+    );
+  return lines.find((line) => /^[A-Z]\w*Error\b/.test(line)) ?? lines.at(-1);
+};
 /** How long a stopping host has to close each agent's storage. */
 const STOP_MS = 2_000;
 
@@ -171,7 +182,7 @@ export class Pi {
     void connection.process.exited.then((code) => {
       // Before it is ready, its last words are why it could not start, such
       // as Node missing.
-      const why = stderr.trim().split("\n").at(-1);
+      const why = cause(stderr);
       const exit = `exit ${code ?? "signal"}`;
       connection.gone = isReady
         ? new PiStopped(why ? `Pi stopped: ${why}` : `Pi stopped (${exit})`)

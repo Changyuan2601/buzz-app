@@ -83,6 +83,21 @@ it("fails what a running host had not answered when it stops", async () => {
   expect((error as Error).message).toBe("Pi stopped: FATAL: out of memory");
 });
 
+it("names Node's error, not its version, when a host crashes", async () => {
+  const host = fakeHost({ wait: () => new Promise(() => {}) });
+  const pi = new Pi(() => host.spawn, handlers());
+  const waiting = pi.request("wait");
+  await vi.waitFor(() => expect(host.requests("wait")).toHaveLength(1));
+  host.processes[0]?.exit(
+    1,
+    "file:///host.mjs:9\n  throw new Error(x);\n  ^\n\nTypeError: x is not a function\n    at file:///host.mjs:9:3\n\nNode.js v22.19.0\n",
+  );
+  const error = await waiting.catch((reason: unknown) => reason);
+  expect((error as Error).message).toBe(
+    "Pi stopped: TypeError: x is not a function",
+  );
+});
+
 it("runs the tools the host calls, and sends back each result or error", async () => {
   const host = fakeHost();
   const tool = vi

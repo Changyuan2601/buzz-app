@@ -9,9 +9,13 @@
 // `send`.
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
-import { respond } from "../../buzz-mcp/rpc";
-import { type AddedTool, turnNote } from "../../buzz-mcp/session-tools";
-import type { Tool } from "../../buzz-mcp/tools";
+import { content, errorText } from "../../buzz-mcp/rpc";
+import {
+  type AddedTool,
+  callSessionTool,
+  sessionTools,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
@@ -102,8 +106,11 @@ type Waited =
 type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   /** Where its activity shows: a thread, or a Me chat's channel. */
   scope: string;
-  /** Its conversation's `send` calls when Pi placed it in a run. */
-  sends?: number;
+  /** Where a run's answer for it is posted. */
+  where: Where;
+  /** Where Pi placed it in a run: its conversation, its entry there, and the
+   * conversation's `send` calls then. */
+  placed?: Readonly<{ conversation: number; entry: number; sends: number }>;
 };
 
 type Entry = {
@@ -180,7 +187,7 @@ export class PiRuntime {
    * Without a pick, a turn runs the configured model and level. */
   async models(agent: Agent<Config>): Promise<Models> {
     const { provider, model, effort } = config(agent.config);
-    const { defaults } = await this.setup.providers();
+    const defaults = await this.setup.defaults();
     const id = provider || defaults.provider;
     if (!id) return { current: "", models: [] };
     const listed = await this.setup.models(id);
@@ -281,10 +288,8 @@ export class PiRuntime {
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
     entry.team = team ?? "";
-    const pick = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
     const { event } = trigger;
-    const channel =
-      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
     const topLevel =
       (await this.reads(agent.pubkey)?.meChat(agent.owner, channel, signal)) ??
@@ -293,6 +298,7 @@ export class PiRuntime {
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
     const root = threadReference(event)?.rootId ?? event.id;
+    const where = { channel, root, topLevel };
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
     // than steering into them and changing their tools' context.
@@ -334,6 +340,7 @@ export class PiRuntime {
       // Known before Pi has it, as it can say it joined a run first.
       entry.receipts.set(request, {
         scope: topLevel ? channel : root,
+        where,
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
@@ -346,11 +353,10 @@ export class PiRuntime {
         text,
         steer: steerPrompt(text),
         request,
-        ...(await this.turnOf(entry, agent.pubkey, pick)),
+        ...(await this.turnOf(entry, agent.pubkey, model, effort)),
       });
       sends = entry.sends.get(submitted.conversation) ?? 0;
     })();
-    const where = { channel, root, topLevel };
     const settled = handed
       .then(async (): Promise<TurnResult> => {
         const waited = await this.settle(
@@ -359,14 +365,11 @@ export class PiRuntime {
           submitted.submission,
         );
         if (waited.status === "done") {
-          // Sends before Pi placed the request, in a run it joined, were not
-          // its answer.
           await this.answer(
             entry,
             agent,
-            where,
             submitted.conversation,
-            entry.receipts.get(request)?.sends ?? sends,
+            { where, sends },
             waited,
           );
           return { ok: true };
@@ -376,7 +379,10 @@ export class PiRuntime {
           : { ok: false, error: unanswered(waited) };
       })
       .catch(
-        (error: unknown): TurnResult => ({ ok: false, error: message(error) }),
+        (error: unknown): TurnResult => ({
+          ok: false,
+          error: errorText(error),
+        }),
       )
       .then((result) => {
         this.forget(entry, request);
@@ -416,17 +422,18 @@ export class PiRuntime {
     const entry = this.entry(agent, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    const pick = {
-      ...(delivery.model ? { model: delivery.model } : {}),
-      ...(delivery.effort ? { effort: delivery.effort } : {}),
-    };
     let stop: (() => void) | undefined;
     try {
       await this.open(agent.pubkey);
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
-      const turn = await this.turnOf(entry, agent.pubkey, pick);
+      const turn = await this.turnOf(
+        entry,
+        agent.pubkey,
+        delivery.model,
+        delivery.effort,
+      );
       signal.throwIfAborted();
       const { submission, conversation } = await this.pi.request<{
         submission: number;
@@ -451,7 +458,7 @@ export class PiRuntime {
         ? { ok: false, error: unanswered(waited) }
         : { ok: true };
     } catch (error) {
-      return { ok: false, error: message(error) };
+      return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
     }
@@ -460,38 +467,38 @@ export class PiRuntime {
   /** Runs a Buzz tool for Pi, for the conversation that called it. */
   async tool(call: ToolCall): Promise<ToolResult> {
     const entry = this.agents.get(call.agent);
-    const handle = entry?.handle;
     const client =
-      handle &&
-      entry &&
-      appClient(handle, {
+      entry?.handle &&
+      appClient(entry.handle, {
         spawn: this.spawn,
         cwd: entry.config.workspace,
         memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
       });
-    const reply = (await respond(
-      client,
-      call.context,
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: call.name, arguments: call.arguments },
-      },
-      this.added(),
-    )) as { result?: { content: unknown[]; isError?: boolean } };
-    const result = reply.result ?? { content: [], isError: true };
-    const sent = entry && call.name === "send" && !result.isError;
-    if (sent)
-      entry.sends.set(
-        call.conversation,
-        (entry.sends.get(call.conversation) ?? 0) + 1,
+    try {
+      const reply = await callSessionTool(
+        client,
+        call.context,
+        call.name,
+        call.arguments,
+        this.added(),
       );
-    return {
-      ...result,
-      ...(sent && call.arguments.final === true ? { final: true } : {}),
-    };
+      const sent = entry && call.name === "send";
+      if (sent)
+        entry.sends.set(
+          call.conversation,
+          (entry.sends.get(call.conversation) ?? 0) + 1,
+        );
+      return {
+        content: content(reply),
+        ...(sent && call.arguments.final === true ? { final: true } : {}),
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: errorText(error) }],
+        isError: true,
+      };
+    }
   }
 
   /** What Pi says of its conversations: a request joining a run takes that
@@ -508,7 +515,11 @@ export class PiRuntime {
       const before = active.get(receipt.scope);
       if (before !== receipt) before?.superseded?.();
       active.set(receipt.scope, receipt);
-      receipt.sends ??= entry.sends.get(event.conversation) ?? 0;
+      receipt.placed ??= {
+        conversation: event.conversation,
+        entry: event.entry,
+        sends: entry.sends.get(event.conversation) ?? 0,
+      };
       receipt.acknowledged?.();
       this.notify();
     } else
@@ -531,15 +542,9 @@ export class PiRuntime {
   /** Opens the agent's storage in the host, with its Buzz tools as they are
    * now. The host does nothing for one already open with these tools. */
   private async open(pubkey: string) {
-    const listed = (await respond(
-      undefined,
-      {},
-      { jsonrpc: "2.0", id: 1, method: "tools/list" },
-      this.added(),
-    )) as { result: { tools: readonly Tool[] } };
     await this.pi.request("open", {
       agent: pubkey,
-      tools: listed.result.tools,
+      tools: sessionTools(this.added()),
     });
   }
 
@@ -564,17 +569,17 @@ export class PiRuntime {
   private async turnOf(
     entry: Entry,
     pubkey: string,
-    pick: Readonly<{ model?: string; effort?: string }>,
+    model?: string,
+    effort?: string,
   ) {
-    const { provider, model, effort, workspace, instructions, scope } =
-      entry.config;
+    const { workspace, instructions, scope } = entry.config;
     const memory = await this.core(pubkey);
     return {
-      provider,
-      model,
-      thinking: effort,
+      provider: entry.config.provider,
+      model: entry.config.model,
+      thinking: entry.config.effort,
       // Apart, so a request that steers a working run changes only these.
-      pick: { model: pick.model, thinking: pick.effort },
+      pick: { model, thinking: effort },
       cwd: workspace,
       instructions: systemPrompt({
         scope,
@@ -587,16 +592,28 @@ export class PiRuntime {
     };
   }
 
-  /** Posts the answer of a turn that never sent anything itself, as goose
-   * does, once for all the requests the run answered. */
+  /** Posts the answer of a run that never sent anything itself, as goose
+   * does: once for all the requests it answered, in reply to the latest it
+   * took. */
   private async answer(
     entry: Entry,
     agent: AgentHandle,
-    where: Where,
     conversation: number,
-    sends: number,
+    own: Readonly<{ where: Where; sends: number }>,
     waited: Extract<Waited, { status: "done" }>,
   ) {
+    // The latest request Pi placed before the answer, `own` until one is
+    // known; one placed after it is another run's. Sends after it was placed
+    // answered it; ones before were for earlier requests.
+    let latest = { ...own, at: -1 };
+    for (const { placed, where } of entry.receipts.values())
+      if (
+        placed?.conversation === conversation &&
+        placed.entry < waited.answer &&
+        placed.entry > latest.at
+      )
+        latest = { where, sends: placed.sends, at: placed.entry };
+    const { where, sends } = latest;
     if (
       !waited.text ||
       (entry.sends.get(conversation) ?? 0) !== sends ||
@@ -763,9 +780,6 @@ export class PiRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
-
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
 
 /** Why Pi left a request unanswered, in words. */
 function unanswered({

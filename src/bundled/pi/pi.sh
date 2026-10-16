@@ -53,6 +53,7 @@ if [ ! -d "$deps" ]; then
   # when another build's rename came first, and this copy is removed.
   "$node" -e 'require("fs").renameSync(process.argv[1], process.argv[2])' \
     "$part" "$deps" 2>/dev/null || rm -rf "$part"
+  [ -d "$deps" ] || { echo "Pi could not install its packages" >&2; exit 1; }
   trap - EXIT INT TERM
   # Folders no build has started for a month are old builds' packages.
   find "$dir/deps" -mindepth 1 -maxdepth 1 -mtime +30 -exec rm -rf {} + 2>/dev/null || true

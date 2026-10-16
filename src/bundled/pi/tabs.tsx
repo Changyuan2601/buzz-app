@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { errorText } from "../../buzz-mcp/rpc";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -52,9 +53,6 @@ import {
 } from "./setup";
 import { TURN_LIMIT } from "./transcript";
 
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
-
 const SCOPES = [
   {
     label: "",
@@ -80,31 +78,41 @@ const providerIcon = (id: string | undefined) => {
 const CONVERSATION_LIMIT = 30;
 const label = ({ channelId, name, root }: Place) =>
   `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
-type Read<T> =
+type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
-  | { status: "error"; error: string; value?: T };
+  | { status: "error"; error: string; value?: T }
+) & { scope?: string };
 
 /** `read()` as it settles, read again when `key` changes or on `retry`, which
- * abort the one before. A value already shown stays while it is read again. */
-function useRead<T>(read: (signal: AbortSignal) => Promise<T>, key: string) {
+ * abort the one before. A value already shown for the same `scope` stays
+ * while it is read again, and when that read fails. */
+function useRead<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  key: string,
+  scope = key,
+) {
   const [state, setState] = useState<Read<T>>({ status: "loading" });
   const [round, setRound] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
     const abort = new AbortController();
-    setState((prior) =>
-      prior.value === undefined
-        ? { status: "loading" }
-        : { status: "loading", value: prior.value },
-    );
+    const kept = (prior: Read<T>) =>
+      prior.value === undefined || prior.scope !== scope
+        ? {}
+        : { value: prior.value, scope };
+    setState((prior) => ({ status: "loading", ...kept(prior) }));
     read(abort.signal).then(
       (value) => {
-        if (!abort.signal.aborted) setState({ status: "ready", value });
+        if (!abort.signal.aborted) setState({ status: "ready", value, scope });
       },
       (error: unknown) => {
         if (!abort.signal.aborted)
-          setState({ status: "error", error: message(error) });
+          setState((prior) => ({
+            status: "error",
+            error: errorText(error),
+            ...kept(prior),
+          }));
       },
     );
     return () => abort.abort();
@@ -202,7 +210,7 @@ export function createTabs({
     return (
       <>
         <Select
-          label="Model provider"
+          label="Provider"
           variant={rows ? "preference" : "field"}
           value={value.provider}
           leading={providerIcon(id)}
@@ -339,7 +347,7 @@ export function createTabs({
               key,
               tested: await setup.test(choice).catch((error: unknown) => ({
                 ok: false,
-                message: message(error),
+                message: errorText(error),
               })),
             });
           }}
@@ -377,7 +385,7 @@ export function createTabs({
         setChanging(false);
         onSaved();
       } catch (reason) {
-        setError(message(reason));
+        setError(errorText(reason));
       } finally {
         setSaving(false);
       }
@@ -451,10 +459,15 @@ export function createTabs({
   /** A provider, its key and its model, chosen apart from the card. */
   function ChooseDialog({
     value,
+    listing,
+    reload,
     onChange,
     onClose,
   }: Readonly<{
     value: Choice;
+    /** The card's read of Pi's providers, so both show one result. */
+    listing: Read<Providers>;
+    reload(): void;
     onChange(choice: Choice): void;
     onClose(): void;
   }>) {
@@ -462,7 +475,6 @@ export function createTabs({
       provider: value.provider,
       model: value.model,
     });
-    const [listing, reload] = useRead(() => setup.providers(), "providers");
     return (
       <Dialog
         open
@@ -573,6 +585,8 @@ export function createTabs({
         {choosing && (
           <ChooseDialog
             value={current}
+            listing={listing}
+            reload={reload}
             onClose={() => setChoosing(false)}
             onChange={(choice) => {
               onChange({
@@ -607,6 +621,7 @@ export function createTabs({
     const [read, refresh] = useRead(
       (signal) => runtime.transcript(agent.pubkey, place, working, signal),
       `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
+      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}`,
     );
     return (
       <div className="grid gap-4">
@@ -620,15 +635,12 @@ export function createTabs({
             Refresh
           </Button>
         </div>
-        {read.status === "error" ? (
+        {read.status === "error" && (
           <p role="alert" className="m-0">
             Could not read the Pi conversation: {read.error}
           </p>
-        ) : !read.value ? (
-          <p role="status" className="m-0">
-            Reading the Pi conversation…
-          </p>
-        ) : (
+        )}
+        {read.value ? (
           <ActivityTranscript
             transcript={read.value}
             agentName={agent.name}
@@ -641,6 +653,12 @@ export function createTabs({
               )
             }
           />
+        ) : (
+          read.status !== "error" && (
+            <p role="status" className="m-0">
+              Reading the Pi conversation…
+            </p>
+          )
         )}
       </div>
     );
@@ -664,6 +682,7 @@ export function createTabs({
     const [listing, reload] = useRead(
       () => runtime.places(agent.pubkey),
       `${agent.pubkey}\u0000${working.join()}`,
+      agent.pubkey,
     );
     const places = listing.value;
     if (!places)
@@ -810,7 +829,7 @@ export function createTabs({
           workspace: draft.workspace.trim() || DEFAULT_CONFIG.workspace,
         });
       } catch (reason) {
-        setError(message(reason));
+        setError(errorText(reason));
       } finally {
         setSaving(false);
       }
