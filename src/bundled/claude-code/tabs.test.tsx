@@ -1165,3 +1165,34 @@ it.each(["Identity", "Settings"])(
     });
   },
 );
+
+it("continues onboarding only through the successful Done action", async () => {
+  const { type } = installed();
+  const Setup = providerSetup(type);
+  const onClose = vi.fn(),
+    onComplete = vi.fn();
+  render(<Setup onClose={onClose} onComplete={onComplete} />);
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Done" });
+  await user.click(screen.getByRole("combobox", { name: "Default model" }));
+  await user.click(await screen.findByRole("option", { name: "Sonnet 5.5" }));
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  expect(
+    JSON.parse(
+      localStorage.getItem("buzz.claude-code.provider-defaults.v1") ?? "null",
+    ),
+  ).toMatchObject({ model: "sonnet" });
+  expect(onComplete).toHaveBeenCalledOnce();
+  expect(onClose).not.toHaveBeenCalled();
+  const failure = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("Defaults write failed");
+    });
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Defaults write failed",
+  );
+  expect(onComplete).toHaveBeenCalledOnce();
+  failure.mockRestore();
+});

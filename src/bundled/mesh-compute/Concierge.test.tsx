@@ -15,6 +15,7 @@ import type {
 } from "../../features/relay/contracts";
 import {
   conciergeSetup,
+  conciergeConnection,
   conciergeDraft,
   ConciergeDraft,
   MESH_TYPE,
@@ -469,4 +470,84 @@ it("preserves edits after a failed mutation and checks the persisted target prov
     conciergeSetup(f.agents, f.relay).apply(message()),
   ).rejects.toThrow("settings changed");
   expect(f.agents.retype).toHaveBeenCalledTimes(1);
+});
+
+it("shows concrete choices immediately after naming; choosing opens setup and successful completion connects the same agent", async () => {
+  const f = fixture(),
+    target = message(rename);
+  if (!f.codex.provider) throw new Error("Missing provider fixture");
+  Object.assign(f.codex.provider, {
+    DialogBody: ({
+      onClose,
+      onComplete,
+    }: {
+      onClose(): void;
+      onComplete?: () => void;
+    }) => (
+      <div>
+        <p>Account setup</p>
+        <button type="button" onClick={onClose}>
+          Cancel setup
+        </button>
+        <button type="button" onClick={onComplete}>
+          Finish setup
+        </button>
+      </div>
+    ),
+  });
+  const view = f.mount(target);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Use this name" }));
+  expect(await screen.findByRole("button", { name: "Codex" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Shared Compute" })).toBeVisible();
+  expect(screen.queryByText(/buzz.codex/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Codex" }));
+  expect(await screen.findByRole("dialog")).toHaveTextContent("Account setup");
+  expect(f.agents.retype).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Finish setup" }));
+  await screen.findByText(/Milo is connected/);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(f.agents.retype).toHaveBeenCalledExactlyOnceWith(
+    author,
+    connect.harness,
+    {
+      config: expect.objectContaining({
+        model: "default",
+        workspace: "~/.buzz",
+      }),
+    },
+  );
+  expect(f.agents.find(author)?.name).toBe("Milo");
+  expect(f.agents.create).not.toHaveBeenCalled();
+  view.unmount();
+  f.mount(target);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Manage Codex" })).toBeVisible();
+  expect(f.setup.completed(conciergeConnection(target, connect.harness))).toBe(
+    true,
+  );
+});
+it("returns from cancelled setup without switching the agent", async () => {
+  const f = fixture(),
+    target = message(rename);
+  if (!f.codex.provider) throw new Error("Missing provider fixture");
+  Object.assign(f.codex.provider, {
+    DialogBody: ({ onClose }: { onClose(): void }) => (
+      <button type="button" onClick={onClose}>
+        Cancel setup
+      </button>
+    ),
+  });
+  await f.setup.apply(target);
+  f.mount(target);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Codex" }));
+  await user.click(await screen.findByRole("button", { name: "Cancel setup" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Manage Codex" })).toHaveFocus();
+  expect(f.agents.retype).not.toHaveBeenCalled();
+  expect(f.agents.find(author)?.type).toBe(MESH_TYPE);
+  await user.click(screen.getByRole("button", { name: "Codex" }));
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  expect(f.agents.retype).not.toHaveBeenCalled();
 });

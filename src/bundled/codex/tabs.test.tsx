@@ -1153,3 +1153,34 @@ it.each(["Identity", "Settings"])(
     });
   },
 );
+
+it("distinguishes completing onboarding from cancelling provider setup", async () => {
+  const f = fixture(),
+    onClose = vi.fn(),
+    onComplete = vi.fn();
+  render(
+    <f.tabs.ProviderDialogBody onClose={onClose} onComplete={onComplete} />,
+  );
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: "Continue" });
+  await user.click(screen.getByRole("combobox", { name: "Default model" }));
+  await user.click(await screen.findByRole("option", { name: "Model B" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(f.provider.resolve(defaults)).toMatchObject({ model: "model-b" });
+  expect(onComplete).toHaveBeenCalledOnce();
+  expect(onClose).not.toHaveBeenCalled();
+  const failure = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("Defaults write failed");
+    });
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Defaults write failed",
+  );
+  expect(onComplete).toHaveBeenCalledOnce();
+  failure.mockRestore();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(onComplete).toHaveBeenCalledOnce();
+});

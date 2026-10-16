@@ -17,13 +17,18 @@ The guide asks one short question at a time:
 
 1. Choose a name for this agent. A bounded rename proposal shows **Use this name**;
    approval uses the existing Agents service to rename and publish its profile.
-2. Choose a supported harness the person can access. The runtime supplies only
-   registered local choices and the current saved agent name. Codex, Claude and
+2. Choose a supported AI using the buttons directly below the saved name.
+   The app lists registered choices immediately; there is no need to guess a name
+   or type a harness ID. Selecting Claude or Codex opens its existing setup dialog.
+   Successful Done/Continue saves its model defaults and connects this same agent,
+   returning to the main chat. Cancel/Close returns without switching. Goose uses
+   its existing inline provider/model controls before Connect. The runtime supplies
+   only registered local choices and the current saved agent name. Codex, Claude and
    Goose are offered when registered; Pi/Phi are not invented as supported options.
    Shared Compute can remain explicitly as a tool-free fallback.
-3. Choose a useful role, or a general assistant if the person wants to skip.
-   Review its instructions, account, model and workspace controls inline, then
-   choose **Connect this agent**.
+3. Start with a general assistant role and customize it after connection.
+   Role questions must not delay opening the chosen AI's setup. A tailored
+   conversational proposal remains available if explicitly requested.
 4. Send a first test in the same conversation. The same named agent now answers
    using the selected harness. A saved configuration is not proof of inference.
 
@@ -85,8 +90,9 @@ model-operated shell tools or arbitrary agent-creation tools are introduced.
 1. Leave Provider sharing compute in MeshLLM. Open Consumer's Solo onboarding chat.
 2. Answer the welcome with a name and choose **Use this name**. Verify the composer
    and subsequent messages use the saved name.
-3. Ask for a supported harness; review account/model/workspace settings. Complete
-   sign-in or macOS security prompts yourself, then **Connect this agent**.
+3. Choose an AI button beneath the saved name. Complete the opened setup,
+   reviewing account/model/workspace access and handling sign-in yourself. Choose
+   Done/Continue to connect and return to this same chat; Cancel must not switch.
 4. Send the proposed first test without a mention. Verify the same named agent
    answers in the main conversation, with no second agent or subthread.
 5. Reopen onboarding and verify it preserves the selected harness and role.

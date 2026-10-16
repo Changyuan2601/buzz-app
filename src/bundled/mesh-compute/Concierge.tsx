@@ -302,15 +302,17 @@ function ConciergeReview({
   agents,
   setup,
   draft,
+  startSetup = false,
 }: {
   message: ChannelMessage;
   agents: Agents;
   setup: ReturnType<typeof conciergeSetup>;
   draft: Draft;
+  startSetup?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(startSetup);
   const setupButton = useRef<HTMLButtonElement>(null);
   const done = setup.completed(message);
   const agent = agents.find(message.authorId);
@@ -368,27 +370,29 @@ function ConciergeReview({
           </p>
           {!done && (
             <>
-              <Select
-                label="Harness"
-                value={key}
-                disabled={pending || !!reviewed}
-                groups={[
-                  {
-                    label: "On this computer",
-                    options: types.map((item) => ({
-                      value: item.key,
-                      label: item.title,
-                    })),
-                  },
-                ]}
-                onValueChange={(next) => {
-                  const selected = types.find((item) => item.key === next);
-                  if (!selected) return;
-                  setKey(next);
-                  setConfig(conciergeConfig(selected, draft));
-                  setError("");
-                }}
-              />
+              {!startSetup && (
+                <Select
+                  label="Harness"
+                  value={key}
+                  disabled={pending || !!reviewed}
+                  groups={[
+                    {
+                      label: "On this computer",
+                      options: types.map((item) => ({
+                        value: item.key,
+                        label: item.title,
+                      })),
+                    },
+                  ]}
+                  onValueChange={(next) => {
+                    const selected = types.find((item) => item.key === next);
+                    if (!selected) return;
+                    setKey(next);
+                    setConfig(conciergeConfig(selected, draft));
+                    setError("");
+                  }}
+                />
+              )}
               {!proposed && (
                 <p role="status" className="m-0 text-body-sm text-secondary">
                   That harness is unavailable. Choose one listed here.
@@ -428,7 +432,17 @@ function ConciergeReview({
             <ProviderDialog
               type={type}
               finalFocus={setupButton}
-              onClose={() => setSetupOpen(false)}
+              onClose={() => {
+                setSetupOpen(false);
+              }}
+              onComplete={
+                done
+                  ? undefined
+                  : () => {
+                      setSetupOpen(false);
+                      void apply();
+                    }
+              }
             />
           )}
           <p className="m-0 text-body-sm text-secondary">
@@ -445,7 +459,7 @@ function ConciergeReview({
       {done ? (
         <p role="status" className="m-0 text-body-sm">
           {draft.action === "rename"
-            ? `Name saved: ${agent?.name ?? "your agent"}. Tell me which harness you'd like to use next, or ask for help choosing.`
+            ? `Name saved: ${agent?.name ?? "your agent"}.`
             : `${agent?.name ?? "your agent"} is connected. Send the first test in this conversation. If sign-in needs attention, use the setup controls above.`}
         </p>
       ) : (
@@ -467,6 +481,13 @@ function ConciergeReview({
           </Button>
         </div>
       )}
+      {done && draft.action === "rename" && (
+        <ConciergeHarnessChoices
+          message={message}
+          agents={agents}
+          setup={setup}
+        />
+      )}
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}
@@ -478,5 +499,102 @@ function ConciergeReview({
         </p>
       )}
     </section>
+  );
+}
+
+/** A completed naming step offers the actual registered choices immediately.
+ * The derived connection proposal is local UI state, not a fabricated message
+ * sent to the channel. Its receipt is separate from the naming receipt. */
+export function conciergeConnection(
+  message: ChannelMessage,
+  harness: string,
+): ChannelMessage {
+  return {
+    ...message,
+    id: `${message.id}:connect`,
+    content:
+      "```buzz-agent\n" +
+      JSON.stringify({
+        action: "connect",
+        harness,
+        instructions:
+          "Be a helpful personal assistant. Answer directly and concisely. Ask what the person wants help with if their goal is unclear. Use only available tools when the request needs them. Never invent facts or claim actions you have not taken.",
+        test: "Hi! Help me get started with my assistant.",
+      }) +
+      "\n```",
+  };
+}
+function ConciergeHarnessChoices({
+  message,
+  agents,
+  setup,
+}: {
+  message: ChannelMessage;
+  agents: Agents;
+  setup: ReturnType<typeof conciergeSetup>;
+}) {
+  const agent = agents.find(message.authorId);
+  const [selected, setSelected] = useState<{ key: string; opening: number }>();
+  if (!agent) return null;
+  const target = conciergeConnection(message, selected?.key ?? "");
+  const reviewed = setup.reviewed(target);
+  if (
+    !reviewed &&
+    (agent.type !== MESH_TYPE ||
+      meshAgentConfig(agent.config).preset !== CONCIERGE_PRESET)
+  )
+    return (
+      <p role="status" className="m-0 text-body-sm">
+        Connected to{" "}
+        {agents.types().find((type) => type.key === agent.type)?.title ??
+          "your chosen AI"}
+        . Continue with {agent.name} in this conversation.
+      </p>
+    );
+  const key = reviewed?.type ?? selected?.key;
+  const connection = conciergeConnection(message, key ?? "");
+  const draft = conciergeDraft(connection.content);
+  return (
+    <div className="grid gap-3">
+      {!reviewed && (
+        <>
+          <p className="m-0 text-body-md">
+            Choose the AI you'd like me to use. I'll open its setup and bring
+            you back here when it's ready.
+          </p>
+          <p className="m-0 text-body-sm text-secondary">
+            Claude, Codex and Goose can use your account and tools on this
+            computer. Review the setup before connecting. Shared Compute stays
+            chat only.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {conciergeHarnesses(agents).map((type) => (
+              <Button
+                key={type.key}
+                size="sm"
+                onClick={() =>
+                  setSelected((previous) => ({
+                    key: type.key,
+                    opening: (previous?.opening ?? 0) + 1,
+                  }))
+                }
+              >
+                {type.title}
+              </Button>
+            ))}
+          </div>
+        </>
+      )}
+      {key && draft && (
+        <ConciergeReview
+          key={`${key}:${selected?.opening ?? 0}`}
+          message={connection}
+          agents={agents}
+          setup={setup}
+          draft={draft}
+          startSetup={!setup.completed(connection)}
+        />
+      )}
+    </div>
   );
 }

@@ -133,6 +133,7 @@ async function start(agents: Agents, relay: RelayData, signal: AbortSignal) {
       // Only exact shipped prototype guides: retain owner-written prompts.
       if (
         [
+          "703092c608d3a95a79e26169f6a117774c2d07eb77c7bd68a384b7e9ecac2d7b",
           "b98c020507363fee2b02889b0e6e5bf990b34dee74901099622cf750c859c963",
           "9daf27f40fed25e56547b13d90d31668d0622b495ce467251c068de2c02690a3",
           "5554662fee08a55d3b78508cb53f817953948496ce613121d8b44027916d0986",

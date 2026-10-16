@@ -394,7 +394,13 @@ export function createTabs(
     );
   }
 
-  function ProviderDialogBody({ onClose }: { onClose(): void }) {
+  function ProviderDialogBody({
+    onClose,
+    onComplete,
+  }: {
+    onClose(): void;
+    onComplete?: (() => void) | undefined;
+  }) {
     const defaultsForm = useId();
     const state = useProvider();
     const { data, error, checking } = state;
@@ -493,7 +499,7 @@ export function createTabs(
               setSaveError(message(reason));
               return;
             }
-            onClose();
+            (onComplete ?? onClose)();
           }}
         >
           <Select
@@ -558,6 +564,14 @@ export function createTabs(
           >
             Cancel
           </Button>
+          {onComplete &&
+            state.readiness === "ready" &&
+            !checking &&
+            !installing.running && (
+              <Button type="submit" form={defaultsForm} variant="prominent">
+                Continue
+              </Button>
+            )}
           {state.readiness === "ready" ? (
             <Button
               type="submit"

@@ -11,10 +11,12 @@ export function ProviderDialog({
   type,
   finalFocus,
   onClose,
+  onComplete,
 }: {
   type: RegisteredAgentType | undefined;
   finalFocus: RefObject<HTMLButtonElement | null>;
   onClose(): void;
+  onComplete?: (() => void) | undefined;
 }) {
   const provider = type?.provider;
   if (!type || !provider) return null;
@@ -40,6 +42,7 @@ export function ProviderDialog({
         provider={provider}
         finalFocus={finalFocus}
         onClose={onClose}
+        onComplete={onComplete}
       />
     </ContributionBoundary>
   );
@@ -50,11 +53,13 @@ function ManagedProviderDialog({
   provider,
   finalFocus,
   onClose,
+  onComplete,
 }: {
   type: RegisteredAgentType;
   provider: NonNullable<RegisteredAgentType["provider"]>;
   finalFocus: RefObject<HTMLButtonElement | null>;
   onClose(): void;
+  onComplete?: (() => void) | undefined;
 }) {
   const state = useSyncExternalStore(
     provider.subscribe,
@@ -81,7 +86,7 @@ function ManagedProviderDialog({
       finalFocus={() => finalFocus.current}
     >
       <ProviderDialogFooter value={footer}>
-        <Body onClose={onClose} />
+        <Body onClose={onClose} onComplete={onComplete} />
       </ProviderDialogFooter>
     </Dialog>
   );

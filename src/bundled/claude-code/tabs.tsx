@@ -397,7 +397,14 @@ export function createTabs({
   }
 
   /** Claude Code installation and account readiness on this computer. */
-  function ProviderDialogBody({ onClose }: { onClose(): void }) {
+  function ProviderDialogBody({
+    onClose,
+    onComplete,
+  }: {
+    onClose(): void;
+    onComplete?: (() => void) | undefined;
+  }) {
+    const defaultsForm = useId();
     const state = useSetupCatalog();
     const savedDefaults = useSyncExternalStore(
       defaults.subscribe,
@@ -516,7 +523,12 @@ export function createTabs({
                 {action.label}
               </Button>
               {ready && (
-                <Button variant="prominent" onClick={onClose}>
+                <Button
+                  variant="prominent"
+                  type={onComplete ? "submit" : "button"}
+                  form={onComplete ? defaultsForm : undefined}
+                  onClick={onComplete ? undefined : onClose}
+                >
                   Done
                 </Button>
               )}
@@ -588,6 +600,7 @@ export function createTabs({
           )}
         </div>
         <form
+          id={defaultsForm}
           className="grid gap-3"
           hidden={!ready}
           onSubmit={(event) => {
@@ -599,7 +612,7 @@ export function createTabs({
               setDefaultError(message(error));
               return;
             }
-            onClose();
+            (onComplete ?? onClose)();
           }}
         >
           <Select

@@ -342,7 +342,11 @@ export type AgentProvider = Readonly<{
   /** Handles the current attention state directly; absent opens DialogBody. */
   attentionAction?: (() => void) | undefined;
   /** Provider-owned recovery/progress controls and optional saved defaults. */
-  DialogBody: ComponentType<{ onClose(): void }>;
+  DialogBody: ComponentType<{
+    onClose(): void;
+    /** An onboarding caller can continue only after explicit successful setup. */
+    onComplete?: (() => void) | undefined;
+  }>;
 }>;
 export type AgentType<Config = unknown> = {
   id: string;
