@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
+  Agent,
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
-import { readView, writeView } from "../../shared/view-state";
+import { clearView, readView, writeView } from "../../shared/view-state";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import type { conciergeCreation } from "./conciergeCreation";
 import { Select } from "../../shared/design-system/ui/Select";
 import { ProviderDialog } from "../agents/ProviderDialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -14,6 +18,7 @@ import { DEFAULT_MESH_AGENT_CONFIG, meshAgentConfig } from "./meshAgent";
 export const CONCIERGE_PRESET = "buzz-concierge";
 export const MESH_TYPE = "buzz.mesh-compute/mesh";
 type Draft =
+  | Readonly<{ action: "start" }>
   | Readonly<{ action: "rename"; name: string }>
   | Readonly<{
       action: "connect";
@@ -46,7 +51,7 @@ export function conciergeConfig(
   );
 }
 
-/** Model output proposes a bounded edit to its own identity, never a new agent. */
+/** Model output proposes bounded steps; the owner chooses and applies actions. */
 export function conciergeDraft(content: string): Draft | undefined {
   if (content.length > 12_000) return;
   const blocks = [
@@ -57,11 +62,13 @@ export function conciergeDraft(content: string): Draft | undefined {
     const value = JSON.parse(blocks[0][1]);
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const limits =
-      value.action === "rename"
-        ? { name: 60 }
-        : value.action === "connect"
-          ? { instructions: 4000, test: 400, harness: 200 }
-          : undefined;
+      value.action === "start"
+        ? {}
+        : value.action === "rename"
+          ? { name: 60 }
+          : value.action === "connect"
+            ? { instructions: 4000, test: 400, harness: 200 }
+            : undefined;
     if (
       !limits ||
       Object.keys(value).sort().join() !==
@@ -86,6 +93,21 @@ export function conciergeDraft(content: string): Draft | undefined {
     return;
   }
 }
+
+export type ConciergeActions = {
+  dispose(): void;
+  available(message: ChannelMessage): boolean;
+  completed(message: ChannelMessage): boolean;
+  reviewed(
+    message: ChannelMessage,
+  ): { type: string; config: unknown } | undefined;
+  target(message: ChannelMessage): Agent | undefined;
+  apply(
+    message: ChannelMessage,
+    choice?: { type: string; config: unknown },
+    name?: string,
+  ): Promise<void>;
+};
 
 type Attempt = Readonly<{
   action: Draft["action"];
@@ -146,6 +168,10 @@ export function conciergeSetup(agents: Agents, relay: RelayData) {
       return;
     if (
       !receipt(message) &&
+      !(
+        conciergeDraft(message.content)?.action === "start" &&
+        receipt({ ...message, id: `${message.id}:self` })
+      ) &&
       (agent.type !== MESH_TYPE ||
         meshAgentConfig(agent.config).preset !== CONCIERGE_PRESET)
     )
@@ -157,6 +183,7 @@ export function conciergeSetup(agents: Agents, relay: RelayData) {
       active = false;
     },
     available: (message: ChannelMessage) => !!source(message),
+    target: (message: ChannelMessage) => agents.find(message.authorId),
     completed: (message: ChannelMessage) => receipt(message)?.done === true,
     reviewed: (
       message: ChannelMessage,
@@ -174,7 +201,7 @@ export function conciergeSetup(agents: Agents, relay: RelayData) {
       const operation = (async () => {
         const start = source(message),
           draft = conciergeDraft(message.content);
-        if (!start || !draft)
+        if (!start || !draft || draft.action === "start")
           throw new Error(
             "Reconnect to the original conversation to continue setup.",
           );
@@ -277,11 +304,15 @@ export function ConciergeDraft({
   agents,
   relay,
   setup,
+  creation,
+  onOpenDm,
 }: {
   message: ChannelMessage;
   agents: Agents;
   relay: RelayData;
-  setup: ReturnType<typeof conciergeSetup>;
+  setup: ConciergeActions;
+  creation?: ReturnType<typeof conciergeCreation>;
+  onOpenDm?: ((channelId: string) => void) | undefined;
 }) {
   useSyncExternalStore(agents.subscribe, agents.snapshot);
   useSyncExternalStore(relay.subscribe, relay.snapshot);
@@ -292,6 +323,13 @@ export function ConciergeDraft({
     return (
       <p className="whitespace-pre-wrap text-body-md">{message.content}</p>
     );
+  if (draft.action === "start")
+    return creation ? (
+      <ConciergeStart
+        key={message.id}
+        {...{ message, agents, relay, setup, creation, onOpenDm }}
+      />
+    ) : null;
   return (
     <ConciergeReview key={message.id} {...{ message, agents, setup, draft }} />
   );
@@ -303,19 +341,21 @@ function ConciergeReview({
   setup,
   draft,
   startSetup = false,
+  newAgentName,
 }: {
   message: ChannelMessage;
   agents: Agents;
-  setup: ReturnType<typeof conciergeSetup>;
-  draft: Draft;
+  setup: ConciergeActions;
+  draft: Exclude<Draft, { action: "start" }>;
   startSetup?: boolean;
+  newAgentName?: string | undefined;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [setupOpen, setSetupOpen] = useState(startSetup);
   const setupButton = useRef<HTMLButtonElement>(null);
   const done = setup.completed(message);
-  const agent = agents.find(message.authorId);
+  const agent = setup.target(message);
   const types = conciergeHarnesses(agents);
   const proposed =
     draft.action === "connect"
@@ -347,6 +387,7 @@ function ConciergeReview({
         draft.action === "connect" && type
           ? { type: type.key, config }
           : undefined,
+        newAgentName,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -361,7 +402,7 @@ function ConciergeReview({
       <p className="m-0 text-label-md">
         {draft.action === "rename"
           ? `Call me ${draft.name}`
-          : `Connect ${agent?.name ?? "your agent"}`}
+          : `${newAgentName ? "Create" : "Connect"} ${agent?.name ?? newAgentName ?? "your agent"}`}
       </p>
       {draft.action === "connect" && (
         <>
@@ -446,8 +487,9 @@ function ConciergeReview({
             />
           )}
           <p className="m-0 text-body-sm text-secondary">
-            This changes this agent's harness and instructions, keeping its
-            name, identity and conversation.{" "}
+            {newAgentName
+              ? "This creates a separate agent and sends its welcome in a private DM with you."
+              : "This changes this agent's harness and instructions, keeping its name, identity and conversation."}{" "}
             {type?.key === MESH_TYPE
               ? "Shared Compute is chat only, with no tools."
               : type?.description}{" "}
@@ -460,7 +502,9 @@ function ConciergeReview({
         <p role="status" className="m-0 text-body-sm">
           {draft.action === "rename"
             ? `Name saved: ${agent?.name ?? "your agent"}.`
-            : `${agent?.name ?? "your agent"} is connected. Send the first test in this conversation. If sign-in needs attention, use the setup controls above.`}
+            : newAgentName
+              ? `${agent?.name ?? newAgentName} is created. Its welcome DM has been sent.`
+              : `${agent?.name ?? "your agent"} is connected. Send the first test in this conversation. If sign-in needs attention, use the setup controls above.`}
         </p>
       ) : (
         <div>
@@ -477,7 +521,11 @@ function ConciergeReview({
             }
             onClick={() => void apply()}
           >
-            {draft.action === "rename" ? "Use this name" : "Connect this agent"}
+            {draft.action === "rename"
+              ? "Use this name"
+              : newAgentName
+                ? `Create ${newAgentName}`
+                : "Connect this agent"}
           </Button>
         </div>
       )}
@@ -528,10 +576,12 @@ function ConciergeHarnessChoices({
   message,
   agents,
   setup,
+  newAgentName,
 }: {
   message: ChannelMessage;
   agents: Agents;
-  setup: ReturnType<typeof conciergeSetup>;
+  setup: ConciergeActions;
+  newAgentName?: string | undefined;
 }) {
   const agent = agents.find(message.authorId);
   const [selected, setSelected] = useState<{ key: string; opening: number }>();
@@ -559,8 +609,8 @@ function ConciergeHarnessChoices({
       {!reviewed && (
         <>
           <p className="m-0 text-body-md">
-            Choose the AI you'd like me to use. I'll open its setup and bring
-            you back here when it's ready.
+            Choose the AI for {newAgentName ?? "this agent"}. I'll open its
+            setup and bring you back here when it's ready.
           </p>
           <p className="m-0 text-body-sm text-secondary">
             Claude, Codex and Goose can use your account and tools on this
@@ -585,16 +635,163 @@ function ConciergeHarnessChoices({
           </div>
         </>
       )}
-      {key && draft && (
+      {key && draft?.action === "connect" && (
         <ConciergeReview
           key={`${key}:${selected?.opening ?? 0}`}
           message={connection}
           agents={agents}
           setup={setup}
           draft={draft}
+          newAgentName={newAgentName}
           startSetup={!setup.completed(connection)}
         />
       )}
     </div>
+  );
+}
+
+/** The chosen path and name belong to the owner, not model interpretation. */
+function ConciergeStart({
+  message,
+  agents,
+  relay,
+  setup,
+  creation,
+  onOpenDm,
+}: {
+  message: ChannelMessage;
+  agents: Agents;
+  relay: RelayData;
+  setup: ConciergeActions;
+  creation: ReturnType<typeof conciergeCreation>;
+  onOpenDm?: ((channelId: string) => void) | undefined;
+}) {
+  type Route = { mode: "self" | "new"; name: string; confirmed: boolean };
+  const scope = relay.snapshot().scope ?? "",
+    key = `concierge:route:${message.authorId}:${message.id}`;
+  const [route, setRoute] = useState<Route | undefined>(() =>
+    readView<Route | undefined>(scope, key, undefined),
+  );
+  const [error, setError] = useState("");
+  const [, refresh] = useState(0);
+  const create: ConciergeActions = {
+    ...creation,
+    apply: async (...args) => {
+      try {
+        await creation.apply(...args);
+      } finally {
+        refresh((value) => value + 1);
+      }
+    },
+  };
+  const save = (next: Route) => {
+    if (!setup.available(message) || !writeView(scope, key, next)) {
+      setError("Reconnect before continuing setup.");
+      return;
+    }
+    setRoute(next);
+    setError("");
+  };
+  const rename = {
+    ...message,
+    id: `${message.id}:self`,
+    content:
+      "```buzz-agent\n" +
+      JSON.stringify({ action: "rename", name: route?.name ?? "" }) +
+      "\n```",
+  };
+  const child = { ...message, id: `${message.id}:new` };
+  const dm = creation.dm(conciergeConnection(child, ""));
+  return (
+    <section aria-label="Get started" className="grid min-w-0 gap-3">
+      <p className="m-0 text-body-md">
+        Hi there! I'm your concierge agent. Would you like to make me your
+        assistant, or create a new agent?
+      </p>
+      {!route ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            onClick={() => save({ mode: "self", name: "", confirmed: false })}
+          >
+            Use this agent
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => save({ mode: "new", name: "", confirmed: false })}
+          >
+            Create a new agent
+          </Button>
+        </div>
+      ) : !route.confirmed ? (
+        <form
+          className="grid gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (route.name.trim())
+              save({ ...route, name: route.name.trim(), confirmed: true });
+          }}
+        >
+          <Field
+            label={
+              route.mode === "self"
+                ? "What would you like to name me?"
+                : "What would you like to name your new agent?"
+            }
+          >
+            <Input
+              value={route.name}
+              maxLength={60}
+              required
+              onValueChange={(name) => save({ ...route, name })}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" size="sm" disabled={!route.name.trim()}>
+              Continue
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                try {
+                  clearView(scope, key);
+                  setRoute(undefined);
+                } catch {
+                  setError("Could not return to the choices. Try again.");
+                }
+              }}
+            >
+              Back
+            </Button>
+          </div>
+        </form>
+      ) : route.mode === "self" ? (
+        <ConciergeReview
+          message={rename}
+          agents={agents}
+          setup={setup}
+          draft={{ action: "rename", name: route.name }}
+        />
+      ) : (
+        <>
+          <ConciergeHarnessChoices
+            message={child}
+            agents={agents}
+            setup={create}
+            newAgentName={route.name}
+          />
+          {dm && (
+            <Button size="sm" onClick={() => onOpenDm?.(dm)}>
+              Open DM
+            </Button>
+          )}
+        </>
+      )}
+      {error && (
+        <p role="alert" className="m-0 text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }

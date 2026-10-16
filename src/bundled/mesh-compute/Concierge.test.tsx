@@ -21,6 +21,7 @@ import {
   MESH_TYPE,
   CONCIERGE_PRESET,
 } from "./Concierge";
+import { conciergeCreation } from "./conciergeCreation";
 import { DEFAULT_MESH_AGENT_CONFIG } from "./meshAgent";
 
 afterEach(() => {
@@ -82,6 +83,7 @@ function fixture() {
       prompt: "Original guide",
     },
   } as Agent;
+  const children = new Map<string, Agent>();
   let state = { status: "ready", agents: [agent], running: [], teams: [] };
   let snapshot = {
     status: "ready",
@@ -90,6 +92,19 @@ function fixture() {
     session: {
       viewer: owner,
       channels: { list: () => channels, subscribeList: subscribe },
+      agentChoices: {
+        refresh: vi.fn(async () => {}),
+        snapshot: () => ({
+          identities: [...children.values()].map((child) => ({
+            pubkey: child.pubkey,
+            managed: true,
+          })),
+        }),
+      },
+      directMessages: {
+        available: true,
+        open: vi.fn(async () => "private-dm"),
+      },
     },
   } as unknown as RelaySnapshot;
   const relay = { snapshot: () => snapshot, subscribe } as RelayData;
@@ -140,20 +155,27 @@ function fixture() {
       },
       codex,
     ],
-    create: vi.fn(),
+    create: vi.fn(async (input) => {
+      const child = { ...agent, ...input, pubkey: "c".repeat(64) } as Agent;
+      children.set(child.pubkey, child);
+      return child;
+    }),
+    welcome: vi.fn(async () => "welcome"),
     save: vi.fn(async (_key, change) => update(change)),
     retype: vi.fn(async (_key, type, change) => {
       update({ type, config: change.config });
       return [];
     }),
-    find: (key: string) => (key === agent.pubkey ? agent : undefined),
+    find: (key: string) => (key === agent.pubkey ? agent : children.get(key)),
     relay: () => relay,
   } as unknown as Agents;
   const setup = conciergeSetup(agents, relay);
+  const creation = conciergeCreation(agents, relay);
   return {
     agents,
     relay,
     setup,
+    creation,
     update,
     providerState,
     codex,
@@ -182,6 +204,7 @@ function fixture() {
           agents={agents}
           relay={relay}
           setup={setup}
+          creation={creation}
         />,
       ),
   };
@@ -550,4 +573,167 @@ it("returns from cancelled setup without switching the agent", async () => {
   await user.click(screen.getByRole("button", { name: "Codex" }));
   expect(await screen.findByRole("dialog")).toBeVisible();
   expect(f.agents.retype).not.toHaveBeenCalled();
+});
+
+it("shows both inline paths and creates a named agent with its own welcome DM", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  f.mount(message({ action: "start" }));
+  expect(screen.getByRole("button", { name: "Use this agent" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Create a new agent" }));
+  await user.type(
+    screen.getByLabelText("What would you like to name your new agent?"),
+    "Nora",
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(screen.getByRole("button", { name: "Shared Compute" }));
+  await user.click(screen.getByRole("button", { name: "Create Nora" }));
+  expect(
+    await screen.findByText("Nora is created. Its welcome DM has been sent."),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open DM" })).toBeVisible();
+  expect(f.agents.create).toHaveBeenCalledTimes(1);
+  expect(f.relay.snapshot().session.directMessages.open).toHaveBeenCalledWith(
+    ["c".repeat(64)],
+    expect.any(AbortSignal),
+  );
+  expect(f.agents.welcome).toHaveBeenCalledWith(
+    "c".repeat(64),
+    "private-dm",
+    "d".repeat(64),
+    false,
+  );
+  expect(f.agents.save).not.toHaveBeenCalled();
+  expect(f.agents.find(author)?.name).toBe("Buzz Concierge");
+});
+it("keeps the original agent path and its inline AI choices", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  f.mount(message({ action: "start" }));
+  await user.click(screen.getByRole("button", { name: "Use this agent" }));
+  await user.type(
+    screen.getByLabelText("What would you like to name me?"),
+    "Bruce",
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(screen.getByRole("button", { name: "Use this name" }));
+  expect(await screen.findByRole("button", { name: "Codex" })).toBeVisible();
+  expect(f.agents.find(author)?.name).toBe("Bruce");
+  expect(f.agents.create).not.toHaveBeenCalled();
+});
+it("resumes an uncertain welcome by confirmation without creating or posting twice", async () => {
+  const f = fixture(),
+    target = message(),
+    choice = { type: MESH_TYPE, config: DEFAULT_MESH_AGENT_CONFIG };
+  vi.mocked(f.agents.welcome).mockRejectedValueOnce(
+    new Error("network outcome unknown"),
+  );
+  await expect(f.creation.apply(target, choice, "Nora")).rejects.toThrow(
+    "unknown",
+  );
+  await conciergeCreation(f.agents, f.relay).apply(target, choice, "Nora");
+  expect(f.agents.create).toHaveBeenCalledTimes(1);
+  expect(f.relay.snapshot().session.directMessages.open).toHaveBeenCalledTimes(
+    1,
+  );
+  expect(f.agents.welcome).toHaveBeenLastCalledWith(
+    "c".repeat(64),
+    "private-dm",
+    target.id,
+    true,
+  );
+});
+it("does not repeat creation after an unknown identity outcome", async () => {
+  const f = fixture(),
+    target = message(),
+    choice = { type: MESH_TYPE, config: DEFAULT_MESH_AGENT_CONFIG };
+  vi.mocked(f.agents.create).mockRejectedValueOnce(new Error("unknown"));
+  await expect(f.creation.apply(target, choice, "Nora")).rejects.toThrow(
+    "unknown",
+  );
+  await expect(f.creation.apply(target, choice, "Nora")).rejects.toThrow(
+    "uncertain outcome",
+  );
+  expect(f.agents.create).toHaveBeenCalledTimes(1);
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+it("refuses admission when creation did not durably save the selected config", async () => {
+  const f = fixture(),
+    original = f.agents.create;
+  vi.mocked(f.agents.create).mockImplementationOnce(async (input) =>
+    original({ ...input, config: {} }),
+  );
+  await expect(
+    f.creation.apply(
+      message(),
+      { type: MESH_TYPE, config: DEFAULT_MESH_AGENT_CONFIG },
+      "Nora",
+    ),
+  ).rejects.toThrow("not saved");
+  expect(f.relay.snapshot().session.directMessages.open).not.toHaveBeenCalled();
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+it("stops after context changes while the confirmed DM is opening", async () => {
+  const f = fixture();
+  let release!: (value: string) => void;
+  vi.mocked(
+    f.relay.snapshot().session.directMessages.open,
+  ).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const operation = f.creation.apply(
+    message(),
+    { type: MESH_TYPE, config: DEFAULT_MESH_AGENT_CONFIG },
+    "Nora",
+  );
+  await vi.waitFor(() =>
+    expect(f.relay.snapshot().session.directMessages.open).toHaveBeenCalled(),
+  );
+  try {
+    f.switchCommunity();
+  } finally {
+    release("private-dm");
+  }
+  await expect(operation).rejects.toThrow("conversation changed");
+  expect(f.agents.welcome).not.toHaveBeenCalled();
+});
+
+it("retries a failed DM open using the existing identity", async () => {
+  const f = fixture(),
+    target = message(),
+    choice = { type: MESH_TYPE, config: DEFAULT_MESH_AGENT_CONFIG };
+  vi.mocked(
+    f.relay.snapshot().session.directMessages.open,
+  ).mockRejectedValueOnce(new Error("DM unavailable"));
+  await expect(f.creation.apply(target, choice, "Nora")).rejects.toThrow(
+    "DM unavailable",
+  );
+  await f.creation.apply(target, choice, "Nora");
+  expect(f.agents.create).toHaveBeenCalledTimes(1);
+  expect(f.agents.welcome).toHaveBeenCalledTimes(1);
+  expect(f.creation.completed(target)).toBe(true);
+});
+
+it("returns from naming, switches paths and restores the chosen path after reopening", async () => {
+  const f = fixture(),
+    user = userEvent.setup(),
+    target = message({ action: "start" });
+  const view = f.mount(target);
+  await user.click(screen.getByRole("button", { name: "Use this agent" }));
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Create a new agent" }));
+  await user.type(
+    screen.getByLabelText("What would you like to name your new agent?"),
+    "Nora",
+  );
+  view.unmount();
+  f.mount(target);
+  expect(
+    screen.getByLabelText("What would you like to name your new agent?"),
+  ).toHaveValue("Nora");
+  expect(f.agents.create).not.toHaveBeenCalled();
+  expect(f.agents.save).not.toHaveBeenCalled();
 });

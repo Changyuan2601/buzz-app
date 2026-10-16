@@ -3959,3 +3959,84 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });
+
+it("sends an agent-signed onboarding welcome only to its confirmed owner DM", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Nora" });
+  const listing = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: channel,
+        name: "Nora",
+        channelType: "dm" as const,
+        members: [viewer, bot],
+      },
+    ],
+  };
+  vi.spyOn(f.session.channels, "list").mockReturnValue(listing);
+  const id = await f.service.welcome(bot, channel, "e".repeat(64));
+  expect(f.native.publish).toHaveBeenCalledWith(bot, {
+    kind: 9,
+    content:
+      "Hi, I'm Nora. Your agent is set up. What would you like help with first?",
+    tags: [
+      ["h", channel],
+      ["p", viewer],
+      ["d", "e".repeat(64)],
+    ],
+  });
+  expect(f.session.read).toHaveBeenLastCalledWith([
+    { ids: [id], kinds: [9], authors: [bot], "#h": [channel], limit: 1 },
+  ]);
+});
+it("refuses groups, missing owner membership, archived DMs and malformed welcome markers", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Nora" });
+  for (const bad of [
+    { channelType: "session", members: [viewer, bot] },
+    { channelType: "dm", members: [other, bot] },
+    { channelType: "dm", members: [viewer, bot, sibling] },
+    { channelType: "dm", members: [viewer, bot], archived: true },
+  ]) {
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      status: "ready",
+      channels: [{ id: channel, name: "DM", ...bad }],
+    } as ReturnType<typeof f.session.channels.list>);
+    await expect(
+      f.service.welcome(bot, channel, "e".repeat(64)),
+    ).rejects.toThrow("could not be confirmed");
+  }
+  await expect(f.service.welcome(bot, channel, "bad")).rejects.toThrow(
+    "cannot send",
+  );
+  expect(f.native.publish).not.toHaveBeenCalled();
+});
+it("confirms a previous welcome without publishing again and rejects a mismatched result", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Nora" });
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [
+      { id: channel, name: "DM", channelType: "dm", members: [viewer, bot] },
+    ],
+  });
+  const welcome = event("welcome", {
+    pubkey: bot,
+    tags: [
+      ["h", channel],
+      ["d", "e".repeat(64)],
+    ],
+  });
+  vi.mocked(f.native.query).mockResolvedValueOnce([welcome] as never);
+  expect(await f.service.welcome(bot, channel, "e".repeat(64), true)).toBe(
+    welcome.id,
+  );
+  vi.mocked(f.native.query).mockResolvedValueOnce([
+    { ...welcome, pubkey: other },
+  ] as never);
+  await expect(
+    f.service.welcome(bot, channel, "e".repeat(64), true),
+  ).rejects.toThrow("could not be confirmed");
+  expect(f.native.publish).not.toHaveBeenCalled();
+});

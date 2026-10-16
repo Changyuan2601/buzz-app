@@ -287,6 +287,7 @@ function setup(
         foreign: [],
       }),
     ),
+    welcome: vi.fn(async () => "welcome"),
     save: vi.fn(async () => {}),
     previewRetype: vi.fn(
       () =>

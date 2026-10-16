@@ -549,6 +549,14 @@ export type Agents = {
    * instructions and members here. */
   portTeam(input: Readonly<{ id: string; type: string }>): Promise<TeamPort>;
   save(pubkey: string, change: AgentChange): Promise<void>;
+  /** Fixed onboarding greeting, signed by a local agent, only in its confirmed
+   * one-to-one DM with its owner. confirmOnly never sends another message. */
+  welcome(
+    pubkey: string,
+    channelId: string,
+    source: string,
+    confirmOnly?: boolean,
+  ): Promise<string>;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
   previewRetype(pubkey: string, type: string): RetypePreview;
@@ -1269,6 +1277,91 @@ export class AgentsService extends Service implements Agents {
       : undefined;
     if (!binding) throw new Error("Connect to a community first");
     return binding;
+  }
+
+  async welcome(
+    pubkey: string,
+    channelId: string,
+    source: string,
+    confirmOnly = false,
+  ) {
+    const identity = this.live(pubkey),
+      native = this.native;
+    if (!identity || !native || !/^[0-9a-f]{64}$/.test(source))
+      throw new Error("This agent cannot send a welcome.");
+    const binding = this.bindingOf(identity);
+    const check = () => {
+      const current = this.live(pubkey);
+      const channel = binding?.session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      if (
+        !current ||
+        current.owner !== this.communities.snapshot().viewer ||
+        !binding ||
+        this.bindingOf(current) !== binding ||
+        channel?.channelType !== "dm" ||
+        channel.archived ||
+        channel.readOnly ||
+        channel.cached ||
+        channel.members?.length !== 2 ||
+        !channel.members.includes(pubkey) ||
+        !channel.members.includes(current.owner)
+      )
+        throw new Error(
+          "The agent's private conversation could not be confirmed.",
+        );
+    };
+    check();
+    let event: RelayEvent | undefined;
+    if (confirmOnly) {
+      const existing = await native.query(pubkey, [
+        {
+          kinds: [9],
+          authors: [pubkey],
+          "#h": [channelId],
+          "#d": [source],
+          limit: 1,
+        },
+      ]);
+      check();
+      event = existing.find(
+        (item) =>
+          item.kind === 9 &&
+          item.pubkey === pubkey &&
+          item.tags.some(
+            ([key, value]) => key === "h" && value === channelId,
+          ) &&
+          item.tags.some(([key, value]) => key === "d" && value === source),
+      );
+      if (!event)
+        throw new Error(
+          "The welcome could not be confirmed. Open the DM before sending anything again.",
+        );
+    } else {
+      event = await native.publish(pubkey, {
+        kind: 9,
+        content: `Hi, I'm ${identity.name}. Your agent is set up. What would you like help with first?`,
+        tags: [
+          ["h", channelId],
+          ["p", identity.owner],
+          ["d", source],
+        ],
+      });
+      check();
+    }
+    // The native host owns signing/publication; the normal reader admits it.
+    await binding?.session.read([
+      {
+        ids: [event.id],
+        kinds: [9],
+        authors: [pubkey],
+        "#h": [channelId],
+        limit: 1,
+      },
+    ]);
+    check();
+    return event.id;
   }
 
   async save(pubkey: string, change: AgentChange) {

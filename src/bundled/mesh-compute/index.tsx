@@ -1,3 +1,4 @@
+import { conciergeCreation } from "./conciergeCreation";
 import { ownerReads } from "../../features/agents/reads";
 import { meChat } from "../../features/agents/me-chat";
 import { InlineAgent } from "./inlineAgent";
@@ -180,7 +181,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (isTauri() && spawn && ctx.agents) {
     const agents = ctx.agents;
     const setup = conciergeSetup(agents, ctx.relay);
-    ctx.effect(() => () => setup.dispose());
+    const creation = conciergeCreation(agents, ctx.relay);
+    ctx.effect(() => () => {
+      setup.dispose();
+      creation.dispose();
+    });
     ctx.conversation.registerMessage({
       id: "concierge-draft",
       title: "Agent setup",
@@ -191,6 +196,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
           agents={agents}
           relay={ctx.relay}
           setup={setup}
+          creation={creation}
+          onOpenDm={(channelId) => {
+            const snapshot = ctx.relay.snapshot();
+            if (
+              snapshot.viewer &&
+              snapshot.origin &&
+              creation.available(message)
+            )
+              void ctx.navigation.open({
+                version: 1,
+                kind: "conversation",
+                channelId,
+                scope: {
+                  viewer: snapshot.viewer,
+                  communityOrigin: snapshot.origin,
+                },
+              });
+          }}
         />
       ),
     });
