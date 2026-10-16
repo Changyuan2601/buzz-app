@@ -240,34 +240,48 @@ export const apply: PluginModule["apply"] = (ctx) => {
           memoryReads.forget(snapshot.session, agent);
       },
     });
-    ctx.effect(() => () => runtime.dispose());
-    agents.register<MeshAgentConfig>({
-      id: "mesh",
-      title: "Shared Compute",
-      description:
-        "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
-      defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
-      summary: () => "Shared compute",
-      Create: ({ disabled }) => (
-        <CommunityComputePage setupOnly disabled={disabled} />
-      ),
-      tabs: [
-        { id: "prompt", title: "Settings", component: MeshAgentTab },
-        {
-          id: "transcript",
-          title: "Transcripts",
-          component: createMeshTranscriptTab(inline),
-        },
-      ],
-      // Covers compute startup (native waits up to 120s) plus one reply.
-      timeoutMs: 5 * 60_000,
-      run: (delivery) => {
-        const done = runtime.run(delivery);
-        if (delivery.config.mode === "chat") return done;
-        delivery.workingUntil(done);
-        // Release the host queue so a subsequent mention can steer this run.
-      },
+    let runtimeDisposed = false;
+    ctx.effect(() => () => {
+      runtimeDisposed = true;
+      runtime.dispose();
     });
+    // Only builds with the native Mesh runtime offer the agent type: without
+    // it an agent could be saved but never run. Local sharing is not required.
+    let registered = false;
+    void invoke<MeshStatus>("mesh_compute_status").then(
+      (status) => {
+        if (!status.available || registered || runtimeDisposed) return;
+        registered = true;
+        agents.register<MeshAgentConfig>({
+          id: "mesh",
+          title: "Shared Compute",
+          description:
+            "Runs on this community's shared compute: plain chat, or goose with shell, file and Buzz tools.",
+          defaults: () => ({ config: DEFAULT_MESH_AGENT_CONFIG }),
+          summary: () => "Shared compute",
+          Create: ({ disabled }) => (
+            <CommunityComputePage setupOnly disabled={disabled} />
+          ),
+          tabs: [
+            { id: "prompt", title: "Settings", component: MeshAgentTab },
+            {
+              id: "transcript",
+              title: "Transcripts",
+              component: createMeshTranscriptTab(inline),
+            },
+          ],
+          // Covers compute startup (native waits up to 120s) plus one reply.
+          timeoutMs: 5 * 60_000,
+          run: (delivery) => {
+            const done = runtime.run(delivery);
+            if (delivery.config.mode === "chat") return done;
+            delivery.workingUntil(done);
+            // Release the host queue so a subsequent mention can steer this run.
+          },
+        });
+      },
+      () => {},
+    );
   }
 
   function CommunityComputePage({

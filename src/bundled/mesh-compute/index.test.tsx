@@ -56,6 +56,12 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
+/** The Mesh agent type registers after native availability resolves. */
+const flushRegistration = () =>
+  act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  });
+
 it("revokes a pending selection on disposal and never starts it", async () => {
   let resolve!: (value: string) => void;
   const gate = new Promise<string>((done) => {
@@ -200,6 +206,7 @@ it("renders Running without a reload control and offers recovery after polling e
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   vi.useFakeTimers();
   try {
     await act(async () => {
@@ -267,6 +274,7 @@ it("polls transient states serially, refreshes Running activity, and cancels on 
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   try {
     await act(async () => {
       render(<Component />);
@@ -548,6 +556,7 @@ it("keeps SDK download progress live after management readiness and cancels on u
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   try {
     await act(async () => {
       render(<Component />);
@@ -811,6 +820,7 @@ it("unsupported native builds never show bindings or load inventory across navig
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   render(<Component />);
   await screen.findByText("Shared compute isn’t available in this build.");
   act(() => {
@@ -1071,6 +1081,7 @@ for (const retire of ["identity", "dispose"] as const) {
         },
       },
     } as unknown as Parameters<PluginModule["apply"]>[0]);
+    await flushRegistration();
     render(<Component />);
     const toggle = await screen.findByRole("switch", {
       name: "Share compute",
@@ -1139,6 +1150,7 @@ it.each(["stopped", "ready"])(
         },
       },
     } as unknown as Parameters<PluginModule["apply"]>[0]);
+    await flushRegistration();
     try {
       render(<Component />);
       const button = await screen.findByRole("button", {
@@ -1335,6 +1347,7 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   try {
     await act(async () => {
       render(<Component />);
@@ -1550,6 +1563,33 @@ for (const nextViewer of [undefined, "other"] as const) {
   });
 }
 
+it.each([true, false])(
+  "offers the Mesh agent type only when the native runtime is available (%s)",
+  async (available) => {
+    const register = vi.fn();
+    const cleanups: (() => void)[] = [];
+    native.invoke.mockImplementation(async () => ({
+      available,
+      lifecycle: { state: "stopped" },
+    }));
+    apply({
+      relay: {
+        snapshot: () => ({ status: "loading" }),
+        subscribe: () => () => {},
+      },
+      host: { spawn: vi.fn() },
+      agents: { relay: () => undefined, register },
+      effect: (setup: () => () => void) => {
+        cleanups.push(setup());
+      },
+      settingsCards: { register: () => {} },
+    } as unknown as Parameters<PluginModule["apply"]>[0]);
+    await flushRegistration();
+    expect(register).toHaveBeenCalledTimes(available ? 1 : 0);
+    for (const cleanup of cleanups) cleanup();
+  },
+);
+
 it("prepares a background agent against its own community, not the foreground", async () => {
   const owner = "a".repeat(64);
   const agent = "b".repeat(64);
@@ -1594,6 +1634,7 @@ it("prepares a background agent against its own community, not the foreground", 
     },
     settingsCards: { register: () => {} },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   try {
     await run({
       channelId: "channel-a",
@@ -1661,6 +1702,7 @@ it("releases the host queue while retaining Agent work for mid-turn delivery", a
     },
     settingsCards: { register: () => {} },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   try {
     const workingUntil = vi.fn();
     expect(
@@ -1683,7 +1725,7 @@ it("releases the host queue while retaining Agent work for mid-turn delivery", a
   }
 });
 
-function creationSetup(sharing: string | null = null) {
+async function creationSetup(sharing: string | null = null) {
   const owner = "a".repeat(64);
   let snapshot = {
     status: "ready",
@@ -1731,6 +1773,7 @@ function creationSetup(sharing: string | null = null) {
       cleanups.push(fn());
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
+  await flushRegistration();
   const view = render(<Create disabled={false} />);
   return {
     dispose: () => {
@@ -1753,7 +1796,7 @@ function creationSetup(sharing: string | null = null) {
 }
 
 it("hosts setup in the existing Create slot; only explicit sharing uses Auto with no budget", async () => {
-  const fixture = creationSetup();
+  const fixture = await creationSetup();
   try {
     const local = await screen.findByRole("button", {
       name: "Start sharing with Auto",
@@ -1785,7 +1828,7 @@ it("hosts setup in the existing Create slot; only explicit sharing uses Auto wit
 });
 
 it("does not show setup or restart already-shared compute", async () => {
-  const fixture = creationSetup("existing-model");
+  const fixture = await creationSetup("existing-model");
   try {
     await waitFor(() =>
       expect(
@@ -1801,7 +1844,7 @@ it("does not show setup or restart already-shared compute", async () => {
 });
 
 it("rechecks sharing before starting so a concurrent settings action is preserved", async () => {
-  const fixture = creationSetup();
+  const fixture = await creationSetup();
   try {
     const radio = await screen.findByRole("button", {
       name: "Start sharing with Auto",
@@ -1824,7 +1867,7 @@ it("rechecks sharing before starting so a concurrent settings action is preserve
 });
 
 it("keeps setup failure visible and allows retry without changing the Auto policy", async () => {
-  const fixture = creationSetup();
+  const fixture = await creationSetup();
   try {
     const original = native.invoke.getMockImplementation();
     if (!original) throw new Error("Missing fixture invoke");
@@ -1857,7 +1900,7 @@ it("keeps setup failure visible and allows retry without changing the Auto polic
 });
 
 it("never offers to replace another community's sharing from creation", async () => {
-  const fixture = creationSetup();
+  const fixture = await creationSetup();
   try {
     await waitFor(() =>
       expect(
@@ -1880,7 +1923,7 @@ it("never offers to replace another community's sharing from creation", async ()
 });
 
 it("continues without sharing and can reopen choices without a native action", async () => {
-  const fixture = creationSetup();
+  const fixture = await creationSetup();
   try {
     await userEvent
       .setup()
