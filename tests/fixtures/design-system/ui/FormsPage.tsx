@@ -59,7 +59,7 @@ function FormComposition() {
         groups={workspaceGroups}
         error={submitted && !workspace ? "Choose a destination." : undefined}
       />
-      <Field label="Notes (optional)">
+      <Field label="Notes" optional>
         <Textarea rows={3} />
       </Field>
       <div className="flex flex-wrap items-center gap-3">
@@ -229,7 +229,7 @@ ${workspaceComboboxCode}`}
         groups={workspaceGroups}
         error={submitted && !workspace ? "Choose a destination." : undefined}
       />
-      <Field label="Notes (optional)">
+      <Field label="Notes" optional>
         <Textarea rows={3} />
       </Field>
       <div className="flex flex-wrap items-center gap-3">

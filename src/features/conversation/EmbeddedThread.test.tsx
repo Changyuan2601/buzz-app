@@ -1,3 +1,8 @@
+import {
+  ConversationHost,
+  type ConversationInteractions,
+} from "./ConversationHost";
+import { ConversationPresentation } from "./ConversationPresentation";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -9,6 +14,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { EmbeddedThread } from "./EmbeddedThread";
+import { ConversationChannel, ConversationComposer } from "./Conversation";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ComponentProps } from "react";
 import { createAgentLibrary } from "../agents/library";
@@ -29,7 +35,10 @@ vi.mock("../relay/react", () => {
 vi.mock("../messages/MessageRow", () => ({
   MessageRow: ({ row, onOpenLink, onOpenMediaReview }: MessageRowProps) => (
     <article>
-      <button type="button" onClick={() => onOpenLink?.("fixture:one")}>
+      <button
+        type="button"
+        onClick={() => onOpenLink?.("fixture:one", { rootId: row.id })}
+      >
         Open linked panel
       </button>
       <button
@@ -60,10 +69,17 @@ vi.mock("../messages/MediaReviewViewer", () => ({
     </section>
   ),
 }));
+const dialog = vi.hoisted(() => ({
+  finalFocus: undefined as (() => HTMLElement | false) | undefined,
+}));
 vi.mock("../../shared/design-system/ui/Dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => (
-    <section>{children}</section>
-  ),
+  Dialog: (props: {
+    children: React.ReactNode;
+    finalFocus(): HTMLElement | false;
+  }) => {
+    dialog.finalFocus = props.finalFocus;
+    return <section>{props.children}</section>;
+  },
 }));
 afterEach(() => {
   cleanup();
@@ -213,6 +229,45 @@ it("retires panel actions on contribution removal, destination change and unmoun
   expect(h.listeners.size).toBe(0);
 });
 
+it("a panel keeps the thread root it was opened from, like Channels", () => {
+  const h = fixture();
+  render(<EmbeddedThread {...h.props} />);
+  fireEvent.click(screen.getByText("Open linked panel"));
+  expect(h.panelProps()?.context?.rootId).toBe(h.props.messageId);
+  act(() => {
+    h.panelProps()?.context?.open("fixture:two");
+  });
+  expect(h.panelProps()?.target).toBe("fixture:two");
+  expect(h.panelProps()?.context?.rootId).toBe(h.props.messageId);
+});
+
+it.each([
+  ["a panel replaces itself", "Open linked panel"],
+  ["media review opens a panel", "Open media review"],
+] as const)("focus returns to the message when %s", (_, opener) => {
+  const h = fixture();
+  render(<EmbeddedThread {...h.props} />);
+  const button = screen.getByText(opener);
+  button.focus();
+  fireEvent.click(button);
+  if (opener === "Open media review") {
+    const inner = screen.getByText("Open panel from review");
+    inner.focus();
+    fireEvent.click(inner);
+  } else {
+    // A control inside the panel that the replacement unmounts.
+    const inner = document.createElement("button");
+    document.body.append(inner);
+    inner.focus();
+    act(() => {
+      h.panelProps()?.context?.open("fixture:two");
+    });
+    inner.remove();
+  }
+  expect(screen.getByText("Linked content")).toBeVisible();
+  expect(dialog.finalFocus?.()).toBe(button);
+});
+
 it("a panel opened from media review replaces the viewer, and media review replaces a panel", () => {
   render(<EmbeddedThread {...fixture().props} />);
   fireEvent.click(screen.getByText("Open media review"));
@@ -239,6 +294,42 @@ it.each([
     );
   },
 );
+
+it("selecting a channel supplies its readers without remounting the page below", () => {
+  const { props } = fixture();
+  const interactions: ConversationInteractions = {
+    onOpenLink: () => true,
+    canOpenLink: () => false,
+    onOpenMediaReview: () => {},
+  };
+  const page = (channel?: {
+    id: string;
+    name: string;
+    channelType: "session";
+  }) => (
+    <ConversationChannel
+      session={props.session}
+      scope={props.scope}
+      extensions={props.extensions}
+      channel={channel}
+      interactions={interactions}
+    >
+      <input aria-label="Page state" />
+      {channel && <ConversationComposer />}
+    </ConversationChannel>
+  );
+  const view = render(page());
+  const input = screen.getByLabelText("Page state");
+  fireEvent.change(input, { target: { value: "kept" } });
+  view.rerender(page({ id: "c", name: "Channel", channelType: "session" }));
+  expect(screen.getByLabelText("Page state")).toBe(input);
+  expect(input).toHaveValue("kept");
+  const composer = screen.getByLabelText("Composer");
+  expect(composer).toHaveAttribute("data-session-conversation", "true");
+  expect(composer).toHaveAttribute("data-deletion", "true");
+  view.rerender(page());
+  expect(screen.getByLabelText("Page state")).toBe(input);
+});
 
 it("keeps one channel visit while the thread is retargeted within a channel", () => {
   const h = fixture();
@@ -275,4 +366,46 @@ it("offers recovery for a failed edit left in the outbox", () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
   expect(h.outbox.retry).toHaveBeenCalledExactlyOnceWith("edit");
+});
+
+it("the shared conversation host supplies live actions and retires them while its reader is withheld", () => {
+  const h = fixture();
+  let captured: ConversationInteractions | undefined;
+  const mount = (visible: boolean) => (
+    <ConversationPresentation value={visible}>
+      <ConversationHost {...h.props} threadId={h.props.messageId}>
+        {(interactions) => {
+          captured = interactions;
+          return (
+            <button
+              type="button"
+              onClick={() => interactions.onOpenLink("fixture:one")}
+            >
+              Open profile
+            </button>
+          );
+        }}
+      </ConversationHost>
+    </ConversationPresentation>
+  );
+  const view = render(mount(true));
+  const old = captured;
+  expect(old?.canOpenLink?.("fixture:one")).toBe(true);
+  fireEvent.click(screen.getByText("Open profile"));
+  expect(screen.getByText("Linked content")).toBeVisible();
+  expect(h.panelProps()?.channelContext?.threadId).toBe(h.props.messageId);
+  view.rerender(mount(false));
+  expect(screen.queryByText("Linked content")).not.toBeInTheDocument();
+  expect(old?.onOpenLink("fixture:one")).toBe(false);
+  act(() =>
+    old?.onOpenMediaReview?.(
+      "a",
+      { kind: "image", url: "https://fixture.test/image.png" },
+      0,
+    ),
+  );
+  expect(screen.queryByLabelText("Media review")).not.toBeInTheDocument();
+  view.rerender(mount(true));
+  fireEvent.click(screen.getByText("Open profile"));
+  expect(screen.getByText("Linked content")).toBeVisible();
 });

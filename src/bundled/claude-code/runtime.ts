@@ -7,12 +7,17 @@
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
+  Agents,
   Delivery,
   Effort,
   Models,
@@ -24,7 +29,10 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
-import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  MemoryReads,
+  READ_TIMEOUT_MS,
+} from "../../features/agent-harness/core-memory";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -81,7 +89,6 @@ export type SavedConversation = Conversation & {
   at: number;
 };
 
-const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 
@@ -124,15 +131,21 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message),
+    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    undefined,
+    () => addedKey(this.added()),
   );
 
   constructor(
     private readonly host: Pick<Host, "spawn">,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
     private readonly storage: Storage = globalThis.localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** The tools plugins add to every session now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -595,12 +608,12 @@ export class ClaudeRuntime {
           appClient(handle, {
             spawn: this.spawn,
             cwd,
-            memories: async () => (await this.memories(pubkey)).entries,
+            memories: (slug) => this.memories(pubkey, slug),
             remembered: () => this.forget(pubkey),
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message);
+        return respond(client, context, message, this.added());
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -616,6 +629,7 @@ export class ClaudeRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          addedKey(this.added()),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -638,26 +652,17 @@ export class ClaudeRuntime {
     return entry;
   }
 
-  /** The agent's memory, as its community's reads give it. */
-  private memories(pubkey: string) {
+  /** The agent's memory, or only entry `slug`, as its community's reads give
+   * it. */
+  private memories(pubkey: string, slug?: string) {
     const reads = this.reads(pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
       pubkey,
-      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      AbortSignal.timeout(READ_TIMEOUT_MS),
+      slug,
     );
-  }
-  /** The agent's `core` memory for a new session's prompt: its text, `null`
-   * when it has none, or undefined when it could not be read, so the session
-   * starts without it. */
-  private async core(pubkey: string) {
-    try {
-      return coreOf(await this.memories(pubkey));
-    } catch (error) {
-      console.warn("Claude could not read the agent's memory", error);
-      return undefined;
-    }
   }
   private forget(pubkey: string) {
     const reads = this.reads(pubkey);

@@ -40,6 +40,7 @@ import {
   type GooseHistory,
   type GooseTranscript,
   type Place,
+  RECENT_LIMIT,
   TURN_LIMIT,
 } from "./transcript";
 
@@ -57,28 +58,35 @@ const SCOPES = [
 ];
 
 type Choice = Readonly<{ provider: string; model: string }>;
-type Read<T> =
+type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
-  | { status: "error"; error: string; value?: T };
+  | { status: "error"; error: string; value?: T }
+) & { scope?: string };
 
 /** `read()` as it settles, read again when `key` changes or on `retry`. A
- * value already shown stays while it is read again. */
-function useRead<T>(read: () => Promise<T>, key: string) {
+ * value already shown stays while it is read again, even when that read
+ * fails, but only for the same `scope`; another scope's value is never shown. */
+function useRead<T>(read: () => Promise<T>, key: string, scope = key) {
   const [state, setState] = useState<Read<T>>({ status: "loading" });
   const [round, setRound] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
     let current = true;
-    setState((prior) =>
-      prior.value === undefined
-        ? { status: "loading" }
-        : { status: "loading", value: prior.value },
-    );
+    const kept = (prior: Read<T>) =>
+      prior.value === undefined || prior.scope !== scope
+        ? {}
+        : { value: prior.value, scope };
+    setState((prior) => ({ status: "loading", ...kept(prior) }));
     read().then(
-      (value) => current && setState({ status: "ready", value }),
+      (value) => current && setState({ status: "ready", value, scope }),
       (error: unknown) =>
-        current && setState({ status: "error", error: message(error) }),
+        current &&
+        setState((prior) => ({
+          status: "error",
+          error: message(error),
+          ...kept(prior),
+        })),
     );
     return () => {
       current = false;
@@ -97,7 +105,6 @@ type Row = Readonly<{
   root?: string;
   at?: number;
 }>;
-const RECENT_LIMIT = 30;
 /** `Anthropic · claude-opus-5-5`, or undefined for goose's own default. */
 const choiceLabel = (
   { provider, model }: Choice,
@@ -144,6 +151,7 @@ export function createTabs({
     const [models] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
       `${id}:${provider?.configured ?? false}:${saves}`,
+      id,
     );
     // A result belongs to the choice it tested.
     const choice = `${value.provider}\u0000${value.model}`;
@@ -501,8 +509,8 @@ export function createTabs({
     );
     const [recent, reload] = useRead(() => {
       const abort = new AbortController();
-      return history.recent(agent.name, workspace, abort.signal);
-    }, `${agent.name}\u0000${workspace}`);
+      return history.recent(agent.pubkey, workspace, abort.signal);
+    }, `${agent.pubkey}\u0000${workspace}`);
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
     const status = (sessionId: string) => {
@@ -671,15 +679,18 @@ export function createTabs({
       (fallback ? `goose default (${fallback})` : "goose default");
     return (
       <>
-        <Button
-          size="sm"
-          variant={modelAppearance === "subtle" ? "ghost" : "outline"}
-          disabled={disabled}
-          title="Choose provider and model"
-          onClick={() => setOpen(true)}
-        >
-          {label}
-        </Button>
+        {/* The compact select recipe ellipsizes long model names in cards. */}
+        <div className="buzz-select" data-variant="compact">
+          <Button
+            size="sm"
+            variant={modelAppearance === "subtle" ? "ghost" : "outline"}
+            disabled={disabled}
+            title="Choose provider and model"
+            onClick={() => setOpen(true)}
+          >
+            <span className="buzz-select-value">{label}</span>
+          </Button>
+        </div>
         {open && (
           <ChooseDialog
             value={current}

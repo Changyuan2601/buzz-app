@@ -127,6 +127,10 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ...["--text-standard", "--text-subtle", "--text-metadata"].map((role) => [
+    role,
+    "--bg-app",
+  ]),
   ["--text-standard", "--affordance-popover-selected"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(

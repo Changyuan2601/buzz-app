@@ -9,7 +9,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { useMePlacement } from "../sessions/personal";
@@ -285,7 +284,9 @@ function ReadySidebar({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      (!meEnabled || !placement.ids.includes(channel.id)) &&
+      (!meEnabled ||
+        !placement.ids.includes(channel.id) ||
+        (!channel.cached && channel.channelType === "stream")) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||
@@ -321,6 +322,7 @@ function ReadySidebar({
   }, [createOrigin]);
 
   const [initialGroup, setInitialGroup] = useState("");
+  const [initialStarred, setInitialStarred] = useState(false);
   const pendingChannelCreation = useSyncExternalStore(
     queries.channelCreation.subscribe,
     queries.channelCreation.snapshot,
@@ -359,6 +361,9 @@ function ReadySidebar({
     lifecycleFocus.current = undefined;
     const trigger = lifecycleTrigger.current;
     lifecycleTrigger.current = undefined;
+    // The pending operation is nonmodal; keep focus where the user moved it.
+    if (document.activeElement && document.activeElement !== document.body)
+      return;
     if (trigger?.isConnected) {
       trigger.focus({ preventScroll: true });
       return;
@@ -498,7 +503,11 @@ function ReadySidebar({
     if (!mounted.current || relay.snapshot().session !== queries) return;
     select(id);
     sidebar.toggle(
-      input.setup?.groupId ? `group:${input.setup.groupId}` : "channels",
+      input.setup?.starred
+        ? "starred"
+        : input.setup?.groupId
+          ? `group:${input.setup.groupId}`
+          : "channels",
       true,
     );
   };
@@ -904,25 +913,20 @@ function ReadySidebar({
     });
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
-  return (
-    <>
-      {lifecycleDialog && !lifecycleDialog.origin?.aborted && (
-        <ChannelLifecycleDialog
-          channelId={lifecycleDialog.channel.id}
-          channelName={lifecycleDialog.channel.name}
-          action={lifecycleDialog.action}
-          lifecycle={lifecycle}
-          close={() => {
+  const lifecycleCallbacks = handoff?.lifecycleCallbacks;
+  useLayoutEffect(() => {
+    if (!lifecycleCallbacks) return;
+    lifecycleCallbacks.current = lifecycleDialog
+      ? {
+          close: () => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
             lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
               ? lifecycleDialog.trigger
               : lifecycleDialog.focusFallback;
-            handoff?.closeLifecycle();
-          }}
-          completed={() => {
+          },
+          completed: () => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
-            handoff?.closeLifecycle();
             // Archive changes visibility, not access or the current destination.
             if (
               lifecycleDialog.action === "archive" ||
@@ -954,9 +958,18 @@ function ReadySidebar({
                 });
               }
             }
-          }}
-        />
-      )}
+          },
+        }
+      : undefined;
+  });
+  useLayoutEffect(
+    () => () => {
+      if (lifecycleCallbacks) lifecycleCallbacks.current = undefined;
+    },
+    [lifecycleCallbacks],
+  );
+  return (
+    <>
       {creatingFor && !creatingFor.surface?.signal?.aborted && (
         <CreateSidebarSection
           channelName={creatingFor.channel.name}
@@ -1143,11 +1156,13 @@ function ReadySidebar({
                     )
                   }
                   createChannel={
+                    section.key === "starred" ||
                     isChannelSectionKey(section.key)
                       ? {
                           available: queries.channelCreation.available,
                           open: (trigger) => {
                             createChannelTrigger.current = trigger;
+                            setInitialStarred(section.key === "starred");
                             setInitialGroup(
                               section.key.startsWith("group:")
                                 ? section.key.slice(6)
@@ -1471,6 +1486,7 @@ function ReadySidebar({
           agents={agents}
           destinations={preferences.data?.sections ?? []}
           initialGroup={initialGroup}
+          initialStarred={initialStarred}
           groupsReady={preferences.writable}
         />
       </ResizableSidebar>

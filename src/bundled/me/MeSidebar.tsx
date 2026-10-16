@@ -23,6 +23,7 @@ import { useMePlacement } from "../../features/sessions/personal";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SessionSections } from "../sessions/SessionSections";
+import { resetNewChatProject } from "../../features/sessions/NewSessionComposer";
 import { UnreadBadge } from "../channels/UnreadBadge";
 import { meSelection, meTarget } from "./routes";
 import styles from "../sessions/SessionsWorkspace.module.css";
@@ -123,21 +124,15 @@ function PersonalHistory({
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
+        onConverted={openMessage}
         sessions={conversations.map((item) => ({
           id: item.id,
           title: item.name,
         }))}
-        onShared={(id) => {
-          const destination = sessionLinkTarget(
-            `buzz://channel/${id}`,
-            scope,
-            session.viewer,
-          );
-          if (destination) void navigator.open(destination);
+        onNew={(sectionId) => {
+          if (sectionId) resetNewChatProject(scope, true, sectionId);
+          void navigator.open(meTarget(scope, "new", sectionId));
         }}
-        onNew={(sectionId) =>
-          void navigator.open(meTarget(scope, "new", sectionId))
-        }
         renderSession={(item) => (
           <MeConversationRow
             key={item.id}

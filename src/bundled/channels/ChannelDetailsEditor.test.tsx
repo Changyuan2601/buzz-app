@@ -962,7 +962,7 @@ it("preserves a custom temporary duration through text editing and deliberate li
   expect(screen.getByRole("radio", { name: "Temporary" })).toBeChecked();
   expect(
     screen.getByRole("radio", { name: "Temporary" }),
-  ).toHaveAccessibleDescription("Cleans up after 1 hour without activity.");
+  ).toHaveAccessibleDescription("Archives after 1 hour without activity.");
   await user.click(screen.getByRole("radio", { name: "Ongoing" }));
   await user.click(screen.getByRole("radio", { name: "Temporary" }));
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();

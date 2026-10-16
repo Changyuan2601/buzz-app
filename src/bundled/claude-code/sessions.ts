@@ -417,6 +417,9 @@ export class Spare {
     /** Answers the tool server before any agent has it: it lists the tools. */
     private readonly tools: ToolServer,
     private readonly newId: () => string = () => crypto.randomUUID(),
+    /** Changes when the tools it lists would; a spare listing others is not
+     * handed over. */
+    private readonly toolsKey: () => string = () => "",
   ) {}
 
   /** Wants a spare for one of `wheres`, or none when there are none. */
@@ -434,7 +437,7 @@ export class Spare {
     this.stopped = false;
     const here = this.wanted.some((wanted) => place(wanted) === place(where));
     this.fill(here ? [where] : this.wanted);
-    if (next?.place !== place(where)) {
+    if (next?.place !== this.place(where)) {
       void next?.process.then((process) => process?.kill());
       return undefined;
     }
@@ -448,18 +451,22 @@ export class Spare {
     this.warm();
   }
 
+  private place(where: Where) {
+    return JSON.stringify([place(where), this.toolsKey()]);
+  }
+
   /** Keeps the spare when it fits one of `wheres`, else starts one for the
    * first; with none, keeps none. */
   private fill(wheres: readonly Where[]) {
     const current = this.next;
-    if (current && wheres.some((where) => place(where) === current.place))
+    if (current && wheres.some((where) => this.place(where) === current.place))
       return;
     this.next = undefined;
     void current?.process.then((process) => process?.kill());
     const [first] = wheres;
     if (this.stopped || !first) return;
     const next = {
-      place: place(first),
+      place: this.place(first),
       process: ClaudeProcess.spawn(this.spawn, {
         ...first,
         sessionId: this.newId(),

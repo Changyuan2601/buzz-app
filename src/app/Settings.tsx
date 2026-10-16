@@ -1,19 +1,28 @@
 import type { Agents } from "../features/agents/service";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { Header } from "../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
-import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import { Switch } from "../shared/design-system/ui/Switch";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
-import type { Communities } from "../features/communities/service";
+import type { PluginInfo } from "../plugins/types";
+import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
@@ -32,7 +41,50 @@ import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
+import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
 import { developerMode, settingsSections } from "./settings-sections";
+import { pluginCategoryDefinitions } from "./plugin-categories";
+
+function isRequiredPlugin(plugin: PluginInfo) {
+  return plugin.manifest.id === "buzz.channels";
+}
+
+function isEssentialPlugin(plugin: PluginInfo) {
+  return (
+    plugin.manifest.discovery?.tags?.some(
+      (tag) => tag.trim().toLowerCase() === "essentials",
+    ) ?? false
+  );
+}
+
+function comparePlugins(a: PluginInfo, b: PluginInfo) {
+  return (
+    Number(isRequiredPlugin(b)) - Number(isRequiredPlugin(a)) ||
+    Number(isEssentialPlugin(b)) - Number(isEssentialPlugin(a))
+  );
+}
+
+function groupPlugins(plugins: readonly PluginInfo[]) {
+  const known = new Map<string, PluginInfo[]>(
+    pluginCategoryDefinitions.map(({ id }) => [id, []]),
+  );
+  const other: PluginInfo[] = [];
+  for (const plugin of plugins) {
+    const group = known.get(plugin.manifest.discovery?.category ?? "");
+    (group ?? other).push(plugin);
+  }
+  for (const entries of known.values()) {
+    entries.sort(comparePlugins);
+  }
+  other.sort(comparePlugins);
+  return [
+    ...pluginCategoryDefinitions.flatMap(({ id, label }) => {
+      const entries = known.get(id) ?? [];
+      return entries.length ? [{ id, label, plugins: entries }] : [];
+    }),
+    ...(other.length ? [{ id: "other", label: "Other", plugins: other }] : []),
+  ];
+}
 
 export function Settings({
   agents,
@@ -48,6 +100,7 @@ export function Settings({
   navigation,
   onSection,
   navigationPane = false,
+  onDeparturePending,
 }: {
   agents?: Agents | undefined;
   cards: SettingsCards;
@@ -64,6 +117,7 @@ export function Settings({
     | undefined;
   onSection?: (section: string) => void;
   navigationPane?: boolean;
+  onDeparturePending?: (pending: boolean) => void;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
@@ -74,11 +128,37 @@ export function Settings({
   const selectedCommunity = client.memberships.find(
     (membership) => membership.id === client.selected,
   );
+  // Local removal drops the saved membership before session disposal/purge
+  // settles. Retain only this action's context so its modal can finish.
+  const [departure, setDeparture] = useState<{
+    community: Membership;
+    viewer: string | undefined;
+  } | null>(null);
+  const departureCommunity =
+    departure?.viewer === client.viewer
+      ? (departure?.community ?? selectedCommunity)
+      : selectedCommunity;
   const { groups, sections, defaultSection } = useMemo(
-    () => settingsSections(contributed, selectedCommunity),
-    [contributed, selectedCommunity],
+    () => settingsSections(contributed, departureCommunity),
+    [contributed, departureCommunity],
   );
   const [selected, setSelected] = useState(defaultSection);
+  const departureFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (selected !== "profile" || !departureFocus.current) return;
+    departureFocus.current = false;
+    document.getElementById("main-content")?.focus({ preventScroll: true });
+  }, [selected]);
+  useEffect(() => {
+    if (
+      departure &&
+      (selected !== "leave-community" ||
+        departure.viewer !== client.viewer ||
+        (client.selected !== null &&
+          client.selected !== departure.community.id))
+    )
+      setDeparture(null);
+  }, [client.selected, client.viewer, departure, selected]);
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? defaultSection)
@@ -103,6 +183,11 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
+  const pluginControlPrefix = useId();
+  const pluginGroups = useMemo(
+    () => groupPlugins(catalog?.plugins ?? []),
+    [catalog?.plugins],
+  );
   return (
     <div
       className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
@@ -202,6 +287,26 @@ export function Settings({
                   </OwnedContribution>
                 ),
             )}
+            {departureCommunity && selected === "leave-community" && (
+              <CommunityDepartureSettings
+                key={`${client.viewer}:${departureCommunity.id}`}
+                communities={communities}
+                community={departureCommunity}
+                onPending={(pending) => {
+                  onDeparturePending?.(pending);
+                  setDeparture(
+                    pending
+                      ? { community: departureCommunity, viewer: client.viewer }
+                      : null,
+                  );
+                }}
+                onRemoved={() => {
+                  departureFocus.current = true;
+                  if (onSection) onSection("profile");
+                  else setSelected("profile");
+                }}
+              />
+            )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings
                 key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
@@ -273,92 +378,160 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <SettingsGroup>
-                    {catalog?.plugins.map((plugin) => {
-                      const id = plugin.manifest.id;
-                      const running = activation[id];
-                      const failure =
-                        plugin.error ??
-                        (running?.revision === plugin.revision
-                          ? running.error
-                          : null);
-                      return (
-                        <article className="py-1" key={id}>
-                          {/* Channels is required and has no enable/disable control. */}
-                          {id === "buzz.channels" ? (
-                            <PreferenceRow
-                              icon={<SquaresFourIcon size={20} />}
-                              title={plugin.manifest.name}
-                              trailing={
-                                <span className="text-body-sm text-subtle">
-                                  Required
+                  <div className="grid grid-cols-1 gap-section-gap">
+                    {pluginGroups.map((group) => (
+                      <section
+                        aria-labelledby={`plugin-category-${group.id}`}
+                        key={group.id}
+                      >
+                        <InlineHeader
+                          id={`plugin-category-${group.id}`}
+                          title={
+                            <span className={styles.pluginCategoryTitle}>
+                              <span>{group.label}</span>
+                              <span className={styles.pluginCount}>
+                                {group.plugins.length}
+                                <span className="sr-only">
+                                  {group.plugins.length === 1
+                                    ? " plugin"
+                                    : " plugins"}
                                 </span>
-                              }
-                            />
-                          ) : (
-                            <SwitchPreferenceRow
-                              icon={<SquaresFourIcon size={20} />}
-                              label={plugin.manifest.name}
-                              aria-label={`Enable ${plugin.manifest.name}`}
-                              checked={plugin.enabled}
-                              readOnly={busy}
-                              aria-disabled={busy}
-                              onClick={(event) => event.currentTarget.focus()}
-                              onCheckedChange={() => {
-                                if (busy) return;
-                                void plugins.change(
-                                  plugin.enabled ? "disable" : "enable",
-                                  id,
-                                );
-                              }}
-                            />
-                          )}
-                          {failure && (
-                            <p role="alert" className="error text-body-sm">
-                              {failure}
-                            </p>
-                          )}
-                          <div className="actions items-center">
-                            {plugin.previous && (
-                              <Button
-                                type="button"
-                                disabled={
-                                  busy || !!plugin.rollbackBlockedReason
-                                }
-                                onClick={() => plugins.change("rollback", id)}
-                              >
-                                Roll back
-                              </Button>
-                            )}
-                            {plugin.rollbackBlockedReason && (
-                              <span className="text-body-sm text-muted">
-                                {plugin.rollbackBlockedReason}
                               </span>
-                            )}
-                            {plugin.reloadable && !plugin.enabled && (
-                              <Button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => plugins.reload(id)}
+                            </span>
+                          }
+                        />
+                        <SettingsGroup>
+                          {group.plugins.map((plugin) => {
+                            const id = plugin.manifest.id;
+                            const essentialMarker = isEssentialPlugin(
+                              plugin,
+                            ) && (
+                              <span
+                                className="text-caption"
+                                role="img"
+                                aria-label="Essential"
+                                title="Essential"
                               >
-                                Reload
-                              </Button>
-                            )}
-                            {plugin.source === "external" && (
-                              <Button
-                                type="button"
-                                variant="destructive"
-                                disabled={busy}
-                                onClick={() => plugins.change("remove", id)}
+                                ✨
+                              </span>
+                            );
+                            const running = activation[id];
+                            const failure =
+                              plugin.error ??
+                              (running?.revision === plugin.revision
+                                ? running.error
+                                : null);
+                            return (
+                              <article
+                                className="py-1"
+                                data-preference-description-layout="wide"
+                                key={id}
                               >
-                                Delete
-                              </Button>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </SettingsGroup>
+                                {/* Channels is required and has no enable/disable control. */}
+                                {isRequiredPlugin(plugin) ? (
+                                  <PreferenceRow
+                                    icon={<SquaresFourIcon size={20} />}
+                                    title={plugin.manifest.name}
+                                    subtitle={plugin.manifest.description}
+                                    trailing={
+                                      <span className={styles.pluginControls}>
+                                        {essentialMarker}
+                                        <span className="text-body-sm text-subtle">
+                                          Required
+                                        </span>
+                                      </span>
+                                    }
+                                  />
+                                ) : (
+                                  <PreferenceRow
+                                    icon={<SquaresFourIcon size={20} />}
+                                    title={plugin.manifest.name}
+                                    subtitle={plugin.manifest.description}
+                                    controlId={`${pluginControlPrefix}-${id}`}
+                                    accessibleTitle={`Enable ${plugin.manifest.name}`}
+                                    trailing={(labelProps) => (
+                                      <span className={styles.pluginControls}>
+                                        {essentialMarker}
+                                        <Switch
+                                          {...labelProps}
+                                          id={`${pluginControlPrefix}-${id}`}
+                                          aria-label={`Enable ${plugin.manifest.name}`}
+                                          checked={plugin.enabled}
+                                          readOnly={busy}
+                                          aria-disabled={busy}
+                                          onClick={(event) =>
+                                            event.currentTarget.focus()
+                                          }
+                                          onCheckedChange={() => {
+                                            if (busy) return;
+                                            void plugins.change(
+                                              plugin.enabled
+                                                ? "disable"
+                                                : "enable",
+                                              id,
+                                            );
+                                          }}
+                                        />
+                                      </span>
+                                    )}
+                                  />
+                                )}
+                                {failure && (
+                                  <p
+                                    role="alert"
+                                    className="error text-body-sm"
+                                  >
+                                    {failure}
+                                  </p>
+                                )}
+                                <div className="actions items-center">
+                                  {plugin.previous && (
+                                    <Button
+                                      type="button"
+                                      disabled={
+                                        busy || !!plugin.rollbackBlockedReason
+                                      }
+                                      onClick={() =>
+                                        plugins.change("rollback", id)
+                                      }
+                                    >
+                                      Roll back
+                                    </Button>
+                                  )}
+                                  {plugin.rollbackBlockedReason && (
+                                    <span className="text-body-sm text-muted">
+                                      {plugin.rollbackBlockedReason}
+                                    </span>
+                                  )}
+                                  {plugin.reloadable && !plugin.enabled && (
+                                    <Button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => plugins.reload(id)}
+                                    >
+                                      Reload
+                                    </Button>
+                                  )}
+                                  {plugin.source === "external" && (
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        plugins.change("remove", id)
+                                      }
+                                    >
+                                      Delete
+                                    </Button>
+                                  )}
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </SettingsGroup>
+                      </section>
+                    ))}
+                  </div>
                 </div>
               </section>
             </div>

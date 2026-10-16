@@ -1,6 +1,19 @@
-import { SessionShare } from "./SessionShare";
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
+import { SessionShare, SessionAccessIndicator } from "./SessionShare";
+import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { RenameSession } from "../../features/sessions/RenameSession";
+import { NewProject } from "../../features/sessions/NewProject";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -41,7 +54,7 @@ import {
   DotsThreeIcon,
   FolderSimpleIcon,
   PlusIcon,
-  PencilSimpleIcon,
+  Cube3dSphereIcon,
   CopyIcon,
   GearIcon,
 } from "../../shared/design-system/icons";
@@ -58,14 +71,14 @@ export function SessionSections({
   renderSession,
   onNew,
   personal = false,
-  onShared,
+  onConverted,
   visit,
   header,
 }: {
   /** Shown above the new-item actions, such as the sidebar's brand mark. */
   header?: ReactNode;
   personal?: boolean;
-  onShared?: (id: string) => void;
+  onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
   scope: string;
@@ -73,6 +86,12 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  useSessionConversions(session);
+  useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
+  const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
     error: boolean;
@@ -123,12 +142,18 @@ export function SessionSections({
   const sharingChannel = channels.channels.find(
     (channel) => channel.id === sharing?.id,
   );
+  const [converting, setConverting] = useState<{
+    id: string;
+    visit: AbortSignal | undefined;
+  }>();
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
-  const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
-  const [renaming, setRenaming] = useState<SessionListItem>();
+  const [sessionSettings, setSessionSettings] = useState<{
+    item: SessionListItem;
+    visit: AbortSignal | undefined;
+  }>();
   const [deleting, setDeleting] = useState<string>();
-  const [deleteError, setDeleteError] = useState("");
+  const [sectionError, setSectionError] = useState("");
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -139,6 +164,7 @@ export function SessionSections({
     setRowFocus(undefined);
   }, [rowFocus]);
   const [creatingFor, setCreatingFor] = useState<SessionListItem>();
+  const [creatingProject, setCreatingProject] = useState(false);
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
     name: string;
@@ -199,6 +225,19 @@ export function SessionSections({
                 }
                 onClick={() => onNew(undefined)}
               />
+              {personal && (
+                <NavigationItem
+                  variant="row"
+                  label="New project"
+                  disabled={!preferences.sectionCreationWritable}
+                  icon={
+                    <span className="shell-page-icon">
+                      <Cube3dSphereIcon size={16} strokeWidth={2} />
+                    </span>
+                  }
+                  onClick={() => setCreatingProject(true)}
+                />
+              )}
             </div>
           )}
         </div>
@@ -216,9 +255,9 @@ export function SessionSections({
           </Button>
         </div>
       )}
-      {deleteError && (
+      {sectionError && (
         <p role="alert" className={styles.listMessage}>
-          {deleteError}
+          {sectionError}
         </p>
       )}
       <ChannelSidebarDnd
@@ -281,11 +320,11 @@ export function SessionSections({
                       }
                       onClick={() => {
                         setDeleting(section.id);
-                        setDeleteError("");
+                        setSectionError("");
                         void preferences
                           .removeSection(section.id)
                           .catch((error: unknown) => {
-                            setDeleteError(
+                            setSectionError(
                               error instanceof Error
                                 ? error.message
                                 : "Section could not be deleted. Try again.",
@@ -320,6 +359,17 @@ export function SessionSections({
                     key={item.id}
                     id={item.id}
                     title={item.title}
+                    indicator={
+                      personal ? (
+                        <SessionAccessIndicator
+                          session={session}
+                          channel={channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          )}
+                          onClick={() => setSharing({ id: item.id, visit })}
+                        />
+                      ) : undefined
+                    }
                     className={styles.organizedRow}
                     content={
                       <>
@@ -330,20 +380,23 @@ export function SessionSections({
                             Share…
                           </MenuItem>
                         )}
-                        <MenuItem
-                          disabled={
-                            !session.channelDetails?.available ||
-                            !!channels.channels.find(
+                        {personal &&
+                          canConvertSession(
+                            session,
+                            channels.channels.find(
                               (channel) => channel.id === item.id,
-                            )?.readOnly
-                          }
-                          onClick={() => setRenaming(item)}
-                        >
-                          <MenuIcon>
-                            <PencilSimpleIcon size={16} />
-                          </MenuIcon>
-                          Rename
-                        </MenuItem>
+                            ),
+                          ) && (
+                            <MenuItem
+                              disabled={shareAttempts.has(item.id)}
+                              onClick={() => {
+                                if (!sessionShareAttempt(session, item.id))
+                                  setConverting({ id: item.id, visit });
+                              }}
+                            >
+                              {conversionLabel(session, item.id)}
+                            </MenuItem>
+                          )}
                         <MenuSubmenu>
                           <MenuSubmenuTrigger disabled={!preferences.writable}>
                             <MenuIcon>
@@ -413,22 +466,26 @@ export function SessionSections({
                           </MenuSubmenuPopup>
                         </MenuSubmenu>
 
-                        {personal && (
-                          <MenuItem
-                            disabled={
-                              !session.canvas.available ||
-                              !!channels.channels.find(
-                                (channel) => channel.id === item.id,
-                              )?.readOnly
-                            }
-                            onClick={() => setSessionSettings(item)}
-                          >
-                            <MenuIcon>
-                              <GearIcon size={16} />
-                            </MenuIcon>
-                            Chat settings…
-                          </MenuItem>
-                        )}
+                        <MenuItem
+                          disabled={
+                            (!session.canvas.available &&
+                              !canEditSessionLifetime(
+                                session,
+                                channels.channels.find(
+                                  (channel) => channel.id === item.id,
+                                ),
+                              )) ||
+                            !!channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            )?.readOnly
+                          }
+                          onClick={() => setSessionSettings({ item, visit })}
+                        >
+                          <MenuIcon>
+                            <GearIcon size={16} />
+                          </MenuIcon>
+                          Session settings…
+                        </MenuItem>
                       </>
                     }
                   >
@@ -467,37 +524,53 @@ export function SessionSections({
             </DropSection>
           ))}
       </ChannelSidebarDnd>
+      {converting && (
+        <ConvertSession
+          key={converting.id}
+          session={session}
+          id={converting.id}
+          signal={converting.visit}
+          onConverted={() => onConverted?.(converting.id)}
+          close={() => setConverting(undefined)}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${converting.id}"] button`,
+            ) ?? false
+          }
+        />
+      )}
       {sharing && sharingChannel && (
         <SessionShare
           key={sharing.id}
           session={session}
           channel={sharingChannel}
+          signal={sharing.visit}
+          onConverted={() => onConverted?.(sharing.id)}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
               `[data-session-menu-id="${sharing.id}"] button`,
             ) ?? false
           }
-          direct
           initialOpen
           renderTrigger={() => null}
           onClose={() => setSharing(undefined)}
-          onShared={() => {
-            const id = sharing.id;
-            const sameVisit =
-              sharing.visit === currentVisit.current && !sharing.visit?.aborted;
-            setSharing(undefined);
-            if (sameVisit) onShared?.(id);
-          }}
         />
       )}
       {sessionSettings && (
         <WorkspaceSettings
+          key={sessionSettings.item.id}
+          signal={sessionSettings.visit}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${sessionSettings.item.id}"] button`,
+            ) ?? false
+          }
           session={session}
           scope={scope}
           target={{
             kind: "session",
-            id: sessionSettings.id,
-            name: sessionSettings.title,
+            id: sessionSettings.item.id,
+            name: sessionSettings.item.title,
           }}
           close={() => setSessionSettings(undefined)}
         />
@@ -544,13 +617,12 @@ export function SessionSections({
           close={() => setSettingsFor(undefined)}
         />
       )}
-      {renaming && (
-        <RenameSession
-          key={renaming.id}
+      {creatingProject && (
+        <NewProject
           session={session}
-          id={renaming.id}
-          name={renaming.title}
-          close={() => setRenaming(undefined)}
+          create={(section) => preferences.createSection(section)}
+          close={() => setCreatingProject(false)}
+          onCreated={(id) => toggle(id, true)}
         />
       )}
       {creatingFor && (
@@ -666,6 +738,7 @@ function SessionActionsMenu({
   className,
   children,
   content,
+  indicator,
   enabled = true,
   trailing,
 }: {
@@ -674,6 +747,7 @@ function SessionActionsMenu({
   className: string | undefined;
   children: ReactNode;
   content: ReactNode;
+  indicator?: ReactNode;
   enabled?: boolean;
   /** Follows the overflow action, preserving header action keyboard order. */
   trailing?: ReactNode;
@@ -714,6 +788,7 @@ function SessionActionsMenu({
         }}
       >
         {children}
+        {indicator}
         <MenuRoot>
           <MenuTrigger
             render={(props) => (

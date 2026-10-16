@@ -2,9 +2,11 @@
   "id": "buzz.goose",
   "name": "Goose",
   "apiVersion": 1,
+  "description": "Run local Goose agents in Buzz.",
+  "discovery": { "category": "agents" },
   "host": {
     "processes": [
-      { "id": "goose", "program": "goose-acp" },
+      { "id": "goose", "program": "goose-acp", "bundled": true },
       { "id": "read", "program": "base64", "args": ["-i"] },
       { "id": "workspace", "program": "pwd" }
     ],

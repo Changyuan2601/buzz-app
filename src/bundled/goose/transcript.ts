@@ -17,6 +17,8 @@ import { briefly } from "./setup";
 export const TURN_LIMIT = 50;
 /** Sessions read for one conversation, newest first. */
 const SESSION_LIMIT = 10;
+/** The agent's recent sessions listed. */
+export const RECENT_LIMIT = 30;
 const STEER = "new-message-arrived-while-you-were-working";
 
 type Json = Record<string, unknown>;
@@ -235,13 +237,9 @@ export function gooseTurns(
   return turns;
 }
 
-/** Whether a session was started for the agent in `place`: its first prompt's
- * context names the same agent, channel and, for a thread, thread root. */
-export function startedFor(
-  messages: readonly Message[],
-  agent: string,
-  place: Place,
-) {
+/** A field of the context a session's first prompt carries, such as its
+ * `Agent`; undefined when that prompt carries none. */
+function opening(messages: readonly Message[]) {
   for (const message of messages) {
     if (message.role !== "user" || message.metadata?.userVisible === false)
       continue;
@@ -250,19 +248,30 @@ export function startedFor(
     const context = promptSections(raw).find(
       (section) => section.tag === "context",
     )?.body;
-    if (!context) return false;
-    const field = (name: string) =>
+    if (!context) return undefined;
+    return (name: string) =>
       context.match(new RegExp(`^${name}: (.*)$`, "m"))?.[1];
-    return (
-      field("Agent") === agent &&
-      !!field("Channel")?.endsWith(`(#${place.channelId})`) &&
-      (place.root
-        ? field("Session scope") === "thread" &&
-          field("Thread root") === place.root
-        : field("Session scope") !== "thread")
-    );
   }
-  return false;
+  return undefined;
+}
+
+/** Whether a session was started for the agent in `place`: its first prompt's
+ * context names the same agent, channel and, for a thread, thread root. */
+export function startedFor(
+  messages: readonly Message[],
+  agent: string,
+  place: Place,
+) {
+  const field = opening(messages);
+  return (
+    !!field &&
+    field("Agent") === agent &&
+    !!field("Channel")?.endsWith(`(#${place.channelId})`) &&
+    (place.root
+      ? field("Session scope") === "thread" &&
+        field("Thread root") === place.root
+      : field("Session scope") !== "thread")
+  );
 }
 
 type Listed = {
@@ -314,14 +323,23 @@ export type Lookup = Readonly<{
 export class GooseHistory {
   constructor(private readonly spawn: Spawn | undefined) {}
 
-  /** Sessions goose has for an agent named `name` in `workspace`: the ones
-   * Buzz titled with the agent's name. */
-  recent(name: string, workspace: string, signal: AbortSignal) {
+  /** The agent's latest sessions in `workspace`, newest first: those whose
+   * first prompt names its pubkey, `agent`. */
+  recent(agent: string, workspace: string, signal: AbortSignal) {
     return this.with(signal, async (goose, spawn) => {
       const cwd = await absolute(spawn, workspace);
-      return (await list(goose, cwd)).filter((row) =>
-        row.title.startsWith(`${name} · `),
-      );
+      const rows: GooseSessionRow[] = [];
+      for (const row of await list(goose, cwd, agent)) {
+        if (rows.length >= RECENT_LIMIT) break;
+        signal.throwIfAborted();
+        // One goose deleted since it listed it is left out.
+        const read = await messages(goose, row.sessionId).catch((error) => {
+          if (/not found/i.test(String(error))) return [];
+          throw error;
+        });
+        if (opening(read)?.("Agent") === agent) rows.push(row);
+      }
+      return rows;
     });
   }
 

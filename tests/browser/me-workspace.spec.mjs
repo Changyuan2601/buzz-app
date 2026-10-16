@@ -12,6 +12,60 @@ test.use({
   meChannels: [id, other],
   historyCounts: { [id]: 2, [other]: 1, gamma: 1 },
 });
+// Browser-only: Sessions shares Channels' review, with real portalled dismissal.
+test("Me opens video review and Escape returns to its opener", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/message-gallery/assets/sample.mp4",
+      contentType: "video/mp4",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me video", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.mp4", "m video/mp4"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  await work.locator("[data-video-preview]").hover();
+  const opener = work.getByRole("button", { name: "Open video fullscreen" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Video review" });
+  await expect(review.locator("video")).toBeVisible();
+  await review.getByRole("button", { name: "Close fullscreen viewer" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+test("Me opens image review with its comments", async ({ page, app }) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/attachment-media/still.png",
+      contentType: "image/png",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me image", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.png", "m image/png"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  const opener = work.getByRole("link", { name: "Open image attachment" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Image viewer" });
+  await expect(
+    review.getByRole("button", { name: "Show comments" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
 // Activity opens the agent's profile, where its type's Activity tab lives.
 const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });
@@ -111,7 +165,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   page,
   app,
 }) => {
-  // Install before app timers exist so pausing also controls pending hover work.
+  // Install before app timers exist so hover cleanup never mixes real/fake IDs.
   await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Me");
@@ -155,9 +209,8 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // Let the installed clock run through navigation, then pause ahead of its
-  // own current time. No native timers are left outside the controlled clock.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  // Read the running page clock instead of assuming the host clock matches it.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);
@@ -184,7 +237,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   // Context actions must remain separate from the activity trigger.
   await alpha.press("Shift+F10");
   await expect(
-    page.getByRole("menuitem", { name: "Rename", exact: true }),
+    page.getByRole("menuitem", { name: "Session settings…", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);
@@ -227,7 +280,6 @@ test("Me hides the empty pane launcher until content opens it", async ({
 // Owner-authored inventory supplies choices; signed membership remains authority.
 test.describe("personal recipients", () => {
   test.use({
-    sessionChannels: [id],
     meAgentNames: ["Owned Honey", "Owned Brain"],
     meOutsideAgentNames: ["Outside Agent"],
   });
@@ -317,13 +369,13 @@ test.describe("personal recipients", () => {
       ]);
       // A mention is one-off in Me: the assistant picker carries follow-ups.
       await expect(composer).toHaveText("");
-      // A draft from the ordinary Messages reader may retain a channel member
+      // A draft from the Messages reader may retain a channel member
       // who isn't in the owner's inventory. Me must reject that explicit recipient.
       await composer.fill("");
       await openPage(page, "Messages");
       await page.locator('[data-channel-id="gamma"]').click();
       // Me-owned conversations are intentionally absent from the Messages
-      // sidebar. A real conversation link still opens their ordinary reader.
+      // sidebar. A real conversation link still opens their Messages reader.
       const link = app.append(
         "primary",
         "gamma",
@@ -335,7 +387,11 @@ test.describe("personal recipients", () => {
         .locator(`[data-message-id="${link.id}"]`)
         .getByRole("link", { name: "Open Beta", exact: true })
         .click();
-      await workspace
+      const linkedSession = page.getByRole("tabpanel", {
+        name: "Beta",
+        exact: true,
+      });
+      await linkedSession
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       await page
@@ -345,8 +401,8 @@ test.describe("personal recipients", () => {
           exact: true,
         })
         .click();
-      const ordinaryComposer = page.getByRole("textbox", {
-        name: "Message #Beta",
+      const ordinaryComposer = linkedSession.getByRole("textbox", {
+        name: "Message this session",
         exact: true,
       });
       await ordinaryComposer.press("End");

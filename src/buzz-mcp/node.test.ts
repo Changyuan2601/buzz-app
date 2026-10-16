@@ -7,7 +7,7 @@ import { nodeClient } from "./node";
 const agent = keypair();
 const owner = keypair();
 let stored: unknown[];
-let response: (() => unknown) | undefined;
+let response: ((init: RequestInit) => unknown) | undefined;
 
 // A community that keeps what is posted and answers every query with all of it.
 beforeEach(() => {
@@ -19,7 +19,7 @@ beforeEach(() => {
       if (url.endsWith("/events")) stored.push(JSON.parse(String(init.body)));
       const body = url.endsWith("/events")
         ? { accepted: true }
-        : (response?.() ?? stored);
+        : (response?.(init) ?? stored);
       return new Response(JSON.stringify(body));
     }),
   );
@@ -54,12 +54,30 @@ it.each([
   );
 });
 
+it("marks a memory read the relay cut short as partial", async () => {
+  const buzz = client();
+  await buzz.remember("mem/a", "x", 0);
+  await buzz.remember("mem/b", "y", 0);
+  // 1,001 matching events (repeats are cheap to verify); the relay answers at
+  // most 1,000 to one query, whatever it asks.
+  let total = 1001;
+  response = (init) => {
+    const [{ limit }] = JSON.parse(String(init.body)) as [{ limit: number }];
+    const count = Math.min(limit, 1000, total);
+    return Array.from({ length: count }, (_, index) => stored[index % 2]);
+  };
+  expect(await buzz.memories()).toMatchObject({ partial: true });
+  total = 999;
+  expect(await buzz.memories()).toMatchObject({ partial: false });
+}, 30_000);
+
 it("reads back its memory and rejects a tampered entry", async () => {
   const buzz = client();
   await buzz.remember("mem/notes", "keep this", 0);
-  expect(await buzz.memories()).toMatchObject([
-    { slug: "mem/notes", body: "keep this" },
-  ]);
+  expect(await buzz.memories()).toMatchObject({
+    entries: [{ slug: "mem/notes", body: "keep this" }],
+    partial: false,
+  });
 
   // The newest head would win if its signature went unchecked.
   const entry = stored[0] as { created_at: number };

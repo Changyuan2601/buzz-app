@@ -1,15 +1,12 @@
+import {
+  canonicalDetailsName,
+  detailsDraftErrors,
+} from "../relay/channel-details-protocol";
 import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuItem,
-  MenuIcon,
-} from "../../shared/design-system/ui/Menu";
+import { GearIcon } from "../../shared/design-system/icons";
 import {
   applySessionSetup,
   removedSectionMessage,
@@ -20,7 +17,12 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  writeView,
+  subscribeView,
+  viewRevision,
+} from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
 import { AgentChoice } from "./AgentChoice";
 import { SessionProjectControl } from "./SessionProjectControl";
@@ -30,6 +32,43 @@ import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
+
+/** Starting a new chat from a project starts it in that project, even when an
+ * earlier draft there was switched to another one. */
+function readDraftSettings(scope: string, draftKey: string) {
+  const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
+  if (typeof saved === "string") return { canvas: saved, name: "" };
+  const settings = saved && typeof saved === "object" ? saved : {};
+  return {
+    name: "name" in settings ? (settings.name as string) : "",
+    canvas:
+      "canvas" in settings && typeof settings.canvas === "string"
+        ? settings.canvas
+        : undefined,
+    // Preserve malformed lifetime input for the existing visible validation.
+    ttlSeconds: ("ttlSeconds" in settings ? settings.ttlSeconds : undefined) as
+      | number
+      | undefined,
+  };
+}
+
+export function resetNewChatProject(
+  scope: string,
+  personal: boolean,
+  sectionId: string,
+) {
+  const key = `${personal ? "me" : "sessions"}:section:${sectionId}`;
+  // A submitted start owns its frozen project and must remain recoverable.
+  if (readPending(scope, key)) return;
+  const selected = readView<unknown>(scope, `${key}:new-project`, sectionId);
+  // Instructions belong to the previous project; name and lifetime stay.
+  if (selected !== sectionId)
+    writeView(scope, `${key}:settings`, {
+      ...readDraftSettings(scope, key),
+      canvas: undefined,
+    });
+  writeView(scope, `${key}:new-project`, null);
+}
 
 export function NewSessionComposer({
   session,
@@ -83,10 +122,35 @@ export function NewSessionComposer({
     );
     return typeof saved === "string" ? saved : (sectionId ?? "");
   });
-  const [draftCanvas, setDraftCanvas] = useState<string | undefined>(() => {
-    const saved = readView<unknown>(scope, `${draftKey}:settings`, null);
-    return typeof saved === "string" ? saved : undefined;
-  });
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const [draftSettings, setDraftSettings] = useState(() =>
+    readDraftSettings(scope, draftKey),
+  );
+  const draftCanvas = draftSettings.canvas;
+  // Project entry can reset this draft while the composer stays mounted.
+  // Observe only changed revisions so unrelated writes don't discard local edits
+  // when ordinary view persistence is unavailable.
+  useEffect(() => {
+    const projectKey = `${draftKey}:new-project`;
+    const settingsKey = `${draftKey}:settings`;
+    let projectRevision = viewRevision(scope, projectKey);
+    let settingsRevision = viewRevision(scope, settingsKey);
+    return subscribeView(scope, () => {
+      const nextProject = viewRevision(scope, projectKey);
+      const nextSettings = viewRevision(scope, settingsKey);
+      if (nextProject !== undefined && nextProject !== projectRevision) {
+        projectRevision = nextProject;
+        const project = readView<unknown>(scope, projectKey, sectionId ?? "");
+        setSelectedProject(
+          typeof project === "string" ? project : (sectionId ?? ""),
+        );
+      }
+      if (nextSettings !== undefined && nextSettings !== settingsRevision) {
+        settingsRevision = nextSettings;
+        setDraftSettings(readDraftSettings(scope, draftKey));
+      }
+    });
+  }, [scope, draftKey, sectionId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focusRequest)
@@ -139,6 +203,12 @@ export function NewSessionComposer({
         }
       : {
           id: channelId,
+          ttlSeconds: draftSettings.ttlSeconds,
+          name:
+            typeof draftSettings.name === "string"
+              ? canonicalDetailsName(draftSettings.name) ||
+                automaticTitle(composerMarkdown(draft))
+              : draftSettings.name,
           text: composerMarkdown(draft),
           draft,
         };
@@ -156,6 +226,25 @@ export function NewSessionComposer({
       ),
     ];
     try {
+      if (current.name !== undefined && typeof current.name !== "string")
+        throw new Error("The saved session name could not be verified.");
+      // Receipts from before optional naming have no frozen title.
+      if (!current.name)
+        current.name = automaticTitle(pending?.text ?? current.text);
+      const errors = detailsDraftErrors({
+        name: current.name ?? "Session",
+        description: "",
+        visibility: "private",
+        ttlSeconds: current.ttlSeconds,
+      });
+      if (current.name !== undefined && errors.name)
+        throw new Error(errors.name);
+      const lifetimeError = errors.lifetime;
+      if (lifetimeError || (parent && current.ttlSeconds !== undefined))
+        throw new Error(
+          lifetimeError ?? "Parent-linked sessions cannot set a lifetime.",
+        );
+      save(current); // Freeze validated name and lifetime before the first asynchronous start operation.
       if (current.setup !== undefined) {
         current.setup = parseSessionSetup(current.setup);
         if (
@@ -226,8 +315,9 @@ export function NewSessionComposer({
         }
         current.creationId = session.workSessions.create(
           current.id,
-          [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
+          current.name,
           parent?.id,
+          current.ttlSeconds,
           personal,
         );
         save({ ...current });
@@ -424,8 +514,13 @@ export function NewSessionComposer({
                     if (project === selectedProject) return;
                     setSelectedProject(project);
                     writeView(scope, `${draftKey}:new-project`, project);
-                    setDraftCanvas(undefined);
-                    writeView(scope, `${draftKey}:settings`, null);
+                    const next = {
+                      name: draftSettings.name,
+                      ttlSeconds: draftSettings.ttlSeconds,
+                      canvas: undefined,
+                    };
+                    setDraftSettings(next);
+                    writeView(scope, `${draftKey}:settings`, next);
                   }}
                   disabled={busy || !!pending}
                 />
@@ -493,49 +588,47 @@ export function NewSessionComposer({
     <NewSessionView
       personal={personal}
       actions={
-        <MenuRoot>
-          <MenuTrigger
-            render={(props) => (
-              <IconButton
-                {...props}
-                size="toolbar"
-                aria-label="Session actions"
-                title="Session actions"
-                icon={<DotsThreeIcon size="1rem" />}
-              />
-            )}
-          />
-          <MenuPopup aria-label="Session actions" align="end">
-            <MenuItem
-              disabled={busy || !!pending}
-              onClick={() => setSettingsOpen(true)}
-            >
-              <MenuIcon>
-                <GearIcon size={16} />
-              </MenuIcon>
-              {personal ? "Chat settings…" : "Session settings…"}
-            </MenuItem>
-          </MenuPopup>
-        </MenuRoot>
+        <IconButton
+          ref={settingsTrigger}
+          size="toolbar"
+          aria-label="Session settings"
+          title="Session settings"
+          icon={<GearIcon size="1rem" aria-hidden="true" />}
+          disabled={busy || !!pending}
+          onClick={() => setSettingsOpen(true)}
+        />
       }
     >
       {composer}
       {settingsOpen && (
         <DraftSessionSettings
+          finalFocus={settingsTrigger}
           personal={personal}
           session={session}
           sectionId={selectedProject || undefined}
           canvas={draftCanvas}
+          name={draftSettings.name}
+          ttlSeconds={draftSettings.ttlSeconds}
+          parentLinked={!!parent}
           close={() => setSettingsOpen(false)}
-          save={(canvas) => {
-            if (!writeView(scope, `${draftKey}:settings`, canvas))
+          save={(canvas, ttlSeconds, name) => {
+            const next = { canvas, ttlSeconds, name: name ?? "" };
+            if (!writeView(scope, `${draftKey}:settings`, next))
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",
               );
-            setDraftCanvas(canvas);
+            setDraftSettings(next);
           }}
         />
       )}
     </NewSessionView>
+  );
+}
+
+function automaticTitle(text: string) {
+  return (
+    canonicalDetailsName(
+      [...text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
+    ) || "Session"
   );
 }

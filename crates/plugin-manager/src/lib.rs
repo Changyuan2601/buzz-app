@@ -1,4 +1,5 @@
 //! Installation and settings never execute plugin code. Both desktop and CLI use this crate.
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use nostr::{
     event::{Event, EventBuilder, FinalizeEvent, Kind, Tag},
     key::{Keys, SecretKey},
@@ -17,6 +18,10 @@ mod migrate_agent_flag;
 
 pub type Result<T> = std::result::Result<T, String>;
 const LIMIT: u64 = 8 * 1024 * 1024;
+const MAX_README_BYTES: usize = 256 * 1024;
+const MAX_ICON_BYTES: usize = 1024 * 1024;
+const MAX_ICON_DIMENSION: u32 = 4096;
+const MAX_ICON_PIXELS: u64 = 1024 * 1024;
 pub const DEFAULT_HOST_COMMAND_OUTPUT_BYTES: u64 = 4096;
 pub const MAX_HOST_COMMAND_OUTPUT_BYTES: u64 = 1024 * 1024;
 pub const MAX_HOST_COMMAND_INPUT_BYTES: u64 = 64 * 1024;
@@ -28,7 +33,21 @@ pub struct Manifest {
     pub name: String,
     pub api_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<Discovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostGrants>,
+}
+/// Display-only metadata is deliberately forward-compatible. Unknown fields are
+/// ignored so adding a discovery hint does not make a plugin unloadable.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Discovery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -73,6 +92,9 @@ pub struct HostProcess {
     /// Fixed leading arguments; the caller's arguments follow them.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Run the copy the app ships in its `bin` resources, never one on PATH.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bundled: bool,
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -91,8 +113,40 @@ impl Manifest {
         if self.name.trim().is_empty() || self.name.len() > 80 {
             return Err("Name must contain 1–80 bytes of text".into());
         }
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|description| description.trim().is_empty() || description.len() > 280)
+        {
+            return Err("Description must contain 1–280 bytes of text".into());
+        }
         if self.api_version != 1 {
             return Err("Only page plugin API version 1 is supported".into());
+        }
+        if let Some(discovery) = &self.discovery {
+            if let Some(category) = &discovery.category {
+                valid_id(category)?;
+            }
+            if discovery.tags.len() > 16 {
+                return Err("Too many discovery tags".into());
+            }
+            let mut tags = std::collections::HashSet::new();
+            for tag in &discovery.tags {
+                if tag.trim().is_empty() || tag.len() > 80 || tag.chars().any(char::is_control) {
+                    return Err(
+                        "Discovery tags must contain 1–80 bytes of text without control characters"
+                            .into(),
+                    );
+                }
+                let key = tag
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                if !tags.insert(key) {
+                    return Err("Duplicate discovery tag".into());
+                }
+            }
         }
         if let Some(host) = &self.host {
             if host.commands.len() > 16
@@ -246,6 +300,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/moderation/manifest.json"
         ))
         .expect("moderation manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/relay-staff/manifest.json"
+        ))
+        .expect("relay staff manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -280,6 +338,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
+            | "buzz.relay-staff"
     )
 }
 /// Bundled ids that older profiles may still hold as installed plugins.
@@ -303,6 +362,12 @@ struct Installed {
     #[serde(default)]
     previous_source: Option<ReloadSource>,
     enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    readme_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_png_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_jpg_revision: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -339,10 +404,31 @@ impl Default for Registry {
     }
 }
 #[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Artifact {
     manifest: Manifest,
     code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    readme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_png: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_jpg: Option<String>,
+}
+impl Artifact {
+    fn readme_revision(&self) -> Option<String> {
+        self.readme.as_deref().map(|value| hash(value.as_bytes()))
+    }
+}
+// Revisions are opaque content identities. Hash the canonical base64 directly so
+// catalog/preview comparisons do not decode an already validated image again.
+fn icon_revision(encoded: Option<&str>) -> Option<String> {
+    encoded.map(|value| hash(value.as_bytes()))
+}
+fn decode_icon(encoded: Option<&str>) -> Result<Option<Vec<u8>>> {
+    encoded
+        .map(|value| BASE64.decode(value).map_err(err))
+        .transpose()
 }
 #[derive(Clone)]
 struct Release {
@@ -382,10 +468,7 @@ fn publisher_for_hash(digest: &str, signature: &Event) -> Result<String> {
 }
 
 pub fn sign_release(directory: &Path, key_text: &str) -> Result<String> {
-    let bytes = artifact_from_text(
-        &read_limited(&directory.join("manifest.json"))?,
-        read_limited(&directory.join("plugin.js"))?,
-    )?;
+    let bytes = imports::prepare_unsigned_artifact(directory)?;
     let secret = SecretKey::parse(key_text.trim()).map_err(|_| "Invalid signing key")?;
     let tags = [
         Tag::custom("x", [hash(&bytes).as_str()]),
@@ -447,6 +530,17 @@ pub struct PluginInfo {
     pub reloadable: bool,
     pub error: Option<String>,
     pub publisher: Option<String>,
+    pub readme_revision: Option<String>,
+    pub icon_png_revision: Option<String>,
+    pub icon_jpg_revision: Option<String>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginContent {
+    pub readme: Option<String>,
+    pub icon_png: Option<String>,
+    pub icon_jpg: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -615,6 +709,9 @@ impl Manager {
                     reloadable: false,
                     error: None,
                     publisher: None,
+                    readme_revision: None,
+                    icon_png_revision: None,
+                    icon_jpg_revision: None,
                 }
             })
             .collect();
@@ -651,6 +748,9 @@ impl Manager {
                 reloadable: p.current_source.is_some(),
                 error,
                 publisher,
+                readme_revision: p.readme_revision,
+                icon_png_revision: p.icon_png_revision,
+                icon_jpg_revision: p.icon_jpg_revision,
             });
         }
         Ok(Catalog {
@@ -665,7 +765,11 @@ impl Manager {
     }
     fn install_artifact(&self, release: &Release, source: Option<ReloadSource>) -> Result<Catalog> {
         let bytes = &release.bytes;
-        let manifest = release.validate()?;
+        let artifact = release.artifact()?;
+        let manifest = artifact.manifest.clone();
+        let readme_revision = artifact.readme_revision();
+        let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
+        let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
@@ -706,6 +810,9 @@ impl Manager {
                     previous_signature,
                     previous_source,
                     enabled,
+                    readme_revision,
+                    icon_png_revision,
+                    icon_jpg_revision,
                 },
             );
             self.save(&registry)?;
@@ -756,6 +863,9 @@ impl Manager {
                         p.current = previous;
                         std::mem::swap(&mut p.current_signature, &mut p.previous_signature);
                         p.current_source = previous_source;
+                        p.readme_revision = a.readme_revision();
+                        p.icon_png_revision = icon_revision(a.icon_png.as_deref());
+                        p.icon_jpg_revision = icon_revision(a.icon_jpg.as_deref());
                         p.manifest = a.manifest;
                     }
                     _ => return Err("Unknown management action".into()),
@@ -803,7 +913,11 @@ impl Manager {
             )
         };
         let release = prepare_reload_artifact(&snapshot.1)?;
-        let manifest = release.validate()?;
+        let artifact = release.artifact()?;
+        let manifest = artifact.manifest.clone();
+        let readme_revision = artifact.readme_revision();
+        let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
+        let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
@@ -863,12 +977,36 @@ impl Manager {
             plugin.previous = previous;
             plugin.previous_signature = previous_signature;
             plugin.previous_source = previous_source;
+            plugin.readme_revision = readme_revision;
+            plugin.icon_png_revision = icon_png_revision;
+            plugin.icon_jpg_revision = icon_jpg_revision;
             self.save(&registry)?;
         }
         self.catalog()
     }
     pub fn module(&self, id: &str, revision: &str) -> Result<String> {
         Ok(self.current_artifact(id, revision)?.code)
+    }
+    /// Read inert package content only when a details surface asks for it. This does not
+    /// execute the plugin or add its potentially large content to the polled catalog.
+    pub fn content(&self, id: &str, revision: &str) -> Result<PluginContent> {
+        valid_id(id)?;
+        valid_hash(revision)?;
+        let _lock = self.lock()?;
+        let registry = self.read()?;
+        let plugin = registry
+            .installed
+            .get(id)
+            .ok_or("Plugin is not installed")?;
+        if plugin.current != revision {
+            return Err("Plugin was updated; refresh the catalog".into());
+        }
+        let artifact = self.artifact(id, revision, plugin.current_signature.as_ref())?;
+        Ok(PluginContent {
+            readme: artifact.readme,
+            icon_png: artifact.icon_png,
+            icon_jpg: artifact.icon_jpg,
+        })
     }
     pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
         if revision == "bundled" {
@@ -920,12 +1058,21 @@ impl Manager {
     }
 }
 impl Release {
-    fn validate(&self) -> Result<Manifest> {
+    fn artifact(&self) -> Result<Artifact> {
         if self.bytes.len() as u64 > LIMIT {
             return Err("Plugin artifact exceeds 8 MiB".into());
         }
         let artifact: Artifact = serde_json::from_slice(&self.bytes).map_err(err)?;
         artifact.manifest.validate()?;
+        validate_readme(artifact.readme.as_deref())?;
+        validate_icon(
+            decode_icon(artifact.icon_png.as_deref())?.as_deref(),
+            image::ImageFormat::Png,
+        )?;
+        validate_icon(
+            decode_icon(artifact.icon_jpg.as_deref())?.as_deref(),
+            image::ImageFormat::Jpeg,
+        )?;
         if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
@@ -936,7 +1083,10 @@ impl Release {
             }
             publisher(&self.bytes, signature)?;
         }
-        Ok(artifact.manifest)
+        Ok(artifact)
+    }
+    fn validate(&self) -> Result<Manifest> {
+        Ok(self.artifact()?.manifest)
     }
     fn publisher(&self) -> Option<String> {
         self.signature.as_ref().map(|event| event.pubkey.to_hex())
@@ -987,7 +1137,17 @@ fn validate_candidate_path(path: &str) -> Result<PathBuf> {
     }
     Ok(relative)
 }
+#[cfg(test)]
 fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
+    artifact_from_parts(manifest, code, None, None, None)
+}
+fn artifact_from_parts(
+    manifest: &str,
+    code: String,
+    readme: Option<String>,
+    icon_png: Option<Vec<u8>>,
+    icon_jpg: Option<Vec<u8>>,
+) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;
     manifest.validate()?;
     if is_bundled(&manifest.id) {
@@ -996,11 +1156,73 @@ fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
     if code.trim().is_empty() {
         return Err("Plugin module is empty".into());
     }
-    let bytes = serde_json::to_vec(&Artifact { manifest, code }).map_err(err)?;
+    validate_readme(readme.as_deref())?;
+    validate_icon(icon_png.as_deref(), image::ImageFormat::Png)?;
+    validate_icon(icon_jpg.as_deref(), image::ImageFormat::Jpeg)?;
+    let bytes = serde_json::to_vec(&Artifact {
+        manifest,
+        code,
+        readme,
+        icon_png: icon_png.map(|bytes| BASE64.encode(bytes)),
+        icon_jpg: icon_jpg.map(|bytes| BASE64.encode(bytes)),
+    })
+    .map_err(err)?;
     if bytes.len() as u64 > LIMIT {
         return Err("Plugin artifact exceeds 8 MiB".into());
     }
     Ok(bytes)
+}
+
+fn validate_readme(readme: Option<&str>) -> Result<()> {
+    if readme.is_some_and(|value| value.len() > MAX_README_BYTES) {
+        return Err("README.md exceeds 256 KiB".into());
+    }
+    Ok(())
+}
+
+fn icon_reader(
+    bytes: &[u8],
+    format: image::ImageFormat,
+) -> image::ImageReader<std::io::Cursor<&[u8]>> {
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_ICON_DIMENSION);
+    limits.max_image_height = Some(MAX_ICON_DIMENSION);
+    limits.max_alloc = Some(16 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+}
+
+fn validate_icon(icon: Option<&[u8]>, format: image::ImageFormat) -> Result<()> {
+    let Some(bytes) = icon else { return Ok(()) };
+    let (name, kind) = match format {
+        image::ImageFormat::Png => ("icon.png", "PNG"),
+        image::ImageFormat::Jpeg => ("icon.jpg", "JPEG"),
+        _ => return Err("Unsupported plugin icon format".into()),
+    };
+    if bytes.len() > MAX_ICON_BYTES {
+        return Err(format!("{name} exceeds 1 MiB"));
+    }
+    if image::guess_format(bytes).ok() != Some(format) {
+        return Err(format!("{name} must be a {kind} image"));
+    }
+    // Apply limits before parsing even the header: compressed PNG metadata can
+    // expand independently of pixel dimensions.
+    let decoded = icon_reader(bytes, format).decode().map_err(|_| {
+        format!("{name} must be a valid {kind} image within dimensions and allocation limits")
+    })?;
+    let (width, height) = (decoded.width(), decoded.height());
+    if width == 0
+        || height == 0
+        || width > MAX_ICON_DIMENSION
+        || height > MAX_ICON_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_ICON_PIXELS
+    {
+        return Err(format!(
+            "{name} dimensions must be 1–4096 pixels per side and at most 1,048,576 pixels"
+        ));
+    }
+    Ok(())
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -1066,11 +1288,43 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::{
         artifact_from_text, bundled_manifests, enabled_by_default, validate_candidate_path,
-        Manager, Manifest, MAX_HOST_COMMAND_OUTPUT_BYTES,
+        Manager, Manifest, Release, MAX_HOST_COMMAND_OUTPUT_BYTES,
     };
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
+
+    #[test]
+    fn compressed_png_profile_is_bounded_before_header_decode() {
+        use image::{ImageDecoder as _, ImageEncoder as _};
+        use std::io::Write as _;
+        let mut png = vec![];
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0, 0, 0, 0], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let mut compressed = flate2::write::ZlibEncoder::new(vec![], flate2::Compression::best());
+        for _ in 0..32 {
+            compressed.write_all(&[0; 1024 * 1024]).unwrap();
+        }
+        let mut profile = b"profile\0\0".to_vec();
+        profile.extend(compressed.finish().unwrap());
+        let mut chunk = (profile.len() as u32).to_be_bytes().to_vec();
+        chunk.extend(b"iCCP");
+        chunk.extend(profile);
+        let crc = crc32fast::hash(&chunk[4..]);
+        chunk.extend(crc.to_be_bytes());
+        png.splice(33..33, chunk); // Immediately after IHDR, before IDAT.
+        assert!(png.len() < super::MAX_ICON_BYTES);
+
+        // png ignores an over-budget optional profile. Verify it was discarded,
+        // rather than inflated and retained, by the same bounded reader used in
+        // validation. Removing the reader limits makes this assertion fail.
+        let mut decoder = super::icon_reader(&png, image::ImageFormat::Png)
+            .into_decoder()
+            .unwrap();
+        assert!(decoder.icc_profile().unwrap().is_none());
+        super::validate_icon(Some(&png), image::ImageFormat::Png).unwrap();
+    }
 
     #[test]
     fn native_catalog_matches_desktop_bundles() {
@@ -1107,6 +1361,19 @@ mod tests {
             })
             .collect();
         assert_eq!(native, expected);
+    }
+
+    #[test]
+    fn legacy_manifest_and_code_artifacts_remain_compatible() {
+        let release = Release {
+            bytes: br#"{"manifest":{"id":"example.page","name":"Example","apiVersion":1},"code":"export function apply() {}"}"#.to_vec(),
+            signature: None,
+        };
+        let artifact = release.artifact().unwrap();
+        assert_eq!(artifact.manifest.id, "example.page");
+        assert!(artifact.readme.is_none());
+        assert!(artifact.icon_png.is_none());
+        assert!(artifact.icon_jpg.is_none());
     }
 
     #[test]
@@ -1306,6 +1573,123 @@ mod tests {
     }
 
     #[test]
+    fn validates_discovery_metadata_and_old_manifests() {
+        let old: Manifest =
+            serde_json::from_str(r#"{"id":"example.page","name":"Example","apiVersion":1}"#)
+                .unwrap();
+        assert_eq!(old.description, None);
+        assert_eq!(old.discovery, None);
+        assert!(old.validate().is_ok());
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({"id":"example.page","name":"Example","apiVersion":1})
+        );
+
+        let manifest = serde_json::json!({
+            "id": "example.page",
+            "name": "Example",
+            "apiVersion": 1,
+            "description": "Reconcile invoices without leaving Buzz.",
+            "discovery": {
+                "category": "finance",
+                "tags": ["accounting", "invoices"],
+                "futureDisplayHint": true
+            }
+        });
+        let parsed: Manifest = serde_json::from_value(manifest).unwrap();
+        assert!(parsed.validate().is_ok());
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Reconcile invoices without leaving Buzz.")
+        );
+        assert_eq!(
+            parsed.discovery.as_ref().unwrap().category.as_deref(),
+            Some("finance")
+        );
+        assert_eq!(
+            parsed.discovery.as_ref().unwrap().tags,
+            ["accounting", "invoices"]
+        );
+        assert!(!serde_json::to_string(&parsed)
+            .unwrap()
+            .contains("futureDisplayHint"));
+
+        for description in ["".into(), "   ".into(), "x".repeat(281)] {
+            let mut invalid = parsed.clone();
+            invalid.description = Some(description);
+            assert!(invalid.validate().is_err());
+        }
+        for category in ["", "Finance", "finance_tools"] {
+            let mut invalid = parsed.clone();
+            invalid.discovery.as_mut().unwrap().category = Some(category.into());
+            assert!(invalid.validate().is_err());
+        }
+        let mut duplicate = parsed.clone();
+        duplicate.discovery.as_mut().unwrap().tags = vec!["finance".into(), "finance".into()];
+        assert!(duplicate.validate().is_err());
+        let mut too_many = parsed.clone();
+        too_many.discovery.as_mut().unwrap().tags =
+            (0..17).map(|index| format!("tag-{index}")).collect();
+        assert!(too_many.validate().is_err());
+
+        let unknown_top_level = serde_json::json!({
+            "id": "example.page",
+            "name": "Example",
+            "apiVersion": 1,
+            "futureSecurityField": true
+        });
+        assert!(serde_json::from_value::<Manifest>(unknown_top_level).is_err());
+    }
+
+    #[test]
+    fn discovery_tags_accept_readable_text_and_preserve_display_spelling() {
+        let text = serde_json::json!({
+            "id": "example.page", "name": "Example", "apiVersion": 1,
+            "discovery": {
+                "category": "finance",
+                "tags": ["Programming Language", "  Café  Tools  ", "编程", "C++", "🛠️"]
+            }
+        });
+        let manifest: Manifest = serde_json::from_value(text.clone()).unwrap();
+        assert!(manifest.validate().is_ok());
+        assert_eq!(serde_json::to_value(&manifest).unwrap(), text);
+        let bytes = artifact_from_text(&text.to_string(), "export const code = 1".into()).unwrap();
+        let artifact: super::Artifact = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(artifact.manifest, manifest);
+
+        for tag in ["x".repeat(80), "é".repeat(40)] {
+            let mut valid = manifest.clone();
+            valid.discovery.as_mut().unwrap().tags = vec![tag];
+            assert!(valid.validate().is_ok());
+        }
+        for tag in [
+            "".into(),
+            "   ".into(),
+            "\u{a0}".into(),
+            "x".repeat(81),
+            "é".repeat(41),
+            "Programming\nLanguage".into(),
+            "Programming\tLanguage".into(),
+            "Bad\0Tag".into(),
+            "Bad\u{7f}Tag".into(),
+        ] {
+            let mut invalid = manifest.clone();
+            invalid.discovery.as_mut().unwrap().tags = vec![tag];
+            assert!(invalid.validate().is_err());
+        }
+        for pair in [
+            ["Programming Language", "programming language"],
+            ["Programming Language", "  Programming   Language  "],
+            ["Programming Language", "Programming\u{a0}Language"],
+            ["Café", "CAFÉ"],
+        ] {
+            let mut duplicate = manifest.clone();
+            duplicate.discovery.as_mut().unwrap().tags = pair.map(String::from).to_vec();
+            assert!(duplicate.validate().is_err());
+        }
+    }
+
+    #[test]
     fn validates_host_declarations_and_old_manifests() {
         let old: Manifest =
             serde_json::from_str(r#"{"id":"example.page","name":"Example","apiVersion":1}"#)
@@ -1389,6 +1773,11 @@ mod tests {
             parsed.host.as_ref().unwrap().processes[0].args,
             Vec::<String>::new()
         );
+        assert!(!parsed.host.as_ref().unwrap().processes[0].bundled);
+        let mut bundled = processes.clone();
+        bundled["host"]["processes"][0]["bundled"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(bundled).unwrap();
+        assert!(parsed.host.as_ref().unwrap().processes[0].bundled);
         for (field, value) in [
             ("program", serde_json::json!("/bin/sh")),
             ("program", serde_json::json!("")),

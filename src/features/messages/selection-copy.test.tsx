@@ -21,7 +21,7 @@ import {
 const person = "a".repeat(64);
 const target = `nostr:${npubEncode(person)}`;
 const message = `buzz://message?channel=general&id=${"b".repeat(64)}`;
-const messageHtml = message.replace("&", "&amp;");
+const messageHtml = message.replaceAll("&", "&amp;");
 const formats: CopyFormat[] = ["text", "markdown", "html"];
 
 // Markup shapes produced by MessageMarkdown's renderProfile and MessageLink.
@@ -378,6 +378,27 @@ describe("serializeNode", () => {
       text: 'PLUGIN <tag> & "q"',
       markdown: 'PLUGIN <tag> & "q"',
       html: "<p>PLUGIN &lt;tag&gt; &amp; &quot;q&quot;</p>",
+    });
+  });
+
+  it("escapes link labels read from the DOM", () => {
+    const markup = '"><img src=x onerror=alert(1)>';
+    const html = "&quot;&gt;&lt;img src=x onerror=alert(1)&gt;";
+    const markdown = '"\\>\\<img src=x onerror=alert(1)\\>';
+    const paragraph = query(
+      "p",
+      mount(row(`<p>${mention()} ${mention()} ${anchor(message, "docs")}</p>`)),
+    );
+    // Each label source: a mention name, a nameless chip's text, a link label.
+    query("button", paragraph).setAttribute("data-mention-name", markup);
+    const chip = query("button:nth-of-type(2)", paragraph);
+    chip.removeAttribute("data-mention-name");
+    lastText(chip).data = markup;
+    query("a", paragraph).setAttribute("data-link-label", markup);
+    expect(each(paragraph)).toEqual({
+      text: `@${markup} @${markup} ${markup} (${message})`,
+      markdown: `[@${markdown}](${target}) [@${markdown}](${target}) [${markdown}](${message})`,
+      html: `<p><a href="${target}">@${html}</a> <a href="${target}">@${html}</a> <a href="${messageHtml}">${html}</a></p>`,
     });
   });
 

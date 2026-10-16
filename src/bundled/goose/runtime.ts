@@ -1,19 +1,29 @@
-// Turns Agents deliveries into goose turns. Each agent of this type has its
-// own `goose-acp` process; a delivery becomes a prompt in the harness format,
-// sent to the ACP session for its conversation; a watch or timer wake runs as
-// a one-off turn in a new session, in its Interest's lane. The run returns once
-// the turn is handed over, so one agent works in several conversations at once.
+// Turns Agents deliveries into goose turns. Every agent of this type shares
+// one `goose-acp` process; a delivery becomes a prompt in the harness format,
+// sent to the agent's ACP session for its conversation; a watch or timer wake
+// runs as a one-off turn in a new session, in its Interest's lane. The run
+// returns once the turn is handed over, so one agent works in several
+// conversations at once.
 // goose acts in Buzz with the in-process Buzz tools over loopback HTTP MCP,
 // signed by the agent's native-held key; the runtime only reports a turn that
 // fails.
-import type { Context, Memory } from "../../buzz-mcp/client";
+import type { Context, Memories } from "../../buzz-mcp/client";
+import {
+  abortable,
+  READ_TIMEOUT_MS,
+} from "../../features/agent-harness/core-memory";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
-import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import {
   fromOwner,
   type Agent,
   type AgentHandle,
+  type Agents,
   type Delivery,
   type StandaloneTurn,
   type TurnResult,
@@ -31,10 +41,11 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
-import { AgentSessions } from "./sessions";
+import { AgentSessions, ServerPool, SharedProcess } from "./sessions";
 
 export type Config = Readonly<{
-  /** A model the provider offers; empty uses the goose config's. */
+  /** A model the provider offers; empty uses the provider's default, or the
+   * goose config's when no provider is named. */
   model: string;
   /** A goose provider; empty uses the goose config's. */
   provider: string;
@@ -56,12 +67,15 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-/** How long a read of the agent's core memory is reused. */
-const MEMORY_TTL_MS = 5 * 60_000;
-const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 const TITLE_LIMIT = 80;
+
+/** A watch's or timer's prompt, after a context naming the agent as a
+ * conversation's first prompt does, so its session is listed as the agent's. */
+export function standalonePrompt(agent: string, text: string) {
+  return `<context>\nScope: standalone\nAgent: ${agent}\n</context>\n\n${text}`;
+}
 
 /** A session's title in goose, as harness agents name theirs:
  * `Agent · #channel`, and the thread's root when each thread is a session. */
@@ -85,23 +99,22 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
-  memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
 };
 
-/** The environment that picks the agent's model and provider over the goose
- * config's. */
-const env = ({ model, provider }: Config) => ({
-  ...(model.trim() ? { GOOSE_MODEL: model.trim() } : {}),
-  ...(provider.trim() ? { GOOSE_PROVIDER: provider.trim() } : {}),
-});
-
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
-  private readonly reading = new Map<string, Promise<readonly Memory[]>>();
+  /** The MCP servers every agent's sessions share. */
+  private readonly pool = new ServerPool();
+  /** The goose every agent's sessions open in. */
+  private readonly goose = new SharedProcess(
+    (id, options) => this.spawn(id, options),
+    (handler) => this.serve(handler),
+  );
+  private readonly reading = new Map<string, Promise<Memories>>();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
     string,
@@ -112,6 +125,10 @@ export class GooseRuntime {
     private readonly host: Host,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
+    /** The tools plugins add to every session now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -126,7 +143,8 @@ export class GooseRuntime {
   }
 
   /** Brings the runtime in line with this type's agents: changed settings
-   * reopen idle sessions, and removed agents stop. */
+   * reopen idle sessions, and removed agents stop. goose stops with the
+   * last. */
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.agents)
@@ -134,6 +152,7 @@ export class GooseRuntime {
         entry.sessions.dispose();
         this.agents.delete(pubkey);
       }
+    if (!this.agents.size) this.goose.stop();
     for (const agent of agents) {
       const next = config(agent.config);
       const entry = this.agents.get(agent.pubkey);
@@ -173,6 +192,7 @@ export class GooseRuntime {
   dispose() {
     for (const entry of this.agents.values()) entry.sessions.dispose();
     this.agents.clear();
+    this.goose.stop();
   }
 
   async run({
@@ -181,6 +201,7 @@ export class GooseRuntime {
     config: raw,
     channelId,
     team,
+    model,
     workingUntil,
     ignored,
     signal,
@@ -215,7 +236,6 @@ export class GooseRuntime {
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";
-    void this.memory(agent.pubkey, entry);
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -264,6 +284,8 @@ export class GooseRuntime {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
       title: sessionTitle(entry.name, place, key.split("/")[1]),
+      signal,
+      ...(model ? { model } : {}),
       activityScope: topLevel
         ? channel
         : (threadReference(event)?.rootId ?? event.id),
@@ -275,14 +297,9 @@ export class GooseRuntime {
     this.notify();
     void done
       .then((result) => {
-        if (!result.ok)
-          return this.report(
-            agent,
-            channel,
-            event,
-            result.error ?? "",
-            topLevel,
-          );
+        // Of the messages one turn answered, only one has its error or text.
+        if (result.error !== undefined)
+          return this.report(agent, channel, event, result.error, topLevel);
         // An answer goose wrote without `send` is posted for it, so the
         // thread is not left waiting.
         if (result.text)
@@ -297,16 +314,23 @@ export class GooseRuntime {
   async runOnce({
     delivery,
     key,
+    signal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
     const entry = this.entry(agent.pubkey, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    void this.memory(agent.pubkey, entry);
-    const done = entry.sessions.runOnce(key, prompt, {
-      title: sessionTitle(entry.name, key),
-    });
+    const done = entry.sessions.runOnce(
+      key,
+      async () => {
+        const text = await prompt();
+        return text === undefined
+          ? undefined
+          : standalonePrompt(agent.pubkey, text);
+      },
+      { signal, title: sessionTitle(entry.name, key) },
+    );
     this.notify();
     return done.finally(() => this.notify());
   }
@@ -456,7 +480,7 @@ export class GooseRuntime {
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
-    // One process serves every session, so the tools read the settings, the
+    // Every session of the agent shares them, so they read the settings, the
     // handle and the conversation's place as they are when called.
     const tools: ToolServer = async (conversation, message) => {
       const handle = entry.handle;
@@ -464,27 +488,27 @@ export class GooseRuntime {
         ...appClient(handle, {
           spawn: this.spawn,
           cwd: entry.config.workspace,
-          memories: () => this.memories(pubkey),
+          memories: (slug) => this.memories(pubkey, slug),
         }),
         remember: async (slug: string, body: string, after: number) => {
           await handle.remember(slug, body, after);
-          if (slug === "core") delete entry.memory;
+          this.forgetMemories(pubkey);
         },
       };
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message);
+      return respond(client, context, message, this.added());
     };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       tools,
-      serve: (handler) => this.serve(handler),
+      process: this.goose,
+      pool: this.pool,
       onChange: () => this.notify(),
-      processFingerprint: () =>
-        JSON.stringify([
-          entry.config.workspace,
-          entry.config.model,
-          entry.config.provider,
-        ]),
+      // Read as each turn starts, so a change needs no restart.
+      choice: () => ({
+        provider: entry.config.provider.trim(),
+        model: entry.config.model.trim(),
+      }),
       fingerprint: () =>
         JSON.stringify([
           entry.config.workspace,
@@ -492,13 +516,13 @@ export class GooseRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          addedKey(this.added()),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
-        const memory = await this.memory(pubkey, entry);
+        const memory = await this.core(pubkey);
         return {
           workspace,
-          env: env(entry.config),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
@@ -514,61 +538,35 @@ export class GooseRuntime {
     return entry;
   }
 
-  /** The agent's `core` memory, as a new session's prompt carries it: its
-   * text, `null` when it has none, or undefined when it could not be read. */
-  private async memory(pubkey: string, entry: Entry) {
-    if (entry.memory && Date.now() - entry.memory.at < MEMORY_TTL_MS)
-      return entry.memory.value;
-    let value: string | null | undefined;
-    try {
-      const memories = await this.memories(pubkey);
-      value = memories.find((memory) => memory.slug === "core")?.body ?? null;
-    } catch (error) {
-      console.warn("goose could not read the agent's memory", error);
-    }
-    entry.memory = { value, at: Date.now() };
-    return value;
-  }
-
-  /** The agent's memory, read back through the owner's session: it is
-   * encrypted to the owner, so no agent key is needed to read it. */
-  private memories(pubkey: string): Promise<readonly Memory[]> {
-    let reading = this.reading.get(pubkey);
+  /** The agent's memory, or only entry `slug`, read back through the owner's
+   * session: it is encrypted to the owner, so no agent key is needed. */
+  private memories(pubkey: string, slug?: string): Promise<Memories> {
+    const key = `${pubkey}\0${slug ?? ""}`;
+    let reading = this.reading.get(key);
     if (!reading) {
-      reading = this.readMemories(pubkey).finally(() =>
-        this.reading.delete(pubkey),
-      );
-      this.reading.set(pubkey, reading);
+      const started = this.readMemories(pubkey, slug).finally(() => {
+        if (this.reading.get(key) === started) this.reading.delete(key);
+      });
+      this.reading.set(key, started);
+      reading = started;
     }
-    return reading;
+    // The shared read keeps its own bound, so a caller that stops waiting
+    // sooner cannot cut it short for the others.
+    return abortable(reading, AbortSignal.timeout(READ_TIMEOUT_MS));
   }
-  private async readMemories(pubkey: string): Promise<readonly Memory[]> {
+  /** After a memory write, a read that may have started before it is not
+   * shared with later callers. */
+  private forgetMemories(pubkey: string) {
+    for (const key of this.reading.keys())
+      if (key.startsWith(`${pubkey}\0`)) this.reading.delete(key);
+  }
+  private async readMemories(pubkey: string, slug?: string): Promise<Memories> {
     const snapshot = this.relay(pubkey)?.snapshot();
     if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    const view = snapshot.session.agentMemories.open(pubkey);
-    try {
-      const done = new Promise<void>((resolve) => {
-        const settled = () =>
-          !["idle", "loading"].includes(view.snapshot().status) && resolve();
-        view.subscribe(settled);
-        settled();
-      });
-      void view.refresh();
-      await Promise.race([
-        done,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Memory read timed out")),
-            MEMORY_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      const { status, listing } = view.snapshot();
-      if (status !== "ready" || !listing)
-        throw new Error(`Memory unavailable (${status})`);
-      return listing.entries;
-    } finally {
-      view.dispose();
-    }
+    return snapshot.session.agentMemories.read(
+      pubkey,
+      AbortSignal.timeout(READ_TIMEOUT_MS),
+      slug,
+    );
   }
 }

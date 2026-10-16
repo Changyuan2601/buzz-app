@@ -47,10 +47,25 @@ note that it is off when it is off. `callSessionTool` dispatches each call and
 refuses attention calls while attention is off. A new shared tool needs no
 harness change.
 
-The Agents runner owns watches and timers. `src/features/agent-harness/wakes.ts`
-queues each wake in its Interest's lane (`lanes.ts`), checks that it is still
-current before and while its prompt is built, and passes it to the type's
-optional `runOnce`. That runs one turn with no saved conversation (Claude: a
+Plugins add tools with `ctx.agents.addTool`, listed after the Buzz
+tools under the same `buzz` server; the standalone server in
+`src/buzz-mcp/main.ts` stays without them. A harness reads `agents.tools()`
+and passes it to `respond` or `callSessionTool`. A session keeps the list it
+started with, so `addedKey` goes in what decides when one is replaced: the
+Claude and goose session fingerprints, Claude's spare, and each saved Codex
+binding, since `thread/resume` keeps a thread's tools. Claude and goose resume
+their sessions when replaced, but a Codex agent starts a new thread and loses its
+context. That happens once when a plugin with tools ships, and again whenever a
+tool's name, description or schema changes, so edit those deliberately.
+
+The Agents runner starts a mention run from a `p` tag, or from any new message
+by the other member of a one-to-one DM the agent is in; group DMs still need
+the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
+Interest's turns one at a time, up to 8 Interests at once, beside the mention
+lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
+it is still current before and while its prompt is built, and passes it to the
+type's optional `runOnce`. That runs one turn with
+no saved conversation (Claude: a
 one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
 be ready. The prompt text lives in `attention-prompt.ts`.
@@ -91,6 +106,22 @@ the runtime like the corresponding per-agent save but does not mutate agent
 records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
+
+Codex's provider model menu offers **Codex recommended** (the catalog's
+recommendation) and specific models. Blank model preferences follow the
+recommendation; blank thinking preferences follow the selected model's default
+unless a supported Buzz provider thinking preference is inherited. Explicit Buzz
+selections take precedence. Local Codex configuration does not supply model or
+thinking preferences to Buzz; unrelated configuration is still used where needed.
+Preview and execution resolve the same concrete model and thinking level, and
+execution passes both explicitly rather than falling through to host preferences.
+Composer discovery caches reads until effective model or thinking settings change.
+Codex opts into sending the concrete displayed model and known effort with each
+composer message; this does not rewrite saved provider preferences or agent
+overrides. Model discovery's `sendDefaults` flag is opt-in: other types send only
+explicit picks. In particular, an untouched Claude picker must not emit an override,
+so follow-up messages preserve a running turn's model and configured cloud model
+IDs do not become per-turn tags.
 
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
@@ -228,7 +259,9 @@ You can always mention yourself. If archive state is unknown, the mention is
 allowed.
 
 A mention notifies a member. It does not promise that an agent will answer, and
-choosing someone does not give them access or start an agent.
+choosing someone does not give them access or start an agent. In a one-to-one
+DM with your own agent, it answers every message you send, mention or not; a
+group DM still requires a mention.
 
 Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
 group, matches against the visible resolved label come first: whole-name exact,
@@ -396,9 +429,9 @@ the relay re-verifies consent. An owner request copies the target's single live
 by that re-read, and only a definitive relay rejection skips it. No profile pane
 offers Archive or Unarchive now; the only caller is agent deletion.
 
-**Delete agent** on Agents forgets the agent's key on this device, then
-(`AgentsService.cleanup`, shared helpers in `features/agents/relay-removal.ts`)
-runs whenever its community is open:
+**Delete agent** on Agents marks the agent's row `deleting` in the native agent
+store and stops it, keeping its key. The cleanup (`AgentsService.cleanup`, shared
+helpers in `features/agents/relay-removal.ts`) then runs:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
    channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
@@ -406,9 +439,15 @@ runs whenever its community is open:
 2. A fresh archive read runs; unless it already lists the identity, it is archived
    through the request path above when a consent path exists. An agent that never
    published an owner-attested profile has nothing to hide and is not archived.
-3. The saved record is forgotten.
+3. The owner's agent record is deleted.
+4. Only after every step is confirmed is the key erased and the row dropped.
 
-Any failure leaves the cleanup to be retried on the next refresh or connect.
+If a step fails or the app quits partway, nothing is erased and nothing retries in
+the background. The agent stays listed and stopped, including after a relaunch, with
+a note in its settings that Delete didn't finish; pressing Delete again reruns the
+whole cleanup. Rows deleted by older builds, whose key is already erased, only have
+the owner's agent record deleted and the row dropped.
+
 `removeRelayAgent` applies the same steps to a relay-only agent: archive when
 consent exists, delete the owner's kind 30177 record (NIP-09), then remove it from
 its channels on a best-effort basis.

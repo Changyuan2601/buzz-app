@@ -15,6 +15,8 @@ export function ChannelSidebarRow({
   icon,
   nameAccessory,
   badge,
+  working = false,
+  ordinary = false,
   childContent,
   dmVisualSpacing = false,
   wrapSelect,
@@ -34,6 +36,10 @@ export function ChannelSidebarRow({
   icon: ReactNode;
   nameAccessory?: ReactNode;
   badge?: ReactNode;
+  /** Agents are working here; the badge reserves its own trailing space. */
+  working?: boolean;
+  /** Ordinary unread backlog emphasises the label. */
+  ordinary?: boolean;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   dmVisualSpacing?: boolean;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
@@ -57,6 +63,7 @@ export function ChannelSidebarRow({
     <NavigationItem
       type="button"
       data-channel-id={channel.id}
+      data-working={working || undefined}
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
       }
@@ -86,7 +93,13 @@ export function ChannelSidebarRow({
           </span>
         )
       }
-      trailing={badge && <span className={styles.badges}>{badge}</span>}
+      trailing={
+        badge && (
+          <span className={styles.badges} data-working={working || undefined}>
+            {badge}
+          </span>
+        )
+      }
     />
   );
   return (
@@ -94,6 +107,7 @@ export function ChannelSidebarRow({
       <div
         className={styles.row}
         data-channel-sidebar-row=""
+        data-ordinary={ordinary || undefined}
         data-selected={(selected === channel.id && !draftSelected) || undefined}
       >
         {hasChildren && (

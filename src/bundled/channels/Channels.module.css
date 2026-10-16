@@ -239,7 +239,7 @@
   isolation: isolate;
   width: max-content;
   max-width: calc(100% - var(--space-2));
-  background: var(--affordance-prominent);
+  /* Button owns the fill; a second backing makes its soft edge muddy. */
   box-shadow: var(--shadow-sm);
   border-radius: var(--radius-capsule);
   visibility: hidden;
@@ -373,7 +373,7 @@
   min-height: var(--size-control-sm);
   padding: var(--space-half) calc((2 * var(--size-control-sm)) + var(--space-2))
     var(--space-half) var(--space-2);
-  color: var(--text-unavailable);
+  color: var(--text-subtle);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -401,7 +401,8 @@
   white-space: nowrap;
 }
 .sectionLabel [data-sidebar-group-icon] {
-  margin-inline-end: var(--space-2);
+  width: var(--space-5);
+  margin-inline-end: var(--space-1);
 }
 .sectionChevron {
   display: inline-grid;
@@ -409,7 +410,7 @@
   height: var(--space-6);
   flex: 0 0 var(--space-6);
   place-items: center;
-  color: var(--text-unavailable);
+  color: var(--text-subtle);
   transition: transform 160ms ease-out;
 }
 .sectionHeader details:not([open]) .sectionChevron {
@@ -423,7 +424,7 @@
   right: 0.25rem;
   display: flex;
   align-items: center;
-  color: var(--text-unavailable);
+  color: var(--text-subtle);
   opacity: 0;
   pointer-events: auto;
 }
@@ -431,7 +432,7 @@
   top: 50%;
   transform: translateY(-50%);
 }
-.sectionActions [data-icon-variant] {
+.sectionActions [data-icon-variant]:not([data-disabled]) {
   color: inherit;
 }
 .untitledSection {
@@ -445,22 +446,12 @@
 .untitledSectionContent {
   padding-inline-end: calc(var(--space-8) + var(--space-1));
 }
-.channelSection:has(
-    summary:hover,
-    summary:focus-visible,
-    .sectionActions:hover,
-    .sectionActions:focus-within,
-    [data-popup-open]
-  )
-  .sectionActions,
-.channelSection:has(
-    summary:hover,
-    summary:focus-visible,
-    .sectionActions:hover,
-    .sectionActions:focus-within,
-    [data-popup-open]
-  )
-  .sectionChevron {
+.sectionActions:focus-within,
+.sectionHeader:hover :is(.sectionActions, .sectionChevron),
+.channelSection[data-menu-open] :is(.sectionActions, .sectionChevron),
+html[data-keyboard-navigation]
+  .sectionHeader:focus-within
+  :is(.sectionActions, .sectionChevron) {
   opacity: 1;
   pointer-events: auto;
 }

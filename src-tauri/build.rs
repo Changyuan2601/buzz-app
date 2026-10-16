@@ -16,6 +16,9 @@ fn main() {
     if configured("BUZZ_UPDATER_PUBLIC_KEY") && configured("BUZZ_UPDATER_ENDPOINT") {
         println!("cargo:rustc-cfg=buzz_updater_enabled");
     }
+    // tauri-build watches only the resource files present when it ran, so watch
+    // the directory too: goose-acp is staged after a first `cargo check`.
+    println!("cargo:rerun-if-changed=resources/bin");
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -54,6 +57,10 @@ fn main() {
             "relay_publish_read_state",
             "relay_http",
             "relay_workflow_runs",
+            "relay_admin_discover",
+            "relay_admin_request",
+            "relay_admin_attachment",
+            "relay_admin_save_attachment",
             "relay_project_git",
             "relay_project_git_cancel",
             "relay_channel_sign",
@@ -110,6 +117,7 @@ fn main() {
             "app_agent_set_picture",
             "app_agent_set_type",
             "app_agent_delete",
+            "app_agent_begin_delete",
             "app_agent_forget",
             "app_agent_publish",
             "app_agent_publish_profile",
@@ -119,6 +127,10 @@ fn main() {
             "app_agent_remember",
             "app_agent_claim",
             "app_agent_release",
+            "jev_classifier_status",
+            "jev_classifier_set_key",
+            "jev_classifier_clear_key",
+            "jev_classify",
             "title_bar_double_click",
             "notification_show",
             "notification_permission_state",

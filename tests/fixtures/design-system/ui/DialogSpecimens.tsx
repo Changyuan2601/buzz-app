@@ -122,9 +122,40 @@ ${informational ? "" : `  <form id={id} className="space-y-section-gap" onSubmit
   );
 }
 
+function ScrollToEdgeExample() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>
+        Open footerless scrolling list
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Scrolling list"
+        height="stable"
+        bodyLayout="flex"
+        footerGap="none"
+      >
+        <div className="buzz-thin-scrollbar min-h-0 overflow-auto pb-6">
+          {Array.from(
+            { length: 24 },
+            (_, index) => `List item ${index + 1}`,
+          ).map((label) => (
+            <p className="py-3 text-body" key={label}>
+              {label}
+            </p>
+          ))}
+        </div>
+      </Dialog>
+    </>
+  );
+}
+
 export function DialogSpecimens() {
   return (
     <div className="component-specimen-stack">
+      <ScrollToEdgeExample />
       <Example
         label="Wide catalog"
         description="A bounded wide surface for a sidebar and setup details."

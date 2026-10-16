@@ -39,12 +39,18 @@ export type FakeGoose = {
   closed: string[];
   cancelled: string[];
   deleted: string[];
+  /** Each `session/set_config_option`, as `sessionId configId=value`. */
+  configured: string[];
+  /** When set, `session/set_config_option` fails with it. */
+  configError?: string;
   /** The environment it started with. */
   env: Readonly<Record<string, string | null>>;
   /** When set, a turn stays open until it is finished. */
   hold: boolean;
   /** When set, a turn takes a steer and ends before goose answers the steer. */
   endOnSteer: boolean;
+  /** Requests it never answers, as a goose that hangs. */
+  silent: Set<string>;
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
@@ -98,6 +104,8 @@ export function fakeSpawn(
     supported?: readonly string[];
     /** Saved sessions `session/list` and `session/export` read. */
     history?: readonly FakeSession[];
+    /** Requests each process never answers. */
+    silent?: readonly string[];
   }> = {},
 ) {
   const processes: FakeGoose[] = [];
@@ -173,9 +181,11 @@ export function fakeSpawn(
       closed: [],
       cancelled: [],
       deleted: [],
+      configured: [],
       env: process.env ?? {},
       hold: options.hold ?? false,
       endOnSteer: false,
+      silent: new Set(options.silent),
       killed: false,
       ask: (method, params) => {
         const requestId = `goose-${++requests}`;
@@ -219,6 +229,7 @@ export function fakeSpawn(
         answers.delete(id ?? "");
         return;
       }
+      if (fake.silent.has(method)) return;
       const sessionId = String(params.sessionId ?? "");
       switch (method) {
         case "initialize":
@@ -290,6 +301,17 @@ export function fakeSpawn(
           if (fake.endOnSteer) turn.finish();
           return reply(id, { runId: turn.runId, messageId: "m" });
         }
+        case "session/set_config_option":
+          if (fake.configError)
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: fake.configError },
+            });
+          fake.configured.push(
+            `${sessionId} ${String(params.configId)}=${String(params.value)}`,
+          );
+          return reply(id, { configOptions: [] });
         case "session/cancel":
           fake.cancelled.push(sessionId);
           running.get(sessionId)?.finish("cancelled");

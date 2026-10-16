@@ -41,11 +41,15 @@ import type { LocalAgents } from "../agents/local";
 import { localAgentsFixture } from "../agents/local-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import type { OutgoingEvent } from "../relay/outbox";
+import type { Outbox, OutgoingEvent } from "../relay/outbox";
+import { createMessages } from "../relay/messages";
+import { ClaudeProcess } from "../../bundled/claude-code/claude";
+import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
@@ -2261,6 +2265,288 @@ it("opens the model picker while discovery is pending, then fills its controls",
     screen.queryByText("Loading model and effort…"),
   ).not.toBeInTheDocument();
 });
+
+it.each([
+  "claude-sonnet-4-5@20250929",
+  "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5",
+])(
+  "sends an untouched Claude cloud model without an override: %s",
+  async (current) => {
+    const snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+    };
+    const types = [
+      {
+        key: "claude",
+        models: () => ({
+          current,
+          models: [
+            { id: current, label: "Configured Claude", efforts: [] },
+            { id: "haiku", label: "Haiku", efforts: [] },
+          ],
+        }),
+      },
+    ];
+    const agents = {
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    const publish = vi.fn<Outbox["send"]>(() => "sent");
+    const messages = createMessages(
+      { supports: () => true, send: publish } as unknown as Outbox,
+      first.pubkey,
+      () => undefined,
+      () => [],
+      () => {},
+    );
+    h.messages.send.mockImplementation(messages.send);
+    await h.user.type(h.input(), "use the configured model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    ).toHaveTextContent("Configured Claude");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: [
+        ["h", "channel"],
+        ["p", first.pubkey],
+      ],
+    });
+  },
+);
+
+it("keeps an active Claude model when a follow-up composer picker is untouched", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    cwd: "~/.buzz",
+    systemPrompt: "test",
+    model: "opus",
+    sessionId: "s1",
+  });
+  onTestFinished(() => claude.kill());
+  await claude.send("plain");
+  const fake = processes[0];
+  if (!fake) throw new Error("Expected Claude process");
+  fake.hold = true;
+  const quick = claude.send("quick", { model: "haiku" });
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "claude" }],
+  };
+  const types = [
+    {
+      key: "claude",
+      models: () => ({
+        current: "opus",
+        models: [
+          { id: "opus", label: "Opus", efforts: [] },
+          { id: "haiku", label: "Haiku", efforts: [] },
+        ],
+      }),
+    },
+  ];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  let steered: ReturnType<ClaudeProcess["send"]> | undefined;
+  h.messages.send.mockImplementation(
+    (
+      _channel,
+      content,
+      _mentions,
+      _attachments,
+      _recovery,
+      _references,
+      picks,
+    ) => {
+      steered = claude.send(content, picks?.[first.pubkey]);
+      return "sent";
+    },
+  );
+  try {
+    await h.user.type(h.input(), "keep working");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    ).toHaveTextContent("Opus");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    await waitFor(() => expect(fake.prompts).toHaveLength(3));
+    expect(fake.models).toEqual(["opus", "haiku", "haiku"]);
+  } finally {
+    fake.finish();
+    await Promise.all([quick, steered]);
+  }
+});
+
+it("sends the model and effort shown by an untouched agent picker", async () => {
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const models = {
+    current: "gpt-6.1-sol",
+    sendDefaults: true,
+    models: [
+      {
+        id: "gpt-6.1-sol",
+        label: "GPT-6.1-Sol",
+        effort: "high",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      { id: "other", label: "Other", efforts: [] },
+    ],
+  };
+  const types = [{ key: "test/agent", models: () => models }];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "use what you show");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: "Model for Honey's next run",
+    }),
+  ).toHaveTextContent("GPT-6.1-Sol");
+  expect(
+    await screen.findByLabelText("Effort for Honey's next run"),
+  ).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("use what you show"),
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { model: "gpt-6.1-sol", effort: "high" } },
+  );
+});
+
+it.each(["settings refresh", "model pick"])(
+  "follows the new model's effort after %s without inheriting an untouched effort",
+  async (change) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    let current = "fast";
+    const models = [
+      {
+        id: "fast",
+        label: "Fast",
+        effort: "medium",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      {
+        id: "deep",
+        label: "Deep",
+        effort: "high",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ];
+    const listeners = new Set<() => void>();
+    const types = [
+      {
+        key: "test/agent",
+        models: () => ({ current, models, sendDefaults: true }),
+      },
+    ];
+    const agents = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "follow the shown defaults");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    const trigger = await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    });
+    await h.user.click(trigger);
+    expect(
+      await screen.findByLabelText("Effort for Honey's next run"),
+    ).toHaveAttribute("aria-valuetext", "Medium");
+    expect(trigger).not.toHaveAttribute("data-selected");
+    if (change === "settings refresh") {
+      await act(async () => {
+        current = "deep";
+        snapshot = { ...snapshot };
+        for (const listener of listeners) listener();
+      });
+    } else {
+      await h.user.click(
+        screen.getByRole("button", { name: "Model for Honey's next run" }),
+      );
+      await h.user.click(
+        await screen.findByRole("menuitemradio", { name: "Deep" }),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "Model for Honey's next run",
+        }),
+      ).toHaveTextContent("Deep"),
+    );
+    expect(
+      await screen.findByLabelText("Effort for Honey's next run"),
+    ).toHaveAttribute("aria-valuetext", "High");
+    if (change === "settings refresh")
+      expect(trigger).not.toHaveAttribute("data-selected");
+    await h.user.keyboard("{Escape}");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenLastCalledWith(
+      "channel",
+      expect.stringContaining("follow the shown defaults"),
+      [first.pubkey],
+      [],
+      undefined,
+      [],
+      { [first.pubkey]: { model: "deep", effort: "high" } },
+    );
+  },
+);
 
 it("asks a mentioned agent of the viewer's for a model and effort on the next run only", async () => {
   // Snapshots are stable, as the service's are.
@@ -4701,7 +4987,7 @@ it("inserts readable literal mention links without new notification recipients d
     );
   });
   const labels = ["@Honey", ...names.map((name) => `@${name}`)].map((label) =>
-    label.replace("\n", " "),
+    label.replace(/[\r\n]+/g, " "),
   );
   // Each selection stays one literal label on its own exact identity link.
   const readable = (body: string) => {
@@ -5466,6 +5752,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
         ensure: async () => {},
         refresh: async () => {},
         writable: false,
+        supported: true,
         consent: vi.fn(),
         request: vi.fn(),
       },
@@ -6880,4 +7167,100 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("marks the composer for conversation controls only while they render", () => {
+  const h = mount(
+    { trailingTool: <button type="button">Tool</button> },
+    undefined,
+    first.pubkey,
+  );
+  const form = () => h.container.querySelector("form");
+  expect(form()).toHaveAttribute("data-conversation-controls");
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(form()).toHaveAttribute("data-editing");
+  expect(form()).not.toHaveAttribute("data-conversation-controls");
+  h.unmount();
+});
+
+it("marks the leading tools while explicit recipients are shown", async () => {
+  const h = mount();
+  expect(h.container.querySelector("[data-recipients]")).toBeNull();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const region = screen.getByRole("region", { name: "Explicit mentions" });
+  const tools = region.parentElement;
+  expect(tools).toHaveAttribute("data-recipients");
+  await h.user.click(
+    within(region).getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  expect(tools).not.toHaveAttribute("data-recipients");
+  h.unmount();
+});
+
+it("marks the composer with attachments until the emptied section has animated out", async () => {
+  // jsdom applies no CSS module styles, so the gap/padding this attribute
+  // drives cannot be measured here; the attribute's timeline is asserted.
+  const h = await mountUploadComposer();
+  expect(h.form()).not.toHaveAttribute("data-attachments");
+  attachByPaste(h.input(), attachmentFile("notes.txt"));
+  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
+  const section = screen.getByRole("region", { name: "Attachments" });
+  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+  // The list is empty but the section is still exiting: keep the mark.
+  expect(section).toBeInTheDocument();
+  expect(h.form()).toHaveAttribute("data-attachments");
+  await waitFor(() => expect(section).not.toBeInTheDocument());
+  expect(h.form()).not.toHaveAttribute("data-attachments");
+  attachByPaste(h.input(), attachmentFile("again.txt"));
+  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
+});
+
+it("drops the attachments mark while a row-requested edit holds pending items", async () => {
+  // Arrow-up refuses to edit over pending items; the row's Edit action does not.
+  const h = await mountUploadComposer({ editable: true });
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  h.unmount();
+  let scope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    scope = useMessageEditScope();
+    return null;
+  }
+  const row = editableMessage({ authorId: viewer });
+  const view = render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  const form = within(view.container).getByRole("form");
+  attachByPaste(
+    within(view.container).getByRole("textbox"),
+    attachmentFile("pending.txt"),
+  );
+  await waitFor(() => expect(form).toHaveAttribute("data-attachments"));
+  act(() => scope?.current?.(row));
+  expect(form).toHaveAttribute("data-editing");
+  expect(form).not.toHaveAttribute("data-attachments");
+  fireEvent.click(
+    within(view.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  expect(form).not.toHaveAttribute("data-editing");
+  expect(form).toHaveAttribute("data-attachments");
+  expect(within(view.container).getByText("pending.txt")).toBeVisible();
 });

@@ -130,6 +130,13 @@ active registered types appear there; plugin activation remains owned by
 Settings → Plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
+A plugin, bundled or installed, can add a tool to every agent session in the
+app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
+gets the agent's Buzz client and where it is working, so the tool acts as the
+agent, as the rest of a trusted plugin's code acts as its owner. Names are
+lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
+scope ends, so safe mode removes installed plugins' tools.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",
@@ -516,7 +523,42 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
-Plugins can declare host access in `manifest.json`:
+Plugin manifests may include display-only discovery metadata:
+
+```json
+{
+  "id": "example.invoices",
+  "name": "Invoices",
+  "apiVersion": 1,
+  "description": "Reconcile invoices without leaving Buzz.",
+  "discovery": {
+    "category": "finance",
+    "tags": ["Accounting", "Invoice Management"]
+  }
+}
+```
+
+Descriptions contain 1–280 UTF-8 bytes. Category values use the same stable
+lowercase identifier syntax as plugin IDs. Tags are readable plain text, such as
+`"Programming Language"`, with 1–80 UTF-8 bytes per tag and at most 16 tags. Blank
+tags and control characters (including tabs and newlines) are rejected. Duplicate
+comparison trims and collapses Unicode whitespace to a single space, then applies
+Unicode lowercasing; `"Programming Language"` and `" programming   language "`
+are duplicates. The original spelling, casing, and spacing are preserved for
+display and serialization. This comparison does not perform Unicode canonical
+normalization or full Unicode case folding.
+Categories are open slugs: a host may give recognized categories first-class
+labels and group unrecognized values under Other, but an unrecognized category
+does not invalidate a plugin. Tags carry open-ended search terms. Neither field
+grants capabilities, asserts provenance, or describes runtime state. The
+`discovery` object accepts unknown display hints for forward compatibility;
+security-bearing manifest fields remain strict.
+
+Hosts released before these metadata fields were introduced reject `description`
+and `discovery` as unknown manifest keys. Publishers targeting those hosts must
+omit both fields; using slug tags does not make them compatible.
+
+Plugins can separately declare host access in `manifest.json`:
 
 ```json
 {
@@ -583,7 +625,9 @@ stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
 `cwd` is absolute or `~/…` and is created if missing. `env` adds to the app's
 environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
 are never inherited. The program is found on the same search path as commands,
-which on macOS also includes `~/.local/bin`.
+which on macOS also includes `~/.local/bin`. A process declared with
+`"bundled": true` instead runs the copy the app ships in its `bin` resources and
+never searches PATH; the Goose plugin runs `goose-acp` this way.
 
 `agent` names an agent whose type the calling plugin registered. The
 process then runs as that agent, as harness agents do: native puts its key in
@@ -636,6 +680,50 @@ or URL is needed. Include both files in the imported folder or Git repository.
 Buzz checks the event ID, signature and exact artifact bytes before install and
 each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
 local development.
+
+A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
+those required files. README content must be UTF-8 and is limited to 256 KiB.
+Icons must match their PNG or JPEG filename and have a decodable first image, each at most 1 MiB, no more than 4096 pixels on
+either side, and no more than 1,048,576 pixels total. Signing places their exact
+content in typed optional release-envelope fields, so the artifact hash and
+publisher signature cover them without changing plugin `apiVersion: 1`. Hosts
+continue to accept older `{ manifest, code }` artifacts. The catalog exposes only
+small content revisions for import/update comparison. `Manager::content` reads the
+integrity-checked content on demand; its native command and capability land with
+the first details surface that consumes them.
+Both icon formats may be packaged together and are returned independently; the
+client decides which format to prefer.
+Header parsing and image decoding use a 16 MiB allocation budget; the underlying
+decoder may discard optional metadata that exceeds that budget. Validation does
+not certify later animation frames or reject trailing bytes after the image.
+Content reads return the stored base64 icon strings. Conventional
+asset filenames are case-sensitive in both folder and Git imports; a symbolic
+link at one of those filenames rejects an unsigned candidate.
+
+`README.md`, `icon.png`, and `icon.jpg` are reserved names in an unsigned build
+folder, with the same all-or-nothing rule as `manifest.json`: a file at one of
+those names that misses the limits above rejects the whole folder or Git import,
+reload, and signing, and an installed plugin keeps its current revision.
+Older hosts ignored these names, so a source tree that already ships a
+nonconforming file there (for example, a 2048×2048 `icon.png`) stops reloading
+after upgrade. To migrate, resize the file to meet the limits, or rename or move it
+out of the build folder. Signed artifacts carry their content explicitly and are
+not affected by neighboring files.
+
+Older hosts can still read asset-free packages and registry entries. Packages
+with these new fields, and registry entries recording their content revisions,
+require a host that supports them; older hosts reject unknown fields and may
+offer settings recovery. Downgrading after installing such a package is not
+supported. This does not change the plugin runtime API version.
+Signing requires regular, non-symlink source files, using the same directory
+capability boundary as folder import.
+
+These files are publisher-supplied presentation content, not an endorsement or a
+runtime asset directory. Buzz-owned framing and fallback artwork remain
+authoritative. A future README renderer must keep raw HTML/scripts disabled and
+must not load embedded data URLs or passive remote media; the package API does not
+turn README links, images, or the icon into plugin runtime resources.
+
 A signed installation can only update from the same publisher; remove and
 reinstall to choose a different publisher. Signing identifies an author, but
 does not sandbox plugin code or make a publisher trustworthy.
@@ -670,9 +758,10 @@ Local discovery skips symlink directories, `node_modules`, `target` and dot-pref
 directories such as `.git` and `.claude` (Claude worktrees) below the selected
 folder; select such a folder itself to import from it. Git discovery does not skip
 dot-prefixed directories. Local discovery uses `cap-std` directory-relative reads to
-confine descendant path resolution. Files
-must be regular, non-symlink UTF-8 text; candidate folder names must be UTF-8 and are
-not lossily normalized. Discovery never evaluates modules. Git is a required local
+confine descendant path resolution. Files must be regular and non-symlink;
+manifests, modules, READMEs, signatures and candidate folder names must be UTF-8,
+while icons are validated as binary PNGs or JPEGs. Folder names are not lossily normalized.
+Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
 submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
@@ -688,7 +777,7 @@ Folder traversal checks a 60-second budget between directory reads (a hung files
 syscall is not forcibly cancelled), 32 nesting levels and 20,000 entries. A preview
 holds at most 32 plugins / 32 MiB; each artifact retains the 8 MiB limit. No builds
 are run: source-only folders explain that the author must supply `manifest.json`
-plus the self-contained `plugin.js`. Separate assets/TSX/runtime dependency resolution
+plus the self-contained `plugin.js`. Arbitrary assets/TSX/runtime dependency resolution
 remain outside API v1. Browser Settings truthfully directs users to desktop rather
 than adding a second external-plugin storage or broadening CSP. Native commands need
 a rebuilt/restarted desktop process; frontend HMR alone cannot add them.
@@ -1166,7 +1255,9 @@ plugin keeps registering its default and never sees, stores or re-registers for
 an override; the override follows the plugin across disable, re-enable and
 replacement, and an override whose owner is no longer installed is ignored rather
 than deleted. Rebinding replaces an alias set with the single chosen chord; reset
-restores every alias. Host chords stay reserved: the page refuses to assign a chord
+restores every alias. On Apple platforms a binding may add Control (`ctrl`) beside
+Command, as in Me's ⌃⌘A Archive chat; elsewhere Control is `mod`, so a `ctrl`
+binding never matches there and capture never records one. Host chords stay reserved: the page refuses to assign a chord
 that another listed shortcut already uses, host or plugin, refuses the copy, cut,
 paste and select-all chords (and close-window/quit in the desktop build) because a
 match would prevent their default everywhere, and warns when a chord is one the

@@ -47,7 +47,7 @@
   padding-inline: var(--space-2)
     calc(var(--channel-row-fill-end, 0%) + var(--space-1) + var(--space-half));
 }
-.row .select [data-variant="row"]:has([data-channel-working]) {
+.row .select [data-variant="row"][data-working] {
   padding-inline-end: calc(var(--channel-row-fill-end, 0%) + var(--space-1));
 }
 .select [class~="navigation-item-label"],
@@ -82,7 +82,7 @@
   padding-inline-end: var(--space-1);
   gap: var(--space-2);
 }
-.badges:has([data-channel-working]) {
+.badges[data-working] {
   padding-block: var(--space-1);
   padding-inline-end: 0;
 }
@@ -112,7 +112,7 @@
   max-width: 100%;
   flex: 0 1 auto;
 }
-.row:has([data-channel-ordinary="true"]) .label {
+.row[data-ordinary] .label {
   color: var(--text-navigation-unread);
   font-weight: var(--type-weight-semibold);
 }
@@ -131,10 +131,13 @@
 .row .chevronIcon {
   display: none;
 }
-.row:is(:hover, :has(:focus-visible)) .hashIcon {
+/* Keyboard focus swaps in the chevron; pointer focus after a click does not. */
+.row:hover .hashIcon,
+html[data-keyboard-navigation] .row:focus-within .hashIcon {
   display: none;
 }
-.row:is(:hover, :has(:focus-visible)) .chevronIcon {
+.row:hover .chevronIcon,
+html[data-keyboard-navigation] .row:focus-within .chevronIcon {
   display: block;
 }
 .childLabel {
@@ -146,10 +149,6 @@
 .childLabel > [data-channel-unread-title="true"] {
   color: var(--text-navigation-unread);
   font-weight: var(--type-weight-semibold);
-}
-/* Empty badge wrappers must not consume the navigation item's trailing gap. */
-.select span:has(> .badges:empty) {
-  display: none;
 }
 .sessions.sessions [data-buzz-ui][data-variant="row"] {
   border-radius: var(--radius-row);

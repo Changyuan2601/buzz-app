@@ -83,7 +83,16 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   await close.click();
   await expect(dock).toHaveCount(0);
 
-  // Keep the scrollbar unclipped and the capsule centered in the 4px panel gutter.
+  // Keep the scrollbar unclipped and the capsule centered in the shared panel gutter.
+  const gap = await page
+    .locator(".shell-content")
+    .evaluate(
+      (element) =>
+        Number.parseFloat(
+          getComputedStyle(element).getPropertyValue("--space-panel-gap"),
+        ) *
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
   const navigation = page.getByRole("navigation", {
     name: "Subscribed channels",
   });
@@ -93,12 +102,17 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
     .getByRole("complementary", { name: "Channel sidebar", exact: true })
     .boundingBox();
   const mainBounds = await page.locator("#main-content > .panel").boundingBox();
-  expect(mainBounds.x - (sidebarBounds.x + sidebarBounds.width)).toBeCloseTo(4);
+  expect(mainBounds.x - (sidebarBounds.x + sidebarBounds.width)).toBeCloseTo(
+    gap,
+  );
   const railCenter = resizeBounds.x + resizeBounds.width / 2;
   expect(railCenter).toBeCloseTo(
     (sidebarBounds.x + sidebarBounds.width + mainBounds.x) / 2,
   );
-  expect(railCenter - (scrollBounds.x + scrollBounds.width)).toBeCloseTo(5);
+  // The existing scrollbar inset is 3px inside the panel's trailing edge.
+  expect(railCenter - (scrollBounds.x + scrollBounds.width)).toBeCloseTo(
+    gap / 2 + 3,
+  );
   const capsuleCenter = await resize.evaluate(
     (el) =>
       el.getBoundingClientRect().left +

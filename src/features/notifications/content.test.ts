@@ -68,6 +68,16 @@ it("bounds source, Unicode output and nesting, with a nonempty fallback", () => 
   );
   expect(messagePreview("<!-- buzz:wave:v1 -->")).toBe("New message");
 });
+it.each([
+  ["<div><!<!-- hidden -->-- visible --></div>", "<div><!-- visible --></div>"],
+  [
+    "<div><scr<!-- hidden -->ipt>alert(1)</script></div>",
+    "<div><script>alert(1)</script></div>",
+  ],
+  ["an <!-- unclosed comment", "an <!-- unclosed comment"],
+])("preserves literal HTML in notification text: %s", (source, text) => {
+  expect(messagePreview(source)).toBe(text);
+});
 it("normalizes whitespace/control characters in names and body", () => {
   const text = messageNotificationText(
     { ...message, previewContent: "hello\u202E\nworld" },

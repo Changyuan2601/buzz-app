@@ -2,11 +2,13 @@
 // agents, through the reads of the agent's community.
 import type { AgentReads, MemoryListing } from "../agents/reads";
 
-/** How long a shared read may take; each caller can stop waiting sooner. */
-const READ_TIMEOUT_MS = 10_000;
+/** How long a shared read may take; each caller can stop waiting sooner. It
+ * matches the frontend's bound on the native read, which answers a slow
+ * listing partial within it. */
+export const READ_TIMEOUT_MS = 10_000;
 
-/** One read per connection and agent at a time, which concurrent turns and
- * tool calls share. A new connection, even to the same community, may read as
+/** One read per connection, agent and slug (or full listing) at a time, which
+ * concurrent turns and tool calls share. A new connection, even to the same community, may read as
  * someone else, so it shares nothing with an old one. */
 export class MemoryReads {
   private reads = new WeakMap<object, Map<string, Promise<MemoryListing>>>();
@@ -15,6 +17,7 @@ export class MemoryReads {
     source: Pick<AgentReads, "connection" | "memoryListing">,
     agent: string,
     signal: AbortSignal,
+    slug?: string,
   ) {
     signal.throwIfAborted();
     let reads = this.reads.get(source.connection);
@@ -22,17 +25,19 @@ export class MemoryReads {
       reads = new Map();
       this.reads.set(source.connection, reads);
     }
-    let read = reads.get(agent);
+    const key = `${agent}\0${slug ?? ""}`;
+    let read = reads.get(key);
     if (!read) {
       const started = source.memoryListing(
         AbortSignal.timeout(READ_TIMEOUT_MS),
+        slug,
       );
       const shared = reads;
       const done = () => {
-        if (shared.get(agent) === started) shared.delete(agent);
+        if (shared.get(key) === started) shared.delete(key);
       };
       void started.then(done, done);
-      reads.set(agent, started);
+      reads.set(key, started);
       read = started;
     }
     return abortable(read, signal);
@@ -41,11 +46,13 @@ export class MemoryReads {
   /** After a memory write, a read that may have started before it is not
    * shared with later callers. */
   forget(connection: object, agent: string) {
-    this.reads.get(connection)?.delete(agent);
+    const reads = this.reads.get(connection);
+    for (const key of reads?.keys() ?? [])
+      if (key.startsWith(`${agent}\0`)) reads?.delete(key);
   }
 }
 
-/** The `core` memory in a listing: its text, `null` when the agent has none,
+/** The `core` memory in a listing (best read alone, by slug): its text, `null` when the agent has none,
  * or undefined when a partial listing may have missed it. */
 export function coreOf(listing: MemoryListing) {
   return (
@@ -65,7 +72,7 @@ export function coreMemorySection(memory: string | null | undefined) {
 }
 
 /** Stops waiting when `signal` aborts, even if the read itself does not. */
-function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
+export function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);
     signal.addEventListener("abort", abort, { once: true });

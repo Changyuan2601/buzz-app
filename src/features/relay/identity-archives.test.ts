@@ -225,6 +225,8 @@ it.each(["cache", "disconnect", "access", "dispose"] as const)(
       action === "dispose" ? "unavailable" : "idle",
     );
     if (action === "dispose") {
+      // Closing is not lack of support: callers must not read it as "none".
+      expect(h.archives.supported).toBe(true);
       const calls = h.query.mock.calls.length;
       await h.archives.refresh();
       expect(h.query).toHaveBeenCalledTimes(calls);
@@ -391,6 +393,7 @@ it("offers no writer without an archive authority", () => {
   const owner = createRelaySession(transport);
   owners.push(owner);
   expect(owner.session.archives.writable).toBe(false);
+  expect(owner.session.archives.supported).toBe(false);
 });
 it("owner consent ignores kind clauses but enforces request time bounds", async () => {
   const future = Math.floor(Date.now() / 1000) + 3600;

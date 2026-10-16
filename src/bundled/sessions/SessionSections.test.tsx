@@ -12,16 +12,23 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
-import type { RelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SessionSections } from "./SessionSections";
 
+const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
   cleanup();
   localStorage.clear();
 });
 
 function fixture(sectionName = "Work") {
+  const owner = createRelaySession(null);
+  owners.push(owner);
   let saved: SidebarPreferences = {
     sections: [{ id: "work", name: sectionName, order: 0 }],
     assignments: {},
@@ -84,6 +91,7 @@ function fixture(sectionName = "Work") {
       onNew={onNew}
       session={
         {
+          ...owner.session,
           sidebarPreferences: preferences,
           mePreferences: preferences,
           canvas: { available: false },
@@ -119,8 +127,8 @@ it("creates and moves through the relay service, then restores in a fresh store"
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
   expect(
-    screen.queryByRole("menuitem", { name: "Session settings…" }),
-  ).toBeNull();
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  ).toHaveAttribute("aria-disabled", "true");
   (await screen.findByRole("menuitem", { name: "Section" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(

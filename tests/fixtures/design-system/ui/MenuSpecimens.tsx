@@ -11,6 +11,7 @@ import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
 import {
+  ArchiveIcon,
   BellIcon,
   CheckIcon,
   DotsThreeIcon,
@@ -260,6 +261,7 @@ export function MenuSpecimen() {
       tone="danger"
       onClick={() => setLastAction("Archive selected (preview only)")}
     >
+      <MenuIcon><ArchiveIcon size={16} /></MenuIcon>
       Archive workspace
     </MenuItem>
   </MenuPopup>
@@ -286,6 +288,9 @@ export function MenuSpecimen() {
               tone="danger"
               onClick={() => setLastAction("Archive selected (preview only)")}
             >
+              <MenuIcon>
+                <ArchiveIcon size={16} />
+              </MenuIcon>
               Archive workspace
             </MenuItem>
           </MenuPopup>

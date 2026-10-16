@@ -323,7 +323,7 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
       .click();
     const profileMenu = page.locator(".buzz-menu-popup[data-profile-menu]");
     const profileAvatar = profileMenu.getByRole("menuitem", {
-      name: "View your profile",
+      name: /, edit profile$/,
     });
     await expect(profileAvatar).toBeVisible();
     // The popup enters through a translate transition; Chromium's transformed
@@ -492,6 +492,13 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     expect(help.overflow).toBe("visible");
   }
   const sidebarNode = await sidebar.elementHandle();
+  const panelGap = await shellNavigation.evaluate(
+    (node) =>
+      Number.parseFloat(
+        getComputedStyle(node).getPropertyValue("--space-panel-gap"),
+      ) *
+      Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+  );
   let expandedWidth;
   for (const viewportWidth of [1440, 800]) {
     if (viewportWidth === 800) await handle.press("End");
@@ -515,7 +522,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
         duration: style.transitionDuration,
       };
     });
-    expect(track.width).toBe(expandedWidth + gutterWidth + 4);
+    expect(track.width).toBe(expandedWidth + gutterWidth + panelGap);
     expect(track.property).toContain("grid-template-columns");
     expect(parseFloat(track.duration)).toBeGreaterThan(0);
     const openGap = await page.evaluate(() => {
@@ -528,7 +535,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
         sidebar.getBoundingClientRect().right
       );
     });
-    expect(openGap).toBe(gutterWidth + 4);
+    expect(openGap).toBe(gutterWidth + panelGap);
     // Seek paused real transitions so runner speed cannot hide an immediate jump.
     // Pause them when the toggle commits, before any frame: transitionrun arrives
     // in a later frame, and a stalled WebKit frame can finish the 220ms transition
@@ -585,7 +592,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
           );
         }
       }, label);
-      const width = expandedWidth + gutterWidth + 4;
+      const width = expandedWidth + gutterWidth + panelGap;
       const hiding = label.startsWith("Hide");
       // The track leaves its real extent on the first sampled step and crosses
       // the midpoint halfway through, instead of stalling behind a larger
@@ -602,7 +609,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
       expect(samples.at(-1).width).toBe(hiding ? 0 : width);
       for (const sample of samples) {
         expect(sample.sidebar).toBe(expandedWidth);
-        expect(sample.trailingGap).toBeCloseTo(gutterWidth + 4, 1);
+        expect(sample.trailingGap).toBeCloseTo(gutterWidth + panelGap, 1);
       }
       for (const sample of samples.slice(1, -1)) {
         expect(sample.clip).toBe("inset(-8px 0px -8px -8px)");
@@ -653,7 +660,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     .poll(() =>
       shellNavigation.evaluate((node) => node.getBoundingClientRect().width),
     )
-    .toBe(expandedWidth + gutterWidth + 4);
+    .toBe(expandedWidth + gutterWidth + panelGap);
 
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
   await expect(shellNavigation).toHaveAttribute("aria-hidden", "true");
@@ -708,7 +715,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     },
   );
   await expect(shellNavigation).toHaveAttribute("data-sidebar-open", "true");
-  expect(accessibilityHiddenWidth).toBe(expandedWidth + gutterWidth + 4);
+  expect(accessibilityHiddenWidth).toBe(expandedWidth + gutterWidth + panelGap);
   await shellNavigation.evaluate((node) => node.removeAttribute("aria-hidden"));
 
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();

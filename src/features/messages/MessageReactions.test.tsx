@@ -567,3 +567,21 @@ it("chooses a new bounded tilt on each pointer entry", () => {
     random.mockRestore();
   }
 });
+
+it("marks the reaction row populated only while active reactions render", () => {
+  const h = harness([react(other)]);
+  const view = render(<h.Controls />);
+  const populated = () =>
+    screen.getByTestId("reaction-row").hasAttribute("data-populated");
+  expect(populated()).toBe(true);
+  view.rerender(
+    <ConversationPresentation value={false}>
+      <h.Controls />
+    </ConversationPresentation>,
+  );
+  expect(populated()).toBe(false);
+  view.unmount();
+  const empty = harness();
+  render(<empty.Controls />);
+  expect(populated()).toBe(false);
+});

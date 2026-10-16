@@ -146,6 +146,8 @@ function setup(
 ) {
   let snapshot: AgentsSnapshot = {
     status,
+    classifier: "unavailable",
+    classifierKey: "missing",
     agents: saved,
     running: saved,
     teams: [],
@@ -262,6 +264,8 @@ function setup(
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
     register: vi.fn(),
+    addTool: vi.fn(),
+    tools: () => [],
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.
       if (!shown) return created;
@@ -278,7 +282,7 @@ function setup(
         here: [],
       }),
     ),
-    port: vi.fn(async () => created),
+    port: vi.fn(async () => ({ agent: created, notes: [] })),
     portTeam: vi.fn(
       async (): Promise<TeamPort> => ({
         imported: [],
@@ -318,7 +322,11 @@ function setup(
       for (const listener of listeners) listener();
       return ["workspace"] as const;
     }),
-    remove: vi.fn(async () => {}),
+    remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
+    unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
+    classifier: () => "unavailable",
+    setClassifierKey: vi.fn(async () => {}),
+    clearClassifierKey: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
       snapshot = {
@@ -328,6 +336,7 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
+    core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
         ...snapshot,
@@ -1398,6 +1407,26 @@ it("moves focus from Finish setup to Identity once the setup finishes", async ()
   screen.getByRole("button", { name: "Finish setup" }).focus();
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("tab", { name: "Identity" })).toHaveFocus();
+});
+
+it("keeps a failed Delete's agent and its warning on screen", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents, show } = setup([ada]);
+  const failure = "Ada isn't deleted yet and may still be in some channels.";
+  agents.remove.mockImplementationOnce(async () => {
+    show([{ ...ada, deleting: true }]);
+    throw new Error(failure);
+  });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText(/Its Delete didn't finish/)).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeInTheDocument();
 });
 
 it("opens deletion from the card menu without selecting it and requires confirmation", async () => {

@@ -518,6 +518,66 @@ test("GIF search follows the relay-advertised KLIPY path with signed, bounded in
   }
 });
 
+test("profile search forwards only the name-search shape to the relay endpoint, signed", async () => {
+  const profiles = [{ id: "a".repeat(64), kind: 0 }];
+  let status = 200;
+  const h = await harness((call) =>
+    call.url === `${fixtureRelayUrl}/profiles/search`
+      ? status === 200
+        ? Response.json(profiles)
+        : Response.json({ error: "not found" }, { status })
+      : new Response(null, { status: 500 }),
+  );
+  try {
+    const body = { query: "wes", limit: 40, page: 2 };
+    const response = await h.post("profile-search", body);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(profiles);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({
+      url: `${fixtureRelayUrl}/profiles/search`,
+      body,
+    });
+    expect(h.calls[0].auth.tags).toEqual(
+      expect.arrayContaining([
+        ["u", `${fixtureRelayUrl}/profiles/search`],
+        ["method", "POST"],
+        [
+          "payload",
+          createHash("sha256").update(JSON.stringify(body)).digest("hex"),
+        ],
+      ]),
+    );
+
+    // An older relay's 404 reaches the app, which then uses NIP-50 search.
+    status = 404;
+    expect((await h.post("profile-search", body)).status).toBe(404);
+
+    // The limit counts code points: 100 astral characters are 200 UTF-16
+    // units, and surrounding whitespace does not count.
+    status = 200;
+    const astral = { query: ` ${"𠮷".repeat(100)} `, limit: 1 };
+    expect((await h.post("profile-search", astral)).status).toBe(200);
+    expect(h.calls[2]).toMatchObject({ body: astral });
+
+    for (const rejected of [
+      { query: "", limit: 1 },
+      { query: "x".repeat(101), limit: 1 },
+      { query: "𠮷".repeat(101), limit: 1 },
+      { query: "wes", limit: 0 },
+      { query: "wes", limit: 101 },
+      { query: "wes", limit: 1, search_mode: "prefix" },
+      { query: "wes", limit: 1, page: 0 },
+      { query: "wes", limit: 1, page: 1001 },
+      { query: "wes", limit: 1, page: 1.5 },
+    ])
+      expect((await h.post("profile-search", rejected)).status).toBe(400);
+    expect(h.calls).toHaveLength(3);
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy returns generic files as neutralized authenticated downloads", async () => {
   const bytes = Buffer.from("%PDF-1.7\nfixture pdf\n");
   const h = await harness((call) => {
@@ -1601,6 +1661,7 @@ test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
             "about",
             `Buzz session (buzz.sessions/v1)${parent ? `\nparent:${parent}` : ""}`,
           ],
+          ...(parent ? [] : [["ttl", "600"]]),
         ],
       });
       await vi.waitFor(() =>
@@ -1609,6 +1670,44 @@ test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
             ?.delivery,
         ).toBe("accepted"),
       );
+      const creation = owner.local
+        .snapshot()
+        .find((row) => row.event.id === creationId)?.event;
+      expect(creation).toBeDefined();
+      const fixtureKey = new Uint8Array(32);
+      fixtureKey[31] = 7;
+      for (const ttl of ["", "0", "+1", "1\n", "2147483648"]) {
+        const invalid = {
+          ...creation,
+          tags: [
+            ...creation.tags.filter(
+              ([key]) => key !== "ttl" && key !== "client-id",
+            ),
+            ["ttl", ttl],
+          ],
+        };
+        expect((await h.post("sign", invalid)).status).toBe(400);
+        const signed = finalizeEvent(structuredClone(invalid), fixtureKey);
+        expect((await h.post("publish", signed)).status).toBe(400);
+      }
+      if (parent) {
+        const invalid = {
+          ...creation,
+          tags: [
+            ...creation.tags.filter(([key]) => key !== "client-id"),
+            ["ttl", "600"],
+          ],
+        };
+        expect((await h.post("sign", invalid)).status).toBe(400);
+        expect(
+          (
+            await h.post(
+              "publish",
+              finalizeEvent(structuredClone(invalid), fixtureKey),
+            )
+          ).status,
+        ).toBe(400);
+      }
       const temporaryCreationId = owner.outbox.send({
         kind: 9007,
         content: "",
@@ -3418,6 +3517,32 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       expect(signed).toMatchObject(change);
       await transport.channelDetails.publish(signed, signal);
     }
+    for (const ttl of ["1", "2147483647", ""]) {
+      const change = {
+        ...template,
+        tags: [...template.tags.slice(0, 2), ["ttl", ttl]],
+      };
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
+    for (const tags of [
+      [...template.tags.slice(0, 2), ["ttl", "+1"]],
+      [...template.tags.slice(0, 2), ["ttl", "1\n"]],
+      [...template.tags.slice(0, 2), ["ttl", "1"], ["ttl", ""]],
+      [template.tags[0], ["ttl", "1"], template.tags[1]],
+    ]) {
+      const change = { ...template, tags };
+      expect((await h.post("channel-details-sign", change)).status).toBe(400);
+      // Sign externally so publish's independent guard, not a missing signature, rejects.
+      const fixtureKey = new Uint8Array(32);
+      fixtureKey[31] = 7;
+      expect(getPublicKey(fixtureKey)).toBe(transport.viewer);
+      const signed = finalizeEvent(structuredClone(change), fixtureKey);
+      expect((await h.post("channel-details-publish", signed)).status).toBe(
+        400,
+      );
+    }
     const reopening = {
       ...template,
       tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
@@ -3430,13 +3555,13 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     expect(reopened).toMatchObject(reopening);
     expect((await h.post("publish", reopened)).status).toBe(400);
     await transport.channelDetails.publish(reopened, signal);
-    expect(h.publications).toHaveLength(4);
+    expect(h.publications).toHaveLength(7);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(4);
+    expect(h.publications).toHaveLength(7);
   } finally {
     live?.dispose();
     await h.close();

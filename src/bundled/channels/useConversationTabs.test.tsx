@@ -21,10 +21,71 @@ import type {
   RegisteredPanel,
 } from "../../features/panels/service";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import { tabPane, useChannelTabState } from "./useChannelTabState";
+import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 
 afterEach(cleanup);
+it("background opening preserves the panel shown after moving a side thread to main", () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const panel = { key: "info", title: "Info" } as RegisteredPanel;
+  const available = [panel];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      mainPane: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return { state, workspace };
+  });
+  act(() =>
+    h.result.current.workspace.open({
+      panel,
+      channelId: "alpha",
+      target: "info",
+    }),
+  );
+  act(() =>
+    h.result.current.workspace.openConversationThread("alpha", "r1", "r1"),
+  );
+  act(() => h.result.current.state.moveTab("thread:alpha:r1", "main", 0));
+  expect(h.result.current.state.selected).toBe("");
+  expect(h.result.current.workspace.selectedTab).toBe("info:info");
+  act(() => {
+    channelTabs(session).open("alpha", "r2");
+  });
+  expect(h.result.current.workspace.selectedTab).toBe("info:info");
+  expect(channelTabs(session).list("alpha")).toEqual([
+    { root: "r1", pane: "main", shown: true },
+    { root: "r2", pane: "side", shown: false },
+  ]);
+  act(() => {
+    expect(channelTabs(session).close("alpha", "r2")).toBe("closed");
+  });
+  expect(h.result.current.workspace.selectedTab).toBe("info:info");
+});
+
 it("retained offline tabs can close and open threads without activating connected plugins", () => {
   const channels = [
     { id: "alpha", name: "Alpha" },
@@ -82,11 +143,20 @@ it("retained offline tabs can close and open threads without activating connecte
   act(() =>
     h.result.current.state.resolveThreadRoot("thread:alpha:hint", "root"),
   );
-  expect(
+  const label = () =>
     h.result.current.workspace.items.find(
       (tab) => tab.id === "thread:alpha:hint",
-    )?.label,
-  ).toBe("Original message title");
+    )?.label;
+  expect(label()).toBe("Original message title");
+  // A given name replaces the root's text until it is cleared.
+  act(() => {
+    channelTabs(session).rename("alpha", "root", "Launch plan");
+  });
+  expect(label()).toBe("Launch plan");
+  act(() => {
+    channelTabs(session).rename("alpha", "root", "");
+  });
+  expect(label()).toBe("Original message title");
   const staleOpen = h.result.current.workspace.openConversationThread;
   h.unmount();
   act(() => staleOpen("beta", "another-root", "another-root"));
@@ -471,6 +541,24 @@ it("a launcher's tab keeps its channel when another conversation opens its targe
   // A later non-append opening keeps the retained tab.
   act(() => h.workspace().open(undefined));
   expect(h.entries().map((entry) => entry.target)).toEqual(["work:a"]);
+});
+
+it("a pushed panel keeps the thread its parent was opened from", () => {
+  const h = launcherHarness();
+  act(() => {
+    h.workspace().openConversationLink("alpha", "work:a", { rootId: "root" });
+  });
+  const item = h
+    .workspace()
+    .items.find((item) => item.id === "fixture:work:work:a");
+  if (!item) throw new Error("no Work tab");
+  const { context } = (item.content as { props: { context: PanelContext } })
+    .props;
+  act(() => expect(context.push?.("work:b")).toBe(true));
+  expect(h.entries().find((entry) => entry.target === "work:b")).toMatchObject({
+    channelId: "alpha",
+    rootId: "root",
+  });
 });
 
 it("a launcher whose target changes replaces its one tab in place", () => {

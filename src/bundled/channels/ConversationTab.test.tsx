@@ -31,7 +31,9 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   ),
 }));
 vi.mock("./ChannelBody", () => ({
-  ChannelBody: () => <div>Conversation content</div>,
+  ChannelBody: ({ activityLane }: { activityLane?: boolean }) => (
+    <div data-activity-lane={activityLane}>Conversation content</div>
+  ),
 }));
 vi.mock("../../features/messages/MessageComposer", () => ({
   MessageComposer: () => <div>Composer content</div>,
@@ -227,6 +229,11 @@ it.each([false, true])(
     else expect(thread).not.toHaveAttribute("data-reply-request");
     mounted.rerender(<ConversationTab {...props} focusOnMount />);
     if (!focusOnMount) expect(thread).not.toHaveAttribute("data-reply-request");
+    // Renaming or merging copies the tab without making a new request.
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, name: "Launch plan" }} />,
+    );
+    if (!focusOnMount) expect(thread).not.toHaveAttribute("data-reply-request");
     mounted.rerender(
       <ConversationTab {...props} tab={{ ...tab, replyRequest: undefined }} />,
     );
@@ -234,5 +241,38 @@ it.each([false, true])(
     // A non-Reply opening resets the sequence; a later Reply may reuse number 1.
     mounted.rerender(<ConversationTab {...props} tab={{ ...tab }} />);
     expect(thread).toHaveAttribute("data-reply-request", "1");
+  },
+);
+
+it.each([false, true])(
+  "conversation tabs reserve the jump button's activity lane only for a live channel (cached=%s)",
+  (cached) => {
+    const channel = {
+      id: "beta",
+      name: "Beta",
+      ...(cached ? { cached: true as const } : {}),
+    };
+    const snapshot = { status: "ready", channels: [channel] };
+    const session = {
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    render(
+      <ConversationTab
+        tab={{ id: "beta-tab", kind: "conversation", channelId: "beta" }}
+        channel={channel}
+        session={session}
+        scope="lane-test"
+        active
+        openLink={() => false}
+        canOpenLink={() => false}
+        openThread={() => {}}
+        close={() => {}}
+      />,
+    );
+    // The composer below the body mounts TypingIndicator only when live.
+    expect(screen.getByText("Conversation content")).toHaveAttribute(
+      "data-activity-lane",
+      String(!cached),
+    );
   },
 );

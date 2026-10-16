@@ -1,6 +1,7 @@
 import type { ComponentProps, Ref } from "react";
 import { CaretDownIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
+import { Button } from "../../shared/design-system/ui/Button";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import styles from "./AgentCard.module.css";
 
@@ -29,18 +30,14 @@ export function NewAgentTile({
 }) {
   if (variant === "button")
     return (
-      <SurfaceButton
-        {...props}
-        type="button"
-        className={`${styles.newLabel} text-label-sm`}
-      >
+      <Button {...props} type="button" variant="prominent" size="sm">
         {label}
         <CaretDownIcon
           size={14}
           className="buzz-dropdown-chevron"
           aria-hidden="true"
         />
-      </SurfaceButton>
+      </Button>
     );
   return (
     <SurfaceButton

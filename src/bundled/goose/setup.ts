@@ -3,7 +3,8 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
-import { GooseProcess, type Spawn } from "./goose";
+import type { Models } from "../../features/agents/service";
+import { GooseProcess, type Choice, type Spawn } from "./goose";
 import { absolute } from "./sessions";
 
 export type ConfigKey = Readonly<{
@@ -49,7 +50,15 @@ type Entry = {
     oauthFlow?: boolean;
     deviceCodeFlow?: boolean;
   })[];
-  models?: { id: string; name?: string; recommended?: boolean }[];
+  models?: { id: string; recommended?: boolean }[];
+};
+
+/** A special case for the goose plugin's Databricks provider: goose's catalog
+ * keeps one endpoint per model name, which can be another team's
+ * (`auto-labeler-…-gpt-6-luna` for GPT-6 Luna). Offer the provider's own list,
+ * only the workspace's endpoints and goose's own. */
+const PREFIXES: Readonly<Record<string, readonly string[]>> = {
+  databricks: ["databricks-", "goose-"],
 };
 
 const TEST_PROMPT = "Reply with exactly: OK";
@@ -60,6 +69,32 @@ export class GooseSetup {
   private readonly live = new Map<string, Promise<readonly ModelChoice[]>>();
 
   constructor(private readonly spawn: Spawn | undefined) {}
+
+  /** The models an agent on `choice` can be asked to run a turn on: those of
+   * its provider, or goose's config's, and the one it runs on without. */
+  async picks(choice: Choice): Promise<Models> {
+    const provider = choice.provider.trim();
+    const { providers, defaults } = await this.providers();
+    const id = provider || defaults.provider;
+    const current =
+      choice.model.trim() ||
+      (provider
+        ? providers.find((item) => item.id === id)?.defaultModel
+        : defaults.model) ||
+      "";
+    const models = (id ? await this.models(id) : []).map(({ id, label }) => ({
+      id,
+      label,
+      efforts: [],
+    }));
+    // A model its provider does not list is still the one it runs on.
+    return !current || models.some((model) => model.id === current)
+      ? { current, models }
+      : {
+          current,
+          models: [{ id: current, label: current, efforts: [] }, ...models],
+        };
+  }
 
   /** goose's providers, read once until something is saved. */
   providers(): Promise<Providers> {
@@ -96,8 +131,19 @@ export class GooseSetup {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
-    if (listed?.models.length || !listed?.configured)
-      return listed?.models ?? [];
+    const prefixes = PREFIXES[id];
+    const models =
+      listed?.configured && (prefixes || !listed.models.length)
+        ? await this.supported(id)
+        : (listed?.models ?? []);
+    return prefixes
+      ? models.filter((model) =>
+          prefixes.some((prefix) => model.id.startsWith(prefix)),
+        )
+      : models;
+  }
+
+  private supported(id: string): Promise<readonly ModelChoice[]> {
     let models = this.live.get(id);
     if (!models) {
       models = this.with(async (goose) => {
@@ -140,14 +186,14 @@ export class GooseSetup {
 
   /** Asks the provider for one short reply, without tools. goose reports a
    * failed call as its reply, so only the expected answer passes. */
-  test(choice: Readonly<{ provider: string; model: string }>): Promise<Tested> {
-    const env = {
-      GOOSE_MODE: "chat",
-      ...(choice.provider ? { GOOSE_PROVIDER: choice.provider } : {}),
-      ...(choice.model ? { GOOSE_MODEL: choice.model } : {}),
-    };
+  test(choice: Choice): Promise<Tested> {
+    const env = { GOOSE_MODE: "chat" };
     return this.with(async (goose, cwd) => {
-      const session = await goose.open({ cwd, systemPrompt: "", bare: true });
+      const session = await goose.open({
+        cwd,
+        systemPrompt: "",
+        choice: () => choice,
+      });
       try {
         const settled = await Promise.race([
           session.send(TEST_PROMPT),
@@ -198,9 +244,6 @@ export async function briefly<T>(
   const goose = await GooseProcess.start(spawn, {
     cwd,
     env,
-    tools: async () => {
-      throw new Error("No Buzz tools here");
-    },
   });
   try {
     return await run(goose, cwd);
@@ -230,13 +273,8 @@ function provider(entry: Entry): Provider {
       })),
     signsIn: keys.some((key) => key.oauthFlow || key.deviceCodeFlow),
     steps: entry.setupSteps ?? [],
-    models: models.map((model) => ({
-      id: model.id,
-      label: model.name ?? model.id,
-      ...(model.name && model.name !== model.id
-        ? { description: model.id }
-        : {}),
-    })),
+    // The exact ID: a catalog name can stand for several models.
+    models: models.map((model) => ({ id: model.id, label: model.id })),
   };
 }
 

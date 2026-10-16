@@ -38,6 +38,8 @@ export const ArrowCounterClockwiseIcon = defineIcon(
   TablerArrowCounterClockwiseIcon,
 );
 // Tabler only. Add individual exports as needed; outline icons are the default.
+import TablerStarFilledIcon from "@tabler/icons-react/dist/esm/icons/IconStarFilled.mjs";
+export const StarFilledIcon = defineIcon("tabler", TablerStarFilledIcon);
 import TablerBrowserIcon from "@tabler/icons-react/dist/esm/icons/IconBrowser.mjs";
 export const BrowserIcon = defineIcon("tabler", TablerBrowserIcon);
 import TablerCalendarIcon from "@tabler/icons-react/dist/esm/icons/IconCalendar.mjs";
@@ -151,6 +153,10 @@ import TablerFlagIcon from "@tabler/icons-react/dist/esm/icons/IconFlag.mjs";
 export const FlagIcon = defineIcon("tabler", TablerFlagIcon);
 import TablerFolderOpenIcon from "@tabler/icons-react/dist/esm/icons/IconFolderOpen.mjs";
 export const FolderOpenIcon = defineIcon("tabler", TablerFolderOpenIcon);
+import TablerFolderPlusIcon from "@tabler/icons-react/dist/esm/icons/IconFolderPlus.mjs";
+export const FolderPlusIcon = defineIcon("tabler", TablerFolderPlusIcon);
+import TablerCube3dSphereIcon from "@tabler/icons-react/dist/esm/icons/IconCube3dSphere.mjs";
+export const Cube3dSphereIcon = defineIcon("tabler", TablerCube3dSphereIcon);
 import TablerFolderSimpleIcon from "@tabler/icons-react/dist/esm/icons/IconFolder.mjs";
 export const FolderSimpleIcon = defineIcon("tabler", TablerFolderSimpleIcon);
 import TablerGearIcon from "@tabler/icons-react/dist/esm/icons/IconSettings.mjs";
@@ -275,6 +281,8 @@ import TablerTrashIcon from "@tabler/icons-react/dist/esm/icons/IconTrash.mjs";
 export const TrashIcon = defineIcon("tabler", TablerTrashIcon);
 import TablerUserIcon from "@tabler/icons-react/dist/esm/icons/IconUser.mjs";
 export const UserIcon = defineIcon("tabler", TablerUserIcon);
+import TablerShareIcon from "@tabler/icons-react/dist/esm/icons/IconShare2.mjs";
+export const ShareIcon = defineIcon("tabler", TablerShareIcon);
 import TablerUsersIcon from "@tabler/icons-react/dist/esm/icons/IconUsers.mjs";
 export const UsersIcon = defineIcon("tabler", TablerUsersIcon);
 import TablerVideoCameraIcon from "@tabler/icons-react/dist/esm/icons/IconVideo.mjs";

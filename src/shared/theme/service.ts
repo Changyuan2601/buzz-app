@@ -86,7 +86,7 @@ export function createAppearance(
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute(
         "content",
-        host.getComputedStyle(root).getPropertyValue("--workspace").trim(),
+        host.getComputedStyle(root).getPropertyValue("--bg-app").trim(),
       );
   };
   const notify = () => {

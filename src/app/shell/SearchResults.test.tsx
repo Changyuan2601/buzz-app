@@ -2035,6 +2035,7 @@ it("adds a late shared agent without another keystroke or prefix read", async ()
   const session = {
     ...owner.session,
     read: reads,
+    searchProfiles: reads,
     agentChoices: {
       ...source,
       snapshot: () => choices,

@@ -186,6 +186,30 @@ export function useFloatingActionBar(
       bar.style.maxWidth = "";
       delete bar.dataset.placement;
     };
+    // A narrow side pane covers, but does not unmount, the channel. Only a
+    // second workspace can cover this one, so skip the hit test without it.
+    const covered = (anchor: DOMRect) => {
+      if (!workspace) return false;
+      const workspaces = document.querySelectorAll(workspaceSelector);
+      if (workspaces.length < 2) return false;
+      const front = document
+        .elementsFromPoint(
+          Math.max(
+            0,
+            Math.min(
+              anchor.x + anchor.width / 2,
+              document.documentElement.clientWidth - 1,
+            ),
+          ),
+          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
+        )
+        .find(
+          (element) =>
+            !bar.contains(element) && element.closest(workspaceSelector),
+        )
+        ?.closest(workspaceSelector);
+      return !!front && front !== workspace;
+    };
     const position = () => {
       // A frame can outlive the document that held the bar (for example after
       // the page content is replaced). showPopover throws on detached elements.
@@ -195,28 +219,10 @@ export function useFloatingActionBar(
         row.querySelector<HTMLElement>("[data-message-action-anchor]") ??
         row.querySelector("[data-message-attachments]")?.firstElementChild ??
         slot;
+      // Read every rect before writing any style. A write between reads forces
+      // a synchronous layout of the whole timeline on each positioning frame.
       const anchor = visual.getBoundingClientRect();
-      // A narrow side pane covers, but does not unmount, the channel. Keep its
-      // native top-layer toolbar behind the frontmost workspace as it moves.
-      const front =
-        workspace &&
-        document
-          .elementsFromPoint(
-            Math.max(
-              0,
-              Math.min(
-                anchor.x + anchor.width / 2,
-                document.documentElement.clientWidth - 1,
-              ),
-            ),
-            Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
-          )
-          .find(
-            (element) =>
-              !bar.contains(element) && element.closest(workspaceSelector),
-          )
-          ?.closest(workspaceSelector);
-      if (front && front !== workspace) {
+      if (covered(anchor)) {
         hide();
         return;
       }
@@ -226,11 +232,12 @@ export function useFloatingActionBar(
         hide();
         return;
       }
-      const viewport = scroller?.getBoundingClientRect();
+      // Style reads are cheap here: the rect reads above already left layout clean.
       const style = getComputedStyle(bar);
       const overlap = Number.parseFloat(style.scrollMarginBlockStart) || 0;
-      const rtl = getComputedStyle(row).direction === "rtl";
       const gap = Number.parseFloat(style.scrollMarginInlineEnd) || 0;
+      const rtl = getComputedStyle(row).direction === "rtl";
+      const viewport = scroller?.getBoundingClientRect();
       const rowBounds = row.getBoundingClientRect();
       const start =
         Math.max(0, viewport?.left ?? rowBounds.left) + (viewport ? gap : 0);
@@ -239,9 +246,17 @@ export function useFloatingActionBar(
           document.documentElement.clientWidth,
           viewport?.right ?? rowBounds.right,
         ) - (viewport ? gap : 0);
-      bar.style.maxWidth = `${Math.max(0, end - start)}px`;
-      bar.showPopover?.();
-      const width = bar.getBoundingClientRect().width;
+      const maxWidth = `${Math.max(0, end - start)}px`;
+      let size = bar.getBoundingClientRect();
+      // Measure again only when this frame changes the bar's own layout.
+      if (bar.style.maxWidth !== maxWidth || !bar.matches(":popover-open")) {
+        bar.style.maxWidth = maxWidth;
+        bar.showPopover?.();
+        size = bar.getBoundingClientRect();
+      }
+      const { width } = size;
+      // Layout height: an opening scale transition must not move the bar.
+      const height = bar.offsetHeight;
       const besideLeft = rtl
         ? anchor.left - overlap - width
         : anchor.right + overlap;
@@ -250,11 +265,13 @@ export function useFloatingActionBar(
         besideLeft >= start &&
         besideLeft + width <= end &&
         (!viewport ||
-          (center - bar.offsetHeight / 2 >= viewport.top &&
-            center + bar.offsetHeight / 2 <= viewport.bottom));
-      bar.dataset.placement = beside ? "beside" : "above";
+          (center - height / 2 >= viewport.top &&
+            center + height / 2 <= viewport.bottom));
+      const placement = beside ? "beside" : "above";
+      if (bar.dataset.placement !== placement)
+        bar.dataset.placement = placement;
       const top = beside ? center : anchor.top + overlap;
-      const paintedTop = top - bar.offsetHeight / (beside ? 2 : 1);
+      const paintedTop = top - height / (beside ? 2 : 1);
       if (
         viewport &&
         (anchor.top <= viewport.top || paintedTop >= viewport.bottom)

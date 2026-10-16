@@ -154,7 +154,7 @@ close button, body padding, or footer with feature-specific markup.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
-| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Shared bounded body; keep actions reachable |
+| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
 | Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
 | Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
 | Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
@@ -199,9 +199,13 @@ Choose by interaction before choosing size. They share a material, not semantics
 
 Do not put a form in an action-menu item or simulate selectable values with a set
 of unrelated buttons. Use `MenuNote` for non-action explanatory text and `tone="danger"`
-for a destructive menu action. Select an existing compact/default/wide recipe for
+for a destructive menu action; its icon inherits the danger color and highlighted/pressed
+rows use the matching danger affordance. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
+For choices that must stay within a modal, pass its element to
+`Combobox.Popup collisionBoundary` when the picker opens. Base UI positions it
+and the shared popup scrolls within the resulting available height; keep the portal.
 Use their supported `padding`/alignment props; do not add another padded card inside
 the popup or cancel its styles. Keep long lists scrollable and all actions reachable.
 
@@ -286,6 +290,10 @@ Tailwind utilities include `bg-surface-panel`, `text-standard`,
 `border-prominent` and `bg-affordance-subtle-hover`. Text and border registrations
 stay in separate namespaces so they cannot accidentally share a value.
 
+Enabled sidebar section headings, disclosure chevrons and quiet section actions
+use `text-subtle`, not `text-unavailable`. Disabled controls keep their shared
+disabled state; a parent's inherited color must not override it.
+
 Primary reading text and icons inheriting its color use `text-standard`: #0F0F0F
 in light mode and #FFFFFF in dark mode. Secondary and disabled roles keep their
 existing colors; prominent control fills and focus boundaries remain unchanged.
@@ -309,13 +317,13 @@ role for their active completion highlight.
 
 The interface uses shared color, type, spacing and shape roles. Primary actions
 are neutral. Text uses Inter for reading and labels, and JetBrains Mono for code
-and identifiers. Regular (400) supports reading; Medium (500) marks labels and
+and identifiers. Regular (400) supports reading and form labels; Medium (500) marks actions and
 structure. The Typography page documents each role’s complete setting.
 
 Panel padding is 24px, control inset 16px, group gap 32px and page-section gap
-64px at the default scale. Values are rem-based. Full-window gradient backdrops
-and glass navigation support both color modes; content panels use opaque neutral
-surfaces. Dark text roles are selected for contrast on their intended surfaces.
+64px at the default scale. Values are rem-based. A solid shell with a quiet,
+hue-derived dot grid supports both color modes; content panels remain opaque.
+Shell navigation uses flat fills, not glass. Dark text roles are selected for contrast on their intended surfaces.
 Host compatibility names resolve to the shared tokens.
 
 Features own layout, data and behavior. The foundation guard covers `src/`,
@@ -414,9 +422,10 @@ in identity, guidance, transitions, and ceremony. Use color to convey meaning.
 
 Use the surface that matches the content and its position in the interface.
 
-- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-1` (4px at default scale). Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
+- **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-panel-gap` (8px at default scale). The sidebar resize grip stays centered in that gutter. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (16px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
-- **Reading surfaces:** documentation and dense prose sit on `bg-panel`. Keep page-wide gradients behind product chrome and panels, where their changing contrast will not interfere with reading.
+- **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state.
+- **Reading surfaces:** documentation and dense prose sit on opaque `bg-panel`. Keep the dot grid outside reading panes. Do not add gradient backgrounds to the app shell.
 - **Borders:** use `border-standard` for quiet separators, `border-prominent` for controls, and `border-focus` for keyboard-focus recipes. Errors and warnings have their own boundary roles. Measure the actual pairing in both themes.
 - **Shadows:** use the shared elevation roles and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
 
@@ -479,20 +488,21 @@ complete material so fill, blur, rim, and optional shadow stay together.
 - More opaque glass reads as a higher layer. A brighter fill alone does not communicate the same depth.
 - Keep the rim’s light direction consistent across surfaces. Use a border role when you need a visible boundary rather than a material edge.
 - Avoid adding a glass fill when the region already covers an identical glass parent. Two `glass-2` layers composite to 0.77 alpha and become more opaque than either intended layer.
-- Panels and chrome normally sit directly on the gradient. Text placed there needs inspection because its contrast changes with position; small decorative labels may be deliberate exceptions.
+- Shell panes and navigation do not use glass. Floating popovers and media controls retain their existing material recipes.
 
-**Unresolved contrast:** opaque token checks cannot validate glass over a variable
-backdrop. A rendered dark-mode sample of primary glass over Night garden ranged
-from `#162e28` to `#1e4a3c`. In the brighter area, `text-secondary` measured Lc 58
-and `text-tertiary` Lc 43, below their 60 and 45 targets. Review real product
-content before choosing a fix: dim the backdrop, increase glass opacity, or keep
-metadata off that glass surface. These measurements do not establish a general
-contrast guarantee.
+Opaque contrast checks do not validate translucent materials over arbitrary
+content. Inspect the actual background, text and interaction states wherever
+glass remains; the flat shell does not establish a general glass contrast guarantee.
 
 ### Match controls to their surface
 
-Use `Tabs variant="chrome"` for a glass pill on the backdrop and `variant="panel"`
+Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
+Chrome tab and route-navigation groups use a shared `affordance-subtle` capsule,
+with `affordance-subtle-hover` for an inactive item. Selection uses the pane color
+in light mode and neutral 5 in dark mode, where it stays stronger than hover.
+Standalone chrome icon controls remain unfilled and use backdrop hover/pressed
+fills. No blur or glass rim is added.
 A chrome selection can blend into a white panel; choose the appropriate variant
 instead of retinting `--bg-chrome-selected` for one caller. Keep shared behavior
 in one component and show both surface variants in its examples.
@@ -575,7 +585,7 @@ recorded in `docs/presence.md`.
 
 Top-bar ghost icon actions remain unfilled at rest. Their backdrop hover and
 pressed roles use translucent fills (black 6% / 10% in light mode, white 10% / 16%
-in dark mode), so the gradient remains visible. The shell owns this context;
+in dark mode), so the shell and its dot texture remain visible. The shell owns this context;
 content-panel actions retain their opaque surface recipes. Only the fill is
 translucent: icons stay at full opacity, without adding blur or a rim.
 
@@ -655,6 +665,15 @@ activate. Loading retains the label's geometry, accessible name, focus and varia
 colors while blocking activation; never swap in a differently sized loading label.
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
+
+The proposed `attention` variant is used by overdue reminder snooze actions.
+It reuses the outline button's 1px inset stroke and capsule geometry, tinting
+the stroke with `border-danger` at 45% opacity. Dashes travel slowly around the
+perimeter, advancing one 8px dash-and-gap cycle every 3s with linear timing.
+The capsule and label stay still. Reduced motion and disabled/loading states
+keep the dashed border static. This is a status cue, so retain an
+explicit status label or group heading and the scheduled time. Danger hover
+and pressed fills, disabled boundaries, and keyboard focus remain shared.
 
 IconButton's `bare` variant is for toggles whose glyph supplies the state:
 no resting, hover, pressed or selected background. The small control keeps its
@@ -928,20 +947,28 @@ layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="wide"` for two-column catalogs such as Add harness. It caps the width
 at 56rem and preserves viewport gutters; `height="stable"` can reserve the body
-while changing catalog selection.
+while changing catalog selection. Content-sized dialogs also scroll only their
+body when viewport-capped, without reserving extra height; their title and
+actions stay outside that scrollport. If enlarged title/actions alone cannot fit
+the viewport, the outer dialog scrolls as a fallback so pointer access does not
+depend on focusing an offscreen control. Flow bodies retain at least one control
+height plus their padding, with scroll padding to reveal complete focused fields
+rather than only their text selection; bounded flex/expanded bodies keep their own sizing.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal padding: `--space-6` (24px),
+vertical padding matching the dialog's horizontal padding: `--space-5` (20px),
 or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
 on top of that body padding. Create/Edit channel forms opt into
 `headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
 other dialog compositions retain their default spacing. Their privacy confirmation
 steps also opt into `footerGap="compact"` for 8px between the final checkbox row
 and the actions; returning to the form restores the normal body-bottom padding.
+Session settings uses content height and the default footer spacing, with one
+body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
@@ -974,6 +1001,10 @@ collapsing them preserves local input state; leave the default for static conten
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows
 form one stack; avoid inserting form-section gaps between individual rows.
+Use the proposed `section` variant for a disclosure alongside InlineHeader
+groups, such as completed reminders. It shares the heading type treatment,
+extends the hit area around the aligned label, and leaves panel content flush
+with adjacent lists. Render counts with the same caption role as those groups.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
@@ -1068,7 +1099,9 @@ are no longer Tab destinations or pointer targets.
 Scrolling anything that contains the trigger dismisses a hover-opened preview when
 the trigger moves: a still pointer cannot report that its trigger moved away. A
 scroll that leaves the trigger in place, such as scroll anchoring, keeps the
-preview. A keyboard-focused
+preview. A hover close is refused while the pointer is still on the trigger: a
+scrolling virtualized list briefly stops hit-testing, and WebKit then reports a
+mouseleave that the pointer never made. A keyboard-focused
 trigger keeps its preview, hidden while the trigger is scrolled out of view
 unless focus is inside it.
 The positioned portal owns its layer above dialogs. An optional content anchor
@@ -1117,6 +1150,7 @@ they apply. Keep the same control recognizable across those states.
 
 - Pressed changes the fill without moving the control.
 - Loading preserves the label’s space and blocks repeated activation in behavior, not just CSS.
+- For non-blocking background checks, delay progress feedback for about one second to avoid flicker. User-triggered actions such as Save still show immediate loading feedback.
 - Hover adds contrast appropriate to the surface: a light row darkens, while a dark chip may lighten.
 - Selection remains visible after the pointer leaves. A selected toggle-group item does nothing when selected again and has no hover treatment.
 - Disabled means unavailable. Do not use it as a quieter text-emphasis level.
@@ -1148,8 +1182,8 @@ Values scale with the host interface-size preference.
   each utility’s semantic role and complete setting alongside the size ladder.
 - A role carries size, leading, tracking and weight together. Display, title,
   and heading roles use unitless 1.1 leading so wrapped headings have breathing room.
-- Regular (400) is for reading; Medium (500) is for labels and structure.
-  Existing `font-semibold` consumers resolve to Medium.
+- Regular (400) is for reading and form labels; Medium (500) is for actions and
+  structure. Existing `font-semibold` consumers resolve to Medium.
 - Mono uses `detail/body-xsmall` at 12/16 with 0.03em tracking.
   `--type-xsmall-size` points to the existing 12px step, keeping the semantic
   independent from caption even though their sizes currently match. `text-mono-lg` and
@@ -1532,3 +1566,16 @@ on a contrasting modal surface, retaining the shared field focus treatment.
 Proposed: `Dialog chromeSpacing="padded"` keeps a 12px bottom gutter on the
 fixed header and a footer top gutter matching the modal bottom padding. The
 body omits its vertical gutters; agent creation uses this for scrolling steps.
+
+### Form-label and picker additions
+
+Field labels, choice labels, PreferenceRow titles and Switch labels use the complete
+`text-body-sm` role (14px, Regular). `Field optional` appends “Optional” in the
+same role with `text-metadata` color and normal word spacing, including in the
+accessible label. Required validation
+remains the control's responsibility. Use `FieldButton dropdown={false}` for a
+system picker, not a dropdown; its single-line value ellipsizes.
+
+`SettingsGroup layout="cards"` gives each child a separate bordered surface and
+a shared small gap, rather than drawing dividers across one group. Feature owners
+may bound a card list's height and scrolling without repainting its cards.

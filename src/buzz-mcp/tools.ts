@@ -11,6 +11,7 @@ import {
   lifecycleTemplate,
 } from "../features/relay/channel-lifecycle-protocol";
 import { sessionMetadata } from "../features/sessions/metadata";
+import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -128,6 +129,15 @@ export const TOOLS: readonly Tool[] = [
   tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
     "url",
   ]),
+  tool(
+    "tabs",
+    "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
+    {
+      action: { type: "string", enum: ["open", "close", "rename"] },
+      thread: str,
+      name: str,
+    },
+  ),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -520,27 +530,33 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async mem_get(tools, args) {
-    const entries = await tools.client.memories();
     const slug = text(args.slug);
-    if (!slug)
-      return (
-        entries
-          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-          .join("\n") || "No memory."
-      );
+    if (!slug) {
+      const { entries, partial } = await tools.client.memories();
+      const lines = entries
+        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+        .join("\n");
+      if (!partial) return lines || "No memory.";
+      if (!lines) throw new Error("Memory could not be read; try again.");
+      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+    }
     const key = memorySlug(slug);
-    return (
-      entries.find((entry) => entry.slug === key)?.body ?? `No memory ${key}.`
-    );
+    const { entries, partial } = await tools.client.memories(key);
+    const body = entries.find((entry) => entry.slug === key)?.body;
+    if (body !== undefined) return body;
+    if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
+    return `No memory ${key}.`;
   },
 
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
-    // Unreadable memory still takes a write, dated now.
-    const current = (await tools.client.memories().catch(() => [])).find(
-      (entry) => entry.slug === key,
-    );
+    // A write must be dated after the entry it replaces, so it waits for a
+    // read that finds the entry or confirms there is none.
+    const { entries, partial } = await tools.client.memories(key);
+    const current = entries.find((entry) => entry.slug === key);
+    if (!current && partial)
+      throw new Error(`Memory ${key} could not be read; try again.`);
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },
@@ -571,6 +587,51 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!type?.startsWith("image/"))
       throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
     return { data, type };
+  },
+
+  async tabs(tools, args) {
+    const { client, context } = tools;
+    const tabs = client.tabs;
+    if (!tabs)
+      throw new Error(
+        "Tabs are kept in Buzz Desktop and are unavailable here.",
+      );
+    // Only the channel the agent works in, so it never pulls the owner
+    // toward another conversation.
+    const channel = context.channel;
+    if (!channel) throw new Error("Tabs need a channel to work in.");
+    if (args.action === undefined) {
+      const open = tabs.list(channel);
+      return open.length
+        ? open
+            .map(
+              (tab) =>
+                `${tab.root} ${tab.pane}${tab.name ? ` ${JSON.stringify(tab.name)}` : ""}${tab.shown ? " (shown)" : ""}`,
+            )
+            .join("\n")
+        : "No thread tabs open.";
+    }
+    if (
+      args.action !== "open" &&
+      args.action !== "close" &&
+      args.action !== "rename"
+    )
+      throw new Error("action must be open, close or rename.");
+    const event = await tools.event(required(args, "thread"));
+    if (tag(event, "h") !== channel)
+      throw new Error(`${event.id} is not in this channel.`);
+    // Resolve the root as the reader does, so the tab matched is the one shown.
+    const root = threadReference(event)?.rootId ?? event.id;
+    if (args.action === "open")
+      return tabs.open(channel, root) ? `opened ${root}` : "already open";
+    if (args.action === "rename")
+      return tabs.rename(channel, root, optional(args, "name") ?? "")
+        ? "renamed"
+        : "not open";
+    const closed = tabs.close(channel, root);
+    if (closed === "shown")
+      throw new Error("Your owner is looking at that tab, so it stays open.");
+    return closed === "closed" ? "closed" : "not open";
   },
 };
 

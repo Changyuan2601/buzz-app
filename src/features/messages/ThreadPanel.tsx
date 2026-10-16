@@ -479,6 +479,11 @@ function ThreadMessages({
     },
   );
   const preview = channelAccess === "joinable" || channelAccess === "preview";
+  const cached = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) => !!listed?.cached,
+  );
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [joining, setJoining] = useState(false);
   const snapshot = useSyncExternalStore(
@@ -570,6 +575,7 @@ function ThreadMessages({
         width: number;
         height: number;
         contentHeight: number;
+        scrollTop: number;
         anchor?: { element: HTMLElement; top: number };
       }
     | undefined
@@ -585,6 +591,7 @@ function ThreadMessages({
       width: element.clientWidth,
       height: element.clientHeight,
       contentHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
       ...(row
         ? {
             anchor: {
@@ -902,6 +909,27 @@ function ThreadMessages({
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
+    // Native scroll anchoring is off here, so this panel owns ordinary reading
+    // too. With no explicit anchor, keep the saved first visible row in place
+    // through this commit's layout shift. A scroll since that save is newer
+    // reader intent and wins. A drop in scrollTop while the scroll range shrank
+    // is the browser clamping it during this commit's layout, not the reader.
+    const reading = resizePosition.current;
+    const clamped =
+      reading !== undefined &&
+      element.scrollTop < reading.scrollTop &&
+      element.scrollHeight - element.clientHeight <
+        reading.contentHeight - reading.height;
+    if (
+      !olderAnchor.current &&
+      targetAnchor.current === undefined &&
+      !follow.current &&
+      !jumpingToLatest.current &&
+      reading?.anchor &&
+      (reading.scrollTop === element.scrollTop || clamped) &&
+      element.contains(reading.anchor.element)
+    )
+      correctScrollTop(element, readingDrift(element, reading.anchor));
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
       const added = tree
@@ -1033,16 +1061,7 @@ function ThreadMessages({
       if (follow.current) {
         element.scrollTop = element.scrollHeight;
       } else if (previous.anchor && element.contains(previous.anchor.element)) {
-        correctScrollTop(
-          element,
-          // WebKit quantizes scrollTop. Round the correction instead of letting
-          // tiny negative fractions lose a whole pixel on every animation frame.
-          Math.round(
-            previous.anchor.element.getBoundingClientRect().top -
-              element.getBoundingClientRect().top -
-              previous.anchor.top,
-          ),
-        );
+        correctScrollTop(element, readingDrift(element, previous.anchor));
       }
       // Exact-history restoration must start from this corrected geometry,
       // rather than applying the same child-only height delta a second time.
@@ -1245,6 +1264,13 @@ function ThreadMessages({
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  // The reply composer, and the activity lane its TypingIndicator needs.
+  const composerRoot =
+    !preview &&
+    (!requireReadyRoot ||
+      (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
+      ? snapshot.root
+      : undefined;
   const retryThread = () => {
     if (showOlderPageStatus) {
       if (scroller.current) captureOlderAnchor(scroller.current);
@@ -1285,6 +1311,7 @@ function ThreadMessages({
         aria-label="Thread messages"
         aria-busy={positioning}
         data-positioning={positioning || undefined}
+        data-jump-visible={showJumpToLatest || undefined}
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;
@@ -1350,6 +1377,11 @@ function ThreadMessages({
           visible={showJumpToLatest}
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}
+          activityLane={
+            composerRoot && !cached
+              ? { session, channelId, threadRootId: composerRoot.id }
+              : undefined
+          }
         />
         <div data-thread-rows="" inert={positioning}>
           {snapshot.root ? (
@@ -1461,85 +1493,95 @@ function ThreadMessages({
           onHeightChange={setJoinNoticeHeight}
         />
       )}
-      {!preview &&
-        snapshot.root &&
-        (!requireReadyRoot ||
-          (snapshot.root.id === messageId &&
-            snapshot.targetStatus === "ready")) && (
-          <MessageComposer
-            sessionConversation={sessionConversation}
-            personalConversation={personalConversation}
-            activityClickOpensPanel={activityClickOpensPanel}
-            key={`${scope}:${channelId}:${snapshot.root.id}`}
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            channelName={channelName}
-            placeholder={replyPlaceholder(snapshot.root)}
-            threadRootId={snapshot.root.id}
-            replyParentId={replyParent}
-            disabled={
-              disabled ||
-              (requireReadyRoot &&
-                (snapshot.status !== "ready" || !!snapshot.error)) ||
-              (!!replyParent && !selectedParent)
-            }
-            replyContext={
-              replyParent && !selectedParent ? (
+      {composerRoot && (
+        <MessageComposer
+          sessionConversation={sessionConversation}
+          personalConversation={personalConversation}
+          activityClickOpensPanel={activityClickOpensPanel}
+          key={`${scope}:${channelId}:${composerRoot.id}`}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          channelName={channelName}
+          placeholder={replyPlaceholder(composerRoot)}
+          threadRootId={composerRoot.id}
+          replyParentId={replyParent}
+          disabled={
+            disabled ||
+            (requireReadyRoot &&
+              (snapshot.status !== "ready" || !!snapshot.error)) ||
+            (!!replyParent && !selectedParent)
+          }
+          replyContext={
+            replyParent && !selectedParent ? (
+              <div className={styles.replyContext}>
+                <span>Reply target is no longer available.</span>
+                <Button size="sm" onClick={focusReply}>
+                  Cancel reply target
+                </Button>
+              </div>
+            ) : (
+              selectedParent && (
                 <div className={styles.replyContext}>
-                  <span>Reply target is no longer available.</span>
-                  <Button size="sm" onClick={focusReply}>
-                    Cancel reply target
-                  </Button>
-                </div>
-              ) : (
-                selectedParent && (
-                  <div className={styles.replyContext}>
-                    <div>
-                      <span>Replying to {senderName(selectedParent)}</span>
-                      <p>{selectedParent.content}</p>
-                    </div>
-                    <IconButton
-                      size="sm"
-                      aria-label="Cancel reply target"
-                      onClick={focusReply}
-                      icon={<XIcon size={16} aria-hidden="true" />}
-                    />
+                  <div>
+                    <span>Replying to {senderName(selectedParent)}</span>
+                    <p>{selectedParent.content}</p>
                   </div>
-                )
+                  <IconButton
+                    size="sm"
+                    aria-label="Cancel reply target"
+                    onClick={focusReply}
+                    icon={<XIcon size={16} aria-hidden="true" />}
+                  />
+                </div>
               )
-            }
-            editMessages={rows}
-            focusRequest={replyFocus}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            onDraftSaved={onDraftSaved}
-            onSend={(id) => {
-              targetAnchor.current = undefined;
-              positioned.current = true;
-              follow.current = !selectedParent;
-              if (selectedParent)
-                setExpanded(
-                  (current) =>
-                    new Set([
-                      ...current,
-                      selectedParent.id,
-                      ...tree.ancestors(selectedParent.id),
-                    ]),
-                );
-              // A background send may publish after the user picked a new target.
-              setReplyParent((current) =>
-                current === replyParent ? undefined : current,
+            )
+          }
+          editMessages={rows}
+          focusRequest={replyFocus}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          onDraftSaved={onDraftSaved}
+          onSend={(id) => {
+            targetAnchor.current = undefined;
+            positioned.current = true;
+            follow.current = !selectedParent;
+            if (selectedParent)
+              setExpanded(
+                (current) =>
+                  new Set([
+                    ...current,
+                    selectedParent.id,
+                    ...tree.ancestors(selectedParent.id),
+                  ]),
               );
-              setSent(id);
-            }}
-          />
-        )}
+            // A background send may publish after the user picked a new target.
+            setReplyParent((current) =>
+              current === replyParent ? undefined : current,
+            );
+            setSent(id);
+          }}
+        />
+      )}
     </MessageEditScope>
   );
 }
 /** Holds the thread's area with the Buzz mark until its first page can show. */
+// How far a saved reading row has moved from its saved viewport offset. WebKit
+// quantizes scrollTop: round instead of letting tiny negative fractions lose a
+// whole pixel on every animation frame.
+function readingDrift(
+  element: HTMLElement,
+  anchor: { element: HTMLElement; top: number },
+) {
+  return Math.round(
+    anchor.element.getBoundingClientRect().top -
+      element.getBoundingClientRect().top -
+      anchor.top,
+  );
+}
+
 function ThreadLoading() {
   return (
     <div className={styles.threadLoading} role="status">

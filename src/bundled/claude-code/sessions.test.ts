@@ -80,7 +80,10 @@ function sessions(
 }
 
 /** Sessions with a spare, spawned like their own processes. */
-function withSpare(options: Parameters<typeof sessions>[0] = {}) {
+function withSpare(
+  options: Parameters<typeof sessions>[0] = {},
+  toolsKey?: () => string,
+) {
   let ids = 0;
   let parts: ReturnType<typeof sessions> | undefined;
   const spare = new Spare(
@@ -90,6 +93,7 @@ function withSpare(options: Parameters<typeof sessions>[0] = {}) {
     },
     async (_conversation, message) => ({ from: "spare", message }),
     () => `spare-${++ids}`,
+    toolsKey,
   );
   parts = sessions({ ...options, spare });
   return { ...parts, spare };
@@ -156,6 +160,24 @@ it("hands the spare's tools to the agent that takes it", async () => {
   expect(answered(process, "later")).toMatchObject({
     response: { mcp_response: { from: "agent" } },
   });
+});
+
+it("hands over no spare that lists other tools than there are now", async () => {
+  let key = "";
+  const { pool, spare, claudes } = withSpare({}, () => key);
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  const [stale] = claudes();
+  // A plugin added a tool after the spare listed the tools.
+  key = "tasks";
+  await pool.deliver("c/root", "hi", 1);
+  await flush();
+  expect(stale?.killed).toBe(true);
+  expect(stale?.prompts).toEqual([]);
+  const next = claudes().find((process) =>
+    process.options.args?.includes("spare-2"),
+  );
+  expect(next?.killed).toBe(false);
 });
 
 it("serves whichever agent starts the next conversation", async () => {

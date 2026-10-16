@@ -1,5 +1,7 @@
 import { createLocalAgentActivity } from "./local-activity";
-import { AgentRunners } from "./runner";
+import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
+import { CoreMemoryCache } from "./core-memory-cache";
+import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -42,6 +44,8 @@ import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
+import { threadReference } from "../relay/thread-reference";
+import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import {
@@ -55,11 +59,20 @@ import {
 } from "./attention";
 import type {
   ClassifierAvailability,
+  ClassifierKey,
   Shown,
   WatchFilter,
   WatchSummary,
   WriteOptions,
 } from "./attention-objects";
+import {
+  excerpt,
+  mentionFacts,
+  nativeClassifier,
+  type ClassifierContext,
+  type ClassifierNative,
+  type ClassifierOutcome,
+} from "./classifier";
 import {
   nativeAgents,
   type AgentEventTemplate,
@@ -72,10 +85,12 @@ import {
   type PortSource,
 } from "./native";
 import {
+  readArchiveUnchecked,
   readRecords,
   readTeams,
   readUnfinished,
   setAttention,
+  writeArchiveUnchecked,
   writeRecords,
   writeTeams,
   writeUnfinished,
@@ -85,6 +100,8 @@ import {
   type Unfinished,
 } from "./store";
 import { meChat } from "./me-chat";
+import { readCheckpoints, writeCheckpoints } from "./catch-up";
+import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -103,6 +120,11 @@ export type Agent<Config = unknown> = Readonly<{
   /** A hosted agent its provider made whose setup has not finished; `finish`
    * continues it. */
   unfinished?: true;
+  /** Imported, but whether it is still archived in its community could not
+   * be checked; `unarchive` tries again. */
+  archiveUnchecked?: true;
+  /** Its Delete did not finish: it is stopped until Delete runs again. */
+  deleting?: true;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -198,6 +220,9 @@ export type AgentHandle = Readonly<{
     canvas: string;
     agents: readonly string[];
   }>[];
+  /** The owner's thread tabs on this device in the agent's community;
+   * undefined while it is not connected. */
+  tabs(): ReturnType<typeof channelTabs> | undefined;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -224,10 +249,10 @@ export type AgentAttention = Readonly<{
     options: WriteOptions,
   ): Promise<Shown>;
 }>;
-/** Why a classified watch's event passed without a classifier answer. */
-export type ClassifierSkip = Readonly<{
-  outcome: "not-run";
-  reason: string;
+export type { ClassifierOutcome } from "./classifier";
+export type CaughtUp = Readonly<{
+  event: RelayEvent;
+  classifier?: ClassifierOutcome;
 }>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. */
@@ -240,10 +265,24 @@ export type Trigger =
       watch: EventWatch;
       /** Absent when the watch names an Interest that does not exist. */
       interest?: Interest;
-      /** Set when the watch has a classifier that did not run. The event
-       * passes rather than lose a match to an unavailable model, and the
-       * agent is told why. */
-      classifier?: ClassifierSkip;
+      /** Set when the watch has a classifier: its answers, or why it did
+       * not run or failed. An event the classifier cannot check passes
+       * rather than lose a match, and the agent is told why. */
+      classifier?: ClassifierOutcome;
+    }>
+  /** Events one watch missed while the agent was offline, delivered together
+   * once it is back: oldest first, from one channel unless it watches "all". */
+  | Readonly<{
+      type: "catch-up";
+      slug: string;
+      watch: EventWatch;
+      /** Absent when the watch names an Interest that does not exist. */
+      interest?: Interest;
+      /** Each with its classifier outcome when the watch has a classifier;
+       * only the events it passed are here. */
+      events: readonly CaughtUp[];
+      /** Older missed events were skipped: catch-up reads a bounded window. */
+      skipped?: boolean;
     }>
   | Readonly<{
       type: "timer";
@@ -328,7 +367,13 @@ export type Model = Readonly<{
   effort?: string;
 }>;
 /** The models an owner can pick from, and the id of the one used without a pick. */
-export type Models = Readonly<{ current: string; models: readonly Model[] }>;
+export type Models = Readonly<{
+  current: string;
+  models: readonly Model[];
+  /** Send displayed defaults as per-turn picks even when untouched. Opt in only
+   * when explicit defaults preserve this provider's running-turn semantics. */
+  sendDefaults?: boolean;
+}>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
   /** Action-oriented menu copy for direct recovery or recovery guidance. */
@@ -446,6 +491,10 @@ export type RetypePreview = Readonly<{
 }>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
+  /** Whether a watch's classifier can run on this device now. */
+  classifier: ClassifierAvailability;
+  /** What is known about the saved classifier key, for the owner. */
+  classifierKey: ClassifierKey;
   /** The selected community's agents, while it is connected. */
   agents: readonly Agent[];
   /** Every agent kept running here, whichever community is selected: the
@@ -499,7 +548,11 @@ export type TeamPort = Readonly<{
   foreign: readonly string[];
   /** The team could not be saved, though its members were imported. */
   teamError?: Readonly<{ name: string }>;
+  /** What did not come over with the members that were imported. */
+  notes?: readonly string[];
 }>;
+/** An imported agent, and what did not come over with it. */
+export type Ported = Readonly<{ agent: Agent; notes: readonly string[] }>;
 export type NewAgent = Readonly<{
   type: string;
   name: string;
@@ -512,6 +565,14 @@ export type NewAgent = Readonly<{
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
+  /** Adds a tool to every agent session in the app, beside the Buzz tools.
+   * The tool acts as the agent, like the rest of a trusted plugin's code
+   * acts as its owner. A session lists
+   * the tools there are when it starts, and one that cannot take a changed
+   * list is replaced when it is next used. */
+  addTool(tool: AddedTool): void;
+  /** The tools active plugins add now. A name is only ever one plugin's. */
+  tools(): readonly AddedTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
@@ -519,6 +580,15 @@ export type Agents = {
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
+  /** The agent's `core` memory, as this device keeps it current: its text,
+   * `null` when it has none, or undefined when it could not be read. A start
+   * reads it here, which needs no relay request once this device has read it
+   * once; the host refreshes it, so no agent type does. Rejects only when
+   * `signal` aborts. */
+  core(
+    pubkey: string,
+    signal?: AbortSignal,
+  ): Promise<string | null | undefined>;
   /** Makes an agent of `type` in the selected community: here, or with a
    * hosted type at its provider. A hosted one whose setup then fails is kept
    * as `unfinished`. */
@@ -533,7 +603,7 @@ export type Agents = {
    * from `portable` keeps its key, name and picture, and a shared agent gets a
    * new key with its name and picture. Either keeps whatever of its
    * instructions and workspace the type adopts; its other settings stay behind. */
-  port(input: PortInput): Promise<Agent>;
+  port(input: PortInput): Promise<Ported>;
   /** Imports an old Buzz team from `portable`, as read now, into the selected
    * community: each member not here yet as an agent of `type`, then the team's
    * copy there with every member here. A team imported before keeps its name,
@@ -552,11 +622,23 @@ export type Agents = {
     type: string,
     change?: Readonly<{ config: unknown }>,
   ): Promise<readonly (keyof Carry)[]>;
-  /** Deletes its key at once. Leaving its channels and archiving it follow in
-   * the background whenever its community is open. A hosted agent is archived,
+  /** Stops it for good, leaves its channels and archives it in its
+   * community, and only then deletes its record, key and settings. When that
+   * cannot finish, as offline, nothing is deleted and nothing retries it: it
+   * stays listed and stopped, and this rejects saying so; Delete again runs it
+   * all again. Called while one runs, it joins it. A hosted agent is archived,
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Unarchives an imported agent whose archive state was not checked, as
+   * import does, keeping its key and settings. Resolves with what is left. */
+  unarchive(pubkey: string): Promise<string | undefined>;
+  /** Whether a watch's classifier can run on this device now. */
+  classifier(): ClassifierAvailability;
+  /** Saves the TypeSafe key in native storage, which the classifier uses.
+   * It is never read back into the app or given to an agent. */
+  setClassifierKey(key: string): Promise<void>;
+  clearClassifierKey(): Promise<void>;
   /** Creates a team, or replaces the one with `id`. Members must be agents on
    * this device. */
   saveTeam(team: TeamChange): Promise<Team>;
@@ -569,9 +651,17 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+/** Whether `value` can be sent as JSON, as every session's tool list is. */
+const serializable = (value: unknown) => {
+  try {
+    JSON.stringify(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
 const CLEANUP_TIMEOUT_MS = 60_000;
-const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
@@ -593,6 +683,8 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
     record = setAttention(record, slug, value);
   return record;
 }
+/** How long the classifier waits for a reply's parent before it goes on. */
+const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 /** The team sections for agent `self`: each team it is on, its members that
@@ -647,6 +739,7 @@ type Binding = {
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
   stopLive: () => void;
+  connection: Connection;
 };
 /** A community the viewer has an agent in, and its session while live. */
 type Bound = {
@@ -719,7 +812,17 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  /** Settles once the saved key's status is known; until then a classified
+   * event waits rather than pass unchecked. */
+  private jevStatus: Promise<void> | undefined;
+  /** Goes up when a save or remove of the key starts and when it ends, so
+   * that what a read or classifier call found under an older key is not
+   * shown over the newer one. */
+  private keyGeneration = 0;
   private readonly contributions;
+  private readonly addedTools;
+  /** Every added tool's name, its plugin active or still starting. */
+  private readonly toolNames = new Set<string>();
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -730,11 +833,22 @@ export class AgentsService extends Service implements Agents {
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
   private readonly runners: AgentRunners;
+  private readonly coreMemory: CoreMemoryCache;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
-  /** Deleted agents whose community cleanup is running, and whether it was
-   * asked for again meanwhile, as when the connection recovers mid-attempt. */
-  private cleaning = new Map<string, boolean>();
+  /** Each running cleanup of a row deleted under the old order, which erased
+   * its key first, how to stop it, and whether it finished. */
+  private cleaning = new Map<
+    string,
+    { stop: AbortController; done: Promise<void> }
+  >();
+  /** Identities a re-import is taking back; no cleanup starts for them. */
+  private reclaiming = new Set<string>();
+  /** Imported identities whose archive state could not be checked yet,
+   * saved so Retry survives a restart until a check confirms the state. */
+  private unarchiving: Set<string>;
+  /** Each Delete running, so pressing it again joins it. */
+  private deleting = new Map<string, Promise<void>>();
   private unfinished: readonly Unfinished[];
   /** The viewer's agent records in each community, by origin, as last read
    * from its live session and written since. */
@@ -775,24 +889,38 @@ export class AgentsService extends Service implements Agents {
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
+    private readonly jev: ClassifierNative | undefined = nativeClassifier(),
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     migrateAgentStorage(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
+    this.unarchiving = readArchiveUnchecked(storage);
     this.teamList = Object.freeze(readTeams(storage));
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
+      classifier: "unavailable",
+      classifierKey: "checking",
       agents: [],
       running: [],
       teams: this.teamList,
     });
+    this.coreMemory = new CoreMemoryCache((pubkey) =>
+      ownerReads(this.relay(pubkey), pubkey),
+    );
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
-      find: (pubkey) => this.find(pubkey),
       member: (agent, event) => this.member(agent, event),
+      dm: (agent, event) => this.dm(agent, event),
+      community: (agent) => this.bindingOf(agent),
+      records: () => Object.values(this.records),
+      checkpoints: {
+        read: () => readCheckpoints(this.storage),
+        write: (checkpoints) => writeCheckpoints(this.storage, checkpoints),
+      },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
       record: (pubkey) => {
@@ -825,11 +953,27 @@ export class AgentsService extends Service implements Agents {
           agents: templateAgents(template, this.teamList, here),
         }));
       },
+      tabs: (agent) => {
+        const session = this.bindingOf(agent)?.session;
+        return session && channelTabs(session);
+      },
       classifier: () => this.classifier(),
+      jev: () => this.jev,
+      jevStatus: () => this.jevStatus,
+      classifierKey: () => this.state.classifierKey,
+      classifierKeyGeneration: () => this.keyGeneration,
+      setClassifierKey: (key, generation) => {
+        if (generation === this.keyGeneration) this.setKey(key);
+      },
+      context: (agent, event) => this.context(agent, event),
+      displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
       meChat: (agent, channel, signal) =>
         meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      remembered: (pubkey, slug, body) =>
+        this.coreMemory.wrote(pubkey, slug, body),
+      finished: (pubkey) => void this.coreMemory.refresh(pubkey),
     });
     ctx.effect(() => {
       const stops = [
@@ -844,11 +988,23 @@ export class AgentsService extends Service implements Agents {
       ];
       this.watch();
       void this.refresh();
+      const generation = this.keyGeneration;
+      const found = (key: ClassifierKey) => {
+        if (generation === this.keyGeneration) this.setKey(key);
+      };
+      this.jevStatus = this.jev
+        ?.status()
+        .then((configured) => found(configured ? "saved" : "missing"))
+        .catch((error) => {
+          console.warn("The classifier key could not be read", error);
+          found("unreadable");
+        });
       // Wakes each runner, which starts any timer that is due.
       const tick = setInterval(() => {
         this.runners.tick();
         this.reconnect();
         this.announce();
+        this.runners.catchUp(true);
       }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
@@ -903,6 +1059,29 @@ export class AgentsService extends Service implements Agents {
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
   types = () => this.contributions.snapshot();
+  addTool(tool: AddedTool) {
+    if (
+      !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
+      BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
+      !tool.description ||
+      tool.inputSchema?.type !== "object" ||
+      !serializable(tool.inputSchema) ||
+      typeof tool.call !== "function"
+    )
+      throw new Error(
+        "Agent tools need a lowercase name no Buzz tool has, a description, a JSON object inputSchema and call",
+      );
+    // Reserved from registration, not activation: plugins starting together
+    // are not active yet, and the second to take a name must fail.
+    if (this.toolNames.has(tool.name))
+      throw new Error(`Another plugin adds agent tool ${tool.name}`);
+    this.addedTools.register(this.ctx, { ...tool, id: tool.name });
+    this.ctx.effect(() => {
+      this.toolNames.add(tool.name);
+      return () => this.toolNames.delete(tool.name);
+    });
+  }
+  tools = () => this.addedTools.snapshot();
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -916,6 +1095,8 @@ export class AgentsService extends Service implements Agents {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
   };
+  core = (pubkey: string, signal?: AbortSignal) =>
+    this.coreMemory.core(pubkey, signal);
   private localCache:
     | {
         identities: readonly AgentIdentity[];
@@ -966,8 +1147,103 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
-  /** Whether watch classifiers can run on this device. */
-  private classifier = (): ClassifierAvailability => "unavailable";
+  /** Whether watch classifiers can run on this device: a key is saved. */
+  classifier(): ClassifierAvailability {
+    return this.state.classifier;
+  }
+  async setClassifierKey(key: string) {
+    const jev = this.jev;
+    if (!jev) throw new Error("The classifier runs only in the desktop app");
+    await this.changeKey(() => jev.setKey(key));
+    this.setKey("saved");
+  }
+  async clearClassifierKey() {
+    const jev = this.jev;
+    if (!jev) throw new Error("The classifier runs only in the desktop app");
+    await this.changeKey(() => jev.clearKey());
+    this.setKey("missing");
+  }
+  /** Saves or removes the key. A read or classifier call that started before
+   * it ends may have used the old key, so its finding is ignored. */
+  private async changeKey(change: () => Promise<void>) {
+    this.keyGeneration++;
+    try {
+      await change();
+    } finally {
+      this.keyGeneration++;
+    }
+  }
+  /** Agents are told a classifier can run only while a key is known to be
+   * saved. A key the service refused still runs, and each event reports why
+   * it passed unchecked. */
+  private setKey(classifierKey: ClassifierKey) {
+    const classifier =
+      classifierKey === "saved" || classifierKey === "refused"
+        ? "available"
+        : "unavailable";
+    if (this.state.classifierKey === classifierKey) return;
+    this.state = Object.freeze({ ...this.state, classifier, classifierKey });
+    this.notify();
+  }
+  /** The event's surroundings for the classifier, from what the app knows. */
+  private async context(
+    agent: Agent,
+    event: RelayEvent,
+  ): Promise<ClassifierContext> {
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.bindingOf(agent)?.session.channels;
+    const summary = channelId
+      ? (channels?.list().channels.find((item) => item.id === channelId) ??
+        channels?.get?.(channelId))
+      : undefined;
+    const parent = threadReference(event)?.parentId ?? null;
+    let found: RelayEvent | undefined;
+    const native = this.native;
+    if (parent && native)
+      try {
+        // Bounded: classified events release in order, so a stuck lookup
+        // would hold back every later one.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        [found] = await Promise.race([
+          native.query(agent.pubkey, [{ ids: [parent], limit: 1 }]),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("The parent lookup timed out")),
+              PARENT_LOOKUP_MS,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+      } catch {
+        // The parent stays unknown; the classifier still runs.
+      }
+    return {
+      channel: { name: summary?.name ?? null },
+      thread: {
+        is_reply: !!parent,
+        parent: found
+          ? {
+              author: {
+                role:
+                  found.pubkey === agent.pubkey
+                    ? "self"
+                    : found.pubkey === agent.owner
+                      ? "owner"
+                      : "other",
+                name: this.displayName(agent, found.pubkey),
+              },
+              content: excerpt(found.content),
+            }
+          : null,
+      },
+      mentions: mentionFacts(event.tags, agent.pubkey, agent.owner),
+    };
+  }
+  private displayName(agent: Agent, pubkey: string) {
+    return (
+      this.bindingOf(agent)?.session.profiles?.snapshot().get(pubkey)?.name ??
+      null
+    );
+  }
 
   /** Has the provider make the agent, then sets it up. From here on it is
    * kept, unfinished until set up, so a failure never makes a second one. */
@@ -1078,20 +1354,16 @@ export class AgentsService extends Service implements Agents {
     };
   }
 
-  async port(input: PortInput) {
+  async port(input: PortInput): Promise<Ported> {
     const { type } = input;
-    if (input.source !== "shared") {
-      const { source, pubkey } = input;
-      return this.add(type, (native, destination, owner) =>
-        native.port(source, pubkey, destination, owner, type),
-      );
-    }
+    if (input.source !== "shared")
+      return this.portIdentity(input.source, input.pubkey, type);
     const name = input.name.trim();
     if (!name) throw new Error("Name the agent");
     const { picture, instructions } = input;
     // A shared agent has no key to keep; it is a new identity that carries
     // what was shared, as a brought-over one does.
-    return this.add(
+    const agent = await this.add(
       type,
       async (native, destination, owner) => ({
         agent: await native.create(destination, owner, type, name),
@@ -1099,6 +1371,59 @@ export class AgentsService extends Service implements Agents {
       }),
       { picture },
     );
+    return { agent, notes: [] };
+  }
+
+  /** Takes over an identity an earlier agent system saved. One deleted here
+   * whose cleanup already archived it comes back unarchived where the owner
+   * can, and otherwise says it is still archived. */
+  private async portIdentity(
+    source: PortSource,
+    pubkey: string,
+    type: string,
+    given?: Binding,
+  ): Promise<Ported> {
+    const binding = given ?? this.selectedBinding();
+    const notes: string[] = [];
+    // A cleanup still running from its Delete must not touch it once it is back.
+    await this.reclaim(pubkey);
+    try {
+      const agent = await this.add(
+        type,
+        async (native, destination, owner) => {
+          const ported = await native.port(
+            source,
+            pubkey,
+            destination,
+            owner,
+            type,
+          );
+          notes.push(...(ported.notes ?? []));
+          return ported;
+        },
+        {},
+        binding,
+      );
+      try {
+        const done = await unarchive(binding.session.archives, pubkey);
+        this.setArchiveUnchecked(pubkey, false);
+        if (!done) notes.push(stillArchived(agent.name));
+      } catch (error) {
+        console.warn(
+          `Agent ${agent.name} archive state was not checked`,
+          error,
+        );
+        this.setArchiveUnchecked(pubkey, true);
+        this.update();
+        this.notify();
+        notes.push(
+          `Couldn't check whether ${agent.name} is archived in this community. Retry from its settings.`,
+        );
+      }
+      return { agent, notes };
+    } finally {
+      this.reclaiming.delete(pubkey);
+    }
   }
 
   async portTeam({
@@ -1126,6 +1451,7 @@ export class AgentsService extends Service implements Agents {
     const failed: { name: string; error: string }[] = [];
     const elsewhere: string[] = [];
     const foreign: string[] = [];
+    const notes: string[] = [];
     const listed = new Set(found.agents.map((agent) => agent.pubkey));
     const teamId = await importedTeamId(old, binding.scope);
     const labels = publicKeyLabels(old.members.map(({ pubkey }) => pubkey));
@@ -1156,13 +1482,14 @@ export class AgentsService extends Service implements Agents {
         continue;
       }
       try {
-        const agent = await this.add(
+        const ported = await this.portIdentity(
+          member.source,
+          member.pubkey,
           type,
-          (native, destination, owner) =>
-            native.port(member.source, member.pubkey, destination, owner, type),
-          {},
           binding,
         );
+        const { agent } = ported;
+        notes.push(...ported.notes);
         imported.push(agent);
         members.push(agent.pubkey);
       } catch (error) {
@@ -1179,7 +1506,7 @@ export class AgentsService extends Service implements Agents {
       if (!here) return true;
       return fits(here, here.name || pubkey);
     });
-    const result = { imported, failed, elsewhere, foreign };
+    const result = { imported, failed, elsewhere, foreign, notes };
     // A saved team is rewritten so the members judged out leave it; a new
     // one is made only with members.
     if (!saved && !members.length) return result;
@@ -1439,13 +1766,63 @@ export class AgentsService extends Service implements Agents {
     return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
-  async remove(pubkey: string) {
+  async remove(pubkey: string): Promise<void> {
     if (!this.identities.some((identity) => identity.pubkey === pubkey))
       return this.removeHosted(pubkey);
-    if (!this.native) throw new Error("Agents run only in the desktop app");
-    await this.native.remove(pubkey);
-    // Drops its settings, and starts its cleanup if its community is connected.
+    const running = this.deleting.get(pubkey);
+    if (running) return running;
+    const work = this.removeLocal(pubkey).finally(() =>
+      this.deleting.delete(pubkey),
+    );
+    this.deleting.set(pubkey, work);
+    return work;
+  }
+  /** Keeps its key until its community confirms it left every channel and was
+   * archived, so nothing can import it back meanwhile, here or in another copy
+   * of the app. The owner signs each step. */
+  private async removeLocal(pubkey: string) {
+    const native = this.native;
+    if (!native) throw new Error("Agents run only in the desktop app");
+    const identity = this.live(pubkey);
+    if (!identity) throw new Error("No such agent on this device");
+    // Saved first, so neither a relaunch nor another copy runs it again.
+    await native.beginDelete(pubkey);
     await this.refresh();
+    const binding = this.bindingOf(identity);
+    const unfinished = `${identity.name} isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.`;
+    if (!binding)
+      throw new Error(`${unfinished} Its community isn't connected.`);
+    try {
+      const signal = AbortSignal.any([
+        binding.controller.signal,
+        AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
+      ]);
+      await leaveCommunity(binding.session, pubkey, signal);
+      await deleteAgentRecord(binding.session, binding.viewer, pubkey, signal);
+    } catch (error) {
+      console.warn(`Agent ${identity.name} Delete did not finish`, error);
+      throw new Error(unfinished);
+    }
+    await native.remove(pubkey);
+    this.setArchiveUnchecked(pubkey, false);
+    for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
+    await native.forget(pubkey);
+    // Drops its settings.
+    await this.refresh();
+  }
+
+  async unarchive(pubkey: string): Promise<string | undefined> {
+    const identity = this.identities.find(
+      (item) => item.pubkey === pubkey && !item.deleted,
+    );
+    const binding = identity && this.bindingOf(identity);
+    if (!binding)
+      throw new Error("Its community isn't connected. Try again once it is.");
+    const done = await unarchive(binding.session.archives, pubkey);
+    this.setArchiveUnchecked(pubkey, false);
+    this.update();
+    this.notify();
+    return done ? undefined : stillArchived(identity.name);
   }
 
   /** Has a hosted agent's provider remove it, then takes it out of the
@@ -1537,6 +1914,15 @@ export class AgentsService extends Service implements Agents {
     this.notify();
   }
 
+  /** Saves which imports need an archive check, then keeps it in memory. */
+  private setArchiveUnchecked(pubkey: string, unchecked: boolean) {
+    if (this.unarchiving.has(pubkey) === unchecked) return;
+    const next = new Set(this.unarchiving);
+    if (unchecked) next.add(pubkey);
+    else next.delete(pubkey);
+    writeArchiveUnchecked(this.storage, next);
+    this.unarchiving = next;
+  }
   /** Saves the unfinished setups; memory changes only once storage has them. */
   private writeUnfinished(unfinished: readonly Unfinished[]) {
     writeUnfinished(this.storage, unfinished);
@@ -1594,6 +1980,7 @@ export class AgentsService extends Service implements Agents {
     for (const identity of this.identities) {
       if (
         identity.deleted ||
+        identity.deleting ||
         identity.owner !== binding.viewer ||
         originOf(identity.relay) !== origin ||
         this.listing.has(identity.pubkey)
@@ -1630,12 +2017,14 @@ export class AgentsService extends Service implements Agents {
       );
     }
   }
-  /** Writes the agent's record and lists it so, without reading it back. */
+  /** Writes the agent's record and lists it so, without reading it back.
+   * Never relists an agent being deleted: its record may already be gone. */
   private async writeListing(
     origin: string,
     binding: Binding,
     entry: Listing & { runtime: string },
   ) {
+    if (this.isDeleting(entry.pubkey)) return;
     const prior = await publishAgentRecord(
       binding.session,
       entry,
@@ -1644,6 +2033,11 @@ export class AgentsService extends Service implements Agents {
     if (this.bound.get(origin)?.binding !== binding) return;
     this.setRow(origin, entry.pubkey, Object.freeze({ ...entry, prior }));
     this.update();
+  }
+  private isDeleting(pubkey: string) {
+    return this.identities.some(
+      (identity) => identity.pubkey === pubkey && identity.deleting,
+    );
   }
   private unlist(origin: string, pubkey: string) {
     this.setRow(origin, pubkey, null);
@@ -1830,7 +2224,12 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
+      ...(this.archiveUnchecked(identity.pubkey) && { archiveUnchecked: true }),
+      ...(identity.deleting && { deleting: true }),
     });
+  }
+  private archiveUnchecked(pubkey: string) {
+    return this.unarchiving.has(pubkey) || undefined;
   }
   /** The live binding of the agent's community, if it has one now. */
   private bindingOf({ relay, owner }: Pick<AgentIdentity, "relay" | "owner">) {
@@ -1934,53 +2333,60 @@ export class AgentsService extends Service implements Agents {
           );
       else {
         const binding = this.bindingOf(identity);
-        if (binding) void this.cleanup(identity.pubkey, binding);
+        if (binding) this.cleanup(identity.pubkey, binding);
       }
   }
-  /** As harness Delete does: leave every channel, then archive the identity so
-   * it drops out of member lists and mention suggestions. The owner signs both,
-   * so neither needs the deleted key. Nothing is final until each is confirmed. */
-  private async cleanup(pubkey: string, binding: Binding) {
-    if (this.cleaning.has(pubkey)) {
-      this.cleaning.set(pubkey, true);
-      return;
-    }
-    this.cleaning.set(pubkey, false);
-    let failed = false;
+  /** Starts the cleanup of a row deleted under the old order unless one is
+   * running or a re-import is taking it back. Its key is gone, so it can be
+   * imported again, and nothing tells whether someone added it back to a
+   * channel since: it only drops the record and the row. */
+  private cleanup(pubkey: string, binding: Binding) {
+    if (this.reclaiming.has(pubkey) || this.cleaning.has(pubkey)) return;
+    const stop = new AbortController();
+    const done = this.clean(pubkey, binding, stop.signal).finally(() =>
+      this.cleaning.delete(pubkey),
+    );
+    this.cleaning.set(pubkey, { stop, done });
+  }
+  /** Stops a running cleanup before a re-import takes the identity back, and
+   * keeps new ones from starting until the import ends. Resolves once every
+   * write the cleanup started has settled; none starts after the stop. */
+  private async reclaim(pubkey: string) {
+    this.reclaiming.add(pubkey);
+    const running = this.cleaning.get(pubkey);
+    running?.stop.abort(new Error("The agent was taken back"));
+    await running?.done;
+  }
+  /** Deletes an old-order row's record, then drops the row. A re-import's
+   * stop holds through signing, while a publish already started settles, so
+   * the deletion never lands on the record of an agent taken back. */
+  private async clean(pubkey: string, binding: Binding, stopped: AbortSignal) {
     const signal = AbortSignal.any([
       binding.controller.signal,
       AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
     ]);
-    const { session } = binding;
+    const fence = AbortSignal.any([signal, stopped]);
+    const stillDeleted = async () => {
+      const saved = (await this.native?.list())?.find(
+        (identity) => identity.pubkey === pubkey,
+      );
+      fence.throwIfAborted();
+      if (!saved?.deleted) throw new Error("The agent was taken back");
+    };
     try {
-      await removeAgentFromChannels(session, pubkey, signal);
-      const { archives } = session;
-      if (archives.writable) {
-        // The archive cache is not live; this needs a read started now.
-        await archives.ensure();
-        await archives.refresh();
-        signal.throwIfAborted();
-        const state = archives.state(pubkey);
-        // An unfinished read says nothing, least of all "not archived".
-        if (state === "unknown") throw new Error("Archive state is unknown");
-        // Without an owner-attested profile the agent is not in the directory,
-        // so there is nothing to hide (and no consent path to archive it with).
-        const consent =
-          state === "not-archived" && (await archives.consent(pubkey, signal));
-        signal.throwIfAborted();
-        if (consent) await archives.request("archive", pubkey, signal);
-      }
-      await deleteAgentRecord(session, binding.viewer, pubkey, signal);
+      await stillDeleted();
+      await deleteAgentRecord(
+        binding.session,
+        binding.viewer,
+        pubkey,
+        signal,
+        stopped,
+      );
       for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
       await this.native?.forget(pubkey);
       await this.refresh();
     } catch (error) {
-      failed = !binding.controller.signal.aborted;
-      if (failed) console.warn("Deleted agent cleanup will be retried", error);
-    } finally {
-      const again = this.cleaning.get(pubkey);
-      this.cleaning.delete(pubkey);
-      if (failed && again) void this.cleanup(pubkey, binding);
+      if (!fence.aborted) console.warn("Deleted agent cleanup stopped", error);
     }
   }
 
@@ -2061,33 +2467,75 @@ export class AgentsService extends Service implements Agents {
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
+      const connection: Connection = {
+        epoch: 0,
+        start: Math.floor(Date.now() / 1000),
+      };
       entry.binding = live && {
         ...live,
-        stopLive: this.listen(live.session, origin),
+        connection,
+        stopLive: this.listen(live.session, origin, connection),
       };
     }
     // Disconnecting stops its agents even when no binding changed.
     this.update();
     // Its sync reads the community's agent records too.
-    if (changed && entry.binding) this.sync();
+    if (changed && entry.binding) {
+      this.sync();
+      this.refreshCore(origin);
+    }
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
-   * connection recovers, which happens within the same session. */
-  private listen(session: RelaySession, origin: string) {
+   * connection recovers, which happens within the same session. A subscription
+   * that comes back, after a reconnect or a failed route, first sends its
+   * recent history again: what in it is new since this listener started was
+   * missed while it was down, and is delivered now (`seen` drops the rest).
+   * Older history is catch-up's, not replay's. */
+  private listen(
+    session: RelaySession,
+    origin: string,
+    connection: Connection,
+  ) {
     let connected = session.live.snapshot().status === "connected";
-    const stopEvents = session.subscribeLive((batch) =>
-      this.runners.dispatch(batch, (agent) => originOf(agent.relay) === origin),
+    const since = connection.start;
+    if (connected) Object.assign(connection, { epoch: 1, since });
+    const heard = (agent: Agent) => originOf(agent.relay) === origin;
+    const stopEvents = session.subscribeLive(
+      (batch) => this.runners.dispatch(batch, heard, since),
+      { replay: true },
     );
     const stopStatus = session.live.subscribe(() => {
       const now = session.live.snapshot().status === "connected";
-      if (now && !connected) this.sync();
+      if (now !== connected) {
+        // Catch-up reads what this connect may have missed, up to now.
+        connection.epoch += now ? 1 : 0;
+        connection.since = now ? Math.floor(Date.now() / 1000) : undefined;
+      }
+      if (now && !connected) {
+        this.sync();
+        this.refreshCore(origin);
+      }
       connected = now;
+      this.runners.catchUp(false);
     });
+    // A roster the relay confirms decides the events held for it.
+    const stopRosters = session.channels.subscribeList?.(() =>
+      this.runners.releaseHeld(heard),
+    );
     return () => {
       stopEvents();
       stopStatus();
+      stopRosters?.();
     };
+  }
+
+  /** Refreshes the cached `core` memory of each agent running in the
+   * community, which may have changed elsewhere while it was not connected. */
+  private refreshCore(origin: string) {
+    for (const agent of this.state.running)
+      if (originOf(agent.relay) === origin)
+        void this.coreMemory.refresh(agent.pubkey);
   }
 
   // Joins identities, records and the connections into the running and visible
@@ -2112,7 +2560,9 @@ export class AgentsService extends Service implements Agents {
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
           prior.attentionEnabled === (record.attentionEnabled === true) &&
-          prior.config === record.config
+          prior.config === record.config &&
+          prior.archiveUnchecked === this.archiveUnchecked(identity.pubkey) &&
+          prior.deleting === identity.deleting
           ? prior
           : this.view(identity, record),
       );
@@ -2124,8 +2574,9 @@ export class AgentsService extends Service implements Agents {
       ),
       ...this.listedAgents(selected),
     ];
+    // An unfinished Delete stays listed, but nothing runs it.
     this.runners.reconcile(
-      identities,
+      identities.filter((identity) => !identity.deleting),
       new Map(this.types().map((type) => [type.key, type])),
     );
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
@@ -2148,6 +2599,7 @@ export class AgentsService extends Service implements Agents {
       ),
     );
     this.announce();
+    this.runners.catchUp(false);
   }
 
   /** Tells each community which agents this copy runs there: online every
@@ -2224,18 +2676,36 @@ export class AgentsService extends Service implements Agents {
   private notify() {
     for (const listener of this.listeners) listener();
   }
+  /** The event's channel as the agent's community knows it, if at all. */
+  private channelOf(agent: Agent, event: RelayEvent) {
+    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channels = this.bindingOf(agent)?.session.channels;
+    if (!channel || !channels) return undefined;
+    return (
+      channels.list().channels.find((item) => item.id === channel) ??
+      channels.get?.(channel)
+    );
+  }
   /** Whether the agent is in the event's channel, by its relay-signed roster.
    * The stream is the owner's, so a watch, even of "all", sees only what the
    * agent itself could read; an event with no channel, or whose roster is
-   * unknown, wakes no watch. */
-  private member(agent: Agent, event: RelayEvent) {
-    const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-    const channels = this.bindingOf(agent)?.session.channels;
-    if (!channel || !channels) return false;
-    const summary =
-      channels.list().channels.find((item) => item.id === channel) ??
-      channels.get?.(channel);
+   * unknown, wakes no watch. A roster only loaded from disk decides nothing
+   * (undefined): the agent may have been removed or added since it was saved,
+   * so the event waits until the relay confirms it. */
+  private member(agent: Agent, event: RelayEvent): boolean | undefined {
+    const summary = this.channelOf(agent, event);
+    if (summary?.cached) return undefined;
     return !!summary?.members?.includes(agent.pubkey);
+  }
+  /** Whether the event's channel is a DM of exactly the agent and one other,
+   * by the same roster. A group DM, or one whose roster is unknown, is not. */
+  private dm(agent: Agent, event: RelayEvent) {
+    const summary = this.channelOf(agent, event);
+    return (
+      summary?.channelType === "dm" &&
+      summary.members?.length === 2 &&
+      summary.members.includes(agent.pubkey)
+    );
   }
 }
 
@@ -2247,4 +2717,58 @@ async function importedTeamId(team: OldTeam, scope: string) {
     new TextEncoder().encode(`${team.id}\n${scope}`),
   );
   return `beta-${bytesToHex(new Uint8Array(digest))}`;
+}
+
+/** As harness Delete does: leaves every channel, then archives the identity so
+ * it drops out of member lists and mention suggestions. Rejects unless each is
+ * confirmed. */
+async function leaveCommunity(
+  session: RelaySession,
+  pubkey: string,
+  signal: AbortSignal,
+) {
+  await removeAgentFromChannels(session, pubkey, signal);
+  const { archives } = session;
+  if (!archives.writable) return;
+  // The archive cache is not live; this needs a read started now.
+  await archives.ensure();
+  await archives.refresh();
+  signal.throwIfAborted();
+  const state = archives.state(pubkey);
+  // An unfinished read says nothing, least of all "not archived".
+  if (state === "unknown") throw new Error("Archive state is unknown");
+  // Without an owner-attested profile the agent is not in the directory, so
+  // there is nothing to hide (and no consent path to archive it with).
+  if (state === "not-archived" && (await archives.consent(pubkey, signal)))
+    await archives.request("archive", pubkey, signal);
+}
+function stillArchived(name: string) {
+  return `${name} is still archived in this community, so it stays out of member lists and mentions there.`;
+}
+/** Unarchives an identity the owner may, as re-import does for one a Delete's
+ * cleanup archived. False when it stays archived. */
+async function unarchive(
+  archives: RelaySession["archives"],
+  pubkey: string,
+): Promise<boolean> {
+  // The archive cache is not live; this needs a read started now.
+  await archives.ensure();
+  await archives.refresh();
+  // A community without archives cannot have archived it. A session closed
+  // meanwhile reads as "unknown" below, never as nothing to unarchive.
+  if (!archives.supported) return true;
+  const state = archives.state(pubkey);
+  if (state === "not-archived") return true;
+  // An unfinished read says nothing, least of all "not archived".
+  if (state === "unknown") throw new Error("Archive state is unknown");
+  const signal = AbortSignal.timeout(20_000);
+  if (!archives.writable) return false;
+  if (!(await archives.consent(pubkey, signal))) {
+    // A session closed during the check also refuses; that settles nothing.
+    if (archives.state(pubkey) === "unknown")
+      throw new Error("Archive check was interrupted");
+    return false;
+  }
+  await archives.request("unarchive", pubkey, signal);
+  return true;
 }

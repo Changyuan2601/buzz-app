@@ -10,7 +10,10 @@ import type { LiveCallbacks } from "../../src/features/relay/live";
 import type { RelayEvent } from "../../src/features/relay/events";
 import type { Communities } from "../../src/features/communities/service";
 import { keypair, signed, profile } from "../../src/features/relay/testing";
+import { createAppearance } from "../../src/shared/theme/service";
 import "../../src/shared/styles/globals.css";
+
+const appearance = createAppearance();
 
 const viewer = keypair(),
   other = keypair(),
@@ -152,6 +155,7 @@ createRoot(root).render(
         <ProfileButton
           communities={communities}
           accountActions={accountActions}
+          appearance={appearance}
           settingsSelected={false}
           onSettings={() => {}}
         />

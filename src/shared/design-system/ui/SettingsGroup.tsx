@@ -6,7 +6,8 @@ export function SettingsGroup({
   layout = "rows",
 }: {
   children: ReactNode;
-  layout?: "rows" | "form";
+  /** `cards` gives each child its own bordered card instead of dividers. */
+  layout?: "rows" | "form" | "cards";
 }) {
   return (
     <div data-buzz-ui="" className="buzz-settings-group" data-layout={layout}>

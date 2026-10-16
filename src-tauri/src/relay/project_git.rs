@@ -63,8 +63,8 @@ fn parse_read(read: GitRead) -> Result<GitRead> {
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
         && !read.dtag.contains("..")
-        && read.commit.as_deref().map_or(true, git_hash)
-        && read.path.as_deref().map_or(true, |path| {
+        && read.commit.as_deref().is_none_or(git_hash)
+        && read.path.as_deref().is_none_or(|path| {
             path.encode_utf16().count() <= 4096
                 && !path.chars().any(|c| (c as u32) < 32 || c as u32 == 127)
                 && path
@@ -488,7 +488,9 @@ async fn snapshot(git: &Git, read: &GitRead, tip: &str) -> Read<Value> {
     let history = String::from_utf8_lossy(&history);
     let parts: Vec<&str> = history.split('\0').collect();
     let commits: Vec<Value> = parts
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| {
             json!({
                 "hash": c[0].trim(),

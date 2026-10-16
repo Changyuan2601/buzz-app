@@ -50,7 +50,7 @@
     clip-path: inset(0 0 0 50%);
   }
   .buzz-theme-preview-backdrop {
-    fill: var(--surface-base);
+    fill: var(--bg-app);
   }
   .buzz-theme-preview-panel {
     fill: var(--surface-panel);

@@ -448,7 +448,7 @@ describe("composer Markdown boundary", () => {
         schema.text(source),
         schema.text("d", [schema.marks.italic.create()]),
       );
-      expect(output).toBe(`**c**${source.replace("*", "\\*")}*d*`);
+      expect(output).toBe(`**c**${source.replaceAll("*", "\\*")}*d*`);
       expect(fromMarkdown(output).children[0]).toMatchObject({
         type: "paragraph",
         children: expect.arrayContaining([

@@ -59,9 +59,9 @@ it("keeps current custom catalogs separate and ranks exact shortcodes first", as
   expect(second.find((item) => item.id === "custom/smile")?.url).toBe(
     b[0]?.url,
   );
-  expect(second.some((item) => item.url?.startsWith("https://a.test"))).toBe(
-    false,
-  );
+  expect(second.flatMap((item) => (item.url ? [item.url] : []))).toEqual([
+    b[0]?.url,
+  ]);
   expect((await searchEmoji("smile", [])).every((item) => !item.url)).toBe(
     true,
   );

@@ -211,6 +211,24 @@ second
     );
   });
 
+  it.each([
+    [
+      "<div><!<!-- hidden -->-- visible --></div>",
+      "<div><!-- visible --></div>",
+    ],
+    [
+      "<div><scr<!-- hidden -->ipt>alert(1)</script></div>",
+      "<div><script>alert(1)</script></div>",
+    ],
+  ])(
+    "renders syntax joined by comment removal as literal text: %s",
+    (source, text) => {
+      const { container } = renderDom(<MessageMarkdown {...props(source)} />);
+      expect(container.textContent).toBe(text);
+      expect(container.querySelector("script")).toBeNull();
+    },
+  );
+
   it("allows credential-free HTTP(S) links and makes other destinations non-clickable", () => {
     expect(safeLinkUrl("https://example.com/path?q=1")).toBe(
       "https://example.com/path?q=1",
@@ -746,7 +764,7 @@ describe("Markdown inline extensions", () => {
         media: () => "https://media.test/emoji.png",
       });
       expect(html).not.toContain("<img");
-      expect(html).toContain(`>${url.replace("&", "&amp;")}</a>`);
+      expect(html).toContain(`>${url.replaceAll("&", "&amp;")}</a>`);
     },
   );
 
@@ -836,9 +854,10 @@ it("keeps resolved private channel labels and lock icons for Buzz links", () => 
   });
   expect(html).toContain('data-link-kind="message"');
   expect(html).toContain('data-link-kind="channel"');
-  const text = html.replace(/<[^>]*>/g, "");
-  expect(text).toContain("design");
-  expect(text).not.toContain("buzz://");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.textContent).toContain("design");
+  expect(container.textContent).not.toContain("buzz://");
   const lock = renderToStaticMarkup(
     <LockIcon className={referenceStyles.icon} />,
   );

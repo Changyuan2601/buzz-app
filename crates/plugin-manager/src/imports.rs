@@ -1,6 +1,7 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
-    artifact_from_text, err, hash, Catalog, Manager, Manifest, Release, ReloadSource, Result, LIMIT,
+    artifact_from_parts, err, hash, icon_revision, Catalog, Manager, Manifest, Release,
+    ReloadSource, Result, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use nostr::event::Event;
 use serde::Serialize;
@@ -26,6 +27,9 @@ pub struct Candidate {
     pub manifest: Manifest,
     pub revision: String,
     pub publisher: Option<String>,
+    pub readme_revision: Option<String>,
+    pub icon_png_revision: Option<String>,
+    pub icon_jpg_revision: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,8 +63,11 @@ impl PreparedImport {
         })
     }
     fn add(&mut self, path: String, artifact: Result<Release>) -> Result<()> {
-        match artifact.and_then(|release| release.validate().map(|manifest| (release, manifest))) {
-            Ok((release, manifest)) => {
+        match artifact.and_then(|release| {
+            let artifact = release.artifact()?;
+            Ok((release, artifact))
+        }) {
+            Ok((release, artifact)) => {
                 if self.artifacts.contains_key(&path) {
                     return Err("Duplicate plugin folder identity".into());
                 }
@@ -77,9 +84,12 @@ impl PreparedImport {
                 }
                 self.preview.candidates.push(Candidate {
                     path: path.clone(),
-                    manifest,
+                    manifest: artifact.manifest.clone(),
                     revision: hash(&release.bytes),
                     publisher: release.publisher(),
+                    readme_revision: artifact.readme_revision(),
+                    icon_png_revision: icon_revision(artifact.icon_png.as_deref()),
+                    icon_jpg_revision: icon_revision(artifact.icon_jpg.as_deref()),
                 });
                 self.artifacts.insert(path, release);
             }
@@ -205,12 +215,25 @@ pub(crate) fn read_package(directory: &cap_std::fs::Dir, relative: &Path) -> Res
         });
     }
     Ok(Release {
-        bytes: artifact_from_text(
-            &read_source_file(directory, &relative.join("manifest.json"))?,
-            read_source_file(directory, &relative.join("plugin.js"))?,
-        )?,
+        bytes: artifact_from_source(directory, relative)?,
         signature: None,
     })
+}
+
+pub(crate) fn prepare_unsigned_artifact(directory: &Path) -> Result<Vec<u8>> {
+    let root =
+        cap_std::fs::Dir::open_ambient_dir(directory, cap_std::ambient_authority()).map_err(err)?;
+    artifact_from_source(&root, Path::new("."))
+}
+
+fn artifact_from_source(directory: &cap_std::fs::Dir, relative: &Path) -> Result<Vec<u8>> {
+    artifact_from_parts(
+        &read_source_file(directory, &relative.join("manifest.json"))?,
+        read_source_file(directory, &relative.join("plugin.js"))?,
+        read_optional_source_file(directory, &relative.join("README.md"), MAX_README_BYTES)?,
+        read_optional_source_bytes(directory, &relative.join("icon.png"), MAX_ICON_BYTES)?,
+        read_optional_source_bytes(directory, &relative.join("icon.jpg"), MAX_ICON_BYTES)?,
+    )
 }
 
 fn candidate_path(relative: &Path) -> Result<String> {
@@ -231,6 +254,53 @@ fn candidate_path(relative: &Path) -> Result<String> {
 // All descendant resolution is relative to an opened directory capability: an ancestor
 // swapped for an escaping symlink cannot redirect reads outside the selected folder.
 pub(crate) fn read_source_file(directory: &cap_std::fs::Dir, path: &Path) -> Result<String> {
+    String::from_utf8(read_source_bytes(directory, path, LIMIT as usize)?).map_err(err)
+}
+
+fn read_optional_source_file(
+    directory: &cap_std::fs::Dir,
+    path: &Path,
+    limit: usize,
+) -> Result<Option<String>> {
+    read_optional_source_bytes(directory, path, limit)?
+        .map(|bytes| {
+            String::from_utf8(bytes).map_err(|_| format!("{} must be UTF-8", path.display()))
+        })
+        .transpose()
+}
+
+fn read_optional_source_bytes(
+    directory: &cap_std::fs::Dir,
+    path: &Path,
+    limit: usize,
+) -> Result<Option<Vec<u8>>> {
+    // Directory entries preserve spelling even on case-insensitive filesystems.
+    // Only the conventional exact filename participates in the package.
+    let mut found = false;
+    for entry in directory
+        .read_dir(
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )
+        .map_err(err)?
+    {
+        if entry.map_err(err)?.file_name() == path.file_name().ok_or("Missing asset filename")? {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Ok(None);
+    }
+    match directory.symlink_metadata(path) {
+        Ok(_) => read_source_bytes(directory, path, limit).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(err(error)),
+    }
+}
+
+fn read_source_bytes(directory: &cap_std::fs::Dir, path: &Path, limit: usize) -> Result<Vec<u8>> {
     if !directory
         .symlink_metadata(path)
         .map_err(err)?
@@ -250,7 +320,15 @@ pub(crate) fn read_source_file(directory: &cap_std::fs::Dir, path: &Path) -> Res
     if !file.metadata().map_err(err)?.is_file() {
         return Err("Plugin files must be regular files".into());
     }
-    crate::read_file_limited(file.into_std())
+    let mut bytes = Vec::new();
+    file.into_std()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(err)?;
+    if bytes.len() > limit {
+        return Err(format!("{} exceeds its size limit", path.display()));
+    }
+    Ok(bytes)
 }
 
 /// Only explicit HTTPS/SSH transports. No local paths, URL helpers, credentials in HTTPS,
@@ -435,6 +513,7 @@ impl Git {
             2 * 1024 * 1024,
         )?;
         let mut blobs = BTreeMap::new();
+        let mut symlinks = std::collections::BTreeSet::new();
         for (index, entry) in tree
             .split(|b| *b == 0)
             .filter(|b| !b.is_empty())
@@ -450,6 +529,9 @@ impl Git {
             let mode = meta.next().unwrap_or_default();
             let kind = meta.next().unwrap_or_default();
             let oid = meta.next().unwrap_or_default();
+            if mode == "120000" {
+                symlinks.insert(path.to_string());
+            }
             // Never check out a working tree: symlinks, submodules, attributes/filters and
             // repository scripts cannot become executable acquisition steps.
             if kind == "blob" && (mode == "100644" || mode == "100755") {
@@ -513,41 +595,54 @@ impl Git {
                 )?;
                 continue;
             };
-            let mut contents = vec![];
-            let mut oversized = false;
-            for oid in [manifest_oid, code_oid] {
-                let size = String::from_utf8(
-                    self.run(&["-C", "repository", "cat-file", "-s", oid], 1024)?,
-                )
-                .map_err(err)?;
-                if size.trim().parse::<u64>().map_err(err)? > LIMIT {
-                    oversized = true;
-                    break;
+            let artifact = (|| {
+                for name in ["README.md", "icon.png", "icon.jpg"] {
+                    if symlinks.contains(&format!("{parent}{name}")) {
+                        return Err(format!(
+                            "{name} must be a regular file, not a symbolic link"
+                        ));
+                    }
                 }
-                let bytes = self.run(&["-C", "repository", "cat-file", "blob", oid], LIMIT)?;
-                contents.push(String::from_utf8(bytes).map_err(err)?);
-            }
-            let artifact = if oversized {
-                Err("File exceeds 8 MiB".into())
-            } else {
-                let code = contents.pop().unwrap();
-                artifact_from_text(&contents[0], code).map(|bytes| Release {
+                let manifest = String::from_utf8(self.read_blob(manifest_oid)?)
+                    .map_err(|_| "manifest.json must be UTF-8")?;
+                let code = String::from_utf8(self.read_blob(code_oid)?)
+                    .map_err(|_| "plugin.js must be UTF-8")?;
+                let readme = blobs
+                    .get(&format!("{parent}README.md"))
+                    .map(|oid| {
+                        String::from_utf8(self.read_blob_limited(oid, MAX_README_BYTES as u64)?)
+                            .map_err(|_| String::from("README.md must be UTF-8"))
+                    })
+                    .transpose()?;
+                let icon = blobs
+                    .get(&format!("{parent}icon.png"))
+                    .map(|oid| self.read_blob_limited(oid, MAX_ICON_BYTES as u64))
+                    .transpose()?;
+                let jpg = blobs
+                    .get(&format!("{parent}icon.jpg"))
+                    .map(|oid| self.read_blob_limited(oid, MAX_ICON_BYTES as u64))
+                    .transpose()?;
+                artifact_from_parts(&manifest, code, readme, icon, jpg).map(|bytes| Release {
                     bytes,
                     signature: None,
                 })
-            };
+            })();
             prepared.add(display.into(), artifact)?;
         }
         Ok(prepared)
     }
 
     fn read_blob(&self, oid: &str) -> Result<Vec<u8>> {
+        self.read_blob_limited(oid, LIMIT)
+    }
+
+    fn read_blob_limited(&self, oid: &str, limit: u64) -> Result<Vec<u8>> {
         let size = String::from_utf8(self.run(&["-C", "repository", "cat-file", "-s", oid], 1024)?)
             .map_err(err)?;
-        if size.trim().parse::<u64>().map_err(err)? > LIMIT {
-            return Err("File exceeds 8 MiB".into());
+        if size.trim().parse::<u64>().map_err(err)? > limit {
+            return Err("File exceeds its size limit".into());
         }
-        self.run(&["-C", "repository", "cat-file", "blob", oid], LIMIT)
+        self.run(&["-C", "repository", "cat-file", "blob", oid], limit)
     }
 }
 
@@ -637,6 +732,22 @@ fn directory_size(root: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn decode_content_icon(encoded: Option<&str>) -> Option<Vec<u8>> {
+        use base64::Engine as _;
+        encoded.map(|value| {
+            base64::engine::general_purpose::STANDARD
+                .decode(value)
+                .unwrap()
+        })
+    }
+    use image::{codecs::png::PngEncoder, ExtendedColorType, ImageEncoder as _};
+    fn png() -> Vec<u8> {
+        let mut bytes = vec![];
+        PngEncoder::new(&mut bytes)
+            .write_image(&[0, 0, 0, 0], 1, 1, ExtendedColorType::Rgba8)
+            .unwrap();
+        bytes
+    }
     fn plugin(root: &Path, folder: &str, id: &str) -> PathBuf {
         let path = root.join(folder);
         fs::create_dir_all(&path).unwrap();
@@ -656,12 +767,16 @@ mod tests {
     fn folder_discovers_nested_dist_and_installs_exact_preview_without_execution() {
         let root = tempfile::tempdir().unwrap();
         let source = plugin(root.path(), "pages/one/dist", "example.one");
+        fs::write(source.join("README.md"), "# One").unwrap();
+        fs::write(source.join("icon.png"), png()).unwrap();
         plugin(root.path(), "panels/two", "example.two");
         plugin(root.path(), "node_modules/skipped", "example.skipped");
         fs::write(root.path().join("manifest.json"), "{}").unwrap();
         let prepared = prepare_folder(root.path()).unwrap();
         assert_eq!(prepared.preview.candidates.len(), 2);
         assert_eq!(prepared.preview.candidates[0].path, "pages/one/dist");
+        assert!(prepared.preview.candidates[0].readme_revision.is_some());
+        assert!(prepared.preview.candidates[0].icon_png_revision.is_some());
         assert_eq!(prepared.preview.warnings.len(), 1);
         let home = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
@@ -685,6 +800,12 @@ mod tests {
             .find(|p| p.manifest.id == "example.one")
             .unwrap();
         assert!(!installed.enabled);
+        let content = manager.content("example.one", &installed.revision).unwrap();
+        assert_eq!(content.readme.as_deref(), Some("# One"));
+        assert_eq!(
+            decode_content_icon(content.icon_png.as_deref()).as_deref(),
+            Some(png().as_slice())
+        );
         manager.change("enable", "example.one").unwrap();
         assert!(manager
             .module("example.one", &installed.revision)
@@ -735,6 +856,53 @@ mod tests {
             paths(&root.path().join(".claude")),
             ["worktrees/feature", "worktrees/feature/dist"]
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn folder_and_git_optional_assets_require_exact_names_and_regular_files() {
+        let git = Git::new().unwrap();
+        git.run(&["init", "--template=", "repository"], LIMIT)
+            .unwrap();
+        let repo = git.scratch.path().join("repository");
+        let case = plugin(&repo, "case", "example.case");
+        fs::write(case.join("readme.md"), "not conventional").unwrap();
+        for (index, name) in ["README.md", "icon.png", "icon.jpg"].iter().enumerate() {
+            let linked = plugin(
+                &repo,
+                &format!("linked{index}"),
+                &format!("example.linked{index}"),
+            );
+            std::os::unix::fs::symlink("plugin.js", linked.join(name)).unwrap();
+        }
+        git.run(&["-C", "repository", "add", "."], LIMIT).unwrap();
+        git.run(
+            &[
+                "-C",
+                "repository",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+            LIMIT,
+        )
+        .unwrap();
+        let folder = prepare_folder(&repo).unwrap();
+        let committed = git.read_plugins("fixture".into()).unwrap();
+        for prepared in [folder, committed] {
+            assert_eq!(prepared.preview.candidates.len(), 1);
+            assert_eq!(prepared.preview.warnings.len(), 3);
+            let candidate = &prepared.preview.candidates[0];
+            assert_eq!(candidate.path, "case");
+            assert!(candidate.readme_revision.is_none());
+            assert!(candidate.icon_png_revision.is_none());
+            assert!(candidate.icon_jpg_revision.is_none());
+        }
     }
     #[cfg(unix)]
     #[test]
@@ -856,6 +1024,13 @@ mod tests {
         fs::remove_file(signed.join("manifest.json")).unwrap();
         fs::remove_file(signed.join("plugin.js")).unwrap();
         plugin(&repo, "plugins/two", "example.two");
+        fs::write(repo.join("plugins/two/README.md"), "# Two").unwrap();
+        fs::write(repo.join("plugins/two/icon.png"), png()).unwrap();
+        let mut jpg = vec![];
+        image::codecs::jpeg::JpegEncoder::new(&mut jpg)
+            .write_image(&[128, 128, 128], 1, 1, ExtendedColorType::Rgb8)
+            .unwrap();
+        fs::write(repo.join("plugins/two/icon.jpg"), &jpg).unwrap();
         fs::write(
             repo.join("package.json"),
             r#"{"scripts":{"postinstall":"exit 1"}}"#,
@@ -897,6 +1072,15 @@ mod tests {
             .unwrap()
             .publisher
             .is_some());
+        let with_assets = prepared
+            .preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.path == "plugins/two")
+            .unwrap();
+        assert!(with_assets.readme_revision.is_some());
+        assert!(with_assets.icon_png_revision.is_some());
+        assert!(with_assets.icon_jpg_revision.is_some());
         assert_eq!(prepared.preview.commit.as_ref().unwrap().len(), 40);
         let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].bytes.clone()).unwrap();
         assert!(text.contains("first"));
@@ -916,6 +1100,20 @@ mod tests {
             .module("example.one", &installed.revision)
             .unwrap()
             .contains("first"));
+        prepared
+            .install(&manager, &prepared.preview.token, "plugins/two")
+            .unwrap();
+        let content = manager
+            .content("example.two", &with_assets.revision)
+            .unwrap();
+        assert_eq!(
+            decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+            Some(jpg.as_slice())
+        );
+        assert_eq!(
+            decode_content_icon(content.icon_png.as_deref()).as_deref(),
+            Some(png().as_slice())
+        );
     }
     #[test]
     fn signed_folder_import_load_reload_and_publisher_continuity() {

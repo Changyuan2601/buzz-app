@@ -90,12 +90,8 @@ describe("GooseSetup", () => {
       signsIn: false,
       steps: ["Create a key at console.anthropic.com"],
       models: [
-        {
-          id: "claude-opus-5-5",
-          label: "Claude Opus 5.5",
-          description: "claude-opus-5-5",
-        },
-        { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+        { id: "claude-opus-5-5", label: "claude-opus-5-5" },
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5" },
       ],
     });
     expect(fake.geese.every((goose) => goose.killed)).toBe(true);
@@ -127,6 +123,59 @@ describe("GooseSetup", () => {
     expect(await goose.models("databricks")).toEqual([]);
   });
 
+  it("lists only the workspace's and goose's own Databricks endpoints", async () => {
+    const { setup: goose } = setup({
+      providers: PROVIDERS.map((entry) =>
+        entry.providerId === "databricks"
+          ? {
+              ...entry,
+              configured: true,
+              models: [{ id: "auto-labeler-builderbot-gpt-6-luna" }],
+            }
+          : entry,
+      ),
+      supported: [
+        "auto-labeler-builderbot-gpt-6-luna",
+        "databricks-gpt-6-1-sol",
+        "kgoose-gpt-6-luna",
+        "databricks-gpt-6-luna",
+        "goose-gpt-5-5",
+      ],
+    });
+    expect(await goose.models("databricks")).toEqual([
+      { id: "databricks-gpt-6-1-sol", label: "databricks-gpt-6-1-sol" },
+      { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
+      { id: "goose-gpt-5-5", label: "goose-gpt-5-5" },
+    ]);
+  });
+
+  it("offers an agent its provider's models, or those of goose's config", async () => {
+    const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
+    await expect(
+      goose.picks({ provider: "anthropic", model: "" }),
+    ).resolves.toEqual({
+      current: "claude-sonnet-5-5",
+      models: [
+        { id: "claude-sonnet-5-5", label: "claude-sonnet-5-5", efforts: [] },
+        { id: "claude-opus-5-5", label: "claude-opus-5-5", efforts: [] },
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+      ],
+    });
+    await expect(
+      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).resolves.toMatchObject({
+      current: "claude-haiku-5-5",
+      models: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-5-5" }],
+    });
+    await expect(goose.picks({ provider: "", model: "" })).resolves.toEqual({
+      current: "qwen3",
+      models: [
+        { id: "qwen3", label: "qwen3", efforts: [] },
+        { id: "llama4", label: "llama4", efforts: [] },
+      ],
+    });
+  });
+
   it("saves a provider's fields into goose and reads the list again", async () => {
     const saved = new Map<string, Set<string>>();
     const { fake, setup: goose } = setup({ saved });
@@ -154,15 +203,16 @@ describe("GooseSetup", () => {
       await goose.test({ provider: "anthropic", model: "claude-opus-5-5" }),
     ).toEqual({ ok: true, message: "Connected" });
     const [tested] = fake.geese;
+    expect(tested?.env).toMatchObject({ GOOSE_MODE: "chat" });
     expect(tested?.env).toMatchObject({
-      GOOSE_MODE: "chat",
-      GOOSE_PROVIDER: "anthropic",
-      GOOSE_MODEL: "claude-opus-5-5",
+      GOOSE_PROVIDER: null,
+      GOOSE_MODEL: null,
     });
     expect(tested?.opened[0]).toMatchObject({
       mcpServers: [],
-      _meta: { enabledExtensions: [] },
+      _meta: { enabledExtensions: [], provider: "anthropic" },
     });
+    expect(tested?.configured).toEqual(["session-1 model=claude-opus-5-5"]);
     expect(tested?.turns.map((turn) => turn.text)).toEqual([
       "Reply with exactly: OK",
     ]);
@@ -173,16 +223,20 @@ describe("GooseSetup", () => {
   });
 
   it("fails a test with what goose replied instead", async () => {
-    const { setup: goose } = setup({
+    const { fake, setup: goose } = setup({
       reply: "Authentication failed: invalid x-api-key",
     });
     expect(await goose.test({ provider: "anthropic", model: "" })).toEqual({
       ok: false,
       message: "Authentication failed: invalid x-api-key",
     });
+    // The provider's default model, whatever goose's config names.
+    const [tested] = fake.geese;
+    expect(tested?.opened[0]?._meta).toMatchObject({ provider: "anthropic" });
+    expect(tested?.configured).toEqual([]);
   });
 
-  it("says when goose-acp is not installed", async () => {
+  it("says when the bundled goose-acp is missing", async () => {
     const spawn: Spawn = async (id, options) => {
       if (id === "goose")
         throw new Error(
@@ -191,12 +245,10 @@ describe("GooseSetup", () => {
       return fakeSpawn().spawn(id, options);
     };
     const goose = new GooseSetup(spawn);
-    await expect(goose.providers()).rejects.toThrow(
-      "goose-acp is not installed",
-    );
+    await expect(goose.providers()).rejects.toThrow("goose-acp is missing");
     expect(await goose.test({ provider: "", model: "" })).toMatchObject({
       ok: false,
-      message: expect.stringContaining("goose-acp is not installed"),
+      message: expect.stringContaining("goose-acp is missing"),
     });
   });
 });

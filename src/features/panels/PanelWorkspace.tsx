@@ -32,6 +32,8 @@ type Item = {
   close?: (() => void) | undefined;
   /** Keyboard placement: one position left or right, across panes at an edge. */
   move?: ((delta: -1 | 1) => void) | undefined;
+  /** A blank name restores the tab's own title. */
+  rename?: ((name: string) => void) | undefined;
 };
 type Identity = { label: string; icon?: ReactNode };
 type Local = { id: string; label: string; owner: string; close(): void };
@@ -326,10 +328,16 @@ export function PanelWorkspace({
               attentionRequest:
                 "attentionRequest" in tab ? tab.attentionRequest : undefined,
               onMove: "move" in tab ? tab.move : undefined,
+              onRename: "rename" in tab ? tab.rename : undefined,
               draggable: !!drag && "move" in tab && !!tab.move,
               onClose: tab.close
                 ? () => {
-                    closingTab.current = tab.id;
+                    // Recover focus only when removing its current owner.
+                    closingTab.current = document
+                      .getElementById(`${panelId(tab.id)}-tab`)
+                      ?.parentElement?.contains(document.activeElement)
+                      ? tab.id
+                      : undefined;
                     tab.close?.();
                   }
                 : undefined,

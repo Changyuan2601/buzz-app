@@ -73,6 +73,7 @@ it("carries a verified mention through host handover into all three scopes witho
       },
     ],
     portable: vi.fn(),
+    beginDelete: vi.fn(),
     port: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),

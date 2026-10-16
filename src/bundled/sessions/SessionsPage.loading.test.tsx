@@ -24,7 +24,13 @@ import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { writeView } from "../../shared/view-state";
 import { meTarget } from "../me/routes";
-import { SessionsPage } from "./SessionsPage";
+import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import {
+  beginSessionShare,
+  finishSessionShare,
+} from "../../features/sessions/share-attempt";
+import { SessionsPage, type ArchiveShortcut } from "./SessionsPage";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -41,6 +47,7 @@ const extensions = { tools: contribution, inline: contribution };
 function fixture(
   status: KitSnapshot["status"] = "ready",
   retained = true,
+  type: "session" | "stream" = "session",
   otherMembers: readonly string[] = [],
 ) {
   vi.stubGlobal(
@@ -68,7 +75,7 @@ function fixture(
         publish: async () => {},
       },
       writer: {
-        kinds: [9],
+        kinds: [9, 9000],
         sign: async (event) => signed(viewer, event),
         publish: async () => {},
       },
@@ -86,7 +93,8 @@ function fixture(
   const channel: ChannelSummary = {
     id,
     name: "Planning",
-    channelType: "session",
+    channelType: type,
+    private: true as const,
     members: [viewer.pubkey, ...otherMembers],
   };
   let list = {
@@ -101,20 +109,22 @@ function fixture(
   };
   const set = vi.fn(async () => {});
   // Like the relay, settle the roster before the confirmed action resolves.
-  const run = vi.fn(async (action: string) => {
-    list = {
-      ...list,
-      channels: action === "archive" ? [{ ...channel, archived: true }] : [],
-    };
-    for (const listener of listListeners) listener();
-  });
+  const run = vi.fn(
+    async (action: string, _id?: string, _signal?: AbortSignal) => {
+      list = {
+        ...list,
+        channels: action === "archive" ? [{ ...channel, archived: true }] : [],
+      };
+      for (const listener of listListeners) listener();
+    },
+  );
   const refresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
     channelLifecycle: {
       ...owner.session.channelLifecycle,
       available: true,
-      load: async () => ({
+      load: vi.fn(async () => ({
         channelId: id,
         channelType: "stream" as const,
         canArchive: true,
@@ -122,7 +132,7 @@ function fixture(
         canDelete: true,
         canLeave: false,
         canHide: false,
-      }),
+      })),
       run,
     },
     channels: {
@@ -135,6 +145,7 @@ function fixture(
         };
       },
       ensureList() {},
+      refreshRoster: vi.fn(async () => true),
       window: () => window,
       ensure() {},
     },
@@ -183,14 +194,20 @@ function fixture(
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const page = () => (
-    <SessionsPage
-      relay={relay}
-      panels={{ ...contribution, register() {}, resolve: () => undefined }}
-      extensions={extensions}
-      navigation={navigation}
-      navigator={{ open } as unknown as Navigation}
-    />
+  const archive: ArchiveShortcut = {};
+  const page = (visible = true) => (
+    <ChannelNavigationProvider relay={relay}>
+      {visible && (
+        <SessionsPage
+          relay={relay}
+          panels={{ ...contribution, register() {}, resolve: () => undefined }}
+          extensions={extensions}
+          navigation={navigation}
+          navigator={{ open } as unknown as Navigation}
+          archive={archive}
+        />
+      )}
+    </ChannelNavigationProvider>
   );
   const mount = () => render(page());
   return {
@@ -200,6 +217,7 @@ function fixture(
     relayAuthor,
     query,
     abort,
+    archive,
     set,
     run,
     refresh,
@@ -210,13 +228,18 @@ function fixture(
       state = next;
       for (const listener of listeners) listener();
     },
+    // Chat activity: a new summary object for the same chat.
+    retitle(name: string) {
+      list = { ...list, channels: [{ ...channel, name }] };
+      for (const listener of listListeners) listener();
+    },
     state,
   };
 }
-it("keeps the current audience and removal controls available after Share fails to move a chat", async () => {
+it("keeps the current audience and removal controls available after conversion fails to remove placement", async () => {
   const person = keypair();
   // Start with an existing member; grant confirmation is covered by SessionShare tests.
-  const f = fixture("ready", true, [person.pubkey]);
+  const f = fixture("ready", true, "session", [person.pubkey]);
   f.query.mockImplementation(async (filters) =>
     [
       signed(f.relayAuthor, {
@@ -269,16 +292,32 @@ it("keeps the current audience and removal controls available after Share fails 
   // Populate the real session's access evidence, not only the page's retained list.
   await f.session.read([{ kinds: [39000, 39002], "#d": [id], limit: 2 }]);
   f.set.mockRejectedValue(new Error("Placement refused"));
+  vi.spyOn(f.session.mePlacement, "has").mockReturnValue(true);
+  // Metadata is already ordinary; explicit conversion resumes placement only.
+  // The real details owner must not publish a second metadata command.
+  const save = vi.spyOn(f.session.channelDetails, "save");
   f.mount();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Share" }));
-  const share = screen.getByRole("dialog", { name: "Share conversation" });
-  const submit = within(share).getByRole("button", { name: "Share" });
+  const share = screen.getByRole("dialog", { name: "Share session" });
+  await user.click(
+    within(share).getByRole("button", { name: "Convert to channel" }),
+  );
+  const conversion = await screen.findByRole("dialog", {
+    name: "Move to Multiplayer",
+  });
+  const submit = within(conversion).getByRole("button", {
+    name: "Move to Multiplayer",
+  });
   await waitFor(() => expect(submit).toBeEnabled());
   await user.click(submit);
-  expect(await within(share).findByRole("alert")).toHaveTextContent(
+  expect(await within(conversion).findByRole("alert")).toHaveTextContent(
     "Placement refused",
   );
+  expect(f.set).toHaveBeenCalledWith(id, false, {
+    signal: expect.any(AbortSignal),
+  });
+  expect(save).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(f.open).not.toHaveBeenCalled();
@@ -353,25 +392,34 @@ it.each([false, true])(
       reject = no;
     });
     const held = { promise, resolve, reject };
-    f.set.mockImplementation(() => held.promise);
-    f.mount();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Share" }));
-    const dialog = screen.getByRole("dialog", { name: "Share conversation" });
-    const share = within(dialog).getByRole("button", {
-      name: "Share",
+    f.session.channels.refreshRoster.mockImplementation(async () => {
+      await held.promise;
+      return true;
     });
-    await waitFor(() => expect(share).toBeEnabled());
-    await user.click(share);
-    await waitFor(() => expect(f.set).toHaveBeenCalledOnce());
-    f.abort.abort();
-    await act(async () => {
-      if (failure) held.reject(new Error("Late failure"));
-      else held.resolve();
-      await held.promise.catch(() => {});
-    });
-    expect(f.open).not.toHaveBeenCalled();
-    expect(screen.queryByText("Late failure")).toBeNull();
+    try {
+      f.mount();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Share" }));
+      const dialog = screen.getByRole("dialog", { name: "Share session" });
+      await waitFor(() =>
+        expect(f.session.channels.refreshRoster).toHaveBeenCalledOnce(),
+      );
+      expect(within(dialog).getByRole("status")).toHaveTextContent(
+        "Loading current access",
+      );
+      f.abort.abort();
+      await act(async () => {
+        if (failure) held.reject(new Error("Late failure"));
+        else held.resolve();
+        await held.promise.catch(() => {});
+      });
+      expect(f.open).not.toHaveBeenCalled();
+      expect(f.set).not.toHaveBeenCalled();
+      expect(f.session.channelDetails.load).not.toHaveBeenCalled();
+      expect(screen.queryByText("Late failure")).toBeNull();
+    } finally {
+      held.resolve();
+    }
   },
 );
 it("opens a pending Me start through its original receipt after its section was deleted", () => {
@@ -387,6 +435,60 @@ it("opens a pending Me start through its original receipt after its section was 
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
 });
 
+it("opens settings directly from the header and restores keyboard focus without navigating", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session settings" });
+  expect(trigger).not.toHaveAttribute("aria-haspopup", "menu");
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  const dialog = await screen.findByRole("dialog", {
+    name: "Session settings",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.set).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("preserves the Session actions menu trigger relationship and keyboard focus", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Session actions" });
+  trigger.focus();
+  await user.keyboard("{ArrowDown}");
+  const menu = await screen.findByRole("menu", { name: "Session actions" });
+  expect(trigger.id).not.toBe("");
+  await waitFor(() =>
+    expect(menu).toHaveAttribute("aria-labelledby", trigger.id),
+  );
+  await waitFor(() =>
+    expect(
+      within(menu).getByRole("menuitem", { name: "Convert to channel" }),
+    ).toHaveFocus(),
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+
+  await user.keyboard("{ArrowDown}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Convert to channel" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Convert to channel",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.set).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
 it("opens an already-moved Me route in Messages without a placement or settings write", async () => {
   const f = fixture();
   f.mount();
@@ -398,6 +500,81 @@ it("opens an already-moved Me route in Messages without a placement or settings 
   expect(f.set).not.toHaveBeenCalled();
   expect(f.session.channelDetails.load).not.toHaveBeenCalled();
 });
+
+it("updates the header conversion guard when a share starts and finishes elsewhere", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  const convert = await screen.findByRole("menuitem", {
+    name: "Convert to channel",
+  });
+  expect(convert).not.toHaveAttribute("aria-disabled", "true");
+  act(() => {
+    beginSessionShare(f.session, id, {
+      destination: id,
+      sessionPeople: [],
+    });
+  });
+  expect(convert).toHaveAttribute("aria-disabled", "true");
+  await user.click(convert);
+  expect(
+    screen.queryByRole("dialog", { name: "Convert to channel" }),
+  ).toBeNull();
+  act(() => {
+    finishSessionShare(f.session, id);
+  });
+  expect(convert).not.toHaveAttribute("aria-disabled", "true");
+  await user.click(convert);
+  expect(
+    await screen.findByRole("dialog", { name: "Convert to channel" }),
+  ).toBeVisible();
+});
+
+it.each([false, true])(
+  "a stale Me route uses ordinary controls after conversion despite retained placement=%s",
+  (retained) => {
+    const f = fixture("ready", true, "stream");
+    if (retained)
+      f.update({
+        ...f.state,
+        entries: [
+          {
+            eventId: "e".repeat(64),
+            createdAt: 1,
+            record: {
+              version: 1,
+              community: "https://test.example",
+              deleted: false,
+              value: {
+                type: "groups",
+                id: "me",
+                groups: [],
+                assignments: {},
+                channels: [id],
+              },
+            },
+          },
+        ],
+      });
+    writeView(f.scope, `me:assistant:${id}`, "a".repeat(64));
+    f.mount();
+    expect(
+      screen.queryByRole("textbox", { name: "Message your agents" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("textbox", { name: "Message #Planning" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Choose follow-up assistant" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Project:/ })).toBeNull();
+    if (!retained)
+      expect(
+        screen.getByText("This conversation is in Multiplayer."),
+      ).toBeVisible();
+  },
+);
 
 it.each([
   ["archive", "Archive channel"],
@@ -411,7 +588,7 @@ it.each([
     await user.click(screen.getByRole("button", { name: "Session actions" }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
     const dialog = screen.getByRole("dialog", {
-      name: `${label}: Planning`,
+      name: action === "delete" ? "Delete Planning?" : `${label}: Planning`,
     });
     await user.click(within(dialog).getByRole("button", { name: label }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -423,6 +600,94 @@ it.each([
     expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
   },
 );
+
+it("confirms Archive from the shortcut, then leaves the archived chat", async () => {
+  const f = fixture();
+  f.mount();
+  expect(f.archive.current?.available()).toBe(true);
+  await act(async () => f.archive.current?.run());
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledWith(
+    id,
+    expect.any(AbortSignal),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: "Archive channel: Planning",
+  });
+  expect(f.run).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Archive channel" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(f.run).toHaveBeenCalledExactlyOnceWith(
+    "archive",
+    id,
+    expect.any(AbortSignal),
+  );
+  expect(f.open).toHaveBeenCalledExactlyOnceWith(meTarget(f.scope));
+  expect(f.archive.current).toBeUndefined();
+});
+
+it("opens no Archive from the shortcut where the menu offers none", async () => {
+  const f = fixture();
+  f.mount();
+  f.session.channelLifecycle.load.mockResolvedValueOnce({
+    channelId: id,
+    channelType: "stream",
+    canArchive: false,
+    canUnarchive: false,
+    canDelete: false,
+    canLeave: true,
+    canHide: false,
+  });
+  await act(async () => f.archive.current?.run());
+  f.session.channelLifecycle.load.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => f.archive.current?.run());
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("keeps a shortcut Archive across chat activity during the permission read", async () => {
+  const f = fixture();
+  let release = () => {};
+  f.session.channelLifecycle.load.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            channelId: id,
+            channelType: "stream",
+            canArchive: true,
+            canUnarchive: false,
+            canDelete: true,
+            canLeave: false,
+            canHide: false,
+          });
+      }),
+  );
+  f.mount();
+  let pending: Promise<void> | undefined;
+  act(() => {
+    pending = f.archive.current?.run();
+  });
+  act(() => f.retitle("Roadmap"));
+  await act(async () => {
+    release();
+    await pending;
+  });
+  // The confirmation names the latest summary, not the one at keypress.
+  expect(
+    screen.getByRole("dialog", { name: "Archive channel: Roadmap" }),
+  ).toBeInTheDocument();
+});
+
+it("stops offering the Archive shortcut when its visit ends", () => {
+  const f = fixture();
+  f.mount();
+  f.abort.abort();
+  expect(f.archive.current?.available()).toBe(false);
+});
 
 it("drops a pending Delete confirmation when its visit ends", async () => {
   const f = fixture();
@@ -441,7 +706,7 @@ it("drops a pending Delete confirmation when its visit ends", async () => {
     await screen.findByRole("menuitem", { name: "Delete channel" }),
   );
   const dialog = screen.getByRole("dialog", {
-    name: "Delete channel: Planning",
+    name: "Delete Planning?",
   });
   await user.click(
     within(dialog).getByRole("button", { name: "Delete channel" }),
@@ -494,4 +759,138 @@ it("returns focus to Session actions when the confirmation is cancelled", async 
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
   expect(f.run).not.toHaveBeenCalled();
+});
+
+it.each(["archive", "delete"] as const)(
+  "submitted Me %s survives page removal and reports its result",
+  async (action) => {
+    const f = fixture();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let signal: AbortSignal | undefined;
+    f.run.mockImplementation(async (_action, _id, operationSignal) => {
+      signal = operationSignal;
+      await pending;
+    });
+    const view = render(<ToastProvider>{f.page()}</ToastProvider>);
+    const user = userEvent.setup();
+    const label = action === "archive" ? "Archive channel" : "Delete channel";
+    await user.click(screen.getByRole("button", { name: "Session actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: label }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: label }),
+    );
+    try {
+      await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      act(() => f.abort.abort());
+      view.rerender(<ToastProvider>{f.page(false)}</ToastProvider>);
+      expect(signal?.aborted).toBe(false);
+      expect(
+        screen.getByRole("dialog", {
+          name:
+            action === "archive" ? "Archiving channel…" : "Deleting channel…",
+        }),
+      ).toBeVisible();
+    } finally {
+      await act(async () => finish());
+    }
+    await screen.findByRole("dialog", {
+      name:
+        action === "archive"
+          ? "Channel archived: Planning"
+          : "Channel deleted: Planning",
+    });
+    expect(f.open).not.toHaveBeenCalled();
+  },
+);
+
+it("retires an unsubmitted Me confirmation when its visit ends", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Delete Planning?" }),
+  ).toBeVisible();
+  act(() => f.abort.abort());
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("keeps a Me action failure visible after leaving its page", async () => {
+  const f = fixture();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, fail) => {
+    reject = fail;
+  });
+  f.run.mockImplementation(async () => pending);
+  const view = render(<ToastProvider>{f.page()}</ToastProvider>);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Delete channel",
+    }),
+  );
+  try {
+    await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    act(() => f.abort.abort());
+    view.rerender(<ToastProvider>{f.page(false)}</ToastProvider>);
+  } finally {
+    await act(async () =>
+      reject(
+        new Error("Could not confirm deletion. Refresh to check its status."),
+      ),
+    );
+  }
+  expect(
+    await screen.findByRole("dialog", { name: "Delete channel failed" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Could not confirm deletion. Refresh to check its status.",
+    ),
+  ).toBeVisible();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("cancels a submitted Me operation when the relay session is replaced", async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let signal: AbortSignal | undefined;
+  f.run.mockImplementation(async (_action, _id, operationSignal) => {
+    signal = operationSignal;
+    await pending;
+  });
+  const view = f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Delete channel",
+    }),
+  );
+  try {
+    await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    const replacement = fixture();
+    view.rerender(replacement.page());
+    expect(signal?.aborted).toBe(true);
+  } finally {
+    await act(async () => finish());
+  }
+  expect(f.open).not.toHaveBeenCalled();
 });

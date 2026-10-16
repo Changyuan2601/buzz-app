@@ -5,6 +5,8 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: ".",
   testMatch: "workflows.journey.mjs",
+  // The journey's fixture server starts from this prepared dependency cache.
+  globalSetup: "../../../tests/browser/vite-server.mjs",
   outputDir: "../../../test-results/workflows",
   workers: 1,
   retries: 0,

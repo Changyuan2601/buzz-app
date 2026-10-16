@@ -3,8 +3,8 @@
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
 use buzz_agent_controller::{
-    AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials, PortSource, Portables,
-    Published, Secret, CREDENTIALS_BUSY,
+    inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
+    PortSource, Portables, Published, Secret, CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -241,6 +241,8 @@ pub(crate) struct AppAgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<String>,
     deleted: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    deleting: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -252,6 +254,7 @@ impl From<AppAgent> for AppAgentSummary {
             name: agent.name,
             picture: agent.picture,
             deleted: agent.deleted,
+            deleting: agent.deleting,
         }
     }
 }
@@ -261,6 +264,9 @@ impl From<AppAgent> for AppAgentSummary {
 pub(crate) struct Ported {
     agent: AppAgentSummary,
     carry: Carry,
+    /// What did not come over, said to the person importing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<String>,
 }
 
 #[tauri::command]
@@ -346,24 +352,57 @@ pub(crate) async fn app_agent_port(
         &agent_type,
         key,
         &found.name,
-        found.picture,
-        found.about,
+        found.picture.clone(),
+        found.about.clone(),
     )?;
     let auth = identity
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
         .await?;
     let host = state.inner().clone();
-    blocking(move || {
+    let (mut agent, key) = blocking(move || {
         let mut keys = host.keys();
         let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
-        keys.insert(agent.pubkey.clone(), Arc::new(key));
-        Ok(Ported {
-            agent: agent.into(),
-            carry: found.carry,
-        })
+        let key = Arc::new(key);
+        keys.insert(agent.pubkey.clone(), key.clone());
+        Ok((agent, key))
     })
-    .await
+    .await?;
+    let mut notes = vec![];
+    // Old Buzz kept some pictures inline; the community serves the upload. The
+    // agent comes over without it if that fails, which the import reports.
+    let inline = found
+        .picture
+        .as_deref()
+        .filter(|url| url.starts_with("data:"));
+    if inline.is_some_and(|url| inline_picture(url).is_none()) {
+        notes.push(format!(
+            "{} came over without its picture, which isn't a PNG, JPEG, GIF or WebP image under 6 MB.",
+            agent.name
+        ));
+    }
+    if let Some((mime, bytes)) = inline.and_then(inline_picture) {
+        let agents = state.agents.clone()?;
+        let uploaded = async {
+            let receipt = upload(&agent, &key, bytes, mime).await?;
+            let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
+            let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
+            blocking(move || agents.set_picture(&pubkey, picture)).await?;
+            Ok::<_, String>(url.to_owned())
+        };
+        match uploaded.await {
+            Ok(url) => agent.picture = Some(url),
+            Err(error) => {
+                eprintln!("Imported agent picture was not saved: {error}");
+                notes.push(format!("{} came over without its picture.", agent.name));
+            }
+        }
+    }
+    Ok(Ported {
+        agent: agent.into(),
+        carry: found.carry,
+        notes,
+    })
 }
 
 #[tauri::command]
@@ -402,6 +441,15 @@ pub(crate) async fn app_agent_delete(
     pubkey: String,
 ) -> Result<(), String> {
     state.delete(pubkey).await
+}
+
+#[tauri::command]
+pub(crate) async fn app_agent_begin_delete(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.begin_delete(&pubkey)).await
 }
 
 #[tauri::command]
@@ -545,7 +593,6 @@ pub(crate) async fn app_agent_upload(
     mime: String,
 ) -> Result<Value, String> {
     use base64::Engine;
-    use sha2::{Digest, Sha256};
     if !UPLOAD_TYPES.contains(&mime.as_str()) || data.len() > UPLOAD_LIMIT / 3 * 4 + 4 {
         return Err("Agents upload images or MP4 video up to 50 MB".into());
     }
@@ -553,13 +600,25 @@ pub(crate) async fn app_agent_upload(
         .decode(data)
         .map_err(|_| "Invalid upload data")?;
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    upload(&agent, &key, bytes, &mime).await
+}
+
+/// Uploads one blob to the agent's community as the agent.
+async fn upload(
+    agent: &AppAgent,
+    key: &Secret,
+    bytes: Vec<u8>,
+    mime: &str,
+) -> Result<Value, String> {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let auth = serde_json::to_vec(&agent.upload_auth(&key, &sha256)?)
+    let auth = serde_json::to_vec(&agent.upload_auth(key, &sha256)?)
         .map_err(|_| "Could not authorize upload")?;
     let response = client()?
         .put(agent.upload_url())
         .timeout(Duration::from_secs(120))
-        .header("Content-Type", &mime)
+        .header("Content-Type", mime)
         .header("X-SHA-256", &sha256)
         .header(
             "Authorization",
@@ -771,6 +830,7 @@ mod tests {
             profile: None,
             about: None,
             deleted: false,
+            deleting: false,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());

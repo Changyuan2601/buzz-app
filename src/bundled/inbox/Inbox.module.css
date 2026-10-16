@@ -188,7 +188,6 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 .empty {
   padding: var(--space-page-section-gap) var(--space-panel-inset);
-  max-width: 65ch;
 }
 
 .list {
@@ -203,19 +202,20 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 .rowSurface {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-row-gap);
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   min-width: 0;
+  border-radius: var(--radius-row);
 }
 
-/* Keep the sibling action from consuming the label in a narrow list pane. */
-@container inbox-list (max-width: 24rem) {
-  .rowSurface {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .rowArchive {
-    justify-self: end;
+.row[data-selected] .rowSurface {
+  background: var(--interaction-selected);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .rowSurface:hover {
+    background: var(--interaction-row-hover);
   }
 }
 
@@ -228,6 +228,14 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 /* Revealed on hover or keyboard focus; always shown without a hover pointer. */
 .rowArchive {
+  display: flex;
+  position: absolute;
+  inset-block-start: var(--space-row-gap);
+  inset-inline-end: calc(
+    var(--space-control-inset) +
+    var(--space-row-gap) +
+    var(--space-2)
+  );
   opacity: 0;
 }
 
@@ -236,9 +244,26 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   opacity: 1;
 }
 
-@media (hover: none) {
+.rowDate {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-inline-size: var(--size-control-sm);
+  justify-content: flex-end;
+}
+
+.row:hover .rowDate,
+.row:focus-within .rowDate {
+  opacity: 0;
+}
+
+@media (hover: none), (pointer: coarse) {
   .rowArchive {
     opacity: 1;
+  }
+
+  .rowDate {
+    opacity: 0;
   }
 }
 
@@ -260,7 +285,6 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 
 .heading {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-1) var(--space-control-inset);
@@ -273,32 +297,25 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   white-space: nowrap;
 }
 
-.sourceLine {
+.identity {
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
   min-width: 0;
 }
 
 .source {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
   min-width: 0;
-  max-width: 100%;
-  border-radius: var(--radius-chip);
-  padding-inline: var(--space-chip-inset);
-  background: var(--affordance-subtle);
-  color: var(--text-subtle);
-}
-
-.sourceName {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-subtle);
 }
 
 .preview {
+  max-inline-size: 64ch;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -309,8 +326,5 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
 @media (max-width: 600px) {
   .row {
     padding-bottom: var(--space-3);
-  }
-  .rowSurface {
-    gap: var(--space-1);
   }
 }

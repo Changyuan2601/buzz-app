@@ -321,7 +321,7 @@
   --neutral-action-pressed: #525252;
   --neutral-12: #000000; /* prominent controls and focus boundary   */
 
-  /* Backdrop interaction fills let the shell gradient show through. */
+  /* Backdrop interaction fills let the shell and its dot texture show through. */
   --backdrop-hover-fill: rgb(0 0 0 / 6%);
   --backdrop-pressed-fill: rgb(0 0 0 / 10%);
 
@@ -359,9 +359,11 @@
     radial-gradient(at 85% 14%, #d9d4ff 0%, transparent 57%),
     linear-gradient(154deg, #fbf8ff 0%, #e9ddf8 50%, #dce8fb 100%);
 
-  /* --- Texture. Separate from colour and gradient. --------- */
-  --texture-dots-color: #0a0a0a0f;
-  --texture-dots-size: 28px;
+  /* Decorative dots are a shade of the shell, never an independent gray.
+     Mixing in sRGB preserves the background's hue while keeping the result
+     in gamut. This is a shared texture recipe, not a component shade override. */
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 94%, black);
+  --texture-dots-size: 24px;
 
   /* --- Blur. A separate axis from translucency. ------------ */
   --blur-sm: 8px;
@@ -505,14 +507,14 @@
     radial-gradient(at 48% 52%, rgba(109, 40, 217, 0.28) 0%, transparent 79%),
     linear-gradient(155deg, #100914 0%, #21113c 52%, #081622 100%);
 
-  --texture-dots-color: #ffffff14;
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
 }
 
 /* ============================================================
-   LAYER 1 — SEMANTIC BACKDROP CHOICES
-   Numbered slots pair one named light treatment with one named
-   dark treatment. They are the appearance-preference seam: a
-   person selects `gradient-1`, not a light-only scene name.
+   LEGACY BACKDROP SPECIMENS
+   Numbered slots remain only for the glass study in the viewer.
+   They are not app themes; the product shell uses solid --bg-app
+   with the shared hue-derived dot texture.
    ============================================================ */
 
 :root {
@@ -703,8 +705,12 @@
    exceptions at the bottom.
    ============================================================ */
 
+.light,
 :root {
-  --bg-app: var(--gradient-1);
+  --bg-app: var(--neutral-quiet-hover);
+}
+
+:root {
   --bg-panel: var(--surface-panel); /* dark: neutral-3 */
   --bg-float: var(--surface-popover); /* dark: neutral-5 */
   --bg-scrim: #00000060;
@@ -753,7 +759,7 @@
   --bg-glass-primary-hover: var(--glass-3);
   --bg-glass-secondary: var(--glass-4);
   --bg-glass-secondary-hover: var(--glass-5);
-  --bg-chrome-selected: var(--neutral-1);
+  --bg-chrome-selected: var(--surface-panel);
 
   /* --- Geometry. Repeated relationships from Messages. ----- */
   --space-workspace-inset: var(--space-4);
@@ -843,6 +849,7 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  --bg-app: var(--neutral-2);
   --bg-panel: var(--surface-panel);
   --border-image: var(--image-rim);
   --bg-float: var(--surface-popover);

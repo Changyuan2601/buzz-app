@@ -24,25 +24,23 @@ export async function searchMembers(
       // An incomplete public key remains an ordinary query while typing.
     }
   }
-  const events = await session.read(
-    [
-      {
-        kinds: [0],
-        ...(exact
-          ? { authors: [exact] }
-          : { search: text, search_mode: "prefix" as const, page }),
+  const events = exact
+    ? await session.read(
+        [{ kinds: [0], authors: [exact], limit: MEMBER_SEARCH_PAGE_SIZE }],
+        { signal },
+      )
+    : await session.searchProfiles(text, {
         limit: MEMBER_SEARCH_PAGE_SIZE,
-      },
-    ],
-    { signal },
-  );
+        page,
+        signal,
+      });
   signal.throwIfAborted();
   const profiles = foldProfiles(
     events.filter(
       (event) => event.kind === 0 && (!exact || event.pubkey === exact),
     ),
   );
-  // The relay matches words; rank its page by the shared name rule.
+  // Rank the relay's page by the shared name rule.
   const score = (name: string) => matchPerson(name, text)?.tier ?? 4;
   return {
     people: [...profiles]

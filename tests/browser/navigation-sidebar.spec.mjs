@@ -1,3 +1,4 @@
+import { checkDurationConsumer } from "./duration-layout.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -51,6 +52,9 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       panelGap: Number.parseFloat(
         getComputedStyle(panel.closest(".shell-sidebar")).marginInlineEnd,
       ),
+      panelGapToken:
+        Number.parseFloat(contentStyle.getPropertyValue("--space-panel-gap")) *
+        rootSize,
       // The redesigned sidebar keeps a symmetric inline gutter; rows use the
       // sidebar's fixed row radius rather than a concentric panel radius.
       padding: [contentStyle.paddingRight, contentStyle.paddingLeft].map(
@@ -69,10 +73,14 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   const conversation = await page
     .locator("#main-content > .panel")
     .boundingBox();
-  expect(geometry.panelGap).toBe(4);
+  expect(geometry.panelGap).toBe(geometry.panelGapToken);
   expect(conversation).not.toBeNull();
   expect(conversation.x - (before.x + before.width)).toBeCloseTo(
     geometry.panelGap,
+    0,
+  );
+  expect(grip.x + grip.width / 2).toBeCloseTo(
+    before.x + before.width + geometry.panelGap / 2,
     0,
   );
   expect(grip.width).toBeGreaterThanOrEqual(16);
@@ -215,7 +223,7 @@ sessionSidebar(
 
 sessionSidebar(
   "Channels opens the shared creation dialog without nested session rows",
-  async ({ page, app }) => {
+  async ({ page, app }, testInfo) => {
     await page.goto(app.origin);
     await openPage(page, "Multiplayer");
     await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
@@ -290,6 +298,7 @@ sessionSidebar(
       dialog.getByRole("textbox", { name: "Description" }),
     ).toBeFocused();
     await dialog.getByRole("radio", { name: /Temporary/ }).click();
+    await checkDurationConsumer(page, dialog, "create-duration", testInfo);
     await expect(
       dialog.getByRole("radio", { name: /Temporary/ }),
     ).toBeChecked();

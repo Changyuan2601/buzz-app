@@ -1,1 +1,7 @@
-{ "id": "buzz.links", "name": "Links", "apiVersion": 1 }
+{
+  "id": "buzz.links",
+  "name": "Links",
+  "apiVersion": 1,
+  "description": "Render Buzz entities and web links with resolved labels.",
+  "discovery": { "category": "communication", "tags": ["Essentials"] }
+}

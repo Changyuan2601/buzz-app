@@ -1,22 +1,34 @@
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
 import { profileActivityViewTarget } from "../../features/profiles/target";
+import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
+import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import type { Panels } from "../../features/panels/service";
+import { panelOpening, type Panels } from "../../features/panels/service";
 import { SidebarRightIcon } from "../../shared/design-system/icons";
 import { channelIcon } from "../../features/channels/channel-icon";
 import channelStyles from "../channels/Channels.module.css";
 import { SessionShare } from "./SessionShare";
 import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
-import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
-import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -25,13 +37,8 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
-  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import {
-  DotsThreeIcon,
-  GearIcon,
-  PencilSimpleIcon,
-} from "../../shared/design-system/icons";
+import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
@@ -62,13 +69,14 @@ import {
   useChannelWindow,
   useRelayConnection,
 } from "../../features/relay/react";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
-import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
+  ConversationChannel,
+  ConversationComposer,
+  ConversationTimeline,
+  useMediaReview,
+} from "../../features/conversation/Conversation";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
@@ -83,6 +91,11 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import styles from "../../features/sessions/Sessions.module.css";
 
+/** The open chat's Archive, published for the Me shortcut while its visit is live. */
+export type ArchiveShortcut = {
+  current?: { available(): boolean; run(): Promise<void> } | undefined;
+};
+
 export function SessionsPage({
   relay,
   panels,
@@ -90,6 +103,7 @@ export function SessionsPage({
   extensions,
   navigator,
   navigation,
+  archive,
 }: {
   relay: RelayData;
   panels: Panels;
@@ -97,6 +111,7 @@ export function SessionsPage({
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
+  archive?: ArchiveShortcut | undefined;
 }) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
@@ -110,6 +125,7 @@ export function SessionsPage({
       extensions={extensions}
       navigator={navigator}
       navigation={navigation?.forSession(relay, connection)}
+      archive={archive}
     />
   ) : (
     <PanelFrame companion={companion}>
@@ -143,6 +159,7 @@ type LiveProps = {
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
+  archive?: ArchiveShortcut | undefined;
 };
 type Lifecycle = {
   channel: ChannelSummary;
@@ -151,33 +168,25 @@ type Lifecycle = {
   origin?: AbortSignal | undefined;
 };
 
-// Lifecycle actions remove the conversation from Me, so the dialog outlives
-// the view but not the visit that opened it.
+// Confirmations belong to their visit; submitted writes and feedback belong to
+// the session owner, even when Me is no longer mounted.
 function LiveSessions(props: LiveProps) {
-  const { session, scope, navigator } = props;
-  const [lifecycle, setLifecycle] = useState<Lifecycle>();
+  const { scope, navigator } = props;
+  const handoff = useChannelNavigation();
   return (
-    <>
-      <SessionsView {...props} chooseLifecycle={setLifecycle} />
-      {lifecycle && !lifecycle.origin?.aborted && (
-        <ChannelLifecycleDialog
-          channelId={lifecycle.channel.id}
-          channelName={lifecycle.channel.name}
-          action={lifecycle.action}
-          lifecycle={session.channelLifecycle}
-          close={() => {
-            setLifecycle(undefined);
-            if (lifecycle.trigger?.isConnected)
-              lifecycle.trigger.focus({ preventScroll: true });
-          }}
-          completed={() => {
-            setLifecycle(undefined);
-            if (!lifecycle.origin?.aborted)
-              void navigator?.open(meTarget(scope));
-          }}
-        />
-      )}
-    </>
+    <SessionsView
+      {...props}
+      chooseLifecycle={({ channel, action, trigger, origin }) =>
+        handoff?.openLifecycle(channel, action, trigger, origin, {
+          close() {
+            if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+          },
+          completed() {
+            if (!origin?.aborted) void navigator?.open(meTarget(scope));
+          },
+        })
+      }
+    />
   );
 }
 
@@ -190,6 +199,7 @@ function SessionsView({
   extensions,
   navigator,
   navigation,
+  archive,
   chooseLifecycle,
 }: LiveProps & { chooseLifecycle(lifecycle: Lifecycle): void }) {
   const list = useChannelList(session.channels);
@@ -205,6 +215,55 @@ function SessionsView({
   const select = (id: string) => {
     void navigator?.open(meTarget(scope, id));
   };
+  // Mail's Archive chord opens the same confirmation as the Session actions menu.
+  const archivable =
+    selected !== "new" &&
+    !pendingDraft &&
+    !selectedSession?.readOnly &&
+    !selectedSession?.cached &&
+    !selectedSession?.archived
+      ? selectedSession
+      : undefined;
+  const lifecycle = session.channelLifecycle;
+  // Chat activity replaces the summary; a pending request belongs to the chat.
+  const latest = useRef(archivable);
+  useLayoutEffect(() => {
+    latest.current = archivable;
+  });
+  const archivableId = archivable?.id;
+  useLayoutEffect(() => {
+    if (!archive || !archivableId || !lifecycle.available) return;
+    const signal = navigation?.signal;
+    const current = {
+      available: () => !signal?.aborted,
+      // The menu's fresh permission read: no Archive where the menu has none.
+      run: async () => {
+        const trigger =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : undefined;
+        const settings = await lifecycle
+          .load(archivableId, signal)
+          .catch(() => undefined);
+        const channel = latest.current;
+        if (
+          settings?.canArchive &&
+          archive.current === current &&
+          channel?.id === archivableId
+        )
+          chooseLifecycle({
+            channel,
+            action: "archive",
+            trigger,
+            origin: signal,
+          });
+      },
+    };
+    archive.current = current;
+    return () => {
+      if (archive.current === current) archive.current = undefined;
+    };
+  }, [archive, archivableId, lifecycle, navigation, chooseLifecycle]);
   if (selected === "new" || pendingDraft)
     return (
       <PanelFrame companion={companion}>
@@ -332,12 +391,18 @@ function SessionWork({
   navigator?: Navigation | undefined;
   chooseLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
+  useSessionConversions(session);
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const media = useMediaReview();
+  const [convertOpen, setConvertOpen] = useState(false);
+  const shareAttempts = useSessionShareAttempts(session);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState<{
+    visit: AbortSignal | undefined;
+  }>();
   const [selectedAgent, setSelectedAgent] = useState(() =>
     readSelectedAssistant(scope, channel.id),
   );
@@ -347,6 +412,7 @@ function SessionWork({
   };
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
+  const personalChat = inMe && channel.channelType === "session";
   const list = useChannelList(session.channels);
   const { channels } = useChannelLabels(
     list.channels,
@@ -365,7 +431,6 @@ function SessionWork({
   }, []);
   const focusFallback = useRef<HTMLElement>(null);
   const secondary = useConversationTabs({
-    fallbackFocus: focusFallback,
     state: tabState,
     relay,
     session,
@@ -379,6 +444,7 @@ function SessionWork({
     navigationSignal: navigation?.signal,
     isLive: () => !navigation?.signal.aborted,
     openLink: (url) => openLink(url),
+    fallbackFocus: focusFallback,
     conversationIcon: (item) => {
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;
@@ -422,18 +488,13 @@ function SessionWork({
       void navigator.open(target);
       return true;
     }
-    const panel = panels.resolve(url);
-    if (!panel) return false;
+    const next = panelOpening(panels, channel.id, url, origin?.rootId);
+    if (!next) return false;
     secondary.panelTrigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    secondary.open({
-      channelId: channel.id,
-      ...(origin && { rootId: origin.rootId }),
-      panel,
-      target: url,
-    });
+    secondary.open(next);
     return true;
   }
   useEffect(
@@ -462,93 +523,97 @@ function SessionWork({
             <SessionShare
               session={session}
               channel={channel}
-              direct
               signal={navigation?.signal}
-              onShared={() => {
-                if (navigation?.signal.aborted) return;
-                const target = sessionLinkTarget(
-                  `buzz://channel/${channel.id}`,
-                  scope,
-                  session.viewer,
-                );
-                if (target) void navigator?.open(target);
-              }}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
-            <MenuRoot>
-              <MenuTrigger
-                render={
-                  <IconButton
-                    ref={menuTrigger}
-                    size="toolbar"
-                    aria-label="Session actions"
-                    title="Session actions"
-                    icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
-                  />
-                }
-              />
-              <MenuPopup aria-label="Session actions" align="end">
-                <MenuItem
-                  disabled={
-                    !!channel.readOnly || !session.channelDetails?.available
+            <IconButton
+              ref={settingsTrigger}
+              size="toolbar"
+              aria-label="Session settings"
+              title="Session settings"
+              icon={<GearIcon size="1rem" aria-hidden="true" />}
+              disabled={
+                !!channel.readOnly ||
+                (!session.canvas.available &&
+                  !canEditSessionLifetime(session, channel))
+              }
+              onClick={() => setSettingsOpen({ visit: navigation?.signal })}
+            />
+            {!channel.readOnly && !channel.cached && !channel.archived && (
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      ref={actionsTrigger}
+                      size="toolbar"
+                      aria-label="Session actions"
+                      title="Session actions"
+                      icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                    />
                   }
-                  onClick={() => setRenameOpen(true)}
-                >
-                  <MenuIcon>
-                    <PencilSimpleIcon size={16} />
-                  </MenuIcon>
-                  Rename
-                </MenuItem>
-                <MenuItem
-                  disabled={!!channel.readOnly || !session.canvas.available}
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  <MenuIcon>
-                    <GearIcon size={16} />
-                  </MenuIcon>
-                  {inMe ? "Chat settings…" : "Session settings…"}
-                </MenuItem>
-                {!channel.readOnly && !channel.cached && !channel.archived && (
+                />
+                <MenuPopup aria-label="Session actions" align="end">
+                  {canConvertSession(session, channel) && (
+                    <MenuItem
+                      disabled={shareAttempts.has(channel.id)}
+                      onClick={() => {
+                        if (!sessionShareAttempt(session, channel.id))
+                          setConvertOpen(true);
+                      }}
+                    >
+                      {conversionLabel(session, channel.id)}
+                    </MenuItem>
+                  )}
                   <ChannelLifecycleMenu
                     channelId={channel.id}
                     lifecycle={session.channelLifecycle}
                     disabled={false}
-                    separator
+                    separator={canConvertSession(session, channel)}
                     choose={(action) =>
-                      chooseLifecycle(action, menuTrigger.current ?? undefined)
+                      chooseLifecycle(
+                        action,
+                        actionsTrigger.current ?? undefined,
+                      )
                     }
                   />
-                )}
-              </MenuPopup>
-            </MenuRoot>
+                </MenuPopup>
+              </MenuRoot>
+            )}
             {hasLocalPanel && !showingPanel && (
-              <IconButton
-                ref={splitTrigger}
-                data-tab-pane-toggle=""
-                size="toolbar"
-                aria-label="Toggle tab pane"
-                title="Open tab pane"
-                aria-expanded={false}
-                icon={<SidebarRightIcon size="1rem" />}
-                onClick={() => tabState.setPaneOpen(true)}
-              />
+              <span className={panelStyles.paneToggle}>
+                <IconButton
+                  ref={splitTrigger}
+                  data-tab-pane-toggle=""
+                  size="toolbar"
+                  aria-label="Toggle tab pane"
+                  title="Open tab pane"
+                  aria-expanded={false}
+                  icon={<SidebarRightIcon size="1rem" />}
+                  onClick={() => tabState.setPaneOpen(true)}
+                />
+              </span>
             )}
           </SessionHeading>
-          {renameOpen && (
-            <RenameSession
+          {convertOpen && (
+            <ConvertSession
               key={channel.id}
               session={session}
               id={channel.id}
-              name={channel.name}
-              close={() => setRenameOpen(false)}
+              signal={navigation?.signal}
+              onConverted={() => openLink(`buzz://channel/${channel.id}`)}
+              close={() => setConvertOpen(false)}
+              finalFocus={actionsTrigger}
             />
           )}
           {settingsOpen && (
             <WorkspaceSettings
+              signal={settingsOpen.visit}
+              finalFocus={settingsTrigger}
               key={channel.id}
               session={session}
               scope={scope}
               target={{ kind: "session", id: channel.id, name: channel.name }}
-              close={() => setSettingsOpen(false)}
+              close={() => setSettingsOpen(undefined)}
             />
           )}
           {placement.status === "error" && !placement.transient ? (
@@ -595,29 +660,24 @@ function SessionWork({
                   Loading messages…
                 </p>
               ) : (
-                <ChannelTimeline
-                  chatPresentation={inMe}
+                <ConversationTimeline
+                  chatPresentation={personalChat}
                   historyControl="scroll"
-                  extensions={extensions}
-                  queries={session}
-                  viewer={session.viewer}
-                  scope={scope}
-                  channelId={channel.id}
                   window={window}
                   revealMessageId={sent}
-                  onOpenLink={openLink}
-                  canOpenLink={canOpenLink}
                 />
               )}
             </div>
-            <MessageComposer
-              chatPresentation={inMe}
-              sessionConversation
+            <ConversationComposer
+              chatPresentation={personalChat}
               activityClickOpensPanel
-              personalConversation={placement.status !== "ready" || inMe}
-              selectedAgent={inMe ? selectedAgent : undefined}
+              personalConversation={
+                channel.channelType === "session" &&
+                (placement.status !== "ready" || inMe)
+              }
+              selectedAgent={personalChat ? selectedAgent : undefined}
               trailingTool={
-                inMe ? (
+                personalChat ? (
                   <>
                     <SessionAgentControl
                       session={session}
@@ -625,37 +685,30 @@ function SessionWork({
                       value={selectedAgent}
                       onChange={selectAgent}
                       disabled={
-                        !!channel.archived ||
-                        placement.status !== "ready" ||
-                        !inMe
+                        !!channel.archived || placement.status !== "ready"
                       }
                     />
                     <SessionProjectControl
                       session={session}
                       channelId={channel.id}
                       disabled={
-                        !!channel.archived ||
-                        placement.status !== "ready" ||
-                        !inMe
+                        !!channel.archived || placement.status !== "ready"
                       }
                     />
                   </>
                 ) : undefined
               }
               onSend={setSent}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              channelId={channel.id}
-              channelName={channel.name}
-              label="Message your agents"
+              label={
+                channel.channelType === "session"
+                  ? "Message your agents"
+                  : undefined
+              }
               disabled={
                 !!channel.archived ||
                 window.status !== "ready" ||
                 placement.status !== "ready"
               }
-              onOpenLink={openLink}
-              canOpenLink={canOpenLink}
             />
           </SessionColumn>
           {drawer.content}
@@ -713,9 +766,20 @@ function SessionWork({
     </div>
   );
   return (
-    <MessageManagement session={session} channelId={channel.id}>
+    <ConversationChannel
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      channel={channel}
+      interactions={{
+        onOpenLink: openLink,
+        canOpenLink,
+        onOpenMediaReview: media.open,
+      }}
+      mediaReview={media.review}
+    >
       {workspace}
-    </MessageManagement>
+    </ConversationChannel>
   );
 }
 

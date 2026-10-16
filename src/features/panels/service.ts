@@ -76,6 +76,24 @@ export type Panel = Readonly<{
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
+export type PanelOpening = {
+  channelId: string;
+  /** Thread root of the message the opening link was in. */
+  rootId?: string;
+  panel: RegisteredPanel;
+  target: string;
+  channelContext?: ChannelPanelContext;
+};
+/** The panel a link opens, kept in the thread it was opened from. */
+export const panelOpening = (
+  panels: Pick<Panels, "resolve">,
+  channelId: string,
+  target: string,
+  rootId?: string,
+): PanelOpening | undefined => {
+  const panel = panels.resolve(target);
+  return panel && { channelId, ...(rootId && { rootId }), panel, target };
+};
 export type Panels = {
   register(panel: Panel): void;
   resolve(target: string): RegisteredPanel | undefined;

@@ -117,14 +117,16 @@ export async function deleteAgentRecord(
   viewer: string,
   pubkey: string,
   signal: AbortSignal,
+  fence?: AbortSignal,
 ) {
   const outbox = session.outbox;
   if (!outbox?.supports(5))
     throw new Error("This community cannot delete agent records.");
+  const waits = fenced(signal, fence);
   await outbox.ready();
-  signal.throwIfAborted();
+  waits.throwIfAborted();
   const coordinate = `30177:${viewer}:${pubkey}`;
-  const active = () => !signal.aborted;
+  const active = () => !waits.aborted;
   const previous = await resumable(
     outbox,
     (event) =>
@@ -232,6 +234,12 @@ export async function removeAgentFromChannels(
     );
   // The rosters confirm the outcome; nothing is left for the outbox to retry.
   await Promise.all(operations.map((id) => outbox.dismiss(id)));
+}
+
+/** `fence` keeps anything new from being admitted, while a publish already
+ * started settles under `signal` alone. */
+function fenced(signal: AbortSignal, fence?: AbortSignal) {
+  return fence ? AbortSignal.any([signal, fence]) : signal;
 }
 
 /** The relay refuses an event more than 15 minutes from its clock, and a

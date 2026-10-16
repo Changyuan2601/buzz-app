@@ -13,6 +13,9 @@
 .placeholder {
   position: absolute;
   inset: 0;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: auto;
   background: var(--border-standard);
 }
 .image {

@@ -209,3 +209,31 @@ test("pasting copied messages into the composer restores chips, the recipient an
     "[#Beta](buzz://channel/beta)",
   );
 });
+
+// Browser integration: external clipboard HTML paints a labelled link in the
+// actual composer and survives publication through the session.
+test("external linked text stays linked in the composer and sent message", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await pasteInto(input, {
+    text: "Read the guide",
+    html: '<p>Read <a href="https://example.com/guide">the guide</a></p>',
+  });
+  await expect(input).toHaveJSProperty(
+    "value",
+    "Read [the guide](https://example.com/guide)",
+  );
+  await expect(input.locator("[data-link-renderer]")).toHaveText("the guide");
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.content).toBe(
+    "Read [the guide](https://example.com/guide)",
+  );
+});

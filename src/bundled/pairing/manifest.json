@@ -1,1 +1,7 @@
-{ "id": "buzz.pairing", "name": "Pair mobile", "apiVersion": 1 }
+{
+  "id": "buzz.pairing",
+  "name": "Pair mobile",
+  "apiVersion": 1,
+  "description": "Pair a mobile device with your Buzz account and community.",
+  "discovery": { "category": "people-and-communities" }
+}

@@ -156,17 +156,19 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   );
   expect(saved.get("anthropic")).toEqual(new Set(["ANTHROPIC_API_KEY"]));
 
-  await choose("Model", "Claude Opus 5.5");
+  await choose("Model", "claude-opus-5-5");
   await user.click(
     within(dialog).getByRole("button", { name: "Test connection" }),
   );
   expect(await within(dialog).findByRole("status")).toHaveTextContent(
     "Connected",
   );
-  expect(fake.geese.at(-1)?.env).toMatchObject({
-    GOOSE_PROVIDER: "anthropic",
-    GOOSE_MODEL: "claude-opus-5-5",
+  expect(fake.geese.at(-1)?.opened[0]?._meta).toMatchObject({
+    provider: "anthropic",
   });
+  expect(fake.geese.at(-1)?.configured).toEqual([
+    "session-1 model=claude-opus-5-5",
+  ]);
   // Nothing reaches the agent until the choice is used.
   expect(changes).toEqual([]);
   await user.click(within(dialog).getByRole("button", { name: "Use" }));
@@ -236,6 +238,85 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
   );
 });
 
+it("keeps the providers shown when reading them again fails", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    saved: new Map(),
+  });
+  const setup = new GooseSetup(fake.spawn);
+  const { SettingsTab } = createTabs({ setup, ...unused });
+  render(
+    <SettingsTab
+      agent={
+        {
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+      save={async () => undefined}
+    />,
+  );
+  await choose("Provider", "Anthropic");
+  const key = await screen.findByLabelText("API key");
+  // Saving reads the providers again, which fails.
+  vi.spyOn(setup, "providers").mockRejectedValue(new Error("goose went away"));
+  await userEvent.setup().type(key, "sk-test{Enter}");
+  expect(
+    await screen.findByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  expect(screen.getByText("goose went away")).toBeVisible();
+  const provider = screen.getByRole("combobox", { name: "Provider" });
+  expect(provider).toBeEnabled();
+  expect(provider).toHaveTextContent("Anthropic");
+});
+
+it("shows no other provider's models when a provider's models fail to load", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    saved: new Map(),
+  });
+  const setup = new GooseSetup(fake.spawn);
+  vi.spyOn(setup, "models").mockImplementation(async (id) => {
+    if (id === "databricks")
+      return [{ id: "dbx-only-model", label: "dbx-only-model" }];
+    throw new Error("Anthropic is down");
+  });
+  const { SettingsTab } = createTabs({ setup, ...unused });
+  render(
+    <SettingsTab
+      agent={
+        {
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+      save={async () => undefined}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: "Model" }));
+  expect(
+    await screen.findByRole("option", { name: "dbx-only-model" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await choose("Provider", "Anthropic");
+  expect(
+    await screen.findByText("Could not list models: Anthropic is down"),
+  ).toBeVisible();
+  // The picker keeps its options mounted while closed, so look past hiding.
+  expect(
+    screen.queryByRole("option", { name: "dbx-only-model", hidden: true }),
+  ).not.toBeInTheDocument();
+});
+
 it("reads a provider's models again after its fields are saved", async () => {
   const { fake } = created({
     spawn: (fake) => new GooseSetup(fake.spawn),
@@ -274,7 +355,7 @@ it("shows what the provider said when the test fails", async () => {
   );
 });
 
-it("says when goose-acp is not installed, and tries again", async () => {
+it("says when the bundled goose-acp is missing, and tries again", async () => {
   let installed = false;
   created({
     spawn: (fake) =>
@@ -286,7 +367,7 @@ it("says when goose-acp is not installed, and tries again", async () => {
   });
   const dialog = await openChoices();
   expect(
-    await within(dialog).findByText(/goose-acp is not installed/),
+    await within(dialog).findByText(/goose-acp is missing/),
   ).toBeInTheDocument();
   installed = true;
   await userEvent
@@ -294,7 +375,7 @@ it("says when goose-acp is not installed, and tries again", async () => {
     .click(within(dialog).getByRole("button", { name: "Try again" }));
   await waitFor(() =>
     expect(
-      within(dialog).queryByText(/goose-acp is not installed/),
+      within(dialog).queryByText(/goose-acp is missing/),
     ).not.toBeInTheDocument(),
   );
 });

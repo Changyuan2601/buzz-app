@@ -75,9 +75,12 @@ export function MessageTimestamp({ createdAt }: { createdAt: number }) {
 /** Grouped messages keep their date available without an inline clock. */
 export function MessageTimestampHint({
   createdAt,
+  attachments = false,
   children,
 }: {
   createdAt: number | undefined;
+  /** Percentage-sized media needs the payload's full width. */
+  attachments?: boolean;
   children: ReactNode;
 }) {
   useLocalDay();
@@ -98,6 +101,7 @@ export function MessageTimestampHint({
       <div
         ref={payload}
         className={styles.messagePayload}
+        data-attachments={attachments || undefined}
         onFocusCapture={() => setOpen(false)}
       >
         {children}

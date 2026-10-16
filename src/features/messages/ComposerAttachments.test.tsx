@@ -621,3 +621,39 @@ it("keeps the open image when upload replaces PNG with canonical WebP", () => {
   expect(screen.getByRole("dialog").querySelector("img")).toBe(image);
   expect(image.getAttribute("src")).toBe(source);
 });
+
+it("compacts media beside non-media chips and restores media-only previews after removal", () => {
+  const image: DraftAttachment = {
+    id: "image",
+    file: new File([], "photo.png", { type: "image/png" }),
+    status: "ready",
+    uploaded: {
+      url: "https://fixture.test/photo",
+      name: "photo.png",
+      type: "image/png",
+      size: 1,
+      sha256: "0".repeat(64),
+    },
+  };
+  const file: DraftAttachment = {
+    id: "file",
+    file: new File([], "notes.txt", { type: "text/plain" }),
+    status: "ready",
+  };
+  const props = {
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: () => undefined,
+  };
+  const view = render(<ComposerAttachments {...props} items={[image, file]} />);
+  expect(screen.getByRole("list").hasAttribute("data-compact-media")).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+  expect(props.remove).toHaveBeenCalledWith("file");
+  view.rerender(<ComposerAttachments {...props} items={[image]} />);
+  expect(screen.getByRole("list").hasAttribute("data-compact-media")).toBe(
+    false,
+  );
+});

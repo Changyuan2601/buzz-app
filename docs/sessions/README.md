@@ -14,38 +14,53 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   migration, membership revocation, nested creation or transcript copy.
 - Projects are existing Me groups, and Chats are ordinary private channels. New
   chats use ordinary private channels. The first send freezes the
-  draft, channel ID, Canvas and group defaults in the existing pending-start
-  receipt. Setup and Me placement must succeed before sending; retries reuse that
+  draft, channel ID, name, lifetime, Canvas and group defaults in the existing
+  pending-start receipt. Setup and Me placement must succeed before sending; retries reuse that
   ID. Draft settings remain local until first send and use Me's defaults namespace.
 - New Me conversations add a `personal` line to the session description
   (`Buzz session (buzz.sessions/v1)`, then optional `parent:<uuid>`, then optional
   `personal`). It is a routing hint for agents that cannot read the owner's
   encrypted placement: answer as one channel-scoped, top-level conversation. It is
-  not access authority, and Share clears it with the rest of the session marker.
+  not access authority, and explicit Convert to channel clears it with the rest of the session marker.
   Conversations created before the hint are not backfilled.
-- **Share** is the single Me-to-Messages flow, available in the heading and sidebar
-  menus. It defaults to the current name, visibility and duration (new conversations
-  are Private/Ongoing), with optional additional people. It preserves the channel
-  ID, history, Canvas and existing agents/members. No conversation is copied.
-- Share confirms selected-person access, then applies channel settings, then removes
-  Me placement and the obsolete Me group assignment. It does not import Me groups
-  into Messages. Removing the legacy session marker makes this an ordinary Messages
-  channel, even when other settings are unchanged. Public sharing explicitly
-  confirms exposure of the full history; Temporary duration automatically archives
-  the conversation without deleting its history. Settings changes require verified
-  owner/admin authority and a details writer; there is no separate placement-only
-  Move fallback. Later agent conversations use ordinary Messages thread routing;
-  the private provider session used in Me is not transferred by Share.
-- Destination-link sharing in Messages remains a separate flow; see
-  [sharing](sharing.md). Neither flow shares owner-private detailed agent activity
-  or starts an agent merely by granting membership.
+- **Share** opens the same access dialog from Me and Messages. This flow
+  preserves channel ID, history, Canvas, existing members,
+  session marker, Me placement and groups. It neither promotes a conversation nor
+  navigates to Messages. Empty-selection Done makes no writes; Share’s separate
+  bottom-left Convert to channel action opens the explicit visibility confirmation.
+  Name and lifetime are not sharing controls.
+- Choose people and at most one existing channel. People-only Share grants access
+  without a DM or link delivery;
+  selecting a channel grants its current roster plus selected people and posts a
+  link without notifications. Recorded channel shares show **#channel** and
+  **N members** in default-closed disclosures. Recorded direct shares appear
+  individually, as do known session agents not shown in a channel group. Unrecorded
+  human/unclassified access is collapsed under **Other access**, without a provenance
+  paragraph or Session participants heading. Display history is account/community-scoped on this device,
+  survives reload, and does not sync across devices or control access. Direct draft
+  selections remain visible. Future joins/departures are not synchronized. Copy
+  link grants no access; Done with no audience closes without writes. Shared uses
+  verified membership and cached human evidence, not privacy inference or a required
+  role refresh. See [sharing](sharing.md) for retries and evidence limits.
+- Naming and lifetime belong to [Session settings](#standalone-session-lifetime),
+  not Share. Backend read-only roles,
+  dynamic inheritance/revocation and synced grant provenance remain deferred or
+  blocked in this checkpoint. Sharing does not expose owner-private detailed agent
+  activity or start an agent. Proposal documents remain design history, not
+  implemented behavior.
 - Me chats and drafts use the full conversation pane. Right-click,
-  Shift+F10 and overflow share one sidebar action list: Share, Rename, Move to a Me
-  project, Copy and Chat settings. Opening a row menu does not select the row.
+  Shift+F10 and overflow share one sidebar action list: Share, Convert to channel,
+  Move to a Me project, Copy and Session settings (where eligible). Opening a row
+  menu does not select the row.
   A chat can also be dragged with a pointer onto another project or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
   rollback notice and Retry. Like Messages' empty Starred, a hidden empty
   **Chats** section is not revealed during a drag.
+- **Archive chat** (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in
+  Settings → Shortcuts) opens the Session actions Archive confirmation for the open
+  chat, including from the composer, after the menu's fresh permission read; it does
+  nothing where the menu offers no Archive. Success returns to Me. Archived chats
+  are restored from search and Channel Settings, as before.
 - Me uses the ordinary composer with a visible selected assistant plus explicit
   owner-scoped mentions. The selected assistant is device-local view intent keyed
   by account, community and chat; it is not Canvas, group data or channel metadata.
@@ -73,32 +88,138 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   access to its conversation actions. Secondary conversations placed in Me keep
   owner-scoped explicit recipients and wait for placement readiness before sending.
 - Canonical channel links still use the ordinary channel reader, and Me routes can
-  refer to an accessible ordinary channel UUID. Routes and plugin views do not
-  grant access. Disabling the Me view does not delete its channels or memberships.
+  refer to an accessible ordinary channel UUID. Such a channel uses ordinary
+  composer and agent reply behavior even if a private Me filing remains. Routes
+  and plugin views do not grant access. Disabling the Me view does not delete its channels or memberships.
 
 ## Organization, settings and recovery
 
 Me projects, assignments and project defaults never fall back to Messages defaults.
 Workspace folders, optional worktree/base branch and Canvas are instructions saved
 in ordinary Canvas Markdown; saving settings does not create a worktree or change
-an agent process. Templates are copied into each new chat, not live-linked. Moving
+an agent process. Templates are copied into each new chat, not live-linked.
+Switching a draft to another project reloads its Workspace/Canvas defaults while
+retaining its independent name and lifetime. Moving
 a saved chat only changes its project assignment. Saved conversation
 settings retain the existing Canvas revision checks and explicit conflict recovery.
 
 Me uses one bounded 16 KiB recipe record, not unlimited history storage. Admission
 checks its exact serialized size before remote channel creation and again before
-saving placement. A full record keeps the draft and suggests moving an existing
-conversation to Messages, which reclaims its placement and assignment bytes.
+saving placement. A full record keeps the draft. **Convert to channel** is a
+separate, owner/admin-confirmed action for standalone sessions, available from
+Share and the existing menus. Its Private/Public choice defaults to Private and
+warns that Public exposes the full existing history to the community. It appears
+in Messages with the same ID, history, Canvas, membership, labels and lifetime.
+After confirming metadata, conversion removes the initiating viewer's Me placement
+and assignment, then opens the channel in Messages. Share alone never does this.
+A partial failure offers removal-only Finish conversion; after restart, an ordinary
+channel still filed in Me offers explicit Move to Messages without another metadata
+edit. The existing preference owner preserves other groups and placements. Conversion
+therefore reclaims this placement/assignment's bytes; it does not compact other records.
 Admission is not a reservation: another device can fill the record between those
 steps. Deleted/archived placements can still consume capacity. No cross-device
 atomicity, automatic compaction or new multi-record storage protocol is claimed.
 
 Share attempts retain in-process intent plus durable per-operation Outbox receipts,
 not a persisted composite transaction. Start over forgets settled choices, not
-submitted operations, created channels, confirmed access or Messages placement.
+submitted operations, confirmed access or Me placement.
 An interrupted link can be retried by its exact ID in Outbox; confirmed delivery
 can be removed there before sharing to the same destination again. Unknown
 receipts remain protected. Whole-share intent does not survive an app restart.
+
+## Standalone session lifetime
+
+Lifetime is separate from Share. Before first send, **Session settings**
+offers the existing Ongoing/Temporary duration control for standalone drafts:
+Ongoing means no automatic archive; Temporary defaults to seven days and archives
+after the selected duration without activity. Existing custom values are retained.
+Parent-linked sessions do not offer this control.
+
+The validated `ttlSeconds` is frozen in the local first-attempt receipt before
+asynchronous setup begins and sent as the fourth `workSessions.create` argument.
+Retries reuse the saved creation event ID: no second creation or create-then-edit.
+Local settings now store name, Canvas and lifetime together; old Canvas-only strings
+still load. Invalid stored durations are visible failures, not implicit Ongoing.
+Setup, Me placement, and first-message ordering retain their existing owners.
+
+The **Session settings** gear in the header opens the form directly; saved-session
+row menus retain **Session settings…** alongside their other actions. Both open one
+scrollable dialog, with **Session name** above Workspace/Canvas
+(optional for a new draft),
+**Lifetime** below it, and one **Save changes** action. The separate Rename editor
+and menu action have been removed. There is no separate lifetime menu or tab.
+Changed Canvas confirms first, then changed name/lifetime use one fresh signed
+channel-details operation. The session marker, privacy, history, membership and
+Me placement remain unchanged. A no-op closes without writing. If details fail
+after Canvas confirms, the dialog keeps the choices
+and retry skips that confirmed Canvas revision. Partial confirmation is explained
+as an error, not presented as two independent normal save states.
+
+Conflicts require explicit Reload while retaining the selected lifetime; an
+unconfirmed save survives modal remount and relabels the single primary action
+**Check save status**, without republishing or implicitly saving other draft
+changes. Workspace drafts keep their existing revision and conflict recovery.
+Section defaults are unchanged; parent-linked sessions have no lifetime section.
+Archived, cached, read-only or unauthorized lifetime writes remain excluded or
+denied by signed details. Canvas/lifetime capabilities can be independently
+unavailable; a failed read never sends an inferred default lifetime.
+
+Closing/retiring a view fences later lifetime admission and late UI completion.
+Canvas remains session-owned: navigation does not guarantee cancellation of its
+internal preparation or already dispatched write. No atomic rollback or composite
+app-restart journal is added. Native GUI, packaged/live-relay and renewed human
+acceptance remain separate gates.
+
+The session edit wire command is exact `h,name[,ttl]`; it never rewrites `about`,
+so the legacy session marker and optional parent/personal lines stay unchanged.
+Unchanged lifetime omits `ttl`; a changed positive canonical decimal
+(1–2147483647) sets it, and an empty value removes it. Lifetime-only changes
+omit `about`; session settings always omit visibility. Creation permits positive
+TTL only for an ordinary channel or the exact standalone session marker, never a
+parent-linked marker; empty creation TTL is rejected. Browser and native signing
+and publish guards enforce this syntax independently. The host grammar cannot
+prove parent ancestry; the shared fresh-details owner remains edit authority.
+
+## Optional naming
+
+New and saved sessions use the same Session settings form. A blank new name retains
+the first-prompt automatic title (80 code points, canonicalized like relay names).
+Explicit names use the shared canonical 1–120-code-point validation. The first
+attempt freezes the chosen or first-prompt title before any asynchronous setup;
+retries do not change it when prompt or local settings change.
+Old Canvas-only settings and pending receipts still load without a migration or
+another creation/rename operation.
+
+New session `about` metadata uses only the existing marker, optional parent line,
+and the `personal` line for Solo chats, exactly as recognized by older Buzz clients.
+Custom creation and subsequent renames do not append a `naming:` extension.
+Name/lifetime edits leave that metadata unchanged; only explicit Convert to channel
+clears `personal`. Persisted naming provenance and automatic-name reset are deferred.
+Clearing a saved name silently preserves the last confirmed title without a name
+write or validation error. Other settings can still save. Old pending receipts without a frozen name derive it from their original first
+prompt, not an edited retry draft.
+The form uses the shared content-sized dialog and its normal footer spacing, with
+one body scrollport and no reserved bottom area. The title and actions stay visible
+in ordinary short windows. If enlarged controls cannot fit, the outer dialog also
+scrolls, retaining space for a complete body control and pointer access to actions.
+Name, Project folders, Canvas and Lifetime use consistent 32px section spacing;
+labels sit 8px above their controls. Parent-linked sessions retain their existing
+details-write exclusion.
+
+Naming uses the existing fresh signed authority/version check and exact full details
+readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save
+is checked without republishing or implicitly saving newer Canvas drafts. Browser
+and native guards consume a shared legacy-metadata contract fixture, accepting only
+the existing marker/parent/personal grammar for creation and rejecting extensions.
+The parser remains identical to the pre-feature parser. Source compatibility and
+synthetic signed create/rename/readback coverage are not live cross-version-client
+acceptance.
+
+Generated sharing messages and recovery receipts retain their original numeric
+`Session · short ID` labels and signed bytes, including after a rename. Dynamic
+explicit-only share-link titles are deferred together with naming provenance; no
+local title inference, metadata protocol, repost or authored-byte rewrite is added.
+Arbitrary authored labels, raw URLs, navigation and access rules are unchanged.
 
 ## Owners and validation limits
 
@@ -113,6 +234,9 @@ browser fixtures exercise actual app wiring in Chromium and WebKit with syntheti
 identities. They do not prove native signing, live persistence/restart,
 cross-device/plugin fallback, real-agent effects or opening performance.
 Those checks and renewed human acceptance remain delivery gates where applicable.
-The polish browser journey covers menu/focus behavior, full-width saved/draft
-composers, and in-place Share through the real browser broker with synthetic relay
-responses. Native/live relay promotion and human acceptance remain unverified.
+See [sharing](sharing.md) for the contract and
+[validation](sharing-evidence.md) for checked snapshots and remaining gates.
+Human testing, packaged/native GUI, live relay, cross-account, no-wake and hosted
+CI acceptance remain separate. Narrow enlarged-text footer clipping/wrapping
+remains a presentation limitation; center hit testing and Tab reachability are
+not complete visual acceptance.
