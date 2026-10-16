@@ -275,6 +275,8 @@ async fn interrupt_cancels_both_requests_queued_before_first_admission() {
     drop(stopping.await);
 }
 
+// The model's scripted shell call is POSIX (printf, cat); the Windows shell is cmd.
+#[cfg(unix)]
 #[tokio::test]
 async fn gdk_loop_uses_the_real_leased_gateway_and_local_tools() {
     use buzz_mesh_agent::{local_tools::LocalTools, AgentMessage, AgentModel};

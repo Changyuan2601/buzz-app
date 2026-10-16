@@ -461,6 +461,8 @@ async fn response_limit_is_independent_of_token_chunking() {
     }
 }
 
+// The commands are POSIX (printf, sed, head, tr); the Windows shell is cmd.
+#[cfg(unix)]
 #[tokio::test]
 async fn real_local_shell_file_changes_and_skill_results_are_bounded() {
     let dir = tempfile::tempdir().unwrap();
