@@ -4,6 +4,7 @@ export type ChannelSetup = {
   canvas: string;
   agents: string[];
   groupId: string;
+  starred?: boolean;
   templateId: string;
 };
 export type ChannelCreationInput = Readonly<{
@@ -13,6 +14,8 @@ export type ChannelCreationInput = Readonly<{
   ttlSeconds?: number | undefined;
   /** NIP-CL labels to create the channel with. */
   labels?: readonly string[] | undefined;
+  /** Create a NIP-CL system channel: left out of channel lists. */
+  system?: true | undefined;
   setup?: ChannelSetup | undefined;
 }>;
 type Progress = {
@@ -52,6 +55,7 @@ export function createChannelSetup({
   refresh,
   canvasHead,
   place,
+  star,
   preflight,
   signal,
   changed,
@@ -68,9 +72,15 @@ export function createChannelSetup({
   delivered(id: string, active?: () => boolean): Promise<void>;
   /** Observe/read back only; never retry template publications. */
   confirm(id: string): Promise<void>;
-  refresh(id: string, member: string): Promise<void>;
+  /** Wait for relay roster proof that `member` is in the channel `input` made. */
+  refresh(
+    id: string,
+    member: string,
+    input: ChannelCreationInput,
+  ): Promise<void>;
   canvasHead(id: string): Promise<string | undefined>;
   place(id: string, group: string): Promise<void>;
+  star(id: string): Promise<void>;
   preflight(input: ChannelCreationInput): Promise<void>;
   signal: AbortSignal;
   changed(): void;
@@ -156,7 +166,7 @@ export function createChannelSetup({
         let retrying = true;
         try {
           await delivered(operation, () => retrying && !signal.aborted);
-          await refresh(checking.id, viewer);
+          await refresh(checking.id, viewer, checking.input);
         } catch (error) {
           if (
             local
@@ -179,7 +189,7 @@ export function createChannelSetup({
         await save(checking);
         if (checking.input.setup)
           throw new Error(
-            "Channel confirmed. Template setup was not continued; check its group, Canvas and members before finishing them manually.",
+            "Channel confirmed. Template setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
           );
         await retire(checking);
         return;
@@ -261,7 +271,7 @@ export function createChannelSetup({
             create(p.id, p.input, active),
           );
           await delivered(id);
-          await refresh(p.id, viewer);
+          await refresh(p.id, viewer, p.input);
           p.created = true;
           admitted.add(p.id);
           pending = undefined;
@@ -273,7 +283,8 @@ export function createChannelSetup({
           const setup = p.input.setup;
           let placementError: unknown;
           try {
-            if (setup?.groupId) await place(p.id, setup.groupId);
+            if (setup?.starred) await star(p.id);
+            else if (setup?.groupId) await place(p.id, setup.groupId);
           } catch (error) {
             placementError = error;
           }
@@ -334,7 +345,7 @@ export function createChannelSetup({
               }
               // Accepted without roster proof stays unresolved. Never restore a
               // deliberately removed member by replaying a confirmed command.
-              await refresh(p.id, agent);
+              await refresh(p.id, agent, p.input);
               p.added.push(agent);
               await persist();
             }

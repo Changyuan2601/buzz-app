@@ -59,6 +59,8 @@ import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
+import relayStaffManifest from "./relay-staff/manifest.json";
+import * as relayStaff from "./relay-staff";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   {
@@ -209,6 +211,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
     module: moderation,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...relayStaffManifest, apiVersion: 1 },
+    module: relayStaff,
     enabledByDefault: true,
   },
 ];

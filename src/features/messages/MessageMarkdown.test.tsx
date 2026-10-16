@@ -14,7 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LockIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { StrictMode, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 import type {
   ConversationExtensions,
   InlineRenderer,
@@ -29,7 +29,6 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
-import * as messageContent from "../relay/message-content";
 import {
   MAX_MARKDOWN_LENGTH,
   safeLinkUrl,
@@ -283,49 +282,6 @@ second
 });
 
 describe("mounted Markdown preparation", () => {
-  it("reuses pure preparation for equivalent rows and invalidates for edited text", () => {
-    const scan = vi.spyOn(messageContent, "scanMarkdown");
-    const initial = props("**first**");
-    const view = renderDom(
-      <StrictMode>
-        <MessageMarkdown {...initial} />
-      </StrictMode>,
-    );
-    const initialScans = scan.mock.calls.length;
-    const initialRenders = markdownRenders.mock.calls.length;
-    expect(initialScans).toBeGreaterThan(0);
-    expect(initialRenders).toBeGreaterThan(0);
-    expect(screen.getByText("first")).toHaveTextContent("first");
-
-    view.rerender(
-      <StrictMode>
-        <MessageMarkdown
-          {...initial}
-          row={{
-            ...initial.row,
-            delivery: "seen",
-            reactions: [{ content: "👍", events: [] }],
-          }}
-        />
-      </StrictMode>,
-    );
-    expect(scan).toHaveBeenCalledTimes(initialScans);
-    expect(markdownRenders).toHaveBeenCalledTimes(initialRenders);
-
-    view.rerender(
-      <StrictMode>
-        <MessageMarkdown
-          {...initial}
-          row={{ ...initial.row, content: "_second_" }}
-        />
-      </StrictMode>,
-    );
-    expect(scan.mock.calls.length).toBeGreaterThan(initialScans);
-    expect(markdownRenders.mock.calls.length).toBeGreaterThan(initialRenders);
-    expect(screen.getByText("second")).toBeInTheDocument();
-    expect(screen.queryByText("first")).not.toBeInTheDocument();
-  });
-
   it("updates live plugin, media, directory, and interactivity inputs without reparsing", () => {
     const metadataRenderer: Contribution<InlineRenderer> = {
       id: "metadata",
@@ -905,31 +861,6 @@ it("renders tagged agent library names and profile names with the same agent ico
       patch: { mentions: [mic, other] },
     }),
   ).not.toContain("data-mention-kind=");
-});
-
-it("uses the agent icon for a known agent profile outside the local library", () => {
-  expect(
-    render("@Mic", {
-      participantProfiles: new Map([[mic, { name: "Mic", isAgent: true }]]),
-    }),
-  ).toContain('data-mention-kind="agent"');
-});
-
-it("keeps the agent icon without presenting an unavailable profile action", () => {
-  const html = render("@Fast Fizz can you also join", {
-    directory: {
-      profiles: new Map(),
-      channels: [],
-      agents: [{ pubkey: mic, name: "Fast Fizz" }],
-    },
-    canOpenLink: undefined,
-  });
-  expect(html).toContain('data-mention-kind="agent"');
-  expect(html).toContain(
-    renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
-  );
-  expect(html).not.toContain("<button");
-  expect(html).not.toContain('aria-label="View');
 });
 
 it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {

@@ -84,6 +84,23 @@ const crew: ChannelReference = {
   joined: false,
 };
 
+it("keeps an unavailable session's document card, lock, sent name and accessible explanation", () => {
+  const t = fixture();
+  render(link(t.session, "private-session", "Session: PR 45 fixes"));
+  t.answer("private-session", { state: "withheld" });
+  const card = screen.getByRole("link", {
+    name: "Session: PR 45 fixes, unavailable",
+  });
+  expect(card.getAttribute("title")).toContain(
+    "You don’t have access, or it no longer exists.",
+  );
+  expect(card.getAttribute("aria-description")).toContain(
+    "Session unavailable",
+  );
+  expect(card.querySelector("svg.tabler-icon-file-text")).not.toBeNull();
+  expect(card.querySelector("svg.tabler-icon-lock")).not.toBeNull();
+});
+
 it("names an open channel and shows its hover card", async () => {
   vi.useFakeTimers();
   HTMLElement.prototype.showPopover = function () {

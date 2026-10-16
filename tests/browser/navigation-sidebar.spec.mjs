@@ -52,6 +52,9 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       panelGap: Number.parseFloat(
         getComputedStyle(panel.closest(".shell-sidebar")).marginInlineEnd,
       ),
+      panelGapToken:
+        Number.parseFloat(contentStyle.getPropertyValue("--space-panel-gap")) *
+        rootSize,
       // The redesigned sidebar keeps a symmetric inline gutter; rows use the
       // sidebar's fixed row radius rather than a concentric panel radius.
       padding: [contentStyle.paddingRight, contentStyle.paddingLeft].map(
@@ -70,10 +73,14 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   const conversation = await page
     .locator("#main-content > .panel")
     .boundingBox();
-  expect(geometry.panelGap).toBe(4);
+  expect(geometry.panelGap).toBe(geometry.panelGapToken);
   expect(conversation).not.toBeNull();
   expect(conversation.x - (before.x + before.width)).toBeCloseTo(
     geometry.panelGap,
+    0,
+  );
+  expect(grip.x + grip.width / 2).toBeCloseTo(
+    before.x + before.width + geometry.panelGap / 2,
     0,
   );
   expect(grip.width).toBeGreaterThanOrEqual(16);

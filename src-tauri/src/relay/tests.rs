@@ -22,11 +22,12 @@ fn routes_cannot_retarget_credentials_or_expand_http_access() {
     ] {
         assert!(request_url("https://relay.test", path, "POST").is_err());
     }
-    for path in ["/api/invites", "/gifs/search"] {
+    for path in ["/api/invites", "/gifs/search", "/profiles/search"] {
         assert!(request_url("https://relay.test", path, "POST").is_ok());
         assert!(request_url("https://relay.test", path, "GET").is_err());
     }
     assert!(request_url("https://relay.test", "/gifs/other", "POST").is_err());
+    assert!(request_url("https://relay.test", "/profiles/other", "POST").is_err());
     assert!(request_url("https://relay.test", "/events", "GET").is_err());
     assert_eq!(
         request_url("https://relay.test", "/query", "POST")
@@ -3609,4 +3610,96 @@ async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() 
         let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
         assert_strict(&blossom_event(&headers), "get", server);
     }
+}
+
+#[tokio::test]
+async fn artifact_signing_through_ipc_admits_a_maximum_config_event_and_bounds_the_full_event() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |event: &EventTemplate| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    // A valid maximum instructions snapshot (131,072 content bytes) whose
+    // text is all quotes, so every content byte escapes again when signed.
+    let shell = r#"{"version":1,"text":""}"#;
+    let room = 131_072 - shell.len();
+    let text = format!("{}{}", "\"".repeat(room / 2), "a".repeat(room % 2));
+    let content = serde_json::json!({ "version": 1, "text": text }).to_string();
+    assert_eq!(content.len(), 131_072);
+    // The NIP-AP envelope plus fifteen preserved, fully escaping 4 KiB tags.
+    let mut tags: Vec<Vec<String>> = vec![
+        vec!["ar".into(), "1".into()],
+        vec!["d".into(), "6ba7b811-9dad-11d1-80b4-00c04fd430c8".into()],
+        vec!["h".into(), "6ba7b811-9dad-11d1-80b4-00c04fd430c8".into()],
+        vec!["type".into(), "buzz.agent.instructions".into()],
+        vec!["title".into(), "x".repeat(512)],
+        vec!["op".into(), "update".into()],
+        vec!["prev".into(), "f".repeat(64)],
+        vec!["team".into(), "t".repeat(64)],
+    ];
+    tags.extend((0..15).map(|_| vec!["x".into(), "\"".repeat(4096)]));
+    let event = |kind, tags: &Vec<Vec<String>>| EventTemplate {
+        created_at: 9_007_199_254_740_991,
+        kind,
+        tags: tags.clone(),
+        content: content.clone(),
+    };
+    let largest = event(45010, &tags);
+    let signed = sign(&largest).unwrap();
+    verify(&signed);
+    assert_eq!(signed["content"], largest.content);
+    let size = serde_json::to_vec(&signed).unwrap().len();
+    assert!(size > 300 * 1024, "maximum config event is {size}");
+    assert!(
+        size <= ARTIFACT_MAX_EVENT_BYTES,
+        "{size} > {ARTIFACT_MAX_EVENT_BYTES}"
+    );
+    // The same event under an ordinary kind is refused by the same command.
+    assert!(sign(&event(9, &tags)).is_err());
+
+    // Pad a tag until the signed commitment sits just under the limit: the
+    // commitment check admits it, but the complete event (id, pubkey key,
+    // sig) is over the relay's limit and must be refused.
+    let pubkey = signed["pubkey"].as_str().unwrap();
+    let commitment = |tags: &Vec<Vec<String>>| {
+        let e = event(45010, tags);
+        serde_json::to_vec(&serde_json::json!([
+            0,
+            pubkey,
+            e.created_at,
+            e.kind,
+            e.tags,
+            e.content
+        ]))
+        .unwrap()
+        .len()
+    };
+    let room = ARTIFACT_MAX_EVENT_BYTES - 8 - commitment(&tags) - r#",["x",""]"#.len();
+    tags.push(vec!["x".into(), "y".repeat(room)]);
+    assert_eq!(commitment(&tags), ARTIFACT_MAX_EVENT_BYTES - 8);
+    assert_eq!(
+        sign(&event(45010, &tags)).unwrap_err(),
+        serde_json::json!("Relay event is too large")
+    );
 }

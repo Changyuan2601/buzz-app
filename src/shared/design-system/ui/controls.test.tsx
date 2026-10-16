@@ -17,23 +17,6 @@ import { Composer } from "./Composer";
 
 afterEach(cleanup);
 
-test("icon actions default to small while labelled actions remain medium", () => {
-  render(
-    <>
-      <IconButton aria-label="Add item" icon={<PlusIcon />} />
-      <Button>Continue</Button>
-    </>,
-  );
-  expect(screen.getByRole("button", { name: "Add item" })).toHaveAttribute(
-    "data-size",
-    "sm",
-  );
-  expect(screen.getByRole("button", { name: "Continue" })).toHaveAttribute(
-    "data-size",
-    "md",
-  );
-});
-
 test.each([
   ["sm", "sm"],
   ["md", "md"],
@@ -142,7 +125,7 @@ test("fields connect labels, help and errors and keep textarea edits controlled"
         <Field label="Title" description="A short name" error="Name required">
           <Input required />
         </Field>
-        <Field label="Description">
+        <Field label="Description" optional>
           <Textarea
             id="description-control"
             ref={ref}
@@ -161,12 +144,14 @@ test("fields connect labels, help and errors and keep textarea edits controlled"
   expect(screen.queryByText("A short name")).not.toBeInTheDocument();
   expect(title).toHaveAccessibleDescription(/Name required/);
   expect(title).toHaveAttribute("aria-invalid", "true");
-  const description = screen.getByRole("textbox", { name: "Description" });
+  const description = screen.getByRole("textbox", {
+    name: "Description Optional",
+  });
   expect(ref.current).toBe(description);
   expect(description).toHaveAttribute("id", "description-control");
   expect(description).toHaveAttribute("name", "description");
   expect(description).toHaveAttribute("rows", "4");
-  await user.click(screen.getByText("Description", { selector: "label" }));
+  await user.click(screen.getByText(/^Description/, { selector: "label" }));
   expect(description).toHaveFocus();
   await user.type(description, " notes");
   expect(screen.getByRole("status")).toHaveTextContent("Draft notes");

@@ -14,7 +14,7 @@ export function AvatarStack({
   size = "compact",
 }: {
   items: readonly StackAvatar[];
-  size?: "compact" | "small";
+  size?: "compact" | "small" | "mini";
 }) {
   if (!items.length) return null;
   return (
@@ -35,6 +35,13 @@ export function AvatarStack({
             src={item.src}
             alt=""
             fallback={item.name}
+            fallbackContent={
+              size === "mini" ? (
+                <span className={`${styles.miniInitial} text-caption`}>
+                  {Array.from(item.name.trim())[0]?.toUpperCase() || "?"}
+                </span>
+              ) : undefined
+            }
             shape={item.shape}
             size="fill"
           />

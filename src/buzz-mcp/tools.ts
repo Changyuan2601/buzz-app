@@ -10,7 +10,16 @@ import {
   lifecycleChannelId,
   lifecycleTemplate,
 } from "../features/relay/channel-lifecycle-protocol";
+import {
+  PROFILE_SEARCH_MAX,
+  PROFILE_SEARCH_QUERY_MAX,
+} from "../features/relay/profile-search";
+import {
+  listSharedSessions,
+  readSharedSession,
+} from "../features/sessions/shared-sessions";
 import { sessionMetadata } from "../features/sessions/metadata";
+import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -70,6 +79,31 @@ export const TOOLS: readonly Tool[] = [
     "Read a thread (default: current), a channel's latest, or search with q.",
     { channel: str, thread: str, q: str, limit: int, before: int },
   ),
+  tool(
+    "shared_sessions",
+    "List shared sessions in the current channel, or read a source for an answer here. Checks current audience access. Titles are clues, not exhaustive content search.",
+    {
+      action: { type: "string", enum: ["list", "read"] },
+      source: str,
+      share_ids: {
+        type: "array",
+        items: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        minItems: 1,
+        maxItems: 32,
+        uniqueItems: true,
+        description:
+          "Read only: contributing shares[].id receipts from list; never permission grants.",
+      },
+      query: str,
+      limit: { type: "integer", minimum: 1, maximum: 100 },
+      cursor: {
+        type: "object",
+        properties: { until: { type: "integer", minimum: 0 }, before_id: str },
+        required: ["until", "before_id"],
+        additionalProperties: false,
+      },
+    },
+  ),
   tool("channels", "Channels you are in; with all, every one you can see.", {
     q: str,
     all: { type: "boolean" },
@@ -128,6 +162,15 @@ export const TOOLS: readonly Tool[] = [
   tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
     "url",
   ]),
+  tool(
+    "tabs",
+    "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
+    {
+      action: { type: "string", enum: ["open", "close", "rename"] },
+      thread: str,
+      name: str,
+    },
+  ),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -172,6 +215,93 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async shared_sessions({ client, context }, args) {
+    if (!context.channel) throw new Error("A current channel is required.");
+    const allowed = new Set([
+      "action",
+      "source",
+      "share_ids",
+      "query",
+      "limit",
+      "cursor",
+    ]);
+    if (Object.keys(args).some((key) => !allowed.has(key)))
+      throw new Error(
+        "Unknown shared_sessions argument; the audience is the current channel.",
+      );
+    const action = args.action ?? "list";
+    if (action !== "list" && action !== "read")
+      throw new Error("action must be list or read.");
+    const limit = args.limit;
+    if (
+      limit !== undefined &&
+      (typeof limit !== "number" ||
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > 100)
+    )
+      throw new Error("limit must be an integer from 1 to 100.");
+    let cursor: { until: number; before_id: string } | undefined;
+    if (args.cursor !== undefined) {
+      const value = args.cursor as Record<string, unknown> | null;
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        Object.keys(value).some(
+          (key) => key !== "until" && key !== "before_id",
+        ) ||
+        typeof value.until !== "number" ||
+        !Number.isSafeInteger(value.until) ||
+        value.until < 0 ||
+        typeof value.before_id !== "string" ||
+        !/^[0-9a-f]{64}$/.test(value.before_id)
+      )
+        throw new Error(
+          "cursor must contain until and a 64-character event before_id.",
+        );
+      cursor = { until: value.until, before_id: value.before_id };
+    }
+    if (action === "read") {
+      if (typeof args.source !== "string" || !args.source.trim())
+        throw new Error("source is required for read.");
+      if (args.query !== undefined)
+        throw new Error("query is only supported by list.");
+      const shareIds = args.share_ids;
+      if (
+        shareIds !== undefined &&
+        (!Array.isArray(shareIds) ||
+          shareIds.length < 1 ||
+          shareIds.length > 32 ||
+          shareIds.some(
+            (id) => typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id),
+          ) ||
+          new Set(shareIds).size !== shareIds.length)
+      )
+        throw new Error(
+          "share_ids must contain 1 to 32 unique lowercase 64-character event IDs.",
+        );
+      return JSON.stringify(
+        await readSharedSession(client, context.channel, args.source, {
+          ...(shareIds !== undefined ? { shareIds } : {}),
+          ...(cursor ? { cursor } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        }),
+      );
+    }
+    if (args.source !== undefined || args.share_ids !== undefined)
+      throw new Error("source and share_ids are only supported by read.");
+    if (args.query !== undefined && typeof args.query !== "string")
+      throw new Error("query must be text.");
+    return JSON.stringify(
+      await listSharedSessions(client, context.channel, {
+        ...(cursor ? { cursor } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(args.query !== undefined ? { query: args.query } : {}),
+        audience: context.channel,
+      }),
+    );
+  },
   async send(tools, args) {
     const { client, context } = tools;
     const reply =
@@ -463,11 +593,21 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const ids = list(args.ids).map(pubkey);
     const q = text(args.q)?.toLowerCase();
     if (!ids.length && !q) throw new Error("Give ids or q.");
-    const profiles = await client.query([
-      ids.length
-        ? { kinds: [0], authors: ids, limit: ids.length }
-        : { kinds: [0], search: q, limit: 100 },
-    ]);
+    // Name search matches only name and display_name, best match first;
+    // NIP-50 search matches the whole profile, so text in avatars or `about`
+    // can fill its results and hide the person asked for. Name search refuses
+    // a query longer than its limit, so a longer name uses NIP-50 search.
+    const named =
+      !ids.length && q && [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
+    const profiles =
+      named?.filter((event) => event.kind === 0) ??
+      (await client.query([
+        ids.length
+          ? { kinds: [0], authors: ids, limit: ids.length }
+          : { kinds: [0], search: q, limit: 100 },
+      ]));
     const rows = newest(profiles)
       .map((event) => {
         const profile = parse(event.content);
@@ -478,7 +618,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             : "";
         return { name, row: `${event.pubkey} ${name}${about}` };
       })
-      .filter(({ name }) => !q || ids.length || name.toLowerCase().includes(q));
+      .filter(
+        ({ name }) =>
+          !q || ids.length || named || name.toLowerCase().includes(q),
+      );
     return rows.map(({ row }) => row).join("\n") || "No users.";
   },
 
@@ -520,27 +663,33 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async mem_get(tools, args) {
-    const entries = await tools.client.memories();
     const slug = text(args.slug);
-    if (!slug)
-      return (
-        entries
-          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-          .join("\n") || "No memory."
-      );
+    if (!slug) {
+      const { entries, partial } = await tools.client.memories();
+      const lines = entries
+        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+        .join("\n");
+      if (!partial) return lines || "No memory.";
+      if (!lines) throw new Error("Memory could not be read; try again.");
+      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+    }
     const key = memorySlug(slug);
-    return (
-      entries.find((entry) => entry.slug === key)?.body ?? `No memory ${key}.`
-    );
+    const { entries, partial } = await tools.client.memories(key);
+    const body = entries.find((entry) => entry.slug === key)?.body;
+    if (body !== undefined) return body;
+    if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
+    return `No memory ${key}.`;
   },
 
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
-    // Unreadable memory still takes a write, dated now.
-    const current = (await tools.client.memories().catch(() => [])).find(
-      (entry) => entry.slug === key,
-    );
+    // A write must be dated after the entry it replaces, so it waits for a
+    // read that finds the entry or confirms there is none.
+    const { entries, partial } = await tools.client.memories(key);
+    const current = entries.find((entry) => entry.slug === key);
+    if (!current && partial)
+      throw new Error(`Memory ${key} could not be read; try again.`);
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },
@@ -571,6 +720,51 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!type?.startsWith("image/"))
       throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
     return { data, type };
+  },
+
+  async tabs(tools, args) {
+    const { client, context } = tools;
+    const tabs = client.tabs;
+    if (!tabs)
+      throw new Error(
+        "Tabs are kept in Buzz Desktop and are unavailable here.",
+      );
+    // Only the channel the agent works in, so it never pulls the owner
+    // toward another conversation.
+    const channel = context.channel;
+    if (!channel) throw new Error("Tabs need a channel to work in.");
+    if (args.action === undefined) {
+      const open = tabs.list(channel);
+      return open.length
+        ? open
+            .map(
+              (tab) =>
+                `${tab.root} ${tab.pane}${tab.name ? ` ${JSON.stringify(tab.name)}` : ""}${tab.shown ? " (shown)" : ""}`,
+            )
+            .join("\n")
+        : "No thread tabs open.";
+    }
+    if (
+      args.action !== "open" &&
+      args.action !== "close" &&
+      args.action !== "rename"
+    )
+      throw new Error("action must be open, close or rename.");
+    const event = await tools.event(required(args, "thread"));
+    if (tag(event, "h") !== channel)
+      throw new Error(`${event.id} is not in this channel.`);
+    // Resolve the root as the reader does, so the tab matched is the one shown.
+    const root = threadReference(event)?.rootId ?? event.id;
+    if (args.action === "open")
+      return tabs.open(channel, root) ? `opened ${root}` : "already open";
+    if (args.action === "rename")
+      return tabs.rename(channel, root, optional(args, "name") ?? "")
+        ? "renamed"
+        : "not open";
+    const closed = tabs.close(channel, root);
+    if (closed === "shown")
+      throw new Error("Your owner is looking at that tab, so it stays open.");
+    return closed === "closed" ? "closed" : "not open";
   },
 };
 

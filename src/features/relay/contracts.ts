@@ -30,7 +30,8 @@ export type ChannelSummary = Readonly<{
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
-  channelType?: "stream" | "forum" | "dm" | "session";
+  /** `system` (NIP-CL): access control for app data; never in list(). */
+  channelType?: "stream" | "forum" | "dm" | "session" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
@@ -38,6 +39,8 @@ export type ChannelSummary = Readonly<{
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
+  /** Signed metadata cleanup interval in seconds; absent means ongoing or unknown. */
+  ttlSeconds?: number;
   /** Exact members from the relay-signed roster; absent means unknown. */
   members?: readonly string[];
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */

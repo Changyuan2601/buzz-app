@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { BuzzClient } from "../../buzz-mcp/client";
+import { callTool } from "../../buzz-mcp/tools";
+import { createAgentMemories } from "../../features/agents/memory";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import type { Delivery } from "../../features/agents/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -59,6 +62,8 @@ function setup(
     reply?: string;
     thread?: readonly EventData[];
     scope?: "thread" | "channel";
+    /** The agent's `core` memory as the host keeps it. */
+    core?: string | null;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -79,7 +84,7 @@ function setup(
   };
   const session = {
     read,
-    agentMemories: { open: () => memories },
+    agentMemories: { open: vi.fn(() => memories) },
     channels: {
       list: () => ({
         channels: [
@@ -108,7 +113,8 @@ function setup(
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
-  const runtime = new GooseRuntime(host, () => relay);
+  const core = vi.fn(async () => options.core);
+  const runtime = new GooseRuntime(host, () => relay, core);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -123,7 +129,7 @@ function setup(
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
   };
-  const deliver = (event: RelayEvent) =>
+  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
     runtime.run({
       trigger: { type: "mention", event },
       channelId: channel,
@@ -131,6 +137,7 @@ function setup(
       config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
+      ...extra,
     } as unknown as Delivery);
   const goose = () => fake.geese.find((process) => process.turns.length);
   const runOnce = (key: string, prompt: string) =>
@@ -146,13 +153,16 @@ function setup(
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
     agent,
+    core,
     deliver,
     runOnce,
     fake,
     goose,
     published,
     read,
+    runtime,
     placement: session.mePlacement,
+    memoryOpen: session.agentMemories.open,
   };
 }
 
@@ -255,6 +265,19 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("starts a session from the host's core memory, reading none from the relay", async () => {
+    const { core, deliver, goose, memoryOpen } = setup({
+      core: "I am Gander.",
+    });
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    expect([...(goose()?.prompts.values() ?? [])].join()).toContain(
+      "<core-memory>\nI am Gander.\n</core-memory>",
+    );
+    expect(core).toHaveBeenCalledWith(self);
+    expect(memoryOpen).not.toHaveBeenCalled();
+  });
+
   it("posts goose's own text in the thread, or at a Me chat's top level", async () => {
     const plain = setup({ reply: "Plain answer" });
     await plain.deliver(message("1", "@Gander hi"));
@@ -301,6 +324,80 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("switches a saved provider in the live session without restarting goose", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const saved = (config: typeof DEFAULT_CONFIG) =>
+      runtime.sync([{ ...agent, config } as unknown as Agent]);
+    saved(DEFAULT_CONFIG);
+    const first = message("1", "@Gander which model?");
+    await deliver(first);
+    await flush(100);
+    saved({ ...DEFAULT_CONFIG, provider: "openai" });
+    await deliver(
+      message("2", "@Gander and now?", {
+        tags: [
+          ["h", channel],
+          ["e", first.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+    );
+    await flush(100);
+    expect(fake.geese).toHaveLength(1);
+    const [goose] = fake.geese;
+    expect(goose?.env).toMatchObject({ GOOSE_PROVIDER: null });
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    expect(goose?.configured).toEqual(["session-1 provider=openai"]);
+  });
+
+  it("runs a mention on the agent's thinking level", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander think"), {
+      config: { ...DEFAULT_CONFIG, effort: "max" },
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=max",
+    ]);
+  });
+
+  it("runs a mention on the model its owner picked", async () => {
+    const { deliver, fake } = setup();
+    await deliver(message("1", "@Gander hi"), {
+      config: { ...DEFAULT_CONFIG, provider: "openai" },
+      model: "o3",
+    });
+    await flush(100);
+    expect(fake.geese[0]?.configured).toEqual(["session-1 model=o3"]);
+  });
+
+  it("keeps goose while another agent runs, and stops it with the last", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const other = { ...agent, pubkey: "d".repeat(64), name: "Drake" };
+    const running = (...agents: (typeof agent)[]) =>
+      runtime.sync(
+        agents.map(
+          (item) => ({ ...item, config: DEFAULT_CONFIG }) as unknown as Agent,
+        ),
+      );
+    running(agent, other);
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    running(other);
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.killed).toBe(false);
+    running();
+    await flush(30);
+    expect(goose?.killed).toBe(true);
+    expect(fake.geese).toHaveLength(1);
+  });
+
   it("fails a session mention it cannot place until the placement can be read", async () => {
     const { deliver, fake, placement, published } = setup({
       channelType: "session",
@@ -314,3 +411,113 @@ describe("GooseRuntime", () => {
     expect(published).toEqual([]);
   });
 });
+
+describe("goose memory reads", () => {
+  it("does not share a read that started before a write", async () => {
+    const pending: ((body: string) => void)[] = [];
+    const read = vi.fn(
+      () =>
+        new Promise<{ entries: { slug: string; body: string }[] }>((done) =>
+          pending.push((body) => done({ entries: [{ slug: "core", body }] })),
+        ),
+    );
+    const relay = {
+      snapshot: () => ({
+        status: "ready",
+        session: { agentMemories: { read } },
+      }),
+    } as unknown as RelayData;
+    const runtime = new GooseRuntime(
+      {} as Host,
+      () => relay,
+      async () => null,
+    ) as unknown as {
+      memories(pubkey: string, slug?: string): Promise<unknown>;
+      forgetMemories(pubkey: string): void;
+    };
+    const before = runtime.memories(self, "core");
+    runtime.forgetMemories(self);
+    const after = runtime.memories(self, "core");
+    expect(read).toHaveBeenCalledTimes(2);
+    pending[0]?.("old");
+    await expect(before).resolves.toEqual({
+      entries: [{ slug: "core", body: "old" }],
+    });
+    // The old read finishing must not drop the newer one.
+    void runtime.memories(self, "core");
+    expect(read).toHaveBeenCalledTimes(2);
+    pending[1]?.("new");
+    await expect(after).resolves.toEqual({
+      entries: [{ slug: "core", body: "new" }],
+    });
+  });
+
+  it("gives a tool the partial listing a slow native read answers", async () => {
+    vi.useFakeTimers();
+    // AbortSignal.timeout runs on real time; put it on the fake clock.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("", "TimeoutError")),
+        ms,
+      );
+      return controller.signal;
+    });
+    try {
+      const relay = {
+        snapshot: () => ({
+          status: "ready",
+          session: { agentMemories: slowMemories(alice) },
+        }),
+      } as unknown as RelayData;
+      const runtime = new GooseRuntime(
+        {} as Host,
+        () => relay,
+        async () => null,
+      ) as unknown as {
+        memories(
+          pubkey: string,
+          slug?: string,
+        ): ReturnType<BuzzClient["memories"]>;
+      };
+      const client = {
+        memories: (slug?: string) => runtime.memories(self, slug),
+      } as unknown as BuzzClient;
+      const reply = callTool(client, {}, "mem_get", {});
+      await vi.advanceTimersByTimeAsync(9_500);
+      await expect(reply).resolves.toMatch(
+        /^mem\/a .*\nThis list is incomplete: some memory could not be read\.$/,
+      );
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+});
+
+/** A native read that pages until its deadline and answers partial at 9.5
+ * seconds, behind the session's real serialized memory reads. */
+function slowMemories(viewer: string) {
+  return createAgentMemories(
+    () =>
+      new Promise((done) =>
+        setTimeout(
+          () =>
+            done({
+              entries: [
+                {
+                  slug: "mem/a",
+                  body: "a",
+                  eventId: "e".repeat(64),
+                  createdAt: 1,
+                },
+              ],
+              partial: true,
+            }),
+          9_500,
+        ),
+      ),
+    viewer,
+    () => true,
+  ).capability;
+}

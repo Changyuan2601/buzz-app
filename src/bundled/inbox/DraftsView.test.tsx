@@ -1531,3 +1531,39 @@ it("returns to the invoking row when Send saves a remembered-agent follow-up", a
     text: "@Alice ",
   });
 });
+
+it.each([false, true])(
+  "discovers and reopens a card-only saved draft (thread: %s)",
+  async (thread) => {
+    const h = fixture({ withWriter: true });
+    const key = thread ? `draft:room:thread:${h.mention.id}` : "draft:room";
+    const link = "[Session: Fix](buzz://channel/session-id)";
+    writeView(h.owner.session.scope, key, {
+      text: "",
+      recipients: [],
+      sessionCards: [link],
+    });
+    render(h.view);
+    await screen.findByText("Please review this");
+    await chooseFilter("Drafts");
+    const list = screen.getByRole("list", { name: "Drafts" });
+    expect(list).toHaveTextContent("Session attachment");
+    await userEvent
+      .setup()
+      .click(
+        within(list).getByRole("button", { name: "Open draft for #Design" }),
+      );
+    const detail = await screen.findByRole("region", { name: "Draft detail" });
+    await waitFor(() =>
+      expect(
+        within(detail).getByRole("button", {
+          name: "Remove session attachment 1",
+        }),
+      ).toBeVisible(),
+    );
+    expect(within(detail).getByRole("textbox")).toHaveValue("");
+    expect(readView(h.owner.session.scope, key, null)).toMatchObject({
+      sessionCards: [link],
+    });
+  },
+);

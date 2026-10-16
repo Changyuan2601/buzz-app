@@ -172,6 +172,8 @@ fn init(directory: &Path, id: &str, name: &str) -> Result<()> {
         id: id.into(),
         name: name.into(),
         api_version: 1,
+        description: None,
+        discovery: None,
         host: None,
     };
     manifest.validate()?;

@@ -327,24 +327,38 @@ replacement semantics. A shared 2.5rem header uses 12rem tabs composed from the 
 with 10px corners matching adjacent icon actions, profile avatars or detail icons,
 and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
-close control; Delete on a tab and Escape in its content close that tab. Closing
+close control; middle-click or Delete on a tab and Escape in its content close
+that tab. Middle-clicking an inactive tab preserves the editor's focus. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
-On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the visible selected
-tab, including a selected detail tab, even while typing in the main conversation.
+On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
+closable tab in the focused pane. If focus is in the permanent main conversation,
+it closes the selected tab in the visible side pane instead. A selected closable
+main-pane tab takes priority over that fallback. Hidden tabs remain untouched;
+with nothing to close the shortcut does nothing and never closes the window.
 The macOS native Close menu uses the same action, including when an embedded
-browser owns focus (embedded browsing is currently macOS-only). A terminal tab
-closes its presentation, not its shell; Ctrl+W while typing in a terminal remains
-shell word deletion on Windows/Linux. With no visible tab pane, Close retains
-the normal window-close behavior: hide until reopened on macOS, close the
-application on Windows/Linux. Hidden tabs remain intact until that window close.
-Closing the last tab leaves the window open until the next press. While a modal
-is open, the shortcut does nothing rather than closing content behind it.
+browser owns focus (embedded browsing is currently macOS-only). On macOS,
+Cmd+Shift+W and the native **Close All Tabs** menu item close all tabs in the current channel,
+including hidden side-pane tabs, just like the tab's right-click action.
+A terminal tab closes its presentation, not its shell; Ctrl+W while typing in a
+terminal remains shell word deletion on Windows/Linux. While a modal is open,
+close shortcuts do nothing rather than closing content behind it.
 Windows/Linux consume held-key repeats without closing further tabs or the window.
 Window buttons and Alt+F4 always retain their window-only behavior. The bottom
 terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
 shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
+Right-click any channel tab and choose **Close all tabs** to close this channel's
+thread, plugin and settings tabs across both panes, including hidden side-pane
+tabs. The permanent channel conversation stays; focus returns there if its previous
+target closed, while typing in surviving content remains uninterrupted. Other
+channels and saved message drafts are untouched. **Close other tabs** in the
+same menu does the same, except that the right-clicked tab stays open, selected
+and focused. On the channel conversation it is the same as Close all tabs. On a
+detail tab, such as an agent log, the tab that owns it stays instead, without
+its details.
+Shift+F10 on a focused tab opens the same
+menu. Hiding the pane remains separate from closing its tabs.
 The main-header split control toggles existing pane content without closing its
 tabs or resetting their contents. With no content it is disabled but remains
 focusable, so closing the last tab has a stable focus-return target. There is no

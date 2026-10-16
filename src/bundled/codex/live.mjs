@@ -14,6 +14,8 @@ await build({
     runtime: new URL("./runtime.ts", import.meta.url).pathname,
     rpc: new URL("./rpc.ts", import.meta.url).pathname,
     reads: new URL("../../features/agents/reads.ts", import.meta.url).pathname,
+    core: new URL("../../features/agents/core-memory-cache.ts", import.meta.url)
+      .pathname,
   },
   output: { dir: workspace, entryFileNames: "[name].mjs", format: "esm" },
   // As Vite does, `?raw` imports a file's text.
@@ -30,6 +32,7 @@ await build({
 const { CodexRuntime } = await import(join(workspace, "runtime.mjs"));
 const { AppServer } = await import(join(workspace, "rpc.mjs"));
 const { ownerReads } = await import(join(workspace, "reads.mjs"));
+const { CoreMemoryCache } = await import(join(workspace, "core.mjs"));
 const children = new Set();
 const notices = [];
 let servers = 0;
@@ -188,9 +191,11 @@ const relay = {
     },
   }),
 };
+const coreMemory = new CoreMemoryCache((key) => ownerReads(relay, key));
 const runtime = new CodexRuntime(
   nativeSpawn,
   (key) => ownerReads(relay, key),
+  (key, signal) => coreMemory.core(key, signal),
   store,
 );
 runtime.sync([{ pubkey }], scope);

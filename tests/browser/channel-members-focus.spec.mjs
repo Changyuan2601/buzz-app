@@ -1,6 +1,5 @@
 import { expect, test } from "./playwright-test.mjs";
-import { preview } from "vite";
-import { build } from "vite";
+import { build, preview } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -301,7 +300,7 @@ test("inline member identity geometry and separate addition focus", async ({
     await expect(add).toBeEnabled();
     const header = await dialog.locator(".buzz-dialog-header").boundingBox();
     const field = await search.locator("..").boundingBox();
-    expect(field.y - header.y - header.height).toBeCloseTo(16, 0);
+    expect(field.y - header.y - header.height).toBeCloseTo(12, 0);
     await expect(add).toHaveCSS("font-size", "12px");
     expect((await add.boundingBox()).height).toBe(24);
     const members = dialog.getByRole("region", {

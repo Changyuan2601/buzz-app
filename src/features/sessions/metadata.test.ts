@@ -3,9 +3,24 @@ import {
   SESSION_CHANNEL_DESCRIPTION,
   sessionDescription,
   sessionMetadata,
+  SESSION_NAMED_LABEL,
+  sessionLinkName,
 } from "./metadata";
 
 const parent = "22222222-2222-4222-8222-222222222222";
+
+it("shares IDs until a chosen name is recorded, never an automatic first prompt", () => {
+  const channel = { id: parent, name: "Private first prompt" };
+  expect(sessionLinkName(channel)).toBe("22222222");
+  expect(sessionLinkName({ ...channel, labels: ["work"] })).toBe("22222222");
+  expect(
+    sessionLinkName({
+      ...channel,
+      name: "PR 45 fixes",
+      labels: [SESSION_NAMED_LABEL],
+    }),
+  ).toBe("PR 45 fixes");
+});
 
 it("retains the exact legacy marker, parent and personal grammar", () => {
   expect(sessionMetadata(sessionDescription())).toEqual({});

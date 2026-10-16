@@ -24,6 +24,8 @@ import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { writeView } from "../../shared/view-state";
 import { meTarget } from "../me/routes";
+import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
   beginSessionShare,
   finishSessionShare,
@@ -107,13 +109,15 @@ function fixture(
   };
   const set = vi.fn(async () => {});
   // Like the relay, settle the roster before the confirmed action resolves.
-  const run = vi.fn(async (action: string) => {
-    list = {
-      ...list,
-      channels: action === "archive" ? [{ ...channel, archived: true }] : [],
-    };
-    for (const listener of listListeners) listener();
-  });
+  const run = vi.fn(
+    async (action: string, _id?: string, _signal?: AbortSignal) => {
+      list = {
+        ...list,
+        channels: action === "archive" ? [{ ...channel, archived: true }] : [],
+      };
+      for (const listener of listListeners) listener();
+    },
+  );
   const refresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
@@ -191,15 +195,19 @@ function fixture(
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const archive: ArchiveShortcut = {};
-  const page = () => (
-    <SessionsPage
-      relay={relay}
-      panels={{ ...contribution, register() {}, resolve: () => undefined }}
-      extensions={extensions}
-      navigation={navigation}
-      navigator={{ open } as unknown as Navigation}
-      archive={archive}
-    />
+  const page = (visible = true) => (
+    <ChannelNavigationProvider relay={relay}>
+      {visible && (
+        <SessionsPage
+          relay={relay}
+          panels={{ ...contribution, register() {}, resolve: () => undefined }}
+          extensions={extensions}
+          navigation={navigation}
+          navigator={{ open } as unknown as Navigation}
+          archive={archive}
+        />
+      )}
+    </ChannelNavigationProvider>
   );
   const mount = () => render(page());
   return {
@@ -580,7 +588,7 @@ it.each([
     await user.click(screen.getByRole("button", { name: "Session actions" }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
     const dialog = screen.getByRole("dialog", {
-      name: `${label}: Planning`,
+      name: action === "delete" ? "Delete Planning?" : `${label}: Planning`,
     });
     await user.click(within(dialog).getByRole("button", { name: label }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -698,7 +706,7 @@ it("drops a pending Delete confirmation when its visit ends", async () => {
     await screen.findByRole("menuitem", { name: "Delete channel" }),
   );
   const dialog = screen.getByRole("dialog", {
-    name: "Delete channel: Planning",
+    name: "Delete Planning?",
   });
   await user.click(
     within(dialog).getByRole("button", { name: "Delete channel" }),
@@ -751,4 +759,138 @@ it("returns focus to Session actions when the confirmation is cancelled", async 
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
   expect(f.run).not.toHaveBeenCalled();
+});
+
+it.each(["archive", "delete"] as const)(
+  "submitted Me %s survives page removal and reports its result",
+  async (action) => {
+    const f = fixture();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let signal: AbortSignal | undefined;
+    f.run.mockImplementation(async (_action, _id, operationSignal) => {
+      signal = operationSignal;
+      await pending;
+    });
+    const view = render(<ToastProvider>{f.page()}</ToastProvider>);
+    const user = userEvent.setup();
+    const label = action === "archive" ? "Archive channel" : "Delete channel";
+    await user.click(screen.getByRole("button", { name: "Session actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: label }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: label }),
+    );
+    try {
+      await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      act(() => f.abort.abort());
+      view.rerender(<ToastProvider>{f.page(false)}</ToastProvider>);
+      expect(signal?.aborted).toBe(false);
+      expect(
+        screen.getByRole("dialog", {
+          name:
+            action === "archive" ? "Archiving channel…" : "Deleting channel…",
+        }),
+      ).toBeVisible();
+    } finally {
+      await act(async () => finish());
+    }
+    await screen.findByRole("dialog", {
+      name:
+        action === "archive"
+          ? "Channel archived: Planning"
+          : "Channel deleted: Planning",
+    });
+    expect(f.open).not.toHaveBeenCalled();
+  },
+);
+
+it("retires an unsubmitted Me confirmation when its visit ends", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Delete Planning?" }),
+  ).toBeVisible();
+  act(() => f.abort.abort());
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("keeps a Me action failure visible after leaving its page", async () => {
+  const f = fixture();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, fail) => {
+    reject = fail;
+  });
+  f.run.mockImplementation(async () => pending);
+  const view = render(<ToastProvider>{f.page()}</ToastProvider>);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Delete channel",
+    }),
+  );
+  try {
+    await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    act(() => f.abort.abort());
+    view.rerender(<ToastProvider>{f.page(false)}</ToastProvider>);
+  } finally {
+    await act(async () =>
+      reject(
+        new Error("Could not confirm deletion. Refresh to check its status."),
+      ),
+    );
+  }
+  expect(
+    await screen.findByRole("dialog", { name: "Delete channel failed" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Could not confirm deletion. Refresh to check its status.",
+    ),
+  ).toBeVisible();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("cancels a submitted Me operation when the relay session is replaced", async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let signal: AbortSignal | undefined;
+  f.run.mockImplementation(async (_action, _id, operationSignal) => {
+    signal = operationSignal;
+    await pending;
+  });
+  const view = f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete channel" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Delete channel",
+    }),
+  );
+  try {
+    await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    const replacement = fixture();
+    view.rerender(replacement.page());
+    expect(signal?.aborted).toBe(true);
+  } finally {
+    await act(async () => finish());
+  }
+  expect(f.open).not.toHaveBeenCalled();
 });

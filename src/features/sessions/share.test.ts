@@ -5,11 +5,14 @@ import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
+import { SHARED_SESSION_TOPIC } from "./shared-session-marker";
+import { SESSION_NAMED_LABEL } from "./metadata";
 import {
   destinationShareAudience,
   grantSessionAccess,
   publishSessionLink,
   sessionLinkMessage,
+  isSessionLinkReceipt,
 } from "./share";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
@@ -31,6 +34,7 @@ function setup() {
   ]);
   let clock = 1_700_000_000;
   let failLink = false;
+  let chosenName: string | undefined;
   let rejectGrant = false;
   let records: readonly import("../relay/outbox").OutgoingEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -52,8 +56,9 @@ function setup() {
   const query = vi.fn(
     async (filters: readonly import("../relay/events").ReadFilter[]) => {
       const events = [
-        metadata(relay, sessionId, "Work", 1_700_000_000, [
+        metadata(relay, sessionId, chosenName ?? "Work", clock, [
           ["t", "stream"],
+          ...(chosenName ? [["t", SESSION_NAMED_LABEL]] : []),
           ["private"],
           ["about", "Buzz session (buzz.sessions/v1)"],
         ]),
@@ -75,6 +80,7 @@ function setup() {
   let knownAgent = false;
   const owner = createRelaySession(
     {
+      channelIdentity: true,
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://community.test",
@@ -122,6 +128,21 @@ function setup() {
     query,
     records: () => records,
     published,
+    async chooseName(name: string) {
+      chosenName = name;
+      clock++;
+      await owner.session.read(
+        [
+          {
+            kinds: [39000],
+            authors: [relay.pubkey],
+            "#d": [sessionId],
+            limit: 1,
+          },
+        ],
+        { fresh: true },
+      );
+    },
     failLink: (value: boolean) => {
       failLink = value;
     },
@@ -183,7 +204,11 @@ it("grants exact session membership, confirms its signed roster, then posts one 
   expect(t.published[0]?.tags).toContainEqual(["p", t.human.pubkey]);
   expect(t.published[0]?.tags.some(([name]) => name === "role")).toBe(false);
   expect(t.published[1]?.tags).toEqual(
-    expect.arrayContaining([["h", channelId]]),
+    expect.arrayContaining([
+      ["h", channelId],
+      ["t", SHARED_SESSION_TOPIC],
+      ["s", sessionId],
+    ]),
   );
   expect(t.published[1]?.content).toBe(sessionLinkMessage(sessionId));
 });
@@ -272,6 +297,7 @@ it("Everyone blocks a known-archived destination identity rather than silently d
 it("does not publish on failed grant, nor duplicate an accepted grant or rejected link on retry", async () => {
   const t = setup();
   await t.ready();
+  await t.chooseName("PR_45 & <fix>");
   t.rejectGrant(true);
   const intents = new Map();
   await expect(
@@ -308,6 +334,12 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
       },
     ),
   ).rejects.toThrow("Post denied");
+  const saved = t.records().find((item) => item.event.id === queued);
+  expect(saved?.event.content).toBe(
+    sessionLinkMessage(sessionId, "PR_45 & <fix>"),
+  );
+  expect(saved && isSessionLinkReceipt(saved)).toBe(true);
+  await t.chooseName("A different chosen name");
   t.failLink(false);
   await publishSessionLink(
     t.session,
@@ -318,6 +350,9 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
     () => {},
   );
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+  if (!saved) throw new Error("Missing saved receipt");
+  expect(t.published[1]).toMatchObject(saved.event);
+  expect(t.published[1]?.tags).toContainEqual(["t", SHARED_SESSION_TOPIC]);
   expect(t.records().filter((item) => item.event.kind === 9)).toHaveLength(1);
 });
 
@@ -482,3 +517,38 @@ it.each(["accepted", "unknown"] as const)(
     }
   },
 );
+
+it("retries an older plain-link receipt without upgrading its signed share intent", async () => {
+  const t = setup();
+  await t.ready();
+  t.failLink(true);
+  const id = t.session.messages.send(
+    channelId,
+    sessionLinkMessage(sessionId),
+    [],
+    [],
+  );
+  await vi.waitFor(() =>
+    expect(
+      t.session.outbox?.snapshot().find((item) => item.event.id === id)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  const original = t.records().find((item) => item.event.id === id)?.event;
+  if (!original) throw new Error("Missing original receipt");
+  expect(original?.tags.some(([key]) => key === "s")).toBe(false);
+  expect(original?.tags).not.toContainEqual(["t", SHARED_SESSION_TOPIC]);
+  t.failLink(false);
+  await expect(
+    publishSessionLink(
+      t.session,
+      sessionId,
+      channelId,
+      id,
+      new AbortController().signal,
+      () => {},
+    ),
+  ).resolves.toBe(id);
+  expect(t.published).toHaveLength(1);
+  expect(t.published[0]).toMatchObject(original);
+});

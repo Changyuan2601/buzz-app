@@ -128,6 +128,11 @@ export function AgentCreateDialog({
       actions={
         <>
           <div ref={setAvatarAction} hidden={!avatarActive} />
+          {!avatarActive && !name.trim() && (
+            <p className="m-0 text-body-sm text-secondary">
+              Name your agent to continue
+            </p>
+          )}
           {!avatarActive && (
             <Button
               variant="primary"

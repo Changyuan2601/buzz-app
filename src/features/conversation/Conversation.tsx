@@ -2,6 +2,8 @@ import {
   createContext,
   useContext,
   useMemo,
+  useRef,
+  useState,
   type ComponentProps,
   type ReactNode,
 } from "react";
@@ -47,6 +49,31 @@ export type MediaReview = Pick<
   | "restoreFocus"
   | "close"
 >;
+
+/** A review that opens over its page and returns focus to its opener. */
+export function useMediaReview() {
+  const [media, setMedia] =
+    useState<Omit<MediaReview, "restoreFocus" | "close">>();
+  const trigger = useRef<HTMLElement | null>(null);
+  const open: ConversationInteractions["onOpenMediaReview"] = (
+    messageId,
+    attachment,
+    initialTime,
+    hasComments = false,
+  ) => {
+    trigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setMedia({ messageId, attachment, initialTime, hasComments });
+  };
+  const review: MediaReview | undefined = media && {
+    ...media,
+    restoreFocus: trigger,
+    close: () => setMedia(undefined),
+  };
+  return { open, review };
+}
 
 const Context = createContext<Conversation | undefined>(undefined);
 export function useConversation() {

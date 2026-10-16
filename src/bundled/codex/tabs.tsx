@@ -31,6 +31,8 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
   config as readConfig,
+  defaults,
+  resolveModel,
   effortName,
   validWorkspace,
   type Config,
@@ -48,7 +50,10 @@ type Read =
   | { status: "missing" }
   | { status: "error"; error: string };
 
-type Catalog = { models: Model[]; account: string };
+type Catalog = {
+  models: Model[];
+  account: string;
+};
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
 type ProviderState = AgentProviderSnapshot &
   Readonly<{
@@ -70,14 +75,17 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
   signal.addEventListener("abort", abort, { once: true });
   try {
     signal.throwIfAborted();
-    await rpc.open(spawn);
+    await rpc.open(spawn, defaults.workspace);
     signal.throwIfAborted();
     const account = await rpc.request<{
       account: { type: string; email?: string } | null;
     }>("account/read");
     if (!account.account) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
-    return { models, account: account.account.email ?? account.account.type };
+    return {
+      models,
+      account: account.account.email ?? account.account.type,
+    };
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();
@@ -220,9 +228,7 @@ export class CodexProvider {
     this.abort = undefined;
   }
   private model(model: string) {
-    return model
-      ? this.state.data?.models.find((choice) => choice.model === model)
-      : this.state.data?.models.find((choice) => choice.isDefault);
+    return catalogModel(model, this.state.data);
   }
   private writeDefaults(defaults: ProviderDefaults) {
     this.storage.setItem(
@@ -243,11 +249,11 @@ export class CodexProvider {
         typeof (value as { effort?: unknown }).effort === "string"
       )
         return Object.freeze({
-          model: (value as { model: string }).model,
+          model: readConfig(value).model,
           effort: (value as { effort: string }).effort,
         });
     } catch {
-      // Malformed local preferences preserve Codex's native defaults.
+      // Malformed local preferences follow Codex's recommendation.
     }
     return Object.freeze({ model: "", effort: "" });
   }
@@ -273,17 +279,15 @@ const choices = (data?: Catalog) =>
     label: model.displayName,
     description: model.description,
   })) ?? [];
+const catalogModel = (model: string, data?: Catalog) => {
+  if (!data) return undefined;
+  const resolved = resolveModel(model, data.models);
+  return data.models.find((choice) => choice.model === resolved);
+};
 const providerDefaultLabel = (model: string, data?: Catalog) => {
-  if (model) {
-    const selected = data?.models.find(
-      (candidate) => candidate.model === model,
-    );
-    if (!data || selected)
-      return selected?.displayName || selected?.model || model;
-  }
-  const native = data?.models.find((candidate) => candidate.isDefault);
-  const name = native?.displayName || native?.model;
-  return name || "Model unavailable";
+  const selected = catalogModel(model, data);
+  const name = selected?.displayName || selected?.model;
+  return name || model || "Recommended";
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
@@ -299,9 +303,11 @@ const modelChange = (model: string, data?: Catalog) => ({
 
 function CodexSignIn({
   login,
+  step,
   disabled,
 }: {
   login: CodexSetup;
+  step: "install" | "login";
   disabled: boolean;
 }) {
   const { running, output } = useSyncExternalStore(
@@ -316,9 +322,9 @@ function CodexSignIn({
           size="sm"
           disabled={disabled}
           loading={Boolean(running)}
-          onClick={() => void login.run("login")}
+          onClick={() => void login.run(step)}
         >
-          Sign in
+          {step === "install" ? "Install Codex" : "Sign in"}
         </Button>
         {running && (
           <Button size="sm" onClick={() => void login.cancel()}>
@@ -329,7 +335,7 @@ function CodexSignIn({
       {output && (
         <pre
           role="log"
-          aria-label="Sign-in output"
+          aria-label="Setup output"
           className="m-0 max-h-40 max-w-sm overflow-auto whitespace-pre-wrap break-all text-caption"
         >
           {output}
@@ -367,21 +373,30 @@ export function createTabs(
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
     const { data, checking, error, defaults: providerDefaults } = useProvider();
-    const signedOut = error === SIGN_IN_ERROR;
+    // The setup's status holds through the provider's next check, so the
+    // button, and its focus, stays put as Install Codex becomes Sign in.
+    const { status } = useSyncExternalStore(
+      login.subscribe,
+      login.snapshot,
+      login.snapshot,
+    );
     const retry = () => void provider.check();
-    if (signedOut)
-      return <CodexSignIn login={login} disabled={props.disabled} />;
+    const step =
+      status?.state === "missing" || error === NOT_INSTALLED
+        ? "install"
+        : status?.state === "signed-out" || error === SIGN_IN_ERROR
+          ? "login"
+          : undefined;
+    if (step)
+      return (
+        <CodexSignIn login={login} step={step} disabled={props.disabled} />
+      );
     return (
       <CreateModelChoices
         {...props}
         models={choices(data)}
         value={current.model}
-        defaultModel={
-          data?.models.find((model) => model.model === providerDefaults.model)
-            ?.model ??
-          data?.models.find((model) => model.isDefault)?.model ??
-          providerDefaults.model
-        }
+        defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
         defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
         defaultDescription="Following the provider's model default"
         loading={checking}
@@ -413,9 +428,7 @@ export function createTabs(
           : undefined;
     useEffect(() => setDraft(state.defaults), [state.defaults]);
     const nativeModel = data?.models.find((model) => model.isDefault);
-    const selected = draft.model
-      ? data?.models.find((model) => model.model === draft.model)
-      : nativeModel;
+    const selected = catalogModel(draft.model, data);
     const efforts = [
       {
         value: "",
@@ -501,6 +514,18 @@ export function createTabs(
             variant="preference"
             value={draft.model}
             disabled={checking || !data}
+            valueLabel={
+              checking
+                ? "Loading models…"
+                : draft.model
+                  ? undefined
+                  : nativeModel?.displayName
+            }
+            valueSuffix={
+              !checking && !draft.model && nativeModel
+                ? " · Default"
+                : undefined
+            }
             groups={[
               {
                 label: "",
@@ -508,11 +533,12 @@ export function createTabs(
                   {
                     value: "",
                     label: nativeModel
-                      ? `Codex default (${nativeModel.displayName})`
-                      : "Codex default",
+                      ? `${nativeModel.displayName} · Default`
+                      : "Default",
                     description: nativeModel
                       ? "Following Codex's recommendation"
                       : undefined,
+                    disabled: !nativeModel,
                   },
                   ...(draft.model &&
                   !data?.models.some((model) => model.model === draft.model)
@@ -538,6 +564,7 @@ export function createTabs(
             valueLabel={
               draft.effort ? undefined : codexDefaultEffortLabel("", selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -813,9 +840,7 @@ export function createTabs(
       setDraft(readConfig(agent.config));
     }, [agent.config]);
     const effective = provider.resolve({ ...draft, effort: "" });
-    const selected = effective.model
-      ? data?.models.find((model) => model.model === effective.model)
-      : data?.models.find((model) => model.isDefault);
+    const selected = catalogModel(effective.model, data);
     const supported = selected?.supportedReasoningEfforts ?? [];
     const efforts = [
       {
@@ -875,11 +900,7 @@ export function createTabs(
             models={choices(data)}
             value={draft.model}
             defaultModel={
-              data?.models.find(
-                (model) => model.model === providerDefaults.model,
-              )?.model ??
-              data?.models.find((model) => model.isDefault)?.model ??
-              providerDefaults.model
+              catalogModel(providerDefaults.model, data)?.model ?? ""
             }
             defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
             defaultDescription="Following the provider's model default"
@@ -896,6 +917,7 @@ export function createTabs(
                 ? undefined
                 : codexDefaultEffortLabel(effective.effort, selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}

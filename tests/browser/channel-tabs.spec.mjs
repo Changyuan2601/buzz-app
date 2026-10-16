@@ -13,6 +13,56 @@ test.use({
 
 // Real content links, two independent editors, browser focus and signed routing
 // prove the retained tab path without a test-only way to manufacture tabs.
+test("middle-click closes a content tab without selecting it", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const link = app.append(
+    "primary",
+    "alpha",
+    "[Open Beta](buzz://channel/beta)",
+  );
+  await main
+    .locator(`[data-message-id="${link.id}"]`)
+    .getByRole("link", { name: "Open Session: beta" })
+    .click();
+  const workspace = page.locator("[data-panel-workspace]");
+  const beta = workspace.getByRole("tab", { name: "Beta", exact: true });
+  await expect(beta).toBeVisible();
+  await openChannelDetails(page);
+  const settings = workspace.getByRole("tab", {
+    name: "Channel settings",
+    exact: true,
+  });
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await beta.click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "Close all tabs", exact: true }),
+  ).toBeVisible();
+  // The popup can paint before its animation-frame focus handoff completes.
+  await expect(page.getByRole("menu")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(beta).toBeVisible();
+  const draft = main.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await draft.fill("Keep this draft");
+  await beta.click({ button: "middle" });
+  await expect(beta).toHaveCount(0);
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await expect(draft).toBeFocused();
+  await expect(draft).toHaveText("Keep this draft");
+  await settings.click({ button: "middle" });
+  await expect(workspace).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Channel actions", exact: true }),
+  ).toBeFocused();
+});
+
 test("content-opened tabs restore drafts without offering blank-tab creation", async ({
   page,
   app,
@@ -24,9 +74,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     name: "Toggle tab pane",
     exact: true,
   });
-  await expect(split).toHaveAttribute("aria-disabled", "true");
-  await split.focus();
-  await split.press("Enter");
+  await expect(split).toHaveCount(0);
   await expect(workspace).toHaveCount(0);
   const fullWidth = (await main.boundingBox()).width;
   const link = app.append(
@@ -36,7 +84,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   );
   const chip = main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Beta" });
+    .getByRole("link", { name: "Open Session: beta" });
   await expect(chip).toBeVisible();
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -198,7 +246,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(workspace).toHaveCount(0);
-  await expect(split).toHaveAttribute("aria-disabled", "true");
+  await expect(split).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();
@@ -231,7 +279,9 @@ test.describe("crowded content tabs", () => {
         .join(" "),
     );
     const row = main.locator(`[data-message-id="${link.id}"]`);
-    await row.getByRole("link", { name: "beta", exact: true }).click();
+    await row
+      .getByRole("link", { name: "Open Session: beta", exact: true })
+      .click();
     const workspace = page.locator("[data-panel-workspace]");
     const list = workspace.getByRole("tablist", { name: "Panel tabs" });
     const tabs = list.getByRole("tab");
@@ -257,7 +307,9 @@ test.describe("crowded content tabs", () => {
       );
     };
     for (const id of ids.slice(2))
-      await row.getByRole("link", { name: id, exact: true }).click();
+      await row
+        .getByRole("link", { name: `Open Session: ${id}`, exact: true })
+        .click();
     await expect(tabs).toHaveCount(6);
     await settlePanelMotion(page);
     const activeClose = workspace.getByRole("button", {
@@ -334,7 +386,7 @@ test.describe("crowded content tabs", () => {
     await expect(
       list.getByRole("tab", { name: "zeta", exact: true }),
     ).toBeFocused();
-    // Closing the final content tab returns focus to the empty pane toggle.
+    // Closing the final content tab returns focus to channel actions.
     for (let remaining = 5; remaining > 0; remaining--) {
       await tabs.first().focus();
       await tabs.first().press("Delete");
@@ -344,8 +396,10 @@ test.describe("crowded content tabs", () => {
       name: "Toggle tab pane",
       exact: true,
     });
-    await expect(split).toHaveAttribute("aria-disabled", "true");
-    await expect(split).toBeFocused();
+    await expect(split).toHaveCount(0);
+    await expect(
+      main.getByRole("button", { name: "Channel actions", exact: true }),
+    ).toBeFocused();
     await expect(
       workspace.getByRole("button", { name: "Add tab", exact: true }),
     ).toHaveCount(0);

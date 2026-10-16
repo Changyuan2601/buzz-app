@@ -518,6 +518,66 @@ test("GIF search follows the relay-advertised KLIPY path with signed, bounded in
   }
 });
 
+test("profile search forwards only the name-search shape to the relay endpoint, signed", async () => {
+  const profiles = [{ id: "a".repeat(64), kind: 0 }];
+  let status = 200;
+  const h = await harness((call) =>
+    call.url === `${fixtureRelayUrl}/profiles/search`
+      ? status === 200
+        ? Response.json(profiles)
+        : Response.json({ error: "not found" }, { status })
+      : new Response(null, { status: 500 }),
+  );
+  try {
+    const body = { query: "wes", limit: 40, page: 2 };
+    const response = await h.post("profile-search", body);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(profiles);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({
+      url: `${fixtureRelayUrl}/profiles/search`,
+      body,
+    });
+    expect(h.calls[0].auth.tags).toEqual(
+      expect.arrayContaining([
+        ["u", `${fixtureRelayUrl}/profiles/search`],
+        ["method", "POST"],
+        [
+          "payload",
+          createHash("sha256").update(JSON.stringify(body)).digest("hex"),
+        ],
+      ]),
+    );
+
+    // An older relay's 404 reaches the app, which then uses NIP-50 search.
+    status = 404;
+    expect((await h.post("profile-search", body)).status).toBe(404);
+
+    // The limit counts code points: 100 astral characters are 200 UTF-16
+    // units, and surrounding whitespace does not count.
+    status = 200;
+    const astral = { query: ` ${"𠮷".repeat(100)} `, limit: 1 };
+    expect((await h.post("profile-search", astral)).status).toBe(200);
+    expect(h.calls[2]).toMatchObject({ body: astral });
+
+    for (const rejected of [
+      { query: "", limit: 1 },
+      { query: "x".repeat(101), limit: 1 },
+      { query: "𠮷".repeat(101), limit: 1 },
+      { query: "wes", limit: 0 },
+      { query: "wes", limit: 101 },
+      { query: "wes", limit: 1, search_mode: "prefix" },
+      { query: "wes", limit: 1, page: 0 },
+      { query: "wes", limit: 1, page: 1001 },
+      { query: "wes", limit: 1, page: 1.5 },
+    ])
+      expect((await h.post("profile-search", rejected)).status).toBe(400);
+    expect(h.calls).toHaveLength(3);
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy returns generic files as neutralized authenticated downloads", async () => {
   const bytes = Buffer.from("%PDF-1.7\nfixture pdf\n");
   const h = await harness((call) => {

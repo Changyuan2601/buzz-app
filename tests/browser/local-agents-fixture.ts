@@ -7,7 +7,10 @@ import type {
 import type { BundledPlugin } from "../../src/plugins/manager";
 import type { WorkOutcome } from "../../src/features/agents/local-activity";
 
-export const localAgentKey = "b".repeat(64);
+// A real curve point: the owner's session derives a NIP-44 key with it to read
+// the agent's memory.
+export const localAgentKey =
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 let identities: AgentIdentity[] = [];
 const pending: {
   id: string;

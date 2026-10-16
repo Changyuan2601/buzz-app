@@ -424,6 +424,14 @@ export function SelectExamples() {
           onValueChange={setInline}
           groups={workspaceGroups}
         />
+        <Select
+          label="Input-height filter"
+          variant="compact"
+          size="md"
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
         <div style={{ maxWidth: 160 }}>
           <Select
             label="Row workspace"
@@ -436,6 +444,7 @@ export function SelectExamples() {
         </div>
         <Select
           label="Card workspace"
+          valueSuffix=" · Default"
           variant="compact"
           appearance="subtle"
           leading={<CodeIcon size={16} aria-hidden="true" />}

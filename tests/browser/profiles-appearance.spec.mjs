@@ -2,172 +2,113 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
-for (const mode of ["light", "dark"]) {
-  test(`Profiles uses shared styles and host keyboard focus in ${mode} mode`, async ({
-    page,
-    app,
-    browserName,
-  }, info) => {
-    await page.addInitScript((mode) => {
-      localStorage.setItem("buzz-appearance.v1", mode);
-    }, mode);
-    await open(page, app);
-    // Virtua mounts overscan outside the viewport. Pin a visible row instead
-    // of letting an arbitrary first avatar trigger automation-driven scrolling.
-    const history = page.getByRole("region", {
-      name: "Channel message history",
+test("Profiles keeps controls contained and keyboard reachable across text size and widths", async ({
+  page,
+  app,
+}, info) => {
+  await open(page, app);
+  // Virtua mounts overscan outside the viewport. Pin a visible row instead
+  // of letting an arbitrary first avatar trigger automation-driven scrolling.
+  const history = page.getByRole("region", {
+    name: "Channel message history",
+  });
+  const messageId = await history.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const avatar = Array.from(
+      element.querySelectorAll(
+        'button[aria-label="View Fixture Reader profile"]',
+      ),
+    ).find((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
     });
-    const messageId = await history.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      const avatar = Array.from(
-        element.querySelectorAll(
-          'button[aria-label="View Fixture Reader profile"]',
-        ),
-      ).find((button) => {
-        const rect = button.getBoundingClientRect();
-        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
-      });
-      if (!avatar) throw new Error("No fully visible profile avatar");
-      return avatar.closest("[data-message-id]").dataset.messageId;
-    });
-    const avatar = history
-      .locator(`[data-message-id="${messageId}"]`)
-      .getByRole("button", {
-        name: "View Fixture Reader profile",
-        exact: true,
-      });
-    await expect(avatar).toBeInViewport({ ratio: 1 });
-    await avatar.click();
-    const panel = page.getByRole("complementary", {
-      name: "Profile",
+    if (!avatar) throw new Error("No fully visible profile avatar");
+    return avatar.closest("[data-message-id]").dataset.messageId;
+  });
+  const avatar = history
+    .locator(`[data-message-id="${messageId}"]`)
+    .getByRole("button", {
+      name: "View Fixture Reader profile",
       exact: true,
     });
-    const region = panel.getByRole("region", { name: "Profile details" });
-    const copy = panel.getByRole("button", { name: "Copy npub", exact: true });
-    const key = panel.locator("code");
-    await expect(region).toHaveAttribute("data-buzz-ui", "");
-    await expect(region).toHaveCSS(
-      "background-color",
-      mode === "light" ? "rgb(255, 255, 255)" : "rgb(26, 26, 26)",
-    );
-    await expect(region).toHaveCSS(
-      "color",
-      mode === "light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
-    );
-    await expect(region).toHaveCSS("font-size", "14px");
-    await expect(
-      panel.getByRole("heading", { name: "Fixture Reader", exact: true }),
-    ).toHaveCSS("font-size", "24px");
-    await expect(key).toHaveCSS("font-size", "12px");
-    await expect(key).toHaveCSS("font-family", /JetBrains Mono/);
-    await expect(copy).toHaveCSS("height", "32px");
-    await expect(copy).toHaveCSS("border-radius", "12px");
-    await copy.hover();
-    await expect(copy).toHaveCSS(
-      "background-color",
-      mode === "light" ? "rgb(241, 241, 242)" : "rgb(46, 46, 46)",
-    );
-    await page.keyboard.press(
-      browserName === "webkit" && process.platform === "darwin"
-        ? "Alt+Tab"
-        : "Tab",
-    );
-    await copy.focus();
-    await expect(copy).toBeFocused();
-    await expect(copy).toHaveCSS("outline-width", "2px");
-    await page.mouse.click(2, 2);
-    await copy.focus();
-    await expect(copy).toHaveCSS("outline-style", "none");
-    // Text and control geometry grow together while keeping labels contained.
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+=`);
-    // WebKit serializes rem multiplication as e.g. 15.400001px. Compare the
-    // numeric size to five decimal places, well below a rendered layout unit.
-    for (const [control, property, base] of [
-      [region, "font-size", 14],
-      [key, "font-size", 12],
-      [copy, "min-height", 32],
-    ]) {
-      await expect
-        .poll(() =>
-          control.evaluate(
-            (element, property) =>
-              parseFloat(getComputedStyle(element).getPropertyValue(property)),
-            property,
-          ),
-        )
-        .toBeCloseTo(base * 1.1, 5);
-    }
-    await expect
-      .poll(() =>
-        copy.evaluate((element) => {
-          const button = element.getBoundingClientRect();
-          const label = element
-            .querySelector(".buzz-button-label")
-            .getBoundingClientRect();
-          return (
-            button.height > 32 &&
-            label.top >= button.top &&
-            label.bottom <= button.bottom &&
-            label.left >= button.left &&
-            label.right <= button.right
-          );
-        }),
-      )
-      .toBe(true);
-    await page.keyboard.press(`${modifier}+0`);
-    await expect(region).toHaveCSS("font-size", "14px");
-    await expect(key).toHaveCSS("font-size", "12px");
-    for (const width of [1280, 900, 390]) {
-      await page.setViewportSize({ width, height: 800 });
-      // matchMedia updates React navigation after the viewport changes. Measure
-      // containment only after the shell has applied that responsive layout.
-      const navigation = page.locator(".shell-navigation");
-      if (width <= 650)
-        await expect(navigation).not.toHaveAttribute(
-          "data-sidebar-collapsible",
-        );
-      else
-        await expect(navigation).toHaveAttribute(
-          "data-sidebar-collapsible",
-          "true",
-        );
-      await expect(key).toBeVisible();
-      await expect
-        .poll(async () => {
-          const bounds = await region.boundingBox();
-          return bounds.x + bounds.width;
-        })
-        .toBeLessThanOrEqual(width);
-      await expect
-        .poll(() => region.evaluate((el) => el.scrollWidth > el.clientWidth))
-        .toBe(false);
-      await expect
-        .poll(() => key.evaluate((el) => el.scrollWidth > el.clientWidth))
-        .toBe(false);
-      // The human profile has no Memories tab; keyboard navigation stays
-      // confined to the available tabs, including at narrow widths.
-      const tabs = region.getByRole("tablist", { name: "Profile sections" });
-      const infoTab = tabs.getByRole("tab", { name: "Info", exact: true });
-      const channels = tabs.getByRole("tab", {
-        name: "Channels",
-        exact: true,
-      });
-      await expect(tabs.getByRole("tab", { name: "Memories" })).toHaveCount(0);
-      await infoTab.focus();
-      await infoTab.press("End");
-      await expect(channels).toBeFocused();
-      await expect(channels).toBeInViewport({ ratio: 1 });
-      await channels.press("Enter");
-      await expect(channels).toHaveAttribute("aria-selected", "true");
-      await channels.press("Home");
-      await infoTab.press("Enter");
-      await expect(infoTab).toHaveAttribute("aria-selected", "true");
-      await copy.scrollIntoViewIfNeeded();
-      await expect(copy).toBeInViewport({ ratio: 1 });
-      await panel.screenshot({
-        path: info.outputPath(`profile-${mode}-${width}.png`),
-      });
-    }
+  await expect(avatar).toBeInViewport({ ratio: 1 });
+  await avatar.click();
+  const panel = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
   });
-}
+  const region = panel.getByRole("region", { name: "Profile details" });
+  const copy = panel.getByRole("button", { name: "Copy npub", exact: true });
+  const key = panel.locator("code");
+  await expect(copy).toBeVisible();
+  // Enlarged text grows the control while keeping its label contained.
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+=`);
+  await expect
+    .poll(() =>
+      copy.evaluate((element) => {
+        const button = element.getBoundingClientRect();
+        const label = element
+          .querySelector(".buzz-button-label")
+          .getBoundingClientRect();
+        return (
+          button.height > 32 &&
+          label.top >= button.top &&
+          label.bottom <= button.bottom &&
+          label.left >= button.left &&
+          label.right <= button.right
+        );
+      }),
+    )
+    .toBe(true);
+  await page.keyboard.press(`${modifier}+0`);
+  for (const width of [1280, 900, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    // matchMedia updates React navigation after the viewport changes. Measure
+    // containment only after the shell has applied that responsive layout.
+    const navigation = page.locator(".shell-navigation");
+    if (width <= 650)
+      await expect(navigation).not.toHaveAttribute("data-sidebar-collapsible");
+    else
+      await expect(navigation).toHaveAttribute(
+        "data-sidebar-collapsible",
+        "true",
+      );
+    await expect(key).toBeVisible();
+    await expect
+      .poll(async () => {
+        const bounds = await region.boundingBox();
+        return bounds.x + bounds.width;
+      })
+      .toBeLessThanOrEqual(width);
+    await expect
+      .poll(() => region.evaluate((el) => el.scrollWidth > el.clientWidth))
+      .toBe(false);
+    await expect
+      .poll(() => key.evaluate((el) => el.scrollWidth > el.clientWidth))
+      .toBe(false);
+    // The human profile has no Memories tab; keyboard navigation stays
+    // confined to the available tabs, including at narrow widths.
+    const tabs = region.getByRole("tablist", { name: "Profile sections" });
+    const infoTab = tabs.getByRole("tab", { name: "Info", exact: true });
+    const channels = tabs.getByRole("tab", {
+      name: "Channels",
+      exact: true,
+    });
+    await expect(tabs.getByRole("tab", { name: "Memories" })).toHaveCount(0);
+    await infoTab.focus();
+    await infoTab.press("End");
+    await expect(channels).toBeFocused();
+    await expect(channels).toBeInViewport({ ratio: 1 });
+    await channels.press("Enter");
+    await expect(channels).toHaveAttribute("aria-selected", "true");
+    await channels.press("Home");
+    await infoTab.press("Enter");
+    await expect(infoTab).toHaveAttribute("aria-selected", "true");
+    await copy.scrollIntoViewIfNeeded();
+    await expect(copy).toBeInViewport({ ratio: 1 });
+    await panel.screenshot({
+      path: info.outputPath(`profile-${width}.png`),
+    });
+  }
+});

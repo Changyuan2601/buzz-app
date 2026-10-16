@@ -52,6 +52,17 @@
     gap: var(--space-4);
     padding-block: var(--space-4);
   }
+  .buzz-settings-group[data-layout="cards"] {
+    display: grid;
+    gap: var(--space-2);
+    padding: 0;
+    border: 0;
+  }
+  .buzz-settings-group[data-layout="cards"] > * {
+    padding-inline: var(--settings-group-inset);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-container);
+  }
   .buzz-settings-group[data-layout="form"] > .buzz-button {
     justify-self: start;
   }
@@ -60,6 +71,25 @@
     .buzz-settings-page .buzz-content-header,
     .buzz-settings-page .buzz-tabs[data-variant="panel"] {
       --settings-group-inset: var(--space-3);
+    }
+    [data-preference-description-layout="wide"]
+      .buzz-preference-row[data-has-icon] {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      row-gap: var(--space-1);
+    }
+    [data-preference-description-layout="wide"] .buzz-preference-row-content {
+      display: contents;
+    }
+    [data-preference-description-layout="wide"] .buzz-preference-row-label {
+      grid-column: 2;
+    }
+    [data-preference-description-layout="wide"]
+      .buzz-preference-row-description {
+      grid-column: 2 / -1;
+    }
+    [data-preference-description-layout="wide"] .buzz-preference-row-trailing {
+      grid-column: 3;
+      grid-row: 1;
     }
   }
   @container (max-width: 8rem) {

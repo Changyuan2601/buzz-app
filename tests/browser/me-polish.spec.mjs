@@ -55,35 +55,46 @@ test("Berd centers new and existing chats and keeps context actions usable", asy
     exact: true,
   });
   await expect(composer).toBeVisible();
-  // A fresh chat uses the same separate context row as a saved chat.
+  // Project context shares the editing-tool rail, rather than a separate row.
   for (const width of [1440, 700]) {
     await page.setViewportSize({ width, height: 950 });
     const send = page.getByRole("button", {
       name: "Send message",
       exact: true,
     });
-    const assistant = page.getByRole("button", {
-      name: "Choose follow-up assistant",
+    await expect(
+      page.getByRole("button", {
+        name: "Choose follow-up assistant",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    const tools = page.getByRole("button", {
+      name: "Toggle formatting",
       exact: true,
     });
     const project = page.getByRole("button", {
-      name: "Project: No project",
+      name: "Add project",
       exact: true,
     });
     await expect
       .poll(async () => {
-        const [sendBox, assistantBox, projectBox] = await Promise.all([
+        const [sendBox, toolsBox, projectBox] = await Promise.all([
           send.boundingBox(),
-          assistant.boundingBox(),
+          tools.boundingBox(),
           project.boundingBox(),
         ]);
         return (
           !!sendBox &&
-          !!assistantBox &&
+          !!toolsBox &&
           !!projectBox &&
-          assistantBox.y >= sendBox.y + sendBox.height &&
-          projectBox.y >= sendBox.y + sendBox.height &&
-          sendBox.x > assistantBox.x
+          Math.abs(
+            projectBox.y +
+              projectBox.height / 2 -
+              toolsBox.y -
+              toolsBox.height / 2,
+          ) < 1 &&
+          projectBox.x >= toolsBox.x + toolsBox.width &&
+          projectBox.x + projectBox.width <= sendBox.x
         );
       })
       .toBe(true);
@@ -212,7 +223,7 @@ test("Berd centers new and existing chats and keeps context actions usable", asy
 
 test.describe("Berd-style Me organization", () => {
   test.use({ meAgentNames: ["Owned Honey"] });
-  test("a project holds two chats and remembers each chat's assistant", async ({
+  test("a project retains two chats and their exact tagged drafts", async ({
     page,
     app,
   }) => {
@@ -221,7 +232,8 @@ test.describe("Berd-style Me organization", () => {
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
     });
-    const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+    // Stable identity: after reload an unread count joins the accessible label.
+    const row = sidebar.locator(`[data-me-channel-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
     await page.getByRole("menuitem", { name: "New project…" }).click();
@@ -264,16 +276,23 @@ test.describe("Berd-style Me organization", () => {
       page.getByRole("button", { name: "Project: Work", exact: true }),
     ).toBeVisible();
     app.meAgentMessage(id, "Agent follow-up fixture");
-    const assistant = page.getByRole("button", {
-      name: "Choose follow-up assistant",
+    const [agent] = app.meAgents;
+    const tag = page.getByRole("button", {
+      name: `Remove mention ${agent.name} ${agent.pubkey}`,
       exact: true,
     });
-    await assistant.click();
-    // Its name gains presence (", online") once that is known.
-    await page.getByRole("button", { name: /^Owned Honey(,|$)/ }).click();
-    await expect(
-      page.getByRole("button", { name: /^Change agent: Owned Honey/ }),
-    ).toBeVisible();
+    await expect(tag).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Mention a member or agent" })
+      .getByRole("button", {
+        name: `${agent.name} ${agent.pubkey}`,
+        exact: true,
+      })
+      .click();
+    await expect(tag).toBeVisible();
     const composer = page.getByRole("textbox", {
       name: "Message your agents",
       exact: true,
@@ -282,24 +301,38 @@ test.describe("Berd-style Me organization", () => {
       exact: true,
     });
     await expect(agentMessage).toBeVisible();
-    await composer.fill("Remember the launch checklist");
+    await composer.press("End");
+    await page.keyboard.insertText("Remember the launch checklist");
     await composer.press("Enter");
-    const viewerMessage = page.getByText("Remember the launch checklist", {
-      exact: true,
-    });
-    await expect(viewerMessage).toBeVisible();
+    const publications = () =>
+      app.report.publications.filter(({ event }) => event.kind === 9);
+    await expect.poll(() => publications().length).toBe(1);
+    const sent = publications()[0].event;
+    expect(verifyEvent(sent)).toBe(true);
+    expect(sent.tags.filter(([key]) => key === "p")).toEqual([
+      ["p", agent.pubkey],
+    ]);
+    expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", id]]);
+    const viewerMessage = page.locator(`[data-message-id="${sent.id}"]`);
+    await expect(viewerMessage).toContainText("Remember the launch checklist");
+    await expect(tag).toBeVisible();
+    await composer.press("End");
+    await page.keyboard.insertText("Keep this follow-up draft");
     await beta.click();
-    await expect(
-      page.getByRole("button", {
-        name: "Choose follow-up assistant",
-        exact: true,
-      }),
-    ).toBeVisible();
+    await expect(composer).not.toContainText("Keep this follow-up draft");
     await sidebar.getByText("Alpha", { exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: /^Change agent: Owned Honey/ }),
-    ).toBeVisible();
-    const viewerBox = await viewerMessage.boundingBox();
+    await expect(composer).toContainText("Keep this follow-up draft");
+    await expect(tag).toBeVisible();
+    await page.reload();
+    await expect(composer).toContainText("Keep this follow-up draft");
+    await expect(tag).toBeVisible();
+    await expect(project).toHaveAttribute("aria-expanded", "true");
+    await expect(row).toBeVisible();
+    await expect(beta).toBeVisible();
+    await expect(agentMessage).toBeVisible();
+    const viewerBox = await viewerMessage
+      .locator("[data-message-action-anchor]")
+      .boundingBox();
     const agentBox = await agentMessage.boundingBox();
     expect(viewerBox).toBeTruthy();
     expect(agentBox).toBeTruthy();
@@ -636,7 +669,13 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
               (button) => button.getBoundingClientRect().width,
             ),
           );
-          return footer.scrollWidth - Math.max(footer.clientWidth, widest);
+          // Include the shared focus-ring inset around an oversized action.
+          const style = getComputedStyle(footer);
+          const inset =
+            parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+          return (
+            footer.scrollWidth - Math.max(footer.clientWidth, widest + inset)
+          );
         }),
       )
       .toBeLessThanOrEqual(1);
@@ -835,7 +874,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
   expect(links[0].event.tags).toContainEqual(["h", destination]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   expect(links[0].event.content).toBe(
-    `[Session · 33333333](buzz://channel/${id})`,
+    `[Session: 33333333](buzz://channel/${id})`,
   );
 });
 
@@ -1150,7 +1189,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     name: "Session settings",
     exact: true,
   });
-  const canvas = settings.getByRole("textbox", { name: "Canvas", exact: true });
+  const canvas = settings.getByRole("textbox", { name: /^Instructions/ });
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
   const draftName = settings.getByRole("textbox", {
@@ -1199,19 +1238,19 @@ test("unified session naming and lifetime retain host focus and save only explic
           .poll(() =>
             dialog.evaluate((el) => {
               const name = el.querySelector("input").closest(".buzz-field");
-              const folders = el
-                .querySelector("textarea")
-                .closest(".buzz-field").parentElement;
-              const canvas = [...el.querySelectorAll(".buzz-field")].find(
-                (field) =>
-                  field.querySelector(".buzz-field-label")?.textContent ===
-                  "Canvas",
-              );
+              const labelled = (label) =>
+                [...el.querySelectorAll(".buzz-field")].find((field) =>
+                  field
+                    .querySelector(".buzz-field-label")
+                    ?.textContent.startsWith(label),
+                );
+              const instructions = labelled("Instructions");
+              const folders = labelled("Folders").parentElement;
               const lifetime = el
                 .querySelector('[role="radio"]')
                 .closest(".buzz-field");
-              const boxes = [name, folders, canvas, lifetime].map((field) =>
-                field.getBoundingClientRect(),
+              const boxes = [name, instructions, folders, lifetime].map(
+                (field) => field.getBoundingClientRect(),
               );
               return boxes
                 .slice(1)
@@ -1254,7 +1293,8 @@ test("unified session naming and lifetime retain host focus and save only explic
               );
               return Math.abs(
                 element.getBoundingClientRect().bottom -
-                  footer.getBoundingClientRect().bottom -
+                  footer.getBoundingClientRect().bottom +
+                  Number.parseFloat(getComputedStyle(footer).paddingBottom) -
                   gutter -
                   element.clientTop,
               );
@@ -1504,10 +1544,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     });
     await worktree.click();
     await expect(worktree).toBeChecked();
-    const repository = dialog.getByRole("textbox", {
-      name: "Source repository",
-      exact: true,
-    });
+    const repository = dialog.getByRole("textbox", { name: /^Folders/ });
     const location = dialog.getByRole("textbox", {
       name: "Worktree location",
       exact: true,
@@ -1544,9 +1581,7 @@ test("unified session naming and lifetime retain host focus and save only explic
             }),
           )
           .toBe(true);
-        await repository.click();
-        await page.keyboard.press("Tab");
-        await expect(location).toBeFocused();
+        await location.click();
         await page.keyboard.press("Tab");
         await expect(branch).toBeFocused();
         await expect.poll(() => pointerReachable(branch)).toBe(true);
@@ -1651,6 +1686,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     ["h", id],
     ["name", "Make contrast meet accessibility standards"],
     ["ttl", "1209600"],
+    ["t", "buzz.session.named"],
   ]);
   const saved = readbacks.find((entry) =>
     entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
@@ -1662,6 +1698,10 @@ test("unified session naming and lifetime retain host focus and save only explic
     "Buzz session (buzz.sessions/v1)",
   ]);
   expect(saved.tags).toContainEqual(["private"]);
+  expect(saved.tags.filter(([key]) => key === "t")).toEqual([
+    ["t", "stream"],
+    ["t", "buzz.session.named"],
+  ]);
   expect(saved.tags).not.toContainEqual(["public"]);
   expect(
     (app.report.sidebarPublications ?? []).filter((entry) =>

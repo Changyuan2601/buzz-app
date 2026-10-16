@@ -34,6 +34,7 @@ import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelPanels } from "./useChannelPanels";
 import {
   panelTabId,
+  selectedTabId,
   tabPane,
   type ConversationTab as Tab,
   type TabPane,
@@ -111,8 +112,9 @@ export function useConversationTabs({
   const focusSplit = useRef(false);
   // The opening control remounts in the main header when the pane closes.
   useLayoutEffect(() => {
-    if (focusSplit.current && splitTrigger.current) {
-      splitTrigger.current.focus({ preventScroll: true });
+    if (focusSplit.current) {
+      const target = splitTrigger.current ?? fallbackFocus?.current;
+      target?.focus({ preventScroll: true });
       focusSplit.current = false;
     }
   });
@@ -299,9 +301,7 @@ export function useConversationTabs({
     ...sideTabs.map((tab) => tab.id),
     ...panelTabs.map(tabId),
   ];
-  const selectedTab = rootTabIds.includes(tabState.selected)
-    ? tabState.selected
-    : (rootTabIds[0] ?? "");
+  const selectedTab = selectedTabId(tabState.selected, rootTabIds);
   // A tab-placed channel launcher keeps one retained tab per channel.
   const channelTab = (panel: Opening["panel"], channelId: string) =>
     panelTabs.find(
@@ -361,6 +361,14 @@ export function useConversationTabs({
         openConversationLink(drawerContext.channelId, target),
     },
   );
+  // The pane's page-local side panel, so a tab opened from outside the page
+  // knows the pane is in use; it ends with this mount.
+  const sidePanel = !!drawer.side;
+  const { setSidePanel } = tabState;
+  useLayoutEffect(() => {
+    setSidePanel(sidePanel);
+    return () => setSidePanel(false);
+  }, [setSidePanel, sidePanel]);
   const selectPanelTab = (id: string) => {
     opening.current = panelTabs.find((entry) => tabId(entry) === id);
     tabState.select(id);
@@ -578,6 +586,7 @@ export function useConversationTabs({
   );
   // Several open threads stay distinguishable by their original message.
   function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
+    if (tab.name) return tab.name;
     const rootId = tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
     const root = queries.channels
       .window(tab.channelId)
@@ -611,6 +620,7 @@ export function useConversationTabs({
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),
+        rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
       content:
         !usable || !target ? (
@@ -641,6 +651,46 @@ export function useConversationTabs({
     };
   }
 
+  // Close all tabs and Close other tabs: one store update for both panes,
+  // including hidden tabs. False when the visit ended or nothing would
+  // change: nothing to close and the kept tab already selected.
+  const closeTabsExcept = (keep?: string) => {
+    const closing = tabState.tabs.filter((tab) => tab.id !== keep);
+    const kept = tabState.tabs.find((tab) => tab.id === keep);
+    const unselected =
+      kept && tabPane(kept) === "main"
+        ? tabState.mainSelected !== keep
+        : (!!kept ||
+            tabState.entries.some((entry) => panelTabId(entry) === keep) ||
+            (!!tabState.settings && keep === "settings")) &&
+          !(tabState.paneOpen && selectedTab === keep);
+    if (
+      !currentVisit() ||
+      navigationSignal?.aborted ||
+      !(
+        closing.length ||
+        tabState.entries.some((entry) => panelTabId(entry) !== keep) ||
+        (tabState.settings && keep !== "settings") ||
+        tabState.thread ||
+        unselected
+      )
+    )
+      return false;
+    const addressed = closing.find(
+      (tab) =>
+        tab.kind === "thread" &&
+        routed?.channelId === tab.channelId &&
+        routed.messageId === tab.messageId,
+    );
+    entryList.current = entryList.current.filter(
+      (entry) => panelTabId(entry) === keep,
+    );
+    opening.current = entryList.current[0];
+    tabState.closeTabs(keep);
+    if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
+    return true;
+  };
+
   return {
     open,
     opened,
@@ -655,6 +705,8 @@ export function useConversationTabs({
       tabState.setPaneOpen(false);
     },
     closeTab,
+    closeAllTabs: () => closeTabsExcept(),
+    closeOtherTabs: (id: string) => closeTabsExcept(id),
     selectedTab,
     drawer,
     drawerContext,

@@ -30,10 +30,15 @@
     gap: var(--space-2);
     min-width: 0;
   }
+  /* Form labels read as regular 14px text; titles carry the emphasis. */
   .buzz-field-label,
   .buzz-choice-label {
-    @apply text-label-sm;
+    @apply text-body-sm;
     color: var(--text-standard);
+  }
+  .buzz-field-optional {
+    /* The placeholder hint color: lighter than descriptions. */
+    color: var(--text-metadata);
   }
   .buzz-field-description,
   .buzz-choice-description {
@@ -206,6 +211,16 @@
     flex: 1;
     gap: var(--space-row-gap);
   }
+  .buzz-select-value-text {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  /* Agent cards keep inheritance visible without truncating the source text. */
+  .buzz-select-value-suffix {
+    flex: none;
+    white-space: pre;
+  }
   .buzz-select-leading {
     display: flex;
     flex: none;
@@ -217,6 +232,14 @@
   .buzz-select-trigger > :last-child {
     display: flex;
     flex-shrink: 0;
+  }
+  /* Without a chevron the value is last: it shrinks and stays one line. */
+  .buzz-select-trigger > .buzz-select-value:last-child {
+    display: block;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   /* The value and caret identify row choices; their boundary stays quiet. */
   .buzz-select[data-variant="compact"] {

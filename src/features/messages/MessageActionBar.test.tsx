@@ -22,6 +22,9 @@ import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboa
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
 import { MessageActionBar } from "./MessageActionBar";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { createPortal } from "react-dom";
+import { MessageLink } from "../conversation/MessageLink";
+import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -58,6 +61,76 @@ function pointerMedia(matches = true) {
       for (const listener of listeners) listener();
     });
 }
+
+it("leaves portalled message content outside its context-menu target", () => {
+  render(
+    <MessageActionBar copyText={() => "Message"}>
+      <div>
+        <button type="button">Expand coordination</button>
+        {createPortal(
+          <button type="button">Viewer content</button>,
+          document.body,
+        )}
+      </div>
+    </MessageActionBar>,
+  );
+  const viewer = screen.getByRole("button", { name: "Viewer content" });
+  expect(
+    fireEvent.contextMenu(viewer, { clientX: 20, clientY: 20, button: 2 }),
+  ).toBe(true);
+  fireEvent.keyDown(viewer, { key: "F10", shiftKey: true });
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+it.each([
+  ["external", "{Shift>}{F10}{/Shift}"],
+  ["external", "{ContextMenu}"],
+  ["thread", "{Shift>}{F10}{/Shift}"],
+  ["thread", "{ContextMenu}"],
+])(
+  "leaves a nested %s link's %s menu to the link owner",
+  async (kind, keys) => {
+    const user = userEvent.setup();
+    render(
+      <LinkThreadTabContext value={() => true}>
+        <MessageActionBar copyText={() => "Message"}>
+          <div>
+            <button type="button">Coordination</button>
+            <MessageLink
+              url={
+                kind === "external"
+                  ? "https://example.com/context"
+                  : `buzz://message?channel=alpha&id=${"a".repeat(64)}`
+              }
+              label="Nested destination"
+              registry={undefined}
+              onOpenLink={() => true}
+            />
+          </div>
+        </MessageActionBar>
+      </LinkThreadTabContext>,
+    );
+    const link = screen.getByRole("link", { name: "Nested destination" });
+    link.focus();
+    await user.keyboard(keys);
+    await screen.findByRole("menuitem", {
+      name: kind === "external" ? "Open in browser" : "Open link",
+    });
+    expect(screen.getAllByRole("menu", { hidden: true })).toHaveLength(1);
+    expect(screen.queryByRole("menuitem", { name: "Copy message" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(link));
+    const row = screen.getByRole("button", { name: "Coordination" });
+    row.focus();
+    await user.keyboard(keys);
+    await screen.findByRole("menuitem", { name: "Copy message" });
+    expect(screen.getAllByRole("menu", { hidden: true })).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(row));
+  },
+);
 
 it("defers desktop controls until row interaction and retains them after leaving", () => {
   pointerMedia();

@@ -1,4 +1,5 @@
 import { Button } from "../../shared/design-system/ui/Button";
+import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
 import { useEffect, useState } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import { DELIVERY_GRACE_MS, deliveryFeedback } from "./delivery";
@@ -22,17 +23,21 @@ export function DeliveryNotice({
   }, [row.createdAt, row.delivery]);
   const feedback = deliveryFeedback(row, now);
   if (!feedback) return null;
+  const canRetry =
+    (row.delivery === "failed" || row.delivery === "unknown") && retry;
   return (
     <div className={styles.delivery}>
-      <span role="status">{feedback}</span>
-      {(row.delivery === "failed" || row.delivery === "unknown") && retry && (
+      <span role="status" className={canRetry ? "sr-only" : undefined}>
+        {feedback}
+      </span>
+      {canRetry && (
         <Button
-          size="sm"
+          size="inline"
           variant="ghost"
-          type="button"
+          title={feedback}
           onClick={() => retry(row.id)}
         >
-          Retry
+          <ArrowsClockwiseIcon size={12} aria-hidden="true" /> Retry
         </Button>
       )}
     </div>

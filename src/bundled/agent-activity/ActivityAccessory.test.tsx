@@ -409,7 +409,7 @@ it("shows local receipt and failure without requiring an ACP transcript, and ope
     );
     expect(bubble.querySelector('[data-state="working"]')).not.toBeNull();
     act(() => work.finish({ ok: false, error: "Provider unavailable" }));
-    expect(bubble).toHaveTextContent("Could not finish");
+    expect(bubble).toHaveTextContent("1 failed");
     expect(bubble.querySelector("[data-state]")).toBeNull();
     fireEvent.click(bubble);
     expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
@@ -449,6 +449,15 @@ it("dismisses only that agent's error on this message, without changing other wo
       begin(A, next).finish({ ok: false, error: "Elsewhere" });
       begin(B, root).step("Read", "notes.txt");
     });
+    const mixed = screen.getByRole("button", { name: /View agent activity/ });
+    expect(mixed).toHaveTextContent("1 failed");
+    const failedBadge = mixed.querySelector("[data-activity-failure]");
+    const workingBadge = mixed.querySelector("[data-thread-working]");
+    expect(failedBadge?.querySelector('[title="Blossom"]')).not.toBeNull();
+    expect(workingBadge?.querySelector('[title="Bubbles"]')).not.toBeNull();
+    expect(workingBadge?.querySelector('[title="Blossom"]')).toBeNull();
+    expect(failedBadge?.parentElement).toBe(workingBadge?.parentElement);
+    expect(mixed.querySelector('[data-state="working"]')).not.toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: /View agent activity/ }),
     );
@@ -513,6 +522,39 @@ it("moves focus out when dismissing the last error removes the bubble", () => {
     );
     expect(onFocusedRemoval).toHaveBeenCalledOnce();
     expect(screen.queryByText("Provider unavailable")).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps an idle reply summary mounted without advertising an activity popup", () => {
+  const f = fixture();
+  const navigate = vi.fn();
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      renderMessageSummary={(activity) => (
+        <button type="button" ref={activity?.ref} onClick={navigate}>
+          View thread{activity ? `: ${activity.label}` : ""}
+        </button>
+      )}
+    />,
+  );
+  try {
+    const summary = screen.getByRole("button", { name: "View thread" });
+    expect(summary).not.toHaveAttribute("aria-haspopup");
+    expect(summary).not.toHaveAttribute("aria-expanded");
+    f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
+    expect(screen.getByRole("button", { name: /View thread/ })).toBe(summary);
+    expect(summary).toHaveAttribute("aria-haspopup", "dialog");
+    f.send(A, "here", 2, "turn_completed");
+    expect(screen.getByRole("button", { name: "View thread" })).toBe(summary);
+    expect(summary).not.toHaveAttribute("aria-haspopup");
+    expect(summary).not.toHaveAttribute("aria-expanded");
+    fireEvent.click(summary);
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   } finally {
     view.unmount();
     f.dispose();

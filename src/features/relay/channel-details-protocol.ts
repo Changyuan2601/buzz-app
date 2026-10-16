@@ -1,5 +1,5 @@
 import type { EventTemplate } from "nostr-tools";
-import { sessionMetadata } from "../sessions/metadata.ts";
+import { SESSION_NAMED_LABEL, sessionMetadata } from "../sessions/metadata.ts";
 import type { RelayEvent } from "./events.ts";
 import {
   exactLifecycleTag,
@@ -116,7 +116,14 @@ export function validateDetailsDraft(
       draft.visibility !== base?.visibility ||
       draft.description !== base?.description ||
       (draft.labels !== undefined &&
-        !sameLabels(draft.labels, base.labels ?? []))
+        !sameLabels(draft.labels, base.labels ?? []) &&
+        !(
+          draft.name !== base.name &&
+          sameLabels(draft.labels, [
+            ...(base.labels ?? []),
+            SESSION_NAMED_LABEL,
+          ])
+        ))
     )
       throw new Error(
         "Only the name and lifetime of a session can be changed here.",
@@ -194,6 +201,10 @@ export function detailsTemplate(
               ],
             ]
           : []),
+        ...(draft.labels !== undefined &&
+        !sameLabels(draft.labels, base.labels ?? [])
+          ? channelLabelTags(draft.labels)
+          : []),
       ],
     };
   return {
@@ -242,6 +253,15 @@ function detailsLabels(tags: readonly (readonly string[])[]): string[] {
   return values;
 }
 
+/** Display-only TTL for summaries; malformed metadata shows no lifetime instead of failing the list. */
+export function channelTtl(event: RelayEvent): number | undefined {
+  try {
+    return parseDetailsTtl(exactLifecycleTag(event, "ttl"));
+  } catch {
+    return undefined;
+  }
+}
+
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */
 function parseDetailsTtl(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -262,12 +282,14 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     Number.isSafeInteger(event.created_at) &&
     event.created_at >= 0 &&
     Array.isArray(event.tags) &&
-    [2, 3].includes(event.tags.length) &&
+    event.tags.length >= 2 &&
     event.tags.every(
       (tag, index) =>
         Array.isArray(tag) &&
         tag.length === 2 &&
-        tag[0] === ["h", "name", "ttl"][index] &&
+        (index < 2
+          ? tag[0] === ["h", "name"][index]
+          : tag[0] === "t" || (index === 2 && tag[0] === "ttl")) &&
         typeof tag[1] === "string",
     )
   ) {
@@ -277,9 +299,12 @@ export function validateDetailsTemplate(event: EventTemplate): void {
       description: "",
       visibility: "private",
       ttlSeconds:
-        event.tags[2]?.[1] === ""
+        event.tags.find(([key]) => key === "ttl")?.[1] === ""
           ? undefined
-          : parseDetailsTtl(event.tags[2]?.[1]),
+          : parseDetailsTtl(event.tags.find(([key]) => key === "ttl")?.[1]),
+      ...(event.tags.some(([key]) => key === "t")
+        ? { labels: detailsLabels(event.tags.filter(([key]) => key === "t")) }
+        : {}),
     });
     return;
   }

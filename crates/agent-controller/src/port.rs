@@ -12,6 +12,8 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+const KEY_GONE: &str = "That agent's key is no longer saved";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PortSource {
@@ -37,6 +39,7 @@ pub struct Portable {
     pub source: PortSource,
     pub pubkey: String,
     pub name: String,
+    /// An HTTPS URL, or an inline image (`inline_picture`) an import uploads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub picture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,8 +136,27 @@ impl OldStores {
         found
     }
     /// One listed identity and its key, both re-read from the store it is in, so
-    /// the caller names only its choice.
+    /// the caller names only its choice. A harness copy whose key is gone falls
+    /// back to old Buzz's copy of the same identity, which keeps its own key.
     pub fn take(
+        &self,
+        source: PortSource,
+        pubkey: &str,
+        credentials: &dyn Credentials,
+    ) -> Result<(Portable, Secret)> {
+        let taken = self.take_from(source, pubkey, credentials);
+        if source != PortSource::Harness || !matches!(&taken, Err(e) if e == KEY_GONE) {
+            return taken;
+        }
+        for legacy in [PortSource::Installed, PortSource::Development] {
+            match self.take_from(legacy, pubkey, credentials) {
+                Err(error) if error != crate::CREDENTIALS_BUSY => {}
+                result => return result,
+            }
+        }
+        taken
+    }
+    fn take_from(
         &self,
         source: PortSource,
         pubkey: &str,
@@ -149,9 +171,7 @@ impl OldStores {
         let key = match source.legacy() {
             Some(_) if !saved.is_empty() => Secret::parse(&saved, pubkey)?,
             Some(legacy) => credentials.read_legacy(legacy, pubkey)?,
-            None => credentials
-                .read(&saved, pubkey)?
-                .ok_or("That agent's key is no longer saved")?,
+            None => credentials.read(&saved, pubkey)?.ok_or(KEY_GONE)?,
         };
         Ok((agent, key))
     }
@@ -339,7 +359,8 @@ fn portable(source: PortSource, record: &Value, records: &[Value]) -> Option<(Po
     } else {
         record["avatar_url"].as_str()
     }
-    .filter(|url| public_picture(url))
+    // Inline data is kept even when unusable, so the import can say it was left behind.
+    .filter(|url| public_picture(url) || url.starts_with("data:"))
     .map(str::to_owned);
     Some((
         Portable {
@@ -401,6 +422,22 @@ pub(crate) fn public_picture(url: &str) -> bool {
         && url::Url::parse(url).is_ok_and(|url| {
             url.scheme() == "https" && url.username().is_empty() && url.password().is_none()
         })
+}
+
+/// An image old Buzz kept inline as a base64 `data:` URL, which an import
+/// uploads to the community: its type and bytes.
+pub fn inline_picture(url: &str) -> Option<(&'static str, Vec<u8>)> {
+    use base64::Engine;
+    const TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+    let (mime, data) = url.strip_prefix("data:")?.split_once(";base64,")?;
+    let mime = TYPES.into_iter().find(|known| *known == mime)?;
+    if data.len() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    Some((mime, bytes))
 }
 
 #[cfg(test)]

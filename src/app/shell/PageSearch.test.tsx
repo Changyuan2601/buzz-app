@@ -82,6 +82,8 @@ it("keeps typing focus while arrows select results and Enter opens the selection
     await user.keyboard(`{${key}}`);
     expect(input).toHaveFocus();
     expect(result).toHaveAttribute("aria-selected", "true");
+    expect(result).toHaveAttribute("data-highlighted");
+    expect(result).not.toHaveAttribute("data-selected");
     expect(input).toHaveAttribute("aria-activedescendant", result.id);
   }
   fireEvent.keyDown(input, { key: "ArrowDown", isComposing: true });
@@ -93,7 +95,7 @@ it("keeps typing focus while arrows select results and Enter opens the selection
     fireEvent.keyDown(input, { key: "Enter", [modifier]: true });
   }
   expect(messages).toHaveAttribute("aria-selected", "true");
-  expect(messages).toHaveAttribute("data-selected", "true");
+  expect(messages).toHaveAttribute("data-highlighted", "true");
   expect(settings).toHaveAttribute("aria-selected", "false");
   expect(messages).not.toHaveAttribute("aria-current", "page");
   expect(select).not.toHaveBeenCalled();

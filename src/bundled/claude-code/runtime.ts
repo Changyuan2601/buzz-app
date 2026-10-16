@@ -7,12 +7,17 @@
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
+  Agents,
   Delivery,
   Effort,
   Models,
@@ -24,7 +29,10 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
-import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  MemoryReads,
+  READ_TIMEOUT_MS,
+} from "../../features/agent-harness/core-memory";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -33,7 +41,11 @@ import {
   turnPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
-import { readTranscript, type Conversation } from "./transcript";
+import {
+  readSessionTitle,
+  readTranscript,
+  type Conversation,
+} from "./transcript";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -81,7 +93,6 @@ export type SavedConversation = Conversation & {
   at: number;
 };
 
-const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 
@@ -121,18 +132,26 @@ export class ClaudeRuntime {
     string,
     ReturnType<AgentSessions["snapshot"]>
   >();
+  /** Me chats whose title was already offered to the host this app run. */
+  private readonly titled = new Set<string>();
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message),
+    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    undefined,
+    () => addedKey(this.added()),
   );
 
   constructor(
     private readonly host: Pick<Host, "spawn">,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
     private readonly storage: Storage = globalThis.localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** The tools plugins add to every session now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -318,6 +337,7 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
+    named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -421,6 +441,46 @@ export class ClaudeRuntime {
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error, topLevel);
     });
+    if (topLevel && named)
+      void this.offerTitle(done, agent.pubkey, key, settings.workspace, named);
+  }
+
+  /** After a Me chat's turn, offers the host the title Claude Code generated
+   * for its session, once. The host decides whether the chat takes it. */
+  private async offerTitle(
+    done: Promise<Settled>,
+    pubkey: string,
+    key: string,
+    workspace: string,
+    named: (title: string) => void,
+  ) {
+    const once = `${pubkey}:${key}`;
+    if (this.titled.has(once)) return;
+    this.titled.add(once);
+    if (!(await done).ok) {
+      // A failed turn has offered no title; a successful retry may still name it.
+      this.titled.delete(once);
+      return;
+    }
+    const signal = AbortSignal.timeout(30_000);
+    // Claude Code writes the title alongside the first reply; give it a moment.
+    for (const wait of [0, 3_000, 10_000]) {
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      const session = localSessions(this.storage, pubkey).get(key)?.id;
+      if (!session || signal.aborted) return;
+      try {
+        const title = await readSessionTitle(
+          this.spawn,
+          workspace,
+          session,
+          signal,
+        );
+        if (title) return named(title);
+      } catch (error) {
+        console.warn("Claude could not read its session title", error);
+        return;
+      }
+    }
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
@@ -593,14 +653,18 @@ export class ClaudeRuntime {
         const client =
           handle &&
           appClient(handle, {
+            relayAuthor: this.reads(pubkey)?.relayAuthor?.(),
+            audienceAuthorityCommunity:
+              this.reads(pubkey)?.audienceAuthorityCommunity?.(),
+            signingAuthority: this.reads(pubkey)?.workflowAuthority(),
             spawn: this.spawn,
             cwd,
-            memories: async () => (await this.memories(pubkey)).entries,
+            memories: (slug) => this.memories(pubkey, slug),
             remembered: () => this.forget(pubkey),
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message);
+        return respond(client, context, message, this.added());
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -616,6 +680,7 @@ export class ClaudeRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          addedKey(this.added()),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
@@ -638,26 +703,17 @@ export class ClaudeRuntime {
     return entry;
   }
 
-  /** The agent's memory, as its community's reads give it. */
-  private memories(pubkey: string) {
+  /** The agent's memory, or only entry `slug`, as its community's reads give
+   * it. */
+  private memories(pubkey: string, slug?: string) {
     const reads = this.reads(pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
       pubkey,
-      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      AbortSignal.timeout(READ_TIMEOUT_MS),
+      slug,
     );
-  }
-  /** The agent's `core` memory for a new session's prompt: its text, `null`
-   * when it has none, or undefined when it could not be read, so the session
-   * starts without it. */
-  private async core(pubkey: string) {
-    try {
-      return coreOf(await this.memories(pubkey));
-    } catch (error) {
-      console.warn("Claude could not read the agent's memory", error);
-      return undefined;
-    }
   }
   private forget(pubkey: string) {
     const reads = this.reads(pubkey);

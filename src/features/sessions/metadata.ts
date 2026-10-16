@@ -1,5 +1,17 @@
 /** Ordinary channel metadata describes presentation, never access authority. */
 export const SESSION_CHANNEL_DESCRIPTION = "Buzz session (buzz.sessions/v1)";
+/** Presentation provenance in the relay's existing NIP-CL labels, never access. */
+export const SESSION_NAMED_LABEL = "buzz.session.named";
+
+export function sessionLinkName(channel: {
+  id: string;
+  name: string;
+  labels?: readonly string[] | undefined;
+}) {
+  return channel.labels?.includes(SESSION_NAMED_LABEL) && channel.name.trim()
+    ? channel.name
+    : channel.id.slice(0, 8);
+}
 /** Marks a personal chat: its owner plus their agents, answered as one
  * channel-scoped conversation at top level. Remote agents read it from
  * channel metadata because Me placement is private to the owner. Explicit conversion to

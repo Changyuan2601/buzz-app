@@ -8,6 +8,10 @@ import {
 } from "react";
 import { Combobox as BaseCombobox } from "@base-ui/react/combobox";
 import type { RelaySession } from "../../features/relay/session";
+import type { Navigation } from "../../features/navigation/controller";
+import { sharedSessionNavigationTarget } from "../../features/sessions/shared-session-target";
+import { sharedSessionIds } from "../../features/sessions/shared-session-marker";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { archiveHides } from "../../features/relay/identity-archives";
 import {
@@ -116,6 +120,7 @@ export function SessionAccessIndicator({
  * session; this view does not own persistence, grant retries or link delivery. */
 export function SessionShare({
   session,
+  navigator: navigationController,
   channel,
   signal,
   renderTrigger,
@@ -126,6 +131,7 @@ export function SessionShare({
   onConverted,
 }: {
   session: RelaySession;
+  navigator?: Navigation | undefined;
   channel: ChannelSummary;
   initialOpen?: boolean;
   onConverted?: (() => void) | undefined;
@@ -136,6 +142,7 @@ export function SessionShare({
   renderTrigger?: (open: () => void, disabled: boolean) => ReactNode;
   signal?: AbortSignal | undefined;
 }) {
+  const notify = useToastNotification();
   useSessionConversions(session);
   useSyncExternalStore(
     session.mePlacement.subscribe,
@@ -647,7 +654,7 @@ export function SessionShare({
       const historySaved = remember();
       if (target !== channel.id) {
         progress("Posting session link…");
-        await publishSessionLink(
+        const messageId = await publishSessionLink(
           session,
           channel.id,
           target,
@@ -657,6 +664,52 @@ export function SessionShare({
             exact.messageId = id;
           },
         );
+        // Optional discovery feedback must not turn a confirmed share into a failed operation.
+        try {
+          const confirmed = await session.read(
+            [
+              {
+                kinds: [9],
+                ids: [messageId],
+                "#h": [target],
+                limit: 1,
+                consistency: "strong",
+              },
+            ],
+            { signal: controller.signal, fresh: true },
+          );
+          if (
+            visible() &&
+            confirmed.some((event) =>
+              sharedSessionIds(event).includes(channel.id),
+            )
+          ) {
+            const destination = sharedSessionNavigationTarget(
+              target,
+              session.scope,
+              session.viewer,
+            );
+            const destinationName = session.channels
+              .list()
+              .channels.find((item) => item.id === target)?.name;
+            notify(
+              destinationName
+                ? `Added to #${destinationName}’s Shared sessions`
+                : "Added to Shared sessions",
+              "success",
+              destination && navigationController
+                ? {
+                    label: "View",
+                    onClick: () => {
+                      void navigationController.open(destination);
+                    },
+                  }
+                : undefined,
+            );
+          }
+        } catch {
+          /* Sharing is already confirmed; the tab can be opened from its launcher. */
+        }
       }
       finishSessionShare(session, channel.id);
       if (visible()) {

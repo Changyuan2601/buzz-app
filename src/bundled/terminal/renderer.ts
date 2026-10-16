@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/600.css";
+import { isApplePlatform } from "../../features/shortcuts/format";
 import { forwardTerminalKey } from "../../features/shortcuts/terminal-key-event";
 import { terminalAppearance } from "./appearance";
 import { createSplash } from "./splash";
@@ -29,7 +30,7 @@ export function createScreen(
   const splash = createSplash(element, () => terminal.focus());
   const fit = new FitAddon();
   terminal.loadAddon(fit);
-  // xterm 5.5.0's public onData drops the producer's wasUserInput flag.
+  // xterm 6.0.0's public onData drops the producer's wasUserInput flag.
   // Its core signal fires synchronously immediately before keyboard/paste data,
   // but not for parser replies. Keep this version-pinned seam here, never infer
   // provenance from escape bytes or from an asynchronous write being pending.
@@ -60,9 +61,39 @@ export function createScreen(
   // bytes. A handled event is prevented, so bubbling cannot dispatch it twice.
   terminal.attachCustomKeyEventHandler((event) => {
     const host = element.ownerDocument.defaultView;
-    return !disposed && element.isConnected && host
-      ? forwardTerminalKey(host, event)
-      : true;
+    if (disposed || !element.isConnected || !host) return true;
+    if (!forwardTerminalKey(host, event)) return false;
+    if (
+      event.type !== "keydown" ||
+      !event.altKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.metaKey ||
+      event.isComposing
+    )
+      return true;
+    // xterm 6 removed these mappings. Preserve 5.5's shell navigation after
+    // the host has had the chance to handle a rebound app shortcut.
+    const apple = isApplePlatform(host.navigator.platform);
+    let sequence: string;
+    switch (event.key) {
+      case "ArrowLeft":
+        sequence = apple ? "\x1bb" : "\x1b[1;5D";
+        break;
+      case "ArrowRight":
+        sequence = apple ? "\x1bf" : "\x1b[1;5C";
+        break;
+      case "ArrowUp":
+      case "ArrowDown":
+        if (apple) return true;
+        sequence = event.key === "ArrowUp" ? "\x1b[1;5A" : "\x1b[1;5B";
+        break;
+      default:
+        return true;
+    }
+    event.preventDefault();
+    terminal.input(sequence, true);
+    return false;
   });
   let opened = false;
   let disposed = false;

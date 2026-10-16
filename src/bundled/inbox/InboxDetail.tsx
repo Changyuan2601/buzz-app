@@ -33,6 +33,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import type { ArchiveShortcut } from "./InboxPage";
 
 export function InboxDetail({
   item,
@@ -45,6 +46,7 @@ export function InboxDetail({
   channelName,
   previewIncomplete,
   archiveAction,
+  archiveShortcut,
   onBack,
   resizeHandle,
 }: {
@@ -61,6 +63,7 @@ export function InboxDetail({
   archiveAction?:
     | { archived: boolean; disabled: boolean; run(): void }
     | undefined;
+  archiveShortcut?: ArchiveShortcut | undefined;
   onBack(): void;
 }) {
   const archiveLabel = archiveAction?.archived
@@ -183,6 +186,21 @@ export function InboxDetail({
     if (result.status === "failed")
       setError("This conversation could not be opened. Try again.");
   };
+  const archiveEnabled =
+    !!archiveAction &&
+    !archiveAction.disabled &&
+    available &&
+    !previewIncomplete;
+  // The Archive shortcut is this visible header's button, under its enablement.
+  useLayoutEffect(() => {
+    if (!archiveShortcut || !archiveAction || !archiveEnabled) return;
+    const current = archiveAction.run;
+    archiveShortcut.current = current;
+    return () => {
+      if (archiveShortcut.current === current)
+        archiveShortcut.current = undefined;
+    };
+  });
   const openAction = (
     <IconButton
       size="sm"
@@ -243,9 +261,7 @@ export function InboxDetail({
               <IconButton
                 size="sm"
                 variant="ghost"
-                disabled={
-                  archiveAction.disabled || !available || !!previewIncomplete
-                }
+                disabled={!archiveEnabled}
                 onClick={archiveAction.run}
                 aria-label={archiveLabel}
                 title={archiveLabel}

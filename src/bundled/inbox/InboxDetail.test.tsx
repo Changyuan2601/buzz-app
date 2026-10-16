@@ -14,6 +14,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { InboxDetail } from "./InboxDetail";
+import { apply as registerLinks } from "../links";
+import type { LinkRenderer } from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
+import linkStyles from "../../shared/InlineReference.module.css";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createRelaySession } from "../../features/relay/session";
@@ -119,21 +123,19 @@ async function frame() {
     for (const callback of pending) callback(performance.now());
   });
 }
-async function fixture(ownReply = false, anotherReply = false) {
+async function fixture(
+  ownReply = false,
+  anotherReply = false,
+  content = "Selected addressed body\n\nhttps://fixture.test/video.mp4",
+) {
   const viewer = keypair(),
     alice = keypair(),
     relay = keypair();
-  const root = message(
-    alice,
-    "room",
-    "Selected addressed body\n\nhttps://fixture.test/video.mp4",
-    20,
-    [
-      ["p", viewer.pubkey],
-      ["imeta", "url https://fixture.test/video.mp4", "m video/mp4"],
-      ["imeta", "url https://fixture.test/image.png", "m image/png"],
-    ],
-  );
+  const root = message(alice, "room", content, 20, [
+    ["p", viewer.pubkey],
+    ["imeta", "url https://fixture.test/video.mp4", "m video/mp4"],
+    ["imeta", "url https://fixture.test/image.png", "m image/png"],
+  ]);
   const reply = ownReply
     ? message(viewer, "room", "My Inbox reply", 21, [
         ["e", root.id, "", "reply"],
@@ -1162,4 +1164,64 @@ it("restores a deleted edit's draft without taking focus from a recovered Inbox 
   } finally {
     publication.resolve();
   }
+});
+
+it("uses the normal message link renderer in Inbox detail", async () => {
+  const url = "https://github.com/block/buzz-app/pull/1";
+  const h = await fixture(false, false, `Review ${url}`);
+  const links: Contribution<LinkRenderer>[] = [];
+  registerLinks({
+    conversation: {
+      registerLink: (value: LinkRenderer) => {
+        links.push({
+          ...value,
+          key: "buzz.links/links",
+          pluginId: "buzz.links",
+          revision: "1",
+        });
+      },
+    },
+  } as never);
+  const noContributions: never[] = [];
+  const empty = { snapshot: () => noContributions, subscribe: () => () => {} };
+  render(
+    <InboxDetail
+      host={
+        {
+          relay: {
+            snapshot: () => ({
+              status: "ready",
+              session: h.session,
+              scope: h.session.scope,
+            }),
+          },
+          navigation: navigator,
+          panels: {
+            subscribe: () => () => {},
+            snapshot: () => emptyPanels,
+            resolve: () => undefined,
+          },
+        } as unknown as ConversationHostServices
+      }
+      item={h.item}
+      target={{ channelId: "room", messageId: h.root.id }}
+      session={h.session}
+      scope={h.scope}
+      navigator={navigator}
+      channelName="Room"
+      onBack={() => {}}
+      extensions={{
+        tools: empty,
+        inline: empty,
+        links: { snapshot: () => links, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  const link = await screen.findByRole("link", { name: /buzz-app/ });
+  expect(link).toHaveAttribute("href", url);
+  expect(link).toHaveAttribute("data-link-renderer", "buzz.links/links");
+  const linkClass = linkStyles.link;
+  if (!linkClass) throw new Error("Missing shared link style");
+  expect(link).toHaveClass(linkClass);
+  expect(link.querySelector("svg")).not.toBeNull();
 });

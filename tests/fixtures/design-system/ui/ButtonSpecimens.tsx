@@ -146,6 +146,21 @@ export function ButtonSpecimen() {
       </ExamplePreview>
       <ButtonMatrix kind="text" />
       <ExamplePreview
+        code={`<Button size="inline" variant="plain" aria-expanded={expanded}>Previous steps <CaretDownIcon aria-hidden="true" /></Button>`}
+      >
+        <Button
+          size="inline"
+          variant="plain"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          Previous steps <CaretDownIcon aria-hidden="true" />
+        </Button>
+        <Button size="inline" variant="plain" disabled>
+          Previous steps <CaretDownIcon aria-hidden="true" />
+        </Button>
+      </ExamplePreview>
+      <ExamplePreview
         code={`<Button size="inline" variant="ghost">Model <CaretDownIcon aria-hidden="true" /></Button>`}
       >
         <Button size="inline" variant="ghost">

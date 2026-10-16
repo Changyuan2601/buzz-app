@@ -158,6 +158,44 @@ it.each(["loading", "failed", "partial"])(
   },
 );
 
+it("shows a local agent's own picture, over older library artwork", async () => {
+  const pictured = { ...agent, picture: "https://cdn.example.test/new.png" };
+  const plain = { ...agent, pubkey: "cd".repeat(32), name: "Plain" };
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      {
+        pubkey: pictured.pubkey,
+        name: pictured.name,
+        avatar: "https://a.test/old.png",
+      },
+    ],
+  }));
+  const lifetime = new AbortController();
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: localAgentsFixture([pictured, plain]),
+    archives: archiveFixture(),
+    signal: lifetime.signal,
+  });
+  try {
+    await choices.refresh();
+    expect(
+      choices.snapshot().selectable.map(({ pubkey, avatar }) => ({
+        pubkey,
+        avatar,
+      })),
+    ).toEqual([
+      { pubkey: pictured.pubkey, avatar: "https://cdn.example.test/new.png" },
+      { pubkey: plain.pubkey, avatar: undefined },
+    ]);
+  } finally {
+    lifetime.abort();
+    library.dispose();
+  }
+});
+
 it("revokes failed local evidence without dropping ready legacy candidates, then recovers and unsubscribes on retirement", async () => {
   const native = localAgentsFixture([agent]);
   const legacy = { pubkey: "cd".repeat(32), name: "Legacy" };

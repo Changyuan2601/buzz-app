@@ -1,8 +1,6 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
-import { writeProfile } from "./profiling-test";
 import { createRelaySession } from "./session";
-import { createRelayProfiler } from "./profiling";
 import { PublishRejected, type OutgoingEvent } from "./outbox";
 import type { RelayEvent } from "./events";
 import {
@@ -35,8 +33,6 @@ function fixture(
   history: RelayEvent[] = [],
   options: import("./store").ChannelStoreOptions = {},
 ) {
-  let clock = 0;
-  const profiling = createRelayProfiler(() => clock);
   let records: readonly OutgoingEvent[] = [];
   const storage = {
     load: () => structuredClone(records),
@@ -60,7 +56,6 @@ function fixture(
   const transport = {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
-    profiling,
     media: () => undefined,
     subscribe(callbacks: import("./live").LiveCallbacks) {
       incoming = callbacks.receive;
@@ -149,14 +144,10 @@ function fixture(
     ...owner,
     transport,
     storage,
-    profiling,
     signings,
     publications,
     accepted,
     stop,
-    advance: (ms: number) => {
-      clock += ms;
-    },
     emit: (events: readonly RelayEvent[]) => incoming(events),
     reconnect: () => resetTraffic(),
     staleRead: () => (stale = deferred<RelayEvent[]>()),
@@ -221,116 +212,6 @@ it("uses whole-thread totals from window summaries and live additions/deletions 
   expect(row()?.replyCount).toBe(0);
   expect(h.session.channels.window("c").rows).toHaveLength(1);
 });
-
-it("attributes a slow first send to signing and publish acknowledgement, independently of read-back", async () => {
-  const h = fixture();
-  await h.open();
-  const id = h.session.messages.send("c", "first");
-  expect(h.session.channels.window("c").rows.at(-1)?.id).toBe(id);
-  await flush();
-  h.advance(700);
-  expect(h.profiling.snapshot()).toContainEqual(
-    expect.objectContaining({
-      stage: "send.sign",
-      id,
-      duration: 700,
-      outcome: "pending",
-    }),
-  );
-  const event = await h.sign();
-  h.advance(2300);
-  expect(h.profiling.snapshot()).toContainEqual(
-    expect.objectContaining({
-      stage: "send.publish",
-      id,
-      duration: 2300,
-      outcome: "pending",
-    }),
-  );
-  await h.acknowledge(event);
-  assert.exists(h.session.outbox);
-  expect(h.session.outbox.snapshot()).toHaveLength(0);
-  expect(h.session.channels.window("c").rows.at(-1)?.delivery).toBe("seen");
-  const stages = h.profiling.snapshot().filter((sample) => sample.id === id);
-  expect(stages).toContainEqual(
-    expect.objectContaining({
-      stage: "send.sign",
-      duration: 700,
-      outcome: "ok",
-    }),
-  );
-  expect(stages).toContainEqual(
-    expect.objectContaining({
-      stage: "send.publish",
-      duration: 2300,
-      outcome: "ok",
-    }),
-  );
-  const nextId = h.session.messages.send("c", "second");
-  const next = await h.sign();
-  await h.acknowledge(next);
-  expect(h.profiling.snapshot()).toContainEqual(
-    expect.objectContaining({ stage: "send.publish", id: nextId, duration: 0 }),
-  );
-  expect(JSON.stringify(h.profiling.snapshot())).not.toContain('"content"');
-});
-
-it("keeps send and acknowledgement work proportional to the changed message in a 2,400-row history", async () => {
-  const history = Array.from({ length: 2400 }, (_, index) =>
-    message(other, "c", `History ${index}`, 1700000000 + index),
-  );
-  const h = fixture(history);
-  await h.open();
-  while (h.session.channels.window("c").hasMore) {
-    h.session.channels.loadOlder("c");
-    await flush();
-  }
-  expect(h.session.channels.window("c").rows).toHaveLength(2400);
-  const before = h.session.channels.window("c").rows;
-  const unrelated = h.session.observe([
-    { kinds: [9], "#h": ["other"], limit: 80 },
-  ]);
-  const unrelatedSnapshot = unrelated.snapshot();
-  const render = vi.fn(),
-    sidebar = vi.fn();
-  unrelated.subscribe(render);
-  h.session.channels.subscribeList(sidebar);
-  h.profiling.clear();
-  const start = performance.now();
-  const id = h.session.messages.send("c", "new");
-  const duration = performance.now() - start;
-  expect(
-    h.session.channels
-      .window("c")
-      .rows.slice(0, 2400)
-      .every((row, index) => row === before[index]),
-  ).toBe(true);
-  const folds = () =>
-    h.profiling
-      .snapshot()
-      .filter((sample) => sample.stage === "view.fold")
-      .reduce((sum, sample) => sum + (sample.count ?? 0), 0);
-  expect(folds()).toBe(1);
-  const event = await h.sign();
-  await h.acknowledge(event);
-  expect(folds()).toBe(1);
-  expect(
-    h.session.channels.window("c").rows.find((row) => row.id === id)?.delivery,
-  ).toBe("seen");
-  expect(sidebar).toHaveBeenCalledTimes(1);
-  expect(render).not.toHaveBeenCalled();
-  expect(unrelated.snapshot()).toBe(unrelatedSnapshot);
-  // Keep timing as diagnostic evidence; deterministic work/identity assertions
-  // above enforce correctness without depending on runner speed.
-  writeProfile("history", h.profiling, {
-    synchronousSendMs: duration,
-    retainedRows: 2400,
-    foldedMessages: folds(),
-  });
-  console.info(
-    `relay integration: 2400 retained rows; synchronous send ${duration.toFixed(2)} ms; folded messages ${folds()}`,
-  );
-}, 20000);
 
 it("merges incoming traffic, stale reads, own echoes, and edit rollback through the same views", async () => {
   const h = fixture();

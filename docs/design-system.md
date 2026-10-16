@@ -24,6 +24,14 @@ System, follows the computer’s color scheme as it changes. The choice is store
 device under `buzz-appearance.v1` in browser-origin localStorage. It does not sync
 through community profiles or relay events, and no theme marketplace is available.
 
+The app shell uses a solid neutral background with one continuous dot grid;
+reading panes remain opaque. The shared texture derives its color from the shell
+at the root in each mode. Startup, color-mode thumbnails and runtime browser
+appearance metadata use that same solid shell color; the HTML metadata uses the
+light shell as its initial fallback. Chrome navigation is flat rather than glass.
+Historical gradients remain only as design-viewer glass-study samples, not
+selectable product themes.
+
 Other same-origin windows observe saved changes without rebuilding pages or relay
 services. Failed reads and invalid values fall back to System. Failed saves keep the
 selection for the current session and show a retry in Appearance.
@@ -245,9 +253,10 @@ scrolling and specialized keyboard/editor interactions remain feature-owned.
 90% opaque mode-aware fill and the shared 8px backdrop blur. Both use the 16px
 `radius-container` role. Opaque fills remain
 the fallback without backdrop-filter support, with reduced transparency, or in
-forced colors. Dialogs and alert dialogs also use `elevated-material`, retaining
-their panel corners. Stepped dialogs paint each step without blurring the shared
-wrapper. Panels and dialog backdrops retain their existing materials.
+forced colors. Dialogs and alert dialogs use an opaque `surface-popover` fill:
+white in light mode and raised charcoal in dark mode, retaining their panel
+corners. Stepped dialogs apply the opaque fill to each step; their shared wrapper
+stays transparent. Panels and dialog backdrops retain their existing materials.
 Default menus, selects, and list popovers share a 4px inset; menu items and
 select options share padding, corners, and hover styling. Compact action surfaces
 retain their denser layout. Use the shared Menu, Select, or Popover according to
@@ -379,7 +388,7 @@ measures its rem-sized leading region for the virtualizer’s pixel start margin
 ## Preference rows
 
 `PreferenceRow` owns settings layout: an optional decorative Tabler `icon`,
-`title`, optional `subtitle`, and `trailing` content. Titles use `text-label-sm`;
+`title`, optional `subtitle`, and `trailing` content. Titles use Regular `text-body-sm` (14px);
 subtitles use `text-body-sm`. Text wraps and controls retain their own interaction,
 focus, disabled, and pending behavior. The row itself is not an action target.
 

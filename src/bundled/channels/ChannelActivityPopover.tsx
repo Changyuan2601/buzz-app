@@ -201,6 +201,8 @@ export function ChannelActivityPopover({
       NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
     >(null);
   const pressedOpen = useRef(false);
+  // Hover opens a transient preview. Selecting its row may still take focus.
+  const [preview, setPreview] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!open || !activeAgents.length) return;
@@ -271,6 +273,7 @@ export function ChannelActivityPopover({
           return;
         }
         pressedOpen.current = next && details.reason === "trigger-press";
+        setPreview(next && details.reason === "trigger-hover");
         setOpen(next);
         if (next) setNow(Date.now());
         if (next && items.length)
@@ -291,6 +294,7 @@ export function ChannelActivityPopover({
     >
       <PopoverTrigger
         render={trigger}
+        data-popup-preview={preview ? "" : undefined}
         openOnHover={hasActivity}
         delay={250}
         closeDelay={150}

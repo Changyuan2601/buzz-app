@@ -84,6 +84,8 @@ export type ComposerInputElement = HTMLDivElement & {
     range?: { start: number; end: number },
     /** A typed closing colon is recorded before conversion for one-step undo. */
     terminator?: ":",
+    /** Automatic edits preserve focus and the current selection. */
+    focus?: boolean,
   ): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;

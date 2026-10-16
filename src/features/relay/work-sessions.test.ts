@@ -1,11 +1,11 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   sessionDescription,
   SESSION_CHANNEL_DESCRIPTION,
 } from "../sessions/metadata";
 import { createWorkSessions } from "./work-sessions";
 import type { Outbox, OutgoingEvent } from "./outbox";
-import type { ChannelQueries } from "./contracts";
+import type { ChannelQueries, ChannelSummary } from "./contracts";
 import {
   keypair,
   message,
@@ -19,7 +19,7 @@ import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { canAddMembers } from "../channel-members/members";
 import { matchesEvent } from "./projection";
-import type { ReadFilter } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 const event = message(keypair(), "session", "Work", 1);
 
 it("keeps verified session roster reads available for sends without member-add capability", async () => {
@@ -768,6 +768,137 @@ it("creates a channel during initial discovery without committing a list of only
   }
 });
 
+it.each(["held", "failed"] as const)(
+  "creates a system channel while initial discovery is %s without certifying the list",
+  async (initial) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const other = "22222222-2222-4222-8222-222222222222";
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let records: readonly OutgoingEvent[] = [];
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        channelIdentity: true,
+        writer: {
+          kinds: [9, 9000, 9007],
+          sign: async (template) => signed(viewer, template),
+          publish: async () => {},
+        },
+      },
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: (next) => {
+            records = structuredClone(next);
+          },
+        },
+      },
+    );
+    try {
+      owner.session.channels.ensureList();
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      // A NIP-CL pass reads the viewer's system channels first.
+      expect(wire.pending[0]?.filters[0]?.["#t"]).toEqual(["system"]);
+      if (initial === "failed") {
+        wire.next().fail(new Error("relay unavailable"));
+        await vi.waitFor(() =>
+          expect(owner.session.channels.list().status).toBe("error"),
+        );
+      }
+      expect(owner.session.channels.list().status).toBe(
+        initial === "held" ? "loading" : "error",
+      );
+      const snapshots: ReturnType<ChannelQueries["list"]>[] = [];
+      const unsubscribe = owner.session.channels.subscribeList(() =>
+        snapshots.push(owner.session.channels.list()),
+      );
+      const creating = owner.session.channelCreation.create({
+        name: "For You records",
+        visibility: "private",
+        labels: ["for-you"],
+        system: true,
+      });
+      await vi.waitFor(() =>
+        expect(records.some(({ event }) => event.kind === 9007)).toBe(true),
+      );
+      const id =
+        records
+          .find(({ event }) => event.kind === 9007)
+          ?.event.tags.find(([name]) => name === "h")?.[1] ?? "";
+      // The relay lists the new system channel only to writer reads.
+      const respond = (filter: ReadFilter): RelayEvent[] => {
+        const strong = filter.consistency === "strong";
+        if (filter.kinds?.includes(39000))
+          return (filter["#d"] ?? []).flatMap((channel) =>
+            channel === id
+              ? strong
+                ? [
+                    metadata(relay, id, "For You records", undefined, [
+                      ["private"],
+                      ["hidden"],
+                      ["t", "system"],
+                      ["t", "for-you"],
+                    ]),
+                  ]
+                : []
+              : [metadata(relay, channel, "Existing", undefined, [["public"]])],
+          );
+        if (!filter.kinds?.includes(39002) || !filter["#p"]) return [];
+        if (filter["#t"]?.includes("system"))
+          return strong
+            ? [
+                signed(relay, {
+                  kind: 39002,
+                  content: "",
+                  tags: [
+                    ["d", id],
+                    ["t", "system"],
+                    ["p", viewer.pubkey],
+                  ],
+                }),
+              ]
+            : [];
+        return filter["#d"] ? [] : [roster(relay, other, [viewer.pubkey])];
+      };
+      const serve = () => {
+        for (const request of wire.pending.splice(0))
+          request.respond(request.filters.flatMap(respond));
+      };
+      await flush();
+      // No exact read: it would certify a list discovery has not made ready.
+      expect(
+        wire.pending.some((request) =>
+          request.filters.some((filter) => filter["#d"]),
+        ),
+      ).toBe(false);
+      for (let round = 0; round < 20; round++) {
+        serve();
+        const done = await Promise.race([
+          creating.then(() => true),
+          flush().then(() => false),
+        ]);
+        if (done) break;
+      }
+      await expect(creating).resolves.toBe(id);
+      expect(owner.session.channels.get?.(id)).toMatchObject({
+        id,
+        channelType: "system",
+        members: [viewer.pubkey],
+      });
+      // Every ready list came from a full pass: it carries the ordinary
+      // channel and never the system one.
+      const ready = snapshots.filter((snapshot) => snapshot.status === "ready");
+      expect(ready.length).toBeGreaterThan(0);
+      for (const snapshot of ready)
+        expect(snapshot.channels.map((channel) => channel.id)).toEqual([other]);
+      unsubscribe();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 it("confirms an agent added to a session and its parent with two concurrent exact roster reads and no rediscovery", async () => {
   const viewer = keypair(),
     relay = keypair(),
@@ -1048,8 +1179,11 @@ function setup(
     async () => true,
   );
   const refreshList = vi.fn();
+  // The store's channel by id; system channels never join the list.
+  let known: ChannelSummary | undefined;
   const channels = {
     list: () => channelList,
+    get: (id: string) => (known?.id === id ? known : undefined),
     subscribeList: (fn: () => void) => {
       listListeners.add(fn);
       return () => {
@@ -1084,6 +1218,10 @@ function setup(
     },
     setList: (next: ReturnType<ChannelQueries["list"]>) => {
       channelList = next;
+      for (const fn of listListeners) fn();
+    },
+    setKnown: (next: ChannelSummary | undefined) => {
+      known = next;
       for (const fn of listListeners) fn();
     },
   };
@@ -1267,6 +1405,52 @@ it("confirms an agent added to a listed channel from one exact roster read witho
   expect(lookupSignal(test, test.refreshRoster).aborted).toBe(true);
   expect(test.refreshList).not.toHaveBeenCalled();
   expect(test.listListeners.size).toBe(0);
+});
+describe("system channel membership", () => {
+  const id = "33333333-3333-4333-8333-333333333333";
+  const viewer = "b".repeat(64);
+  const agent = "a".repeat(64);
+  const system = (members: string[]): ChannelSummary => ({
+    id,
+    name: "For You records",
+    channelType: "system",
+    members,
+  });
+  it("admits a created system channel through the store's exact read", async () => {
+    const test = setup();
+    test.resolve.mockImplementation(async (ids) => {
+      expect(ids).toEqual([id]);
+      test.setKnown(system([viewer]));
+    });
+    await expect(
+      test.service.refresh(id, { member: viewer, system: true }, false),
+    ).resolves.toBeUndefined();
+    expect(test.resolve).toHaveBeenCalledOnce();
+    expect(test.refreshRoster).not.toHaveBeenCalled();
+    expect(test.refreshList).not.toHaveBeenCalled();
+  });
+  it("confirms an agent added to a joined system channel by re-reading its roster", async () => {
+    const test = setup();
+    test.setKnown(system([viewer]));
+    // The store's `resolve` skips a channel it already authorizes; a gate that
+    // asked it would wait for evidence that never comes.
+    test.refreshRoster.mockImplementation(async (channelId) => {
+      expect(channelId).toBe(id);
+      test.setKnown(system([agent, viewer]));
+      return true;
+    });
+    await expect(
+      test.service.refresh(id, { member: agent, system: true }, false),
+    ).resolves.toBeUndefined();
+    expect(test.resolve).not.toHaveBeenCalled();
+    expect(test.refreshRoster).toHaveBeenCalledExactlyOnceWith(id, {
+      signal: expect.any(AbortSignal),
+      consistency: "strong",
+    });
+    expect(lookupSignal(test, test.refreshRoster).aborted).toBe(true);
+    expect(test.refreshList).not.toHaveBeenCalled();
+    expect(test.listListeners.size).toBe(0);
+  });
 });
 it("confirms an addition the live roster lists while its roster read is still in flight", async () => {
   const { id, member, before, after } = listedChannel();
@@ -1734,37 +1918,43 @@ it("creates a stream with NIP-CL labels after about and ttl, and rejects bad lab
   expect(test.outbox.send).toHaveBeenCalledTimes(1);
 });
 
-it("refuses a new labeled channel without signing when the relay does not advertise NIP-CL", async () => {
-  const viewer = keypair(),
-    relay = keypair();
-  const sign = vi.fn();
-  const publish = vi.fn();
-  const owner = createRelaySession(
-    {
-      viewer: viewer.pubkey,
-      relayAuthor: relay.pubkey,
-      media: () => undefined,
-      query: async () => [],
-      writer: { kinds: [9, 9000, 9007], sign, publish },
-    },
-    { outboxStorage: { load: () => [], save() {} } },
-  );
-  try {
-    await expect(
-      owner.session.channelCreation.create({
-        name: "Records",
-        visibility: "open",
-        labels: ["for-you"],
-      }),
-    ).rejects.toThrow(/does not support channel labels/);
-    expect(sign).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-    expect(owner.session.outbox?.snapshot() ?? []).toEqual([]);
-    expect(owner.session.channelCreation.snapshot()).toBeUndefined();
-  } finally {
-    owner.dispose();
-  }
-});
+it.each([
+  ["labeled", { labels: ["for-you"] }],
+  ["system", { system: true as const }],
+])(
+  "refuses a new %s channel without signing when the relay does not advertise NIP-CL",
+  async (_, extra) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const sign = vi.fn();
+    const publish = vi.fn();
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        query: async () => [],
+        writer: { kinds: [9, 9000, 9007], sign, publish },
+      },
+      { outboxStorage: { load: () => [], save() {} } },
+    );
+    try {
+      await expect(
+        owner.session.channelCreation.create({
+          name: "Records",
+          visibility: "private",
+          ...extra,
+        }),
+      ).rejects.toThrow(/does not support channel labels or system channels/);
+      expect(sign).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(owner.session.outbox?.snapshot() ?? []).toEqual([]);
+      expect(owner.session.channelCreation.snapshot()).toBeUndefined();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it("standalone session creation sends validated TTL in its single durable outbox command", () => {
   const h = setup();
@@ -1809,4 +1999,33 @@ it("creates a custom title and lifetime in one legacy-compatible command without
       ["ttl", "600"],
     ],
   });
+});
+
+it("creates a NIP-CL system channel with its labels", () => {
+  const test = setup();
+  const id = "22222222-2222-4222-8222-222222222222";
+  test.service.createChannel(
+    id,
+    "For You records",
+    "private",
+    undefined,
+    undefined,
+    undefined,
+    { labels: ["for-you"], system: true },
+  );
+  expect(test.outbox.send).toHaveBeenLastCalledWith(
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "For You records"],
+        ["visibility", "private"],
+        ["channel_type", "system"],
+        ["t", "for-you"],
+      ],
+    },
+    undefined,
+    undefined,
+  );
 });

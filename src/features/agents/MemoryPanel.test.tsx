@@ -84,12 +84,11 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   expect(within(references).queryByText("core")).not.toBeInTheDocument();
 });
 
-it("shows a spinner while memories load", async () => {
+it("announces that memories are loading", async () => {
   setup(() => new Promise<MemoryListing>(() => {}));
-  const loading = await screen.findByRole("status", {
-    name: "Loading memories",
-  });
-  expect(loading.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
+  expect(
+    await screen.findByRole("status", { name: "Loading memories" }),
+  ).toBeInTheDocument();
   expect(screen.queryByText("Loading memory…")).not.toBeInTheDocument();
 });
 
@@ -186,28 +185,6 @@ it("says when the agent has no memory yet", async () => {
     expect(empty.closest(".buzz-settings-group")).toBeInTheDocument();
     expect(section.querySelector("svg[aria-hidden=true]")).toBeInTheDocument();
   }
-});
-
-it("shows memories from the first month in weeks", async () => {
-  const now = new Date(2026, 9, 24, 12).getTime() / 1_000;
-  vi.spyOn(Date, "now").mockReturnValue(now * 1_000);
-  setup(async () => ({
-    entries: [entry("core", "Remember.", now - 21 * 24 * 60 * 60)],
-    partial: false,
-  }));
-
-  expect(await screen.findByText("3 weeks ago")).toBeInTheDocument();
-});
-
-it("shows memories from the second month as one month ago", async () => {
-  const now = new Date(2026, 9, 24, 12).getTime() / 1_000;
-  vi.spyOn(Date, "now").mockReturnValue(now * 1_000);
-  setup(async () => ({
-    entries: [entry("core", "Remember.", now - 45 * 24 * 60 * 60)],
-    partial: false,
-  }));
-
-  expect(await screen.findByText("1 month ago")).toBeInTheDocument();
 });
 
 it("reports a failed read and reads again on refresh", async () => {

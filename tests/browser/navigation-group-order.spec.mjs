@@ -44,6 +44,7 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   page,
   app,
 }) => {
+  await page.clock.install();
   await page.goto(app.origin);
   await openPage(page, "Messages");
   await expect
@@ -63,6 +64,9 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await page.mouse.up();
   await expect(page.locator("[data-drop-edge]")).toHaveCount(0);
   await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
+  await page.clock.fastForward(51);
+  await header(page, "laptop").dispatchEvent("click", { detail: 1 });
+  await expect(laptop.locator("details")).not.toHaveAttribute("open");
   // Dropping a group on itself is not a move, and its header click is not a toggle.
   const own = await header(page, "laptop").boundingBox();
   const x = own.x + own.width / 2;
@@ -76,6 +80,22 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
   await expect(laptop.locator("details")).not.toHaveAttribute("open");
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+
+  // A delayed post-drag click must remain suppressed after dnd-kit's cleanup.
+  await page.clock.fastForward(51);
+  await header(page, "laptop").dispatchEvent("click", { detail: 1 });
+  await expect(laptop.locator("details")).not.toHaveAttribute("open");
+  // Keyboard and assistive activation remain usable without a pointerdown.
+  await header(page, "laptop").focus();
+  await page.keyboard.press("Enter");
+  await expect(laptop.locator("details")).toHaveAttribute("open");
+  await header(page, "laptop").dispatchEvent("click", { detail: 0 });
+  await expect(laptop.locator("details")).not.toHaveAttribute("open");
+  // The next deliberate pointer action must still toggle normally.
+  await header(page, "laptop").click();
+  await expect(laptop.locator("details")).toHaveAttribute("open");
+  await header(page, "laptop").click();
+  await expect(laptop.locator("details")).not.toHaveAttribute("open");
 
   // Built-in sections are not group targets.
   const channels = await page
@@ -98,8 +118,10 @@ test("dragging a group header moves the whole group, keeps its state, and persis
     .toEqual(["group:work", "group:missing", "group:laptop"]);
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
 
-  // Collapsed last group upward to first.
+  // Collapsed last group upward to first. dnd-kit drops on the target it last
+  // rendered, so release only after the pointer's target is shown.
   await pull(page, "laptop", "work");
+  await expect(work).toHaveAttribute("data-drop-edge", "before");
   await page.mouse.up();
   await expect
     .poll(() => groups(page))

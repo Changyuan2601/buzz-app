@@ -1,1 +1,7 @@
-{ "id": "buzz.agents", "name": "Agents", "apiVersion": 1 }
+{
+  "id": "buzz.agents",
+  "name": "Agents",
+  "apiVersion": 1,
+  "description": "Create, configure, and manage agents.",
+  "discovery": { "category": "agents", "tags": ["Essentials"] }
+}

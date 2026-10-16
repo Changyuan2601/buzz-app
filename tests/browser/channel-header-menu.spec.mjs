@@ -368,7 +368,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     await trigger.click();
     await menu.getByRole("menuitem", { name: label, exact: true }).click();
     const dialog = page.getByRole("dialog", {
-      name: `${label}: ${channelName}`,
+      name:
+        label === "Delete channel"
+          ? `Delete ${channelName}?`
+          : `${label}: ${channelName}`,
       exact: true,
     });
     await expect(dialog).toBeVisible();
@@ -573,7 +576,7 @@ test.describe("dialog origin retirement", () => {
             .getByRole("menuitem", { name: "Delete channel", exact: true })
             .click();
         const dialog = page.getByRole("dialog", {
-          name: action === "create" ? "Create new section" : /Delete channel:/,
+          name: action === "create" ? "Create new section" : /^Delete .+\?$/,
         });
         await expect(dialog).toBeVisible();
         await back(page);

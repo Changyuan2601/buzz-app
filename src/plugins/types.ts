@@ -10,6 +10,9 @@ export type PluginInfo = {
   rollbackBlockedReason?: string | null;
   reloadable: boolean;
   error: string | null;
+  readmeRevision?: string | null;
+  iconPngRevision?: string | null;
+  iconJpgRevision?: string | null;
 };
 export type Catalog = {
   profile: string;
@@ -34,6 +37,9 @@ export type ImportPreview = {
     manifest: PluginManifest;
     revision: string;
     publisher?: string | null;
+    readmeRevision?: string | null;
+    iconPngRevision?: string | null;
+    iconJpgRevision?: string | null;
   }[];
   warnings: string[];
 };

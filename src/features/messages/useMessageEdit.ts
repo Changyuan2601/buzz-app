@@ -86,15 +86,19 @@ export function useMessageEdit(session: RelaySession, restore: () => void) {
     error: error ?? delivery?.error,
     close,
     clearError: () => setError(undefined),
-    start(row: ChannelMessage) {
+    start(
+      row: ChannelMessage,
+      normalize: (body: string) => string = (body) => body,
+    ) {
       setTarget(row);
       setError(undefined);
-      initial.current = messageEditText(
+      const body = messageEditText(
         row,
         session.profiles.snapshot(),
         session.agentLibrary.snapshot().identities,
       );
-      return initial.current;
+      initial.current = normalize(body);
+      return body;
     },
     save(body: string, current: ChannelMessage | undefined) {
       if (!target || submitted.current || !body.trim()) return;

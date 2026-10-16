@@ -25,7 +25,10 @@ import userEvent from "@testing-library/user-event";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import {
+  ChannelNavigationProvider,
+  useChannelNavigation,
+} from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -163,24 +166,30 @@ function fixture(
         <button type="button">Projects</button>
       </nav>
     ),
+    sidebarVisible = true,
     meEnabled = false,
   ) => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
-        <ChannelSidebar
-          relay={relay}
-          navigator={navigator}
-          target={{
-            version: 1,
-            kind: "conversation",
-            channelId: id,
-            scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
-          }}
-          sessionsEnabled={sessionsEnabled}
-          meEnabled={meEnabled}
-        >
-          {pages}
-        </ChannelSidebar>
+        {sidebarVisible && (
+          <ChannelSidebar
+            relay={relay}
+            navigator={navigator}
+            target={{
+              version: 1,
+              kind: "conversation",
+              channelId: id,
+              scope: {
+                viewer: "viewer",
+                communityOrigin: "https://relay.test",
+              },
+            }}
+            sessionsEnabled={sessionsEnabled}
+            meEnabled={meEnabled}
+          >
+            {pages}
+          </ChannelSidebar>
+        )}
       </ChannelNavigationProvider>
     </ToastProvider>
   );
@@ -446,14 +455,16 @@ it.each(["ready", "connecting"] as const)(
   },
 );
 
-it.each([true, false])(
-  "uses only the invoking section for placement (group: %s)",
-  async (fromGroup) => {
+it.each(["Laptop", "Channels", "Starred"])(
+  "uses only the invoking section for placement (%s)",
+  async (section) => {
+    const fromGroup = section === "Laptop";
+    const fromStarred = section === "Starred";
     const preferences = createSidebarPreferencesStore(
       async () => ({
         sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
         assignments: { beta: "laptop" },
-        starred: [],
+        starred: ["alpha"],
         muted: [],
       }),
       true,
@@ -481,9 +492,23 @@ it.each([true, false])(
       await screen.findByRole("button", { name: /Laptop/ });
       // An active grouped channel must not make the general Channels + inherit it.
       const header = screen.getByRole("button", {
-        name: fromGroup ? /Laptop/ : "More actions for Channels",
+        name: `More actions for ${section}`,
       }).parentElement;
       assert.exists(header);
+      if (section === "Starred") {
+        const icon = screen
+          .getByLabelText("Starred")
+          .querySelector("[data-sidebar-group-icon]");
+        const emoji = screen
+          .getByLabelText("Laptop")
+          .querySelector("[data-sidebar-group-icon]");
+        assert.exists(icon);
+        assert.exists(emoji);
+        expect(icon).toHaveAttribute("class", emoji.className);
+        expect(icon).toHaveAttribute("aria-hidden", "true");
+        expect(icon.querySelector("svg")).toBeInTheDocument();
+        expect(icon).not.toHaveTextContent("★");
+      }
       fireEvent.click(
         within(header).getByRole("button", { name: "Create channel" }),
       );
@@ -492,7 +517,9 @@ it.each([true, false])(
       ).not.toBeInTheDocument();
       const title = fromGroup
         ? "Create a channel in Laptop"
-        : "Create a channel";
+        : fromStarred
+          ? "Create a channel in Starred"
+          : "Create a channel";
       expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
       if (fromGroup)
         expect(
@@ -515,13 +542,14 @@ it.each([true, false])(
         expect(create).toHaveBeenCalledWith({
           name: "New laptop channel",
           visibility: "open",
-          ...(fromGroup
+          ...(fromGroup || fromStarred
             ? {
                 setup: {
                   agents: [],
                   canvas: "",
                   templateId: "",
-                  groupId: "laptop",
+                  groupId: fromGroup ? "laptop" : "",
+                  ...(fromStarred ? { starred: true } : {}),
                 },
               }
             : {}),
@@ -742,6 +770,250 @@ it.each([true, false])(
   },
 );
 
+it.each(["archive", "delete"] as const)(
+  "%s completion preserves focus moved during pending work and retains required navigation",
+  async (action) => {
+    const h = fixture();
+    const channel = h.list.channels[1];
+    assert(channel);
+    const origin = new AbortController();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const run = vi.fn(
+      (_action: unknown, _id: string, _signal?: AbortSignal) => pending,
+    );
+    h.session.channelLifecycle = {
+      ...h.session.channelLifecycle,
+      available: true,
+      run,
+    };
+    function StartAction() {
+      const navigation = useChannelNavigation();
+      return (
+        <button
+          type="button"
+          onClick={(event) => {
+            assert(channel);
+            navigation?.openLifecycle(
+              channel,
+              action,
+              event.currentTarget,
+              origin.signal,
+            );
+          }}
+        >
+          Start action
+        </button>
+      );
+    }
+    render(
+      h.view(
+        "beta",
+        true,
+        <>
+          <StartAction />
+          <button type="button">Other control</button>
+        </>,
+      ),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Start action" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: action === "archive" ? "Archive channel" : "Delete channel",
+      }),
+    );
+    try {
+      await screen.findByRole("dialog", {
+        name: action === "archive" ? "Archiving channel…" : "Deleting channel…",
+      });
+      act(() => origin.abort());
+      expect(run.mock.calls[0]?.[2]?.aborted).toBe(false);
+      await user.click(screen.getByRole("button", { name: "Other control" }));
+      expect(
+        screen.getByRole("button", { name: "Other control" }),
+      ).toHaveFocus();
+    } finally {
+      await act(async () => finish());
+    }
+    await screen.findByRole("dialog", {
+      name:
+        action === "archive"
+          ? "Channel archived: beta"
+          : "Channel deleted: beta",
+    });
+    expect(screen.getByRole("button", { name: "Other control" })).toHaveFocus();
+    if (action === "delete")
+      expect(h.navigator.open).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "conversation", channelId: "alpha" }),
+      );
+    else expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+function pendingLifecycle(action: "archive" | "delete" | "leave" | "hide") {
+  const h = fixture();
+  const channel = h.list.channels[1];
+  assert(channel);
+  let finish!: () => void;
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((resolve, fail) => {
+    finish = resolve;
+    reject = fail;
+  });
+  const run = vi.fn(
+    (_action: unknown, _id: string, _signal?: AbortSignal) => pending,
+  );
+  h.session.channelLifecycle = {
+    ...h.session.channelLifecycle,
+    available: true,
+    run,
+  };
+  function Start() {
+    const navigation = useChannelNavigation();
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          assert(channel);
+          navigation?.openLifecycle(channel, action);
+        }}
+      >
+        Start action
+      </button>
+    );
+  }
+  const view = (target = "beta", visible = true) =>
+    h.view(target, true, <Start />, visible);
+  const mounted = render(view());
+  return {
+    ...h,
+    run,
+    finish,
+    reject,
+    mounted,
+    view,
+    async start() {
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Start action" }));
+      await user.click(
+        screen.getByRole("button", {
+          name: {
+            archive: "Archive channel",
+            delete: "Delete channel",
+            leave: "Leave channel",
+            hide: "Hide conversation",
+          }[action],
+        }),
+      );
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    },
+  };
+}
+
+it.each(["archive", "delete"] as const)(
+  "submitted %s survives sidebar swaps without reopening confirmation",
+  async (action) => {
+    const h = pendingLifecycle(action);
+    await h.start();
+    try {
+      h.mounted.rerender(h.view("beta", false));
+      expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(false);
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      expect(
+        screen.getByRole("dialog", {
+          name:
+            action === "archive" ? "Archiving channel…" : "Deleting channel…",
+        }),
+      ).toBeVisible();
+    } finally {
+      await act(async () => h.finish());
+    }
+    await screen.findByRole("dialog", {
+      name:
+        action === "archive"
+          ? "Channel archived: beta"
+          : "Channel deleted: beta",
+    });
+    h.mounted.rerender(h.view("alpha"));
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["delete", "leave", "hide"] as const)(
+  "pending %s does not redirect a newer conversation",
+  async (action) => {
+    const h = pendingLifecycle(action);
+    await h.start();
+    try {
+      h.mounted.rerender(h.view("gamma"));
+    } finally {
+      await act(async () => h.finish());
+    }
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull(),
+    );
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
+
+it("a failed lifecycle action releases its gate while keeping recovery visible", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  await act(async () =>
+    h.reject(new Error("Refresh channels before trying again.")),
+  );
+  await screen.findByRole("dialog", { name: "Delete channel failed" });
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Start action" }));
+  expect(screen.getByRole("dialog", { name: "Delete beta?" })).toBeVisible();
+  expect(
+    screen.getByText("Refresh channels before trying again."),
+  ).toBeVisible();
+  expect(h.run).toHaveBeenCalledOnce();
+});
+
+it("session teardown still aborts submitted lifecycle work", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  h.mounted.unmount();
+  expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(true);
+  await act(async () => h.finish());
+  expect(h.navigator.open).not.toHaveBeenCalled();
+});
+
+it("a replacement relay session cancels the previous submitted action", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  const replacement = fixture();
+  h.mounted.rerender(replacement.view("alpha"));
+  expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(true);
+  await act(async () => h.finish());
+  expect(h.navigator.open).not.toHaveBeenCalled();
+  expect(replacement.navigator.open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("a sidebar remount does not resubmit or redirect pending work", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  try {
+    h.mounted.rerender(h.view("beta", false));
+    h.mounted.rerender(h.view("gamma"));
+    expect(h.run.mock.calls[0]?.[2]?.aborted).toBe(false);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  } finally {
+    await act(async () => h.finish());
+  }
+  await screen.findByRole("dialog", { name: "Channel deleted: beta" });
+  expect(h.run).toHaveBeenCalledOnce();
+  expect(h.navigator.open).not.toHaveBeenCalled();
+});
+
 // The actual mounted caller owns the Me/Message visibility boundary.
 it.each([true, false])(
   "Me placement keeps sessions hidden but ordinary streams visible (enabled=%s)",
@@ -775,7 +1047,7 @@ it.each([true, false])(
       snapshot: () => placement,
     };
     h.publish("beta", { channelType: "session", private: true });
-    render(h.view("alpha", true, undefined, enabled));
+    render(h.view("alpha", true, undefined, true, enabled));
     await screen.findByRole("button", { name: "gamma" });
     expect(!!screen.queryByRole("button", { name: "beta" })).toBe(!enabled);
     h.publish("beta", { channelType: "stream" });

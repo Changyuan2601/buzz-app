@@ -168,6 +168,7 @@ export function PageSearch({
         open={open}
         onOpenChange={setSearchOpen}
         title={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+        footerGap="none"
         motion="default"
         dismissOnOutsideClick
         closeLabel="Close search"

@@ -35,7 +35,6 @@ import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
-import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
@@ -105,8 +104,6 @@ export function ThreadPanel(props: ThreadPanelProps) {
       }
       data-attachment-drop-zone=""
       data-reading-surface=""
-      onDragOver={rejectUnhandledFileDrop}
-      onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
         // Portalled viewers bubble here through React but own their Escape.
@@ -1142,6 +1139,7 @@ function ThreadMessages({
         : undefined;
       const message = (
         <MessageRow
+          viewer={session.viewer}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -1254,12 +1252,6 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
-  // Match the channel's relay summary total. Without a positive total,
-  // stay neutral: visible rows and reader state cannot prove empty history.
-  const replyCount = snapshot.root?.replyCount ?? 0;
-  const replyLabel = replyCount
-    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
-    : "Replies";
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -1386,6 +1378,7 @@ function ThreadMessages({
         <div data-thread-rows="" inert={positioning}>
           {snapshot.root ? (
             <MessageRow
+              viewer={session.viewer}
               extensions={extensions}
               session={session}
               scope={scope}
@@ -1414,11 +1407,6 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-          {snapshot.root && snapshot.replies.length > 0 && (
-            <div className={styles.replyDivider}>
-              <span>{replyLabel}</span>
-            </div>
-          )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>

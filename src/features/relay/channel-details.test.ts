@@ -11,7 +11,7 @@ import {
 import { PublishRejected } from "./outbox";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
-import { sessionDescription } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL, sessionDescription } from "../sessions/metadata";
 import type { ReadFilter } from "./events";
 
 const key = new Uint8Array(32).fill(2),
@@ -47,12 +47,14 @@ function harness(role = "owner", labels = false) {
     description = "Old description",
     visibility = "public",
     type = "stream",
+    labels: readonly string[] = [],
   ) =>
     record(39000, [
       ["name", name],
       ["about", description],
       [visibility],
       ["t", type],
+      ...labels.map((label) => ["t", label]),
     ]);
   let events = [
     metadata(),
@@ -680,14 +682,16 @@ it("allows only a single canonical TTL command tag without widening other fields
 it.each([false, true])(
   "renames standalone sessions with a name-only command and confirmed relay readback (personal=%s)",
   async (personal) => {
-    const h = harness();
+    const h = harness("owner", true);
     const about = sessionDescription(undefined, personal);
     h.set([h.metadata("Old title", about, "private"), ...h.events().slice(1)]);
     const base = await h.owner.capability.load(id);
     expect(base.canEdit).toBe(true);
     h.publish.mockImplementationOnce(async () => {
       h.set([
-        h.metadata("New title", about, "private"),
+        h.metadata("New title", about, "private", "stream", [
+          SESSION_NAMED_LABEL,
+        ]),
         ...h.events().slice(1),
       ]);
     });
@@ -696,6 +700,7 @@ it.each([false, true])(
     expect(command?.tags).toEqual([
       ["h", id],
       ["name", "New title"],
+      ["t", SESSION_NAMED_LABEL],
     ]);
     assert(command);
     expect(() => validateDetailsTemplate(command)).not.toThrow();
@@ -908,7 +913,7 @@ it.each([
 );
 
 it("a signed rename keeps the exact legacy session metadata and rejects a provenance extension", async () => {
-  const h = harness();
+  const h = harness("owner", true);
   const description = sessionDescription();
   h.set([
     h.metadata("First prompt", description, "private"),
@@ -917,7 +922,9 @@ it("a signed rename keeps the exact legacy session metadata and rejects a proven
   const base = await h.owner.capability.load(id);
   h.publish.mockImplementationOnce(async () =>
     h.set([
-      h.metadata("Named", description, "private"),
+      h.metadata("Named", description, "private", "stream", [
+        SESSION_NAMED_LABEL,
+      ]),
       ...h.events().slice(1),
     ]),
   );
@@ -927,6 +934,7 @@ it("a signed rename keeps the exact legacy session metadata and rejects a proven
   expect(command.tags).toEqual([
     ["h", id],
     ["name", "Named"],
+    ["t", SESSION_NAMED_LABEL],
   ]);
   expect(() => validateDetailsTemplate(command)).not.toThrow();
   await expect(
@@ -938,44 +946,32 @@ it("a signed rename keeps the exact legacy session metadata and rejects a proven
   ).rejects.toThrow("Only the name and lifetime");
   expect(h.publish).toHaveBeenCalledOnce();
 });
-it("a name-only writer can rename automatic sessions without blocking later lifetime edits", async () => {
+it("a relay without labels refuses chosen naming before signing but still permits lifetime edits", async () => {
   const h = harness();
   const description = sessionDescription();
-  const metadata = (name: string, ttl?: number) =>
+  const metadata = (ttl?: number) =>
     h.record(39000, [
-      ["name", name],
+      ["name", "First prompt"],
       ["about", description],
       ["private"],
       ["t", "stream"],
       ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
     ]);
-  h.set([metadata("First prompt", 600), ...h.events().slice(1)]);
+  h.set([metadata(600), ...h.events().slice(1)]);
   const base = await h.owner.capability.load(id);
+  await expect(
+    h.owner.capability.save(base, { ...base, name: "Different" }),
+  ).rejects.toThrow("does not support channel labels");
+  expect(h.sign).not.toHaveBeenCalled();
   h.publish.mockImplementationOnce(async () =>
-    h.set([metadata("Different", 600), ...h.events().slice(1)]),
+    h.set([metadata(), ...h.events().slice(1)]),
   );
-  await h.owner.capability.save(base, { ...base, name: "Different" });
+  await h.owner.capability.save(base, { ...base, ttlSeconds: undefined });
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
     ["h", id],
-    ["name", "Different"],
-  ]);
-  expect(h.publish).toHaveBeenCalledOnce();
-  const renamed = await h.owner.capability.load(id);
-  h.publish.mockImplementationOnce(async () =>
-    h.set([metadata("Different", undefined), ...h.events().slice(1)]),
-  );
-  await h.owner.capability.save(renamed, {
-    ...renamed,
-    ttlSeconds: undefined,
-  });
-  expect(h.sign.mock.calls[1]?.[0].tags).toEqual([
-    ["h", id],
-    ["name", "Different"],
+    ["name", "First prompt"],
     ["ttl", ""],
   ]);
-  const lifetimeCommand = h.sign.mock.calls[1]?.[0];
-  assert(lifetimeCommand);
-  expect(() => validateDetailsTemplate(lifetimeCommand)).not.toThrow();
 });
 
 it.each([undefined, 600])(
@@ -991,6 +987,7 @@ it.each([undefined, 600])(
         ["private"],
         ["t", "stream"],
         ["t", "for-you"],
+        ...(name === "Named" ? [["t", SESSION_NAMED_LABEL]] : []),
         ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
       ]);
     h.set([metadata("First prompt", before), ...h.events().slice(1)]);
@@ -1020,8 +1017,73 @@ it.each([undefined, 600])(
       ["h", id],
       ["name", "Named"],
       ...(ttlSeconds === undefined ? [] : [["ttl", String(ttlSeconds)]]),
+      ["t", "for-you"],
+      ["t", SESSION_NAMED_LABEL],
     ]);
-    expect((await h.owner.capability.load(id)).labels).toEqual(["for-you"]);
+    expect((await h.owner.capability.load(id)).labels).toEqual([
+      "for-you",
+      SESSION_NAMED_LABEL,
+    ]);
     expect(h.publish).toHaveBeenCalledOnce();
   },
 );
+
+it("accepts bounded labels after a name-only rename, and rejects malformed ordering", () => {
+  const command = {
+    kind: 9002,
+    created_at: 12,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "PR 45 fixes"],
+    ],
+  };
+  for (const tail of [
+    [["t", SESSION_NAMED_LABEL]],
+    [
+      ["ttl", "600"],
+      ["t", "work"],
+      ["t", SESSION_NAMED_LABEL],
+    ],
+  ])
+    expect(() =>
+      validateDetailsTemplate({ ...command, tags: [...command.tags, ...tail] }),
+    ).not.toThrow();
+  for (const tail of [
+    [
+      ["t", SESSION_NAMED_LABEL],
+      ["ttl", "600"],
+    ],
+    [
+      ["t", SESSION_NAMED_LABEL],
+      ["t", SESSION_NAMED_LABEL],
+    ],
+    [["t", SESSION_NAMED_LABEL, "extra"]],
+    [["t", "system"]],
+    Array.from({ length: 9 }, (_, i) => ["t", `label-${i}`]),
+  ])
+    expect(() =>
+      validateDetailsTemplate({ ...command, tags: [...command.tags, ...tail] }),
+    ).toThrow();
+});
+
+it("refuses marker overflow before signing and retains the existing label set", async () => {
+  const h = harness("owner", true);
+  const labels = Array.from({ length: 8 }, (_, i) => `label-${i}`);
+  h.set([
+    h.record(39000, [
+      ["name", "Prompt"],
+      ["about", sessionDescription()],
+      ["private"],
+      ["t", "stream"],
+      ...labels.map((label) => ["t", label]),
+    ]),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  await expect(
+    h.owner.capability.save(base, { ...base, name: "Chosen" }),
+  ).rejects.toThrow("at most 8");
+  expect(h.sign).not.toHaveBeenCalled();
+  expect((await h.owner.capability.load(id)).labels).toEqual(labels);
+});

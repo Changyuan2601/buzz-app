@@ -1,0 +1,273 @@
+// The local synced copy of each agent's and team's config artifacts, one entry
+// per `owner:community:channel:type`. It decides each artifact's state from relay
+// evidence (NIP-AP "Artifact state"), fences every writer so a late or stale
+// result never replaces newer state, and resolves start inputs synchronously
+// from storage. Dormant until config channels ship.
+import { verifyEvent } from "nostr-tools";
+import type { RelayEvent } from "../relay/events";
+import {
+  artifactOp,
+  artifactPrev,
+  type ArtifactType,
+} from "./agent-config-artifacts";
+
+export const CONFIG_STORAGE_KEY = "buzz.agents.config.v1";
+
+export type ArtifactState = "present" | "invalid" | "deleted" | "unavailable";
+export type Subject = Readonly<{
+  owner: string;
+  community: string;
+  /** The agent pubkey, or the team id, whose config channel this is. */
+  subject: string;
+  channel: string;
+  type: ArtifactType;
+}>;
+type Entry = {
+  state: ArtifactState;
+  head?: RelayEvent;
+  problem?: string;
+  generation: number;
+  sequence: number;
+  syncedAt?: number;
+};
+type Stored = {
+  version: 1;
+  entries: Record<string, Entry>;
+  /** `owner:community:subject:type` once this device has seen any revision. */
+  hadVersion: Record<string, true>;
+};
+/** What a writer saw before its first await. */
+export type Captured = Readonly<{ generation: number; sequence: number }>;
+
+/** A strong read's answer for one artifact. `failed` covers partial,
+ * inaccessible and errored reads: it changes nothing. */
+export type ReadResult =
+  | Readonly<{ kind: "head"; event: RelayEvent; problem?: string }>
+  | Readonly<{ kind: "empty" }>
+  | Readonly<{ kind: "failed" }>;
+/** `reread`: the caller schedules a fresh strong read. */
+export type Applied = "applied" | "unchanged" | "reread";
+
+const key = (s: Subject) => `${s.owner}:${s.community}:${s.channel}:${s.type}`;
+const hadKey = (s: Subject) =>
+  `${s.owner}:${s.community}:${s.subject}:${s.type}`;
+
+export class AgentConfigStore {
+  private stored: Stored;
+
+  constructor(private readonly storage: Storage = localStorage) {
+    this.stored = this.load();
+  }
+
+  state(subject: Subject): Readonly<Entry> {
+    return (
+      this.stored.entries[key(subject)] ?? {
+        state: "unavailable",
+        generation: 0,
+        sequence: 0,
+      }
+    );
+  }
+  hadVersion = (subject: Subject) => !!this.stored.hadVersion[hadKey(subject)];
+
+  /** Taken by every writer before its first await. */
+  capture(subject: Subject): Captured {
+    const { generation, sequence } = this.state(subject);
+    return { generation, sequence };
+  }
+
+  /** A strong read issued at `captured`. Installed only while nothing changed
+   * since; otherwise a differing answer is dropped and a fresh read requested. */
+  applyRead(subject: Subject, captured: Captured, result: ReadResult): Applied {
+    if (result.kind === "failed") return "unchanged";
+    const next = this.fromRead(result);
+    const entry = this.state(subject);
+    if (
+      captured.generation !== entry.generation ||
+      captured.sequence !== entry.sequence
+    )
+      return same(entry, next) ? "unchanged" : "reread";
+    if (result.kind === "head") this.markHadVersion(subject);
+    this.write(subject, next);
+    return "applied";
+  }
+
+  /** A live revision from the binding taken at `generation`. It advances only
+   * a successor of the head current now; anything else asks for a read rather
+   * than deciding by order of arrival. A retired binding changes nothing. */
+  applyLive(
+    subject: Subject,
+    generation: number,
+    event: RelayEvent,
+    problem?: string,
+  ): Applied {
+    const entry = this.state(subject);
+    if (generation !== entry.generation) return "unchanged";
+    if (entry.head?.id === event.id) return "unchanged";
+    if (!entry.head || artifactPrev(event) !== entry.head.id) return "reread";
+    this.markHadVersion(subject);
+    this.write(subject, live(event, problem));
+    return problem ? "reread" : "applied";
+  }
+
+  /** A live NIP-29 redaction from the binding taken at `generation`.
+   * Redacting the head retires it; a retired binding changes nothing. */
+  applyRedaction(
+    subject: Subject,
+    generation: number,
+    target: string,
+  ): Applied {
+    const entry = this.state(subject);
+    if (generation !== entry.generation || entry.head?.id !== target)
+      return "unchanged";
+    this.write(subject, { state: "unavailable" });
+    return "reread";
+  }
+
+  /** Community switch, channel reselection, archive, sign-out or loss of
+   * access: every in-flight writer's capture becomes stale. */
+  rebind(subject: Subject) {
+    const entry = this.state(subject);
+    this.put(subject, {
+      state: "unavailable",
+      generation: entry.generation + 1,
+      sequence: entry.sequence + 1,
+    });
+  }
+
+  /** Set when a head lookup returned a blocking head before any install
+   * (migration `blocked`), so local text stops being a launch source. */
+  markHadVersion(subject: Subject) {
+    if (this.hadVersion(subject)) return;
+    this.stored.hadVersion[hadKey(subject)] = true;
+    this.save();
+  }
+
+  /** Instructions for a start from the synced copy. Pure over storage. */
+  instructions(
+    subject: Subject,
+  ):
+    | Readonly<{ ok: true; text: string }>
+    | Readonly<{ ok: false; state: ArtifactState; problem?: string }> {
+    const entry = this.state(subject);
+    if (entry.state !== "present" || !entry.head)
+      return entry.problem
+        ? { ok: false, state: entry.state, problem: entry.problem }
+        : { ok: false, state: entry.state };
+    return {
+      ok: true,
+      text: (JSON.parse(entry.head.content) as { text: string }).text,
+    };
+  }
+
+  private fromRead(result: Exclude<ReadResult, { kind: "failed" }>) {
+    return result.kind === "empty"
+      ? ({ state: "unavailable" } as const)
+      : live(result.event, result.problem);
+  }
+  private write(
+    subject: Subject,
+    next: Pick<Entry, "state" | "head" | "problem">,
+  ) {
+    const entry = this.state(subject);
+    this.put(subject, {
+      ...next,
+      generation: entry.generation,
+      sequence: entry.sequence + 1,
+      syncedAt: Date.now(),
+    });
+  }
+  private put(subject: Subject, entry: Entry) {
+    this.stored.entries[key(subject)] = entry;
+    this.save();
+  }
+  private save() {
+    this.storage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(this.stored));
+  }
+  private load(): Stored {
+    const empty: Stored = { version: 1, entries: {}, hadVersion: {} };
+    let value: Stored;
+    try {
+      value = JSON.parse(this.storage.getItem(CONFIG_STORAGE_KEY) ?? "null");
+    } catch {
+      return empty;
+    }
+    if (value?.version !== 1 || typeof value.entries !== "object") return empty;
+    const entries: Record<string, Entry> = {};
+    for (const [k, entry] of Object.entries(value.entries)) {
+      // A stored head is re-verified; one that fails counts as never synced.
+      const copy = entry.head && { ...entry.head };
+      const head = copy && verifyEvent(copy) ? copy : undefined;
+      entries[k] =
+        entry.head && !head
+          ? {
+              state: "unavailable",
+              generation: entry.generation + 1,
+              sequence: entry.sequence + 1,
+            }
+          : entry;
+    }
+    return { version: 1, entries, hadVersion: value.hadVersion ?? {} };
+  }
+}
+
+function live(
+  event: RelayEvent,
+  problem?: string,
+): Pick<Entry, "state" | "head" | "problem"> {
+  if (artifactOp(event) === "delete") return { state: "deleted", head: event };
+  return problem
+    ? { state: "invalid", head: event, problem }
+    : { state: "present", head: event };
+}
+const same = (entry: Entry, next: Pick<Entry, "state" | "head">) =>
+  entry.state === next.state && entry.head?.id === next.head?.id;
+
+/** One synced setting: free text or one of a fixed set. */
+export type SettingRule = "string" | readonly string[];
+export type SettingsSchema = Readonly<Record<string, SettingRule>>;
+
+/** Strictly checks a settings object against a plugin's allowlist: unknown
+ * keys, wrong types and out-of-set values are errors, never defaulted. */
+export function settingsProblem(schema: SettingsSchema, value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return "Settings are not an object";
+  for (const [name, setting] of Object.entries(value)) {
+    const rule = Object.hasOwn(schema, name) ? schema[name] : undefined;
+    if (!rule) return `Unknown setting "${name}"`;
+    if (typeof setting !== "string") return `Setting "${name}" is not text`;
+    if (Array.isArray(rule) && !rule.includes(setting))
+      return `Setting "${name}" has an unsupported value`;
+  }
+  return undefined;
+}
+
+/** The allowlisted fields of a plugin's config, for publishing. */
+export const pickSettings = (schema: SettingsSchema, config: object) =>
+  Object.fromEntries(
+    Object.keys(schema)
+      .filter((name) => name in config)
+      .map((name) => [name, (config as Record<string, unknown>)[name]]),
+  ) as Record<string, string>;
+
+/** A `buzz.agent.settings` body for a plugin: `{version: 1, agentType,
+ * settings}`. Another agent type, or a value the plugin can't honour, is
+ * invalid for start. */
+export function syncedSettings(
+  content: string,
+  agentType: string,
+  schema: SettingsSchema,
+):
+  | Readonly<{ settings: Record<string, string> }>
+  | Readonly<{ problem: string }> {
+  const body = JSON.parse(content) as {
+    agentType?: unknown;
+    settings?: unknown;
+  };
+  if (body.agentType !== agentType)
+    return { problem: "These settings are for another agent type" };
+  const problem = settingsProblem(schema, body.settings);
+  return problem
+    ? { problem }
+    : { settings: body.settings as Record<string, string> };
+}

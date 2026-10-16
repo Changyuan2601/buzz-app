@@ -81,6 +81,7 @@ fn request_url(community: &str, path: &str, method: &str) -> Result<Url> {
                 | "/api/invites/claim"
                 | "/api/invites/accept-policy"
                 | "/gifs/search"
+                | "/profiles/search"
         ),
         _ => false,
     };
@@ -221,6 +222,24 @@ pub(crate) async fn relay_git_authorization(
     ))
 }
 
+/// The largest complete signed NIP-AR artifact the relay takes: its default
+/// 512 KiB WebSocket frame (`DEFAULT_MAX_FRAME_BYTES`) less the `["EVENT",…]`
+/// wrapper. A 131,072-byte config snapshot plus the relay's 65,536 tag bytes
+/// fits even fully escaped. Mirrors `ARTIFACT_MAX_EVENT_BYTES` in
+/// `agent-config-artifacts.ts`.
+const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
+
+/// Kinds whose events may exceed the default 64 KiB signing bound.
+fn signing_limit(kind: u16) -> Option<usize> {
+    if catalog::is_catalog(kind) {
+        Some(catalog::MAX_EVENT_BYTES)
+    } else if kind == 45010 {
+        Some(ARTIFACT_MAX_EVENT_BYTES)
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn relay_sign(
     host: tauri::State<'_, IdentityHost>,
@@ -243,11 +262,17 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let signed = if catalog::is_catalog(event.kind) {
-        host.sign_bounded(event, catalog::MAX_EVENT_BYTES).await?
-    } else {
-        host.sign(event).await?
+    let artifact = event.kind == 45010;
+    let signed = match signing_limit(event.kind) {
+        Some(limit) => host.sign_bounded(event, limit).await?,
+        None => host.sign(event).await?,
     };
+    // The commitment bound above omits id, pubkey key and sig; the relay
+    // limits the whole event.
+    if artifact && serde_json::to_vec(&signed).map_or(true, |b| b.len() > ARTIFACT_MAX_EVENT_BYTES)
+    {
+        return Err("Relay event is too large".into());
+    }
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {
@@ -620,6 +645,19 @@ fn verify_signature(event: &serde_json::Value) -> Result<()> {
 }
 
 async fn channel_creation_supported(community: &str) -> Result<bool> {
+    let info = relay_info(community).await?;
+    Ok(info
+        .get("self")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(hex_key)
+        && info
+            .get("supported_nips")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+}
+
+/// The community's unsigned NIP-11 document.
+pub(crate) async fn relay_info(community: &str) -> Result<serde_json::Value> {
     let url = request_url(community, "/", "GET")?;
     let mut response = client()?
         .get(url)
@@ -637,16 +675,7 @@ async fn channel_creation_supported(community: &str) -> Result<bool> {
         "Invalid community information",
     )
     .await?;
-    let info: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|_| "Invalid community information")?;
-    Ok(info
-        .get("self")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(hex_key)
-        && info
-            .get("supported_nips")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+    serde_json::from_slice(&body).map_err(|_| "Invalid community information".into())
 }
 
 fn client() -> Result<&'static reqwest::Client> {
@@ -1316,7 +1345,7 @@ fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
 
 /// Fail closed if the OS cannot mark the file as untrusted internet content.
 #[cfg(target_os = "macos")]
-fn mark_download(file: &std::fs::File, _path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn mark_download(file: &std::fs::File, _path: &std::path::Path) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1341,7 +1370,7 @@ fn mark_download(file: &std::fs::File, _path: &std::path::Path) -> std::io::Resu
 }
 
 #[cfg(target_os = "windows")]
-fn mark_download(_file: &std::fs::File, path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn mark_download(_file: &std::fs::File, path: &std::path::Path) -> std::io::Result<()> {
     // Alternate data streams are attached to the same NTFS file, not a sibling.
     let mut stream = path.as_os_str().to_owned();
     stream.push(":Zone.Identifier");
@@ -1349,7 +1378,7 @@ fn mark_download(_file: &std::fs::File, path: &std::path::Path) -> std::io::Resu
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn mark_download(_file: &std::fs::File, _path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn mark_download(_file: &std::fs::File, _path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 

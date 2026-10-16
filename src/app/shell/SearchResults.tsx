@@ -266,21 +266,10 @@ export function SearchResults({
         let lookupFailed = false;
         if (authorNeedle) {
           try {
-            remote = await session.read(
-              [
-                {
-                  kinds: [0],
-                  search: authorNeedle,
-                  search_mode: "prefix",
-                  limit: 40,
-                },
-              ],
-              {
-                signal: controller.signal,
-                priority: "foreground",
-                fresh: true,
-              },
-            );
+            remote = await session.searchProfiles(authorNeedle, {
+              limit: 40,
+              signal: controller.signal,
+            });
           } catch (error) {
             if (controller.signal.aborted) throw error;
             lookupFailed = true;

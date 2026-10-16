@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
+import { activate, open, virtuaIdle } from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
-const closeRequest = readFileSync(
+const closeRequest = `{ const tabEvent = "buzz:close-active-tab";\n${readFileSync(
   new URL("../../src-tauri/src/close-request.js", import.meta.url),
   "utf8",
-);
+)}\n}`;
 
 test.use({
   productionBroker: true,
@@ -73,9 +73,9 @@ test("Back restores each thread visit before the previous channel", async ({
     exact: true,
   });
 
-  await threadButton(roots[0]).click();
+  await activate(threadButton(roots[0]));
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
   const openThread = await panel
     .getByRole("region", { name: "Thread messages", exact: true })
@@ -101,7 +101,7 @@ test("Back restores each thread visit before the previous channel", async ({
     );
     return state;
   });
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   try {
     await expect
       .poll(() => feedback.evaluate((state) => !!state.cue))
@@ -355,10 +355,26 @@ test("choosing a thread tab resumes typing where its reply was left", async ({
   const tabValue = await selected.getAttribute("data-tab-value");
   await reply.click();
   await page.keyboard.type("here is a message");
-  for (let step = 0; step < 15; step++) await page.keyboard.press("ArrowLeft");
+  for (let step = 0; step < 14; step++) await page.keyboard.press("ArrowLeft");
+  // On a slow runner the last caret move's selectionchange can arrive after
+  // the tab click has taken focus. Hold it back so every run covers that order.
+  await page.evaluate(() => {
+    window.holdSelectionChange = true;
+    document.addEventListener(
+      "selectionchange",
+      (event) => {
+        if (window.holdSelectionChange) event.stopImmediatePropagation();
+      },
+      { capture: true },
+    );
+  });
+  await page.keyboard.press("ArrowLeft");
   await workspace
     .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="false"]')
     .click();
+  await page.evaluate(() => {
+    window.holdSelectionChange = false;
+  });
   await expect(reply).toBeFocused();
   await expect(reply).toHaveText("");
   await workspace.locator(`[role="tab"][data-tab-value="${tabValue}"]`).click();
@@ -891,10 +907,10 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   const main = page.locator("[data-main-workspace]");
   const reply = (host) =>
     host.getByRole("textbox", { name: "Reply to thread", exact: true });
-  await threadButton(roots[0]).click();
+  await activate(threadButton(roots[0]));
   await reply(side).fill("Destination draft");
   const destinationEditor = await reply(side).elementHandle();
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   await reply(side).fill("Keep original draft");
   const originalEditor = await reply(side).elementHandle();
   await side.locator('[role="tab"][aria-selected="true"]').focus();

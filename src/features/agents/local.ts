@@ -6,6 +6,8 @@ export type LocalAgent = Readonly<{
   /** The community origin it was created for. */
   relayUrl: string;
   owner: string;
+  /** Its profile picture, an HTTPS image URL. */
+  picture?: string;
 }>;
 export type LocalAgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";

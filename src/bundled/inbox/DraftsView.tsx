@@ -29,6 +29,7 @@ import {
   subscribeView,
 } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   PanelHeader,
@@ -90,7 +91,10 @@ export function DraftsView({
   // The composer owns draft contents and storage; Inbox only enumerates its scope.
   const saved = listDraftViews(
     session.scope,
-    (value) => !!mentionDraft(value).text.trim(),
+    (value) => {
+      const draft = mentionDraft(value);
+      return !!draft.text.trim() || !!draft.sessionCards?.length;
+    },
     selected,
   );
   const entries = saved.entries.flatMap(({ key, value }) => {
@@ -243,9 +247,13 @@ export function DraftsView({
       {toolbar}
       <div className={styles.draftList}>
         {!entries.length && !saved.unavailable && !active && (
-          <p role="status" className={styles.notice}>
-            No drafts
-          </p>
+          <div role="status" className={styles.empty}>
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="No drafts"
+              description="Messages you start writing appear here."
+            />
+          </div>
         )}
         <ul className={styles.list} aria-label="Drafts">
           {visible.map((entry) => {
@@ -302,7 +310,9 @@ export function DraftsView({
                       <span
                         className={`text-body text-subtle ${styles.preview}`}
                       >
-                        {entry.draft.text}
+                        {entry.draft.text.trim()
+                          ? entry.draft.text
+                          : "Session attachment"}
                       </span>
                     </span>
                   }

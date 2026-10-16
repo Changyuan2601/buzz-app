@@ -48,15 +48,18 @@ it("independently unloads panels without removing the page or shared data", asyn
     const queries = relay.snapshot().session;
     runtime.reconcile(desired(["channels"]));
     await flush();
-    expect(panels.snapshot()).toHaveLength(0);
+    expect(panels.snapshot().map((panel) => panel.id)).toEqual([
+      "shared-sessions",
+    ]);
     expect(pages.snapshot()).toHaveLength(1);
     expect(relay.snapshot().session).toBe(queries);
     runtime.reconcile(desired(["channels", "github"]));
     await flush();
-    expect(panels.snapshot()).toHaveLength(1);
+    expect(panels.snapshot()).toHaveLength(2);
     runtime.reconcile(desired(["github"]));
     await flush();
     expect(pages.snapshot()).toHaveLength(0);
+    expect(panels.resolve("buzz:shared-sessions:alpha")).toBeUndefined();
     expect(
       panels.resolve("https://github.com/block/buzz/pull/23"),
     ).toBeDefined();

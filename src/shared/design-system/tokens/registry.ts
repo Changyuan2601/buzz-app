@@ -200,28 +200,28 @@ export const BACKDROP_CHOICES = [
     variable: "--gradient-1",
     lightTreatment: "sky-field",
     darkTreatment: "night-garden",
-    use: "The default app backdrop: Sky field in light mode, Night garden in dark.",
+    use: "Legacy glass specimen: Sky field in light mode, Night garden in dark.",
   },
   {
     token: "gradient-2",
     variable: "--gradient-2",
     lightTreatment: "peach-field",
     darkTreatment: "signal-flare",
-    use: "A warm paired app backdrop: Peach field in light mode, Signal flare in dark.",
+    use: "A legacy warm glass specimen: Peach field in light mode, Signal flare in dark.",
   },
   {
     token: "gradient-3",
     variable: "--gradient-3",
     lightTreatment: "blue-hour",
     darkTreatment: "electric-dusk",
-    use: "A cool paired app backdrop: Blue hour in light mode, Electric dusk in dark.",
+    use: "A legacy cool glass specimen: Blue hour in light mode, Electric dusk in dark.",
   },
   {
     token: "gradient-4",
     variable: "--gradient-4",
     lightTreatment: "orchid-field",
     darkTreatment: "ultraviolet",
-    use: "A violet paired app backdrop: Orchid field in light mode, Ultraviolet in dark.",
+    use: "A legacy violet glass specimen: Orchid field in light mode, Ultraviolet in dark.",
   },
 ] as const;
 
@@ -291,16 +291,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message",
         variable: "--surface-message",
-        pointsAt: "neutral-2 light / neutral-4 dark",
+        pointsAt: "bubble-received in both modes",
         use: "Received message bubbles; pair with standard text and links.",
         status: "core",
       },
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt:
-          "received fill with 5% black light / 5% white dark; selected accent otherwise",
+        pointsAt: "bubble-neutral in both modes; selected accent otherwise",
         use: "Own message bubbles; pair with --text-message-own.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-highlight",
+        variable: "--surface-message-highlight",
+        pointsAt: "20% selected message bubble mixed with the panel surface",
+        use: "Temporary return-to-message cue; follows the bubble color preference.",
         status: "core",
       },
       {
@@ -455,6 +461,31 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: "file-artwork",
+    name: "File artwork",
+    description: "Fixed document-format artwork colors in both themes.",
+    roles: [
+      {
+        token: "file-pdf-surface",
+        variable: "--file-pdf-surface",
+        pointsAt: "#ffffff",
+        use: "White PDF icon tile, paired with file-pdf-ink.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+      {
+        token: "file-pdf-ink",
+        variable: "--file-pdf-ink",
+        pointsAt: "#d32f2f",
+        use: "Red PDF glyph on file-pdf-surface.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+    ],
+  },
+  {
     id: "semantic-status",
     name: "Status",
     description:
@@ -536,6 +567,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--border-standard",
         pointsAt: "neutral-3 light / neutral-4 dark",
         use: "A quiet separator or panel edge.",
+        status: "core",
+      },
+      {
+        token: "border-message-thread",
+        variable: "--border-message-thread",
+        pointsAt: "neutral-4 light / neutral-6 dark",
+        use: "Reply connectors and thread spines on conversation surfaces.",
         status: "core",
       },
       {
@@ -626,14 +664,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "--affordance-backdrop-hover",
         variable: "--affordance-backdrop-hover",
         pointsAt: "black 6% light / white 10% dark",
-        use: "Translucent top-bar hover fills over the shell gradient.",
+        use: "Translucent top-bar hover fills over the shell and its dot texture.",
         status: "core",
       },
       {
         token: "--affordance-backdrop-pressed",
         variable: "--affordance-backdrop-pressed",
         pointsAt: "black 10% light / white 16% dark",
-        use: "Translucent top-bar pressed and selected fills over the shell gradient.",
+        use: "Translucent top-bar pressed and selected fills over the shell and its dot texture.",
         status: "core",
       },
       {
@@ -833,8 +871,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-app",
         variable: "--bg-app",
-        pointsAt: "gradient-1 (Sky field light / Night garden dark)",
-        use: "The app backdrop. Uses the first paired appearance choice by default.",
+        pointsAt: "neutral-quiet-hover light / neutral 2 dark",
+        use: "Solid app shell below opaque panes. Its dot texture derives from this color in both modes.",
         status: "core",
       },
       {
@@ -948,7 +986,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "glass-primary",
         variable: "--bg-glass-primary",
         pointsAt: "glass 2 + blur-md + rim",
-        use: "Primary glass for chrome and navigation directly on the app backdrop.",
+        use: "Primary glass for surfaces with content behind them. Shell navigation uses flat chrome instead.",
         status: "core",
       },
       {
@@ -961,8 +999,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-chrome-selected",
         variable: "--bg-chrome-selected",
-        pointsAt: "neutral 1 light / neutral 5 dark",
-        use: "An opaque selection inside glass chrome, where opacity distinguishes the selected item.",
+        pointsAt: "surface-panel light / neutral 5 dark",
+        use: "A flat shell selection: pane-colored in light mode, raised above hover in dark. Tab and route groups share a subtle capsule; standalone icons stay unfilled.",
         status: "core",
       },
       {
@@ -1519,7 +1557,11 @@ export const EXCEPTIONS = [
     why: "The glass rim models directional light independently of its fill. In dark mode, translucent white rim values remain distinct from the near-black glass fill.",
   },
   {
-    name: "backdrop treatments and gradient-1…4, texture-dots",
-    why: "Backdrop treatments define complete scenes. Each gradient-1…4 choice pairs one light scene with one dark scene.",
+    name: "legacy backdrop treatments and gradient-1…4",
+    why: "Kept for the viewer’s glass study only, not product themes. The app shell is solid.",
+  },
+  {
+    name: "texture-dots",
+    why: "The shared decorative texture derives its color from bg-app: a darker shade in light mode and a lighter tint in dark. Never give dots an independent gray or paint the pattern inside reading panes.",
   },
 ];

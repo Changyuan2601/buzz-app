@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import styles from "./AgentsPage.module.css";
@@ -35,6 +36,12 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
+import { useAgentChoices } from "../../features/agents/use-choices";
+import type { RelaySession } from "../../features/relay/session";
+import {
+  setDefaultAgent,
+  useDefaultAgent,
+} from "../../features/sessions/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -56,6 +63,9 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuNote,
   MenuPopup,
   MenuItem,
   MenuRoot,
@@ -278,16 +288,23 @@ export function AgentsPage({
           description={snapshot.error ?? "Try again."}
         />
       );
-    return (
-      <Inventory
-        service={agents}
-        agents={snapshot.agents}
-        selected={selected?.pubkey}
-        typeOf={typeOf}
-        onSelect={browse}
-        onBuild={build}
-        newAgent={!toolbarAction && newAgentMenu}
+    const inventory = {
+      service: agents,
+      agents: snapshot.agents,
+      selected: selected?.pubkey,
+      typeOf,
+      onSelect: browse,
+      onBuild: build,
+      newAgent: !toolbarAction && newAgentMenu,
+    };
+    return connection.status === "ready" ? (
+      <DefaultAgentInventory
+        session={connection.session}
+        scope={connection.scope ?? ""}
+        {...inventory}
       />
+    ) : (
+      <Inventory {...inventory} />
     );
   })();
 
@@ -480,6 +497,102 @@ export function AgentsPage({
   );
 }
 
+type InventoryProps = {
+  service: Agents;
+  agents: readonly Agent[];
+  selected: string | undefined;
+  typeOf(agent: Agent): RegisteredAgentType | undefined;
+  onSelect(pubkey?: string): void;
+  onBuild(pubkey: string): void;
+  newAgent: ReactNode;
+  /** The agent new Berd messages are tagged for, in this community. */
+  defaultAgent?: string | undefined;
+  onMakeDefault?: ((pubkey: string) => void) | undefined;
+  defaultChoices?: ReadonlySet<string>;
+};
+
+/** The inventory with this community's default agent marked and settable. */
+function DefaultAgentInventory({
+  session,
+  scope,
+  ...props
+}: InventoryProps & { session: RelaySession; scope: string }) {
+  const current = useDefaultAgent(session, scope);
+  const choices = useAgentChoices(session, true, true);
+  const [error, setError] = useState("");
+  return (
+    <>
+      <Inventory
+        {...props}
+        defaultAgent={current?.pubkey}
+        defaultChoices={
+          new Set(choices.selectable.map((agent) => agent.pubkey))
+        }
+        onMakeDefault={(pubkey) => {
+          setError(
+            setDefaultAgent(scope, pubkey)
+              ? ""
+              : "The default agent couldn't be saved on this device.",
+          );
+        }}
+      />
+      {error && <p role="alert">{error}</p>}
+    </>
+  );
+}
+
+/** An agent card's right-click quick actions; the context-menu key and
+ * Shift+F10 open them from the keyboard. */
+function AgentQuickActions({
+  name,
+  card,
+  isDefault,
+  available,
+  onMakeDefault,
+}: {
+  available: boolean;
+  name: string;
+  card: ReactElement;
+  isDefault: boolean;
+  onMakeDefault(): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLElement>();
+  return (
+    <ContextMenuRoot
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setAnchor(undefined);
+      }}
+    >
+      <ContextMenuTrigger
+        render={card}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            setAnchor(event.currentTarget);
+            setOpen(true);
+          }
+        }}
+      />
+      <MenuPopup aria-label={`Actions for ${name}`} anchor={anchor}>
+        {isDefault ? (
+          <MenuNote>Default agent</MenuNote>
+        ) : (
+          <MenuItem disabled={!available} onClick={onMakeDefault}>
+            Make default agent
+          </MenuItem>
+        )}
+      </MenuPopup>
+    </ContextMenuRoot>
+  );
+}
+
 /** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
 function Inventory({
@@ -490,15 +603,10 @@ function Inventory({
   onSelect,
   onBuild,
   newAgent,
-}: {
-  service: Agents;
-  agents: readonly Agent[];
-  selected: string | undefined;
-  typeOf(agent: Agent): RegisteredAgentType | undefined;
-  onSelect(pubkey?: string): void;
-  onBuild(pubkey: string): void;
-  newAgent: ReactNode;
-}) {
+  defaultAgent,
+  defaultChoices,
+  onMakeDefault,
+}: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
   const columns = () =>
@@ -557,44 +665,64 @@ function Inventory({
           {agents.map((agent, position) => {
             const type = typeOf(agent);
             const active = agent.pubkey === selected;
+            const card = (
+              <InventoryCard
+                tag={
+                  agent.pubkey === defaultAgent ? "Default agent" : undefined
+                }
+                service={service}
+                type={type}
+                onBuild={() => onBuild(agent.pubkey)}
+                onRemoved={() => onSelect()}
+                role="gridcell"
+                aria-label={
+                  agent.pubkey === defaultAgent
+                    ? `${agent.name}, Default agent`
+                    : agent.name
+                }
+                data-selected={active}
+                aria-selected={active}
+                tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
+                data-unavailable={type ? undefined : ""}
+                onClick={(event) => {
+                  if (
+                    event.currentTarget.contains(event.target as Node) &&
+                    !(event.target as Element).closest(
+                      "[data-card-control], button, input",
+                    )
+                  )
+                    onSelect(active ? undefined : agent.pubkey);
+                }}
+                onDoubleClick={(event) => {
+                  if (
+                    event.currentTarget.contains(event.target as Node) &&
+                    !(event.target as Element).closest(
+                      "[data-card-control], button, input",
+                    )
+                  )
+                    onBuild(agent.pubkey);
+                }}
+                agent={agent}
+                community={agent.relay || undefined}
+                icon={<TypeIcon type={type} />}
+                detail={summaryOf(agent, type)}
+              />
+            );
             return (
               // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
               // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
               <div role="row" className="contents" key={agent.pubkey}>
-                <InventoryCard
-                  service={service}
-                  type={type}
-                  onBuild={() => onBuild(agent.pubkey)}
-                  onRemoved={() => onSelect()}
-                  role="gridcell"
-                  aria-label={agent.name}
-                  data-selected={active}
-                  aria-selected={active}
-                  tabIndex={active || (index < 0 && position === 0) ? 0 : -1}
-                  data-unavailable={type ? undefined : ""}
-                  onClick={(event) => {
-                    if (
-                      event.currentTarget.contains(event.target as Node) &&
-                      !(event.target as Element).closest(
-                        "[data-card-control], button, input",
-                      )
-                    )
-                      onSelect(active ? undefined : agent.pubkey);
-                  }}
-                  onDoubleClick={(event) => {
-                    if (
-                      event.currentTarget.contains(event.target as Node) &&
-                      !(event.target as Element).closest(
-                        "[data-card-control], button, input",
-                      )
-                    )
-                      onBuild(agent.pubkey);
-                  }}
-                  agent={agent}
-                  community={agent.relay || undefined}
-                  icon={<TypeIcon type={type} />}
-                  detail={summaryOf(agent, type)}
-                />
+                {onMakeDefault ? (
+                  <AgentQuickActions
+                    name={agent.name}
+                    card={card}
+                    isDefault={agent.pubkey === defaultAgent}
+                    available={!!defaultChoices?.has(agent.pubkey)}
+                    onMakeDefault={() => onMakeDefault(agent.pubkey)}
+                  />
+                ) : (
+                  card
+                )}
               </div>
             );
           })}
@@ -837,8 +965,15 @@ function teamPortNote({
   elsewhere,
   foreign,
   teamError,
+  notes = [],
 }: TeamPort) {
-  if (!failed.length && !elsewhere.length && !foreign.length && !teamError)
+  if (
+    !failed.length &&
+    !elsewhere.length &&
+    !foreign.length &&
+    !teamError &&
+    !notes.length
+  )
     return "";
   const came = imported.map((agent) => agent.name).join(", ");
   return [
@@ -852,6 +987,7 @@ function teamPortNote({
       `Kept out: ${elsewhere.join(", ")}, in another community.`,
     foreign.length &&
       `Kept out: ${foreign.join(", ")}, which another account on this device has.`,
+    ...notes,
   ]
     .filter(Boolean)
     .join(" ");
@@ -898,7 +1034,7 @@ function ImportAgents({
     onPendingChange(true);
     setError("");
     try {
-      await agents.port({
+      const { notes } = await agents.port({
         source: agent.source,
         pubkey: agent.pubkey,
         type: chosen.key,
@@ -910,7 +1046,9 @@ function ImportAgents({
             agents: last.agents.filter((item) => item.pubkey !== agent.pubkey),
           },
       );
-      onImported();
+      // Leaving would hide what did not come over.
+      if (notes.length) setError(notes.join(" "));
+      else onImported();
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -958,7 +1096,8 @@ function ImportAgents({
         {chosen?.adopt
           ? "Keeps each agent's key, name, picture and instructions in this community. Its other settings stay behind."
           : "Keeps each agent's key, name and picture in this community. Its instructions and settings stay behind."}{" "}
-        Stop it where it runs now first, or both will answer.
+        An archived agent is unarchived here. Stop it where it runs now first,
+        or both will answer.
       </p>
       {types.length > 1 && (
         <div className="flex">

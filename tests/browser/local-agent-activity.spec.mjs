@@ -1,6 +1,9 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+const localAgentKey =
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
 // One real app-composition/geometry journey. Matrices stay in the host and
 // adapter tests; only native identity custody and the agent's external work are fake.
 test.use({
@@ -15,7 +18,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   app,
 }, testInfo) => {
   await open(page, app);
-  const agent = "b".repeat(64);
+  const agent = localAgentKey;
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
@@ -94,7 +97,10 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     (id) => window.localAgentFixture.finish(id, false),
     second.id,
   );
-  await expect(waiting).toContainText("Could not finish");
+  await expect(waiting).toContainText("1 failed");
+  await expect(waiting).toHaveAccessibleName(
+    /Local tester, Fixture provider unavailable/,
+  );
   await expect(sidebar).toHaveCount(0);
   await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
   for (const colorScheme of ["light", "dark"]) {
@@ -137,13 +143,13 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   await expect(page.locator("body")).not.toBeFocused();
 });
 
-// Real host composition: dedup is about two mounted presentations, not two agents.
-test("a message bubble replaces duplicate thread dots without hiding work on another reply", async ({
+// Real host composition: one summary combines replies and exact-message work.
+test("one thread summary retains reply navigation and work on another reply", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  const agent = "b".repeat(64);
+  const agent = localAgentKey;
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
@@ -160,14 +166,14 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const bubble = row.getByRole("button", { name: /^Open thread:/ });
-  await expect(bubble).toBeVisible();
-  await expect(row.locator("[data-thread-working]")).toHaveCount(0);
-  // Existing replies keep their navigation even while the bubble owns work here.
-  app.threadSummary(request.id, [agent], 1);
   const summary = row.getByRole("button", { name: /^View thread:/ });
+  await expect(summary).toBeVisible();
+  await expect(row.locator("[data-thread-summary]")).toHaveCount(1);
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
+  // Existing replies share navigation with the message's live work.
+  app.threadSummary(request.id, [agent], 1);
   await expect(summary).toContainText("1 reply");
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
   await page.evaluate(
     (id) => window.localAgentFixture.handover(id),
     request.id,
@@ -187,32 +193,25 @@ test("a message bubble replaces duplicate thread dots without hiding work on ano
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
     .toBe(2);
-  await expect(bubble).toBeVisible();
-  // Same agent, different request: the thread summary still indicates that work.
-  await expect(summary.locator("[data-thread-working]")).toBeVisible();
-  // Ending work keeps the same bubble through its exit: removing and
-  // re-adding it would collapse and regrow the row mid-handoff.
-  await row.evaluate((element) => {
-    const changes = [];
-    window.bubbleChanges = changes;
-    const bubbles = (node) =>
-      node.nodeType === 1 &&
-      (node.matches("section") || !!node.querySelector("section"));
-    new MutationObserver((records) => {
-      for (const { addedNodes, removedNodes } of records) {
-        for (const node of addedNodes) if (bubbles(node)) changes.push("add");
-        for (const node of removedNodes)
-          if (bubbles(node)) changes.push("remove");
-      }
-    }).observe(element, { subtree: true, childList: true });
+  await expect(summary).toBeVisible();
+  // Same agent, different requests: render one working indicator, then retain
+  // the mounted summary and its reply navigation when the first request ends.
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
+  await expect(summary.locator('[data-state="working"]')).toBeVisible();
+  await summary.evaluate((element) => {
+    window.activitySummary = element;
   });
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
     request.id,
   );
-  await expect(bubble).toHaveCount(0);
-  await expect(row.locator("section")).toHaveCount(0);
-  expect(await page.evaluate(() => window.bubbleChanges)).toEqual(["remove"]);
+  // The surviving request has no first step: waiting proves the completed
+  // request has left the activity projection before checking DOM continuity.
+  await expect(summary.locator('[data-state="waiting"]')).toBeVisible();
+  await expect(summary).toContainText("1 reply");
+  expect(
+    await summary.evaluate((element) => element === window.activitySummary),
+  ).toBe(true);
   await expect(summary.locator("[data-thread-working]")).toBeVisible();
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
@@ -238,7 +237,7 @@ test("opens an active message's empty thread without losing its activity preview
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ["h", "alpha"],
-      ["p", "b".repeat(64)],
+      ["p", localAgentKey],
     ],
   });
   app.histories.get("primary/alpha").push(request);
@@ -246,7 +245,7 @@ test("opens an active message's empty thread without losing its activity preview
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const trigger = row.getByRole("button", { name: /^Open thread:/ });
+  const trigger = row.getByRole("button", { name: /^View thread:/ });
   await expect(trigger).toBeVisible();
   await trigger.hover();
   const preview = page.getByRole("dialog", {
@@ -328,7 +327,7 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
       tags: [
         ["h", "alpha"],
         ["e", root.id, "", "reply"],
-        ["p", "b".repeat(64)],
+        ["p", localAgentKey],
       ],
     });
     app.relay.publish("primary", request);
@@ -386,3 +385,57 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
     await expect(section).toHaveCount(0);
   });
 }
+
+// Real browser focus must survive removal of the decorated host button/portal.
+test("finishing a zero-reply summary hands focus back only when it owns focus", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  for (const focusOn of ["summary", "popup", "composer"]) {
+    const request = app.sign({
+      kind: 9,
+      content: `Finish zero-reply activity: ${focusOn}`,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["h", "alpha"],
+        ["p", localAgentKey],
+      ],
+    });
+    app.relay.publish("primary", request);
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${request.id}"]`,
+    );
+    const summary = row.getByRole("button", { name: /^View thread:/ });
+    const popup = page.getByRole("dialog", {
+      name: "Agent activity",
+      exact: true,
+    });
+    await expect(summary).toBeVisible();
+    if (focusOn === "popup") {
+      await summary.hover();
+      await popup
+        .getByRole("button", { name: "View activity for Local tester" })
+        .focus();
+    } else if (focusOn === "summary") await summary.focus();
+    else await composer.focus();
+    await page.evaluate(
+      (id) => window.localAgentFixture.finish(id, true),
+      request.id,
+    );
+    await expect(summary).toHaveCount(0);
+    await expect(popup).toHaveCount(0);
+    await expect(
+      focusOn === "composer"
+        ? composer
+        : row.getByRole("button", { name: "More message actions" }),
+    ).toBeFocused();
+  }
+});

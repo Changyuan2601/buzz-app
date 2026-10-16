@@ -1,3 +1,4 @@
+import { forgetCoreMemory } from "../agents/core-memory-cache";
 import { forgetChannelSetups } from "../channel-templates/setup";
 import { forgetQuickReactions } from "../messages/quick-reactions";
 import { relayPartition } from "../relay/partition";
@@ -41,6 +42,8 @@ export async function purgeCommunityDeviceState(
       failures.push(purgeFailure(origin, store, error));
     }
   };
+  // Agents' core memory is only ever held in memory, so this cannot fail.
+  forgetCoreMemory(scope);
   await attempt("view state", () => clearViewScope(scope));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));

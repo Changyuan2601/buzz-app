@@ -23,6 +23,7 @@ import { useMePlacement } from "../../features/sessions/personal";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SessionSections } from "../sessions/SessionSections";
+import { resetNewChatProject } from "../../features/sessions/NewSessionComposer";
 import { UnreadBadge } from "../channels/UnreadBadge";
 import { meSelection, meTarget } from "./routes";
 import styles from "../sessions/SessionsWorkspace.module.css";
@@ -118,6 +119,7 @@ function PersonalHistory({
       aria-label="Solo conversations"
     >
       <SessionSections
+        navigator={navigator}
         header={<SidebarBrand mark="berd" />}
         personal
         visit={navigator.snapshot().attempt.signal}
@@ -128,9 +130,10 @@ function PersonalHistory({
           id: item.id,
           title: item.name,
         }))}
-        onNew={(sectionId) =>
-          void navigator.open(meTarget(scope, "new", sectionId))
-        }
+        onNew={(sectionId) => {
+          if (sectionId) resetNewChatProject(scope, true, sectionId);
+          void navigator.open(meTarget(scope, "new", sectionId));
+        }}
         renderSession={(item) => (
           <MeConversationRow
             key={item.id}

@@ -1,7 +1,14 @@
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import {
   type ModelChoice,
@@ -17,11 +24,21 @@ import type {
   AgentViewProps,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
+import {
+  AwsLogoIcon,
+  ClaudeLogoIcon,
+  DatabricksLogoIcon,
+  type DefinedIcon,
+  GoogleLogoIcon,
+  GooseLogoIcon,
+  OpenAILogoIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { validWorkspace } from "../codex/config";
 import {
   type Config,
@@ -58,6 +75,20 @@ const SCOPES = [
 ];
 
 type Choice = Readonly<{ provider: string; model: string }>;
+
+/** Marks for goose's most-used providers, by goose's provider ID. */
+const PROVIDER_ICONS: ReadonlyMap<string, DefinedIcon> = new Map([
+  ["anthropic", ClaudeLogoIcon],
+  ["openai", OpenAILogoIcon],
+  ["google", GoogleLogoIcon],
+  ["databricks", DatabricksLogoIcon],
+  ["aws_bedrock", AwsLogoIcon],
+]);
+/** The provider's mark, or undefined for one without a mark. */
+const providerIcon = (id: string | undefined) => {
+  const Icon = id ? PROVIDER_ICONS.get(id) : undefined;
+  return Icon && <Icon size={18} aria-hidden="true" />;
+};
 type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
@@ -131,15 +162,19 @@ export function createTabs({
   runtime: GooseRuntime;
   history: GooseHistory;
 }>) {
-  /** The provider, its key and its model, and a test that they answer. */
+  /** The provider, its key and its model, and a test that they answer. As
+   * `rows` of the agent's settings, only the provider and model: the rest is
+   * `ProviderSetup`'s. */
   function ProviderFields({
     value,
     onChange,
     disabled = false,
+    rows = false,
   }: Readonly<{
     value: Choice;
     onChange(value: Choice): void;
     disabled?: boolean;
+    rows?: boolean;
   }>) {
     const [listing, reload] = useRead(() => setup.providers(), "providers");
     // A new key or host can offer other models, so each save reads them again.
@@ -153,13 +188,6 @@ export function createTabs({
       `${id}:${provider?.configured ?? false}:${saves}`,
       id,
     );
-    // A result belongs to the choice it tested.
-    const choice = `${value.provider}\u0000${value.model}`;
-    const [result, setResult] = useState<{
-      choice: string;
-      tested: Tested | "testing";
-    }>();
-    const tested = result?.choice === choice ? result.tested : undefined;
     const named = (key: string | undefined) =>
       providers?.providers.find((item) => item.id === key)?.name ?? key;
     const modelDefault = value.provider
@@ -169,14 +197,20 @@ export function createTabs({
       <>
         <Select
           label="Provider"
-          variant="field"
+          variant={rows ? "preference" : "field"}
           value={value.provider}
+          leading={providerIcon(id)}
+          {...(rows && !value.provider && fallback
+            ? { valueLabel: named(fallback) }
+            : {})}
           disabled={disabled || !providers}
           {...(listing.status === "error"
             ? { error: listing.error }
             : listing.status === "loading" && !providers
               ? { description: "Loading goose's providers…" }
-              : {})}
+              : rows && provider && !provider.configured
+                ? { description: `Set up ${provider.name} in Settings.` }
+                : {})}
           groups={[
             {
               label: "",
@@ -190,6 +224,7 @@ export function createTabs({
                 ...(providers?.providers ?? []).map((item) => ({
                   value: item.id,
                   label: item.name,
+                  leading: providerIcon(item.id),
                   description: item.configured ? "Set up" : item.description,
                 })),
               ],
@@ -202,7 +237,7 @@ export function createTabs({
             <Button onClick={reload}>Try again</Button>
           </div>
         )}
-        {provider && (
+        {!rows && provider && (
           <ProviderKeys
             key={provider.id}
             provider={provider}
@@ -218,40 +253,138 @@ export function createTabs({
           models={models.value ?? []}
           loading={models.status === "loading"}
           value={value.model}
-          defaultLabel={
-            modelDefault
-              ? `Provider default (${modelDefault})`
-              : "Provider default"
-          }
+          defaultLabel={modelDefault || "Provider model"}
           {...(models.status === "error"
             ? { description: `Could not list models: ${models.error}` }
             : {})}
           disabled={disabled}
           onChange={(model) => onChange({ ...value, model })}
         />
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            disabled={disabled || tested === "testing"}
-            loading={tested === "testing"}
-            onClick={async () => {
-              setResult({ choice, tested: "testing" });
-              setResult({ choice, tested: await setup.test(value) });
-            }}
-          >
-            Test connection
-          </Button>
-          {tested && tested !== "testing" && (
-            <p
-              role={tested.ok ? "status" : "alert"}
-              className={
-                tested.ok ? "m-0 text-body-sm" : "buzz-field-error m-0"
-              }
-            >
-              {tested.message}
-            </p>
-          )}
-        </div>
+        {!rows && <TestConnection choice={value} disabled={disabled} />}
       </>
+    );
+  }
+
+  /** The agent's provider's key, and a test that it answers. */
+  function ProviderSetup({ choice }: Readonly<{ choice: Choice }>) {
+    const [listing, reload] = useRead(() => setup.providers(), "providers");
+    const id = choice.provider || listing.value?.defaults.provider;
+    const provider = listing.value?.providers.find((item) => item.id === id);
+    return (
+      <>
+        {listing.status === "error" && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={reload}>Try again</Button>
+            <p role="alert" className="buzz-field-error m-0">
+              {listing.error}
+            </p>
+          </div>
+        )}
+        {provider && (
+          <ProviderKeys
+            key={provider.id}
+            provider={provider}
+            disabled={false}
+            onSaved={reload}
+          />
+        )}
+        <TestConnection choice={choice} disabled={false} />
+      </>
+    );
+  }
+
+  /** Asks the provider and model for one short reply. */
+  function TestConnection({
+    choice,
+    disabled,
+  }: Readonly<{ choice: Choice; disabled: boolean }>) {
+    // A result belongs to the choice it tested.
+    const key = `${choice.provider}\u0000${choice.model}`;
+    const [result, setResult] = useState<{
+      key: string;
+      tested: Tested | "testing";
+    }>();
+    const tested = result?.key === key ? result.tested : undefined;
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          disabled={disabled || tested === "testing"}
+          loading={tested === "testing"}
+          onClick={async () => {
+            setResult({ key, tested: "testing" });
+            setResult({ key, tested: await setup.test(choice) });
+          }}
+        >
+          Test connection
+        </Button>
+        {tested && tested !== "testing" && (
+          <p
+            role={tested.ok ? "status" : "alert"}
+            className={tested.ok ? "m-0 text-body-sm" : "buzz-field-error m-0"}
+          >
+            {tested.message}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  /** The thinking level turns run on: goose's default, or one goose offers
+   * for the provider and model. */
+  function ThinkingField({
+    choice,
+    value,
+    onChange,
+  }: Readonly<{
+    choice: Choice;
+    value: string;
+    onChange(effort: string): void;
+  }>) {
+    const [efforts] = useRead(
+      () => setup.efforts(choice),
+      `${choice.provider}\u0000${choice.model.trim()}`,
+    );
+    const levels = efforts.value?.levels ?? [];
+    const named = (level: string) =>
+      level.charAt(0).toUpperCase() + level.slice(1);
+    const fallback = efforts.value?.current
+      ? named(efforts.value.current)
+      : "Automatic";
+    return (
+      <Select
+        label="Thinking"
+        variant="preference"
+        value={value}
+        {...(!value ? { valueLabel: fallback } : {})}
+        {...(efforts.status === "error"
+          ? { description: `Could not read goose's levels: ${efforts.error}` }
+          : {})}
+        groups={[
+          {
+            label: "",
+            options: [
+              {
+                value: "",
+                label: `${fallback} · Default`,
+              },
+              // A saved level the model does not offer, or not yet read.
+              ...(value && !levels.includes(value)
+                ? [
+                    {
+                      value,
+                      label:
+                        efforts.status === "ready"
+                          ? `${named(value)} (unavailable)`
+                          : named(value),
+                    },
+                  ]
+                : []),
+              ...levels.map((level) => ({ value: level, label: named(level) })),
+            ],
+          },
+        ]}
+        onValueChange={onChange}
+      />
     );
   }
 
@@ -674,20 +807,35 @@ export function createTabs({
     const fallback = [named(defaults?.provider), defaults?.model]
       .filter(Boolean)
       .join(" · ");
+    const providerMark = providerIcon(current.provider || defaults?.provider);
     const label =
       choiceLabel(current, named) ??
       (fallback ? `goose default (${fallback})` : "goose default");
     return (
       <>
-        <Button
-          size="sm"
-          variant={modelAppearance === "subtle" ? "ghost" : "outline"}
-          disabled={disabled}
-          title="Choose provider and model"
-          onClick={() => setOpen(true)}
-        >
-          {label}
-        </Button>
+        {/* The compact select recipe ellipsizes long model names in cards. */}
+        <div className="buzz-select" data-variant="compact">
+          <Button
+            size="sm"
+            variant={modelAppearance === "subtle" ? "subtle" : "outline"}
+            disabled={disabled}
+            onClick={() => setOpen(true)}
+          >
+            <span className="buzz-select-value-content">
+              <span className="buzz-select-leading" aria-hidden="true">
+                <GooseLogoIcon size={18} />
+              </span>
+              {providerMark && (
+                <span className="buzz-select-leading" aria-hidden="true">
+                  {providerMark}
+                </span>
+              )}
+              <span className="buzz-select-value" title={label}>
+                {label}
+              </span>
+            </span>
+          </Button>
+        </div>
         {open && (
           <ChooseDialog
             value={current}
@@ -702,11 +850,22 @@ export function createTabs({
     );
   }
 
-  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    settingsSection,
+    settingsContent,
+  }: AgentViewProps<Config>) {
+    const form = useId();
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -725,60 +884,73 @@ export function createTabs({
     };
     return (
       <form
-        className="grid gap-4"
+        id={form}
+        className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {settingsHost?.typeControl?.(configChanged)}
-        <ProviderFields
-          value={draft}
-          onChange={(choice) => setDraft({ ...draft, ...choice })}
-        />
-        <Field
-          label="Workspace"
-          description="The folder goose works in. Use ~/ for your home folder."
-        >
-          <Input
-            value={draft.workspace}
-            onValueChange={(workspace) => setDraft({ ...draft, workspace })}
-          />
-        </Field>
-        <Select
-          label="Sessions"
-          variant="field"
-          value={draft.scope}
-          groups={SCOPES}
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={false}
-          description="Added to every session's system prompt, after Buzz's own."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
-          <p role="alert" className="buzz-field-error">
+          <p
+            ref={saveErrorRef}
+            tabIndex={-1}
+            role="alert"
+            className="buzz-field-error"
+          >
             {error}
           </p>
         )}
-        <div>
-          <Button
-            type="submit"
-            variant="prominent"
-            loading={saving}
-            disabled={!changed}
-            focusableWhenDisabled
-          >
-            Save
-          </Button>
-        </div>
+        {settingsSection !== "runtime" && (
+          <>
+            <SettingsGroup>
+              {settingsHost?.typeControl?.(configChanged)}
+              <ProviderFields
+                rows
+                value={draft}
+                onChange={(choice) => setDraft({ ...draft, ...choice })}
+              />
+              <ThinkingField
+                choice={draft}
+                value={draft.effort}
+                onChange={(effort) => setDraft({ ...draft, effort })}
+              />
+            </SettingsGroup>
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={false}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <ProviderSetup choice={draft} />
+            <Field
+              label="Workspace"
+              description="The folder goose works in. Use ~/ for your home folder."
+            >
+              <Input
+                value={draft.workspace}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </Field>
+            <Select
+              label="Sessions"
+              variant="preference"
+              value={draft.scope}
+              groups={SCOPES}
+              onValueChange={(value) =>
+                setDraft({
+                  ...draft,
+                  scope: value === "channel" ? "channel" : "thread",
+                })
+              }
+            />
+          </>
+        )}
+        <AgentSaveButton form={form} saving={saving} disabled={!changed} />
+        {settingsSection !== "identity" && settingsContent}
       </form>
     );
   }

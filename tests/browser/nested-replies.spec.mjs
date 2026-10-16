@@ -600,6 +600,11 @@ for (const width of [1492, 1280, 1024, 700, 390])
       });
       await expect(actions).toHaveCount(1);
       await expect(actions).toHaveCSS("opacity", "1");
+      // Opacity can round to 1 before the entrance transform has finished.
+      // Measure settled placement after the actual animation completes.
+      await actions.evaluate((bar) =>
+        Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+      );
       if (width >= 640) {
         // Both headers and continuations use centered beside controls when
         // they fit, and the same token-sized corner overlap otherwise.

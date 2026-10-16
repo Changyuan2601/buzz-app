@@ -21,7 +21,7 @@
     pointer-events: none;
     border-radius: var(--radius-pill);
     padding: var(--space-1) var(--space-3);
-    background: var(--purple-3);
+    background: var(--affordance-accent);
     color: var(--text-primary);
     opacity: 0.85;
     white-space: nowrap;
@@ -34,7 +34,7 @@
     width: calc(var(--space-1) / 2);
     margin-left: var(--space-1);
     border-radius: var(--radius-pill);
-    background: var(--purple-7);
+    background: var(--affordance-accent-hover);
   }
 
   .swap-workspace-experiment {
@@ -159,7 +159,7 @@
   }
   html[data-keyboard-navigation] .swap-workspace-divider:focus-visible::after {
     background: var(--neutral-12);
-    outline: 2px solid var(--purple-8);
+    outline: 2px solid var(--border-accent);
     outline-offset: 2px;
   }
   .swap-workspace-stage[data-dragging] .swap-workspace-divider {

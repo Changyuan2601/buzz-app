@@ -31,6 +31,7 @@ import {
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
+import { SidebarStarIcon } from "./SidebarStarIcon";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -56,6 +57,7 @@ type Props = {
     icon?: string;
   }>[];
   initialGroup: string;
+  initialStarred?: boolean;
   groupsReady: boolean;
 };
 export function CreateChannelDialog(props: Props) {
@@ -86,6 +88,7 @@ function OpenCreateChannelDialog({
   agents,
   destinations,
   initialGroup,
+  initialStarred = false,
   groupsReady,
 }: Props) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -121,6 +124,7 @@ function OpenCreateChannelDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
+  const [starred, setStarred] = useState(false);
   const templates = useChannelTemplates();
   const teams = useTeams(agents);
   const [chosenTemplate, setTemplateId] = useState("");
@@ -218,8 +222,9 @@ function OpenCreateChannelDialog({
     setConfirmDiscard(false);
     setError("");
     setGroupId(pending ? (pending.setup?.groupId ?? "") : initialGroup);
+    setStarred(pending ? !!pending.setup?.starred : initialStarred);
     setTemplateId("");
-  }, [open, pending, initialGroup]);
+  }, [open, pending, initialGroup, initialStarred]);
 
   const normalizedName = canonicalDetailsName(name);
   const errors = detailsDraftErrors({
@@ -268,12 +273,16 @@ function OpenCreateChannelDialog({
           visibility: privateChannel ? "private" : "open",
           ...(lifetime === "temporary" ? { ttlSeconds: temporaryTtl } : {}),
           ...(description.trim() ? { description: description.trim() } : {}),
-          ...(groupId || templateSetup?.agents.length || templateSetup?.canvas
+          ...(groupId ||
+          starred ||
+          templateSetup?.agents.length ||
+          templateSetup?.canvas
             ? {
                 setup: {
                   agents: templateSetup?.agents ?? [],
                   canvas: templateSetup?.canvas ?? "",
                   groupId,
+                  ...(starred ? { starred: true } : {}),
                   templateId,
                 },
               }
@@ -301,6 +310,7 @@ function OpenCreateChannelDialog({
           : "Only you."}
         {summary.groupId &&
           ` Destination: ${destinations.find((g) => g.id === summary.groupId)?.name ?? "saved group"}.`}
+        {summary.starred && " Destination: Starred."}
       </p>
     </section>
   );
@@ -334,18 +344,22 @@ function OpenCreateChannelDialog({
         ) : (
           <span className={styles.title}>
             Create a channel
-            {groupId && (
+            {(groupId || starred) && (
               <>
                 {" in "}
-                {destination?.icon && (
+                {starred ? (
+                  <>
+                    <SidebarStarIcon />{" "}
+                  </>
+                ) : destination?.icon ? (
                   <>
                     <SidebarGroupIcon
                       icon={destination.icon}
                       session={session}
                     />{" "}
                   </>
-                )}
-                {destination?.name ?? "saved group"}
+                ) : null}
+                {starred ? "Starred" : (destination?.name ?? "saved group")}
               </>
             )}
           </span>

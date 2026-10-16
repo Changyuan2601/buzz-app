@@ -17,9 +17,13 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import {
+  ChatCircleIcon,
+  ClockIcon,
+} from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
+import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -225,21 +229,26 @@ function ChannelSidebarItemCore({
         )
       }
       badge={
-        <span className={styles.indicatorStack} data-channel-indicators="">
-          <span className={styles.indicatorLayer}>
-            <UnreadBadge
-              session={session}
-              channelId={channel.id}
-              dm={channel.channelType === "dm"}
+        <>
+          <span className={styles.indicatorStack} data-channel-indicators="">
+            <span className={styles.indicatorLayer}>
+              <UnreadBadge
+                session={session}
+                channelId={channel.id}
+                dm={channel.channelType === "dm"}
+              />
+            </span>
+            <WorkingAgentsBadge
+              agents={agents}
+              profiles={agentProfiles}
+              channelName={channel.name}
+              waiting={waiting}
             />
           </span>
-          <WorkingAgentsBadge
-            agents={agents}
-            profiles={agentProfiles}
-            channelName={channel.name}
-            waiting={waiting}
-          />
-        </span>
+          {channel.ttlSeconds !== undefined && agents.length === 0 && (
+            <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
+          )}
+        </>
       }
       wrapSelect={(trigger) => {
         const activity = (
@@ -331,5 +340,21 @@ function ChannelSidebarItemCore({
         {menuContent ?? lastMenuContent.current}
       </MenuPopup>
     </ContextMenuRoot>
+  );
+}
+
+/** Quiet lifetime metadata; the working badge takes the trailing slot while agents work. */
+function TemporaryMarker({ ttlSeconds }: { ttlSeconds: number }) {
+  const label = `Temporary channel. Cleans up after ${channelDurationLabel(ttlSeconds)} without activity.`;
+  return (
+    <span
+      className={styles.temporaryMarker}
+      data-channel-temporary=""
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      <ClockIcon size={16} />
+    </span>
   );
 }

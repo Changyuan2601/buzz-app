@@ -146,6 +146,8 @@ function setup(
 ) {
   let snapshot: AgentsSnapshot = {
     status,
+    classifier: "unavailable",
+    classifierKey: "missing",
     agents: saved,
     running: saved,
     teams: [],
@@ -262,6 +264,8 @@ function setup(
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
     register: vi.fn(),
+    addTool: vi.fn(),
+    tools: () => [],
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.
       if (!shown) return created;
@@ -278,7 +282,7 @@ function setup(
         here: [],
       }),
     ),
-    port: vi.fn(async () => created),
+    port: vi.fn(async () => ({ agent: created, notes: [] })),
     portTeam: vi.fn(
       async (): Promise<TeamPort> => ({
         imported: [],
@@ -318,7 +322,11 @@ function setup(
       for (const listener of listeners) listener();
       return ["workspace"] as const;
     }),
-    remove: vi.fn(async () => {}),
+    remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
+    unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
+    classifier: () => "unavailable",
+    setClassifierKey: vi.fn(async () => {}),
+    clearClassifierKey: vi.fn(async () => {}),
     saveTeam: vi.fn(async (change: TeamChange) => {
       const team = { ...change, id: change.id ?? "team-1" };
       snapshot = {
@@ -328,6 +336,7 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
+    core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
         ...snapshot,
@@ -739,11 +748,11 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await user.keyboard("{Enter}");
   const rail = screen.getByRole("complementary", { name: "Ada identity" });
   expect(
-    within(rail).queryByRole("button", { name: "Change provider from Echo" }),
+    within(rail).queryByRole("button", { name: "Change harness from Echo" }),
   ).not.toBeInTheDocument();
   agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
   const typeTrigger = screen.getByRole("button", {
-    name: "Change provider from Echo",
+    name: "Change harness from Echo",
   });
   expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
   await user.click(typeTrigger);
@@ -789,7 +798,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(agents.retype).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
   expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
   expect(
@@ -814,7 +823,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
     config: { endpoint: "wss://custom.example" },
   });
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
 });
 
@@ -1400,6 +1409,26 @@ it("moves focus from Finish setup to Identity once the setup finishes", async ()
   expect(await screen.findByRole("tab", { name: "Identity" })).toHaveFocus();
 });
 
+it("keeps a failed Delete's agent and its warning on screen", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents, show } = setup([ada]);
+  const failure = "Ada isn't deleted yet and may still be in some channels.";
+  agents.remove.mockImplementationOnce(async () => {
+    show([{ ...ada, deleting: true }]);
+    throw new Error(failure);
+  });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText(/Its Delete didn't finish/)).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeInTheDocument();
+});
+
 it("opens deletion from the card menu without selecting it and requires confirmation", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
@@ -1549,7 +1578,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   const choose = async () => {
     await user.click(
-      screen.getByRole("button", { name: "Change provider from Echo" }),
+      screen.getByRole("button", { name: "Change harness from Echo" }),
     );
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Destination" }),
@@ -1563,7 +1592,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(within(setupDialog).getByRole("button", { name: "Close" }));
   expect(
-    screen.getByRole("button", { name: "Change provider from Echo" }),
+    screen.getByRole("button", { name: "Change harness from Echo" }),
   ).toBeInTheDocument();
   await choose();
   await user.click(screen.getByRole("button", { name: "Install and connect" }));
@@ -1571,7 +1600,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("button", { name: "Change provider from Destination" }),
+    screen.getByRole("button", { name: "Change harness from Destination" }),
   ).toBeInTheDocument();
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1843,4 +1872,37 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(field).toBeVisible();
   expect(field).toHaveValue("Unsaved reply");
   expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("announces the default agent and presents its menu status without a fake toggle", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable" },
+  };
+  const connection = {
+    status: "ready",
+    scope: "default-card",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
 });

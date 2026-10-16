@@ -792,8 +792,8 @@ test("local previews stay interactive during eager upload and removal collapses 
             .querySelector('[aria-label="Remove clip.mp4"]')
             .getBoundingClientRect();
           return Math.max(
-            Math.abs(corner.x + corner.width / 2 - box.right),
-            Math.abs(corner.y + corner.height / 2 - box.top),
+            Math.abs(box.right - corner.right - 4),
+            Math.abs(corner.top - box.top - 4),
             Math.abs(box.width - box.height),
           );
         }),
@@ -823,7 +823,11 @@ test("local previews stay interactive during eager upload and removal collapses 
       .poll(() =>
         page.evaluate(() =>
           window.reviewTransitions.some(({ frames }) =>
-            frames.some((frame) => frame.clipPath?.startsWith("path(")),
+            frames.some(
+              (frame) =>
+                frame.clipPath?.startsWith("inset(") &&
+                frame.clipPath.includes(" round "),
+            ),
           ),
         ),
       )
@@ -1034,12 +1038,12 @@ test("local previews stay interactive during eager upload and removal collapses 
     const clipRemove = form.getByRole("button", { name: "Remove clip.mp4" });
     await editor.focus();
     await editor.hover();
-    await expect(photoRemove.locator("..")).toHaveCSS("opacity", "0");
+    await expect(photoRemove).toHaveCSS("opacity", "0");
     await form.getByRole("button", { name: "Preview photo.png" }).hover();
-    await expect(photoRemove.locator("..")).toHaveCSS("opacity", "1");
-    await expect(clipRemove.locator("..")).toHaveCSS("opacity", "0");
+    await expect(photoRemove).toHaveCSS("opacity", "1");
+    await expect(clipRemove).toHaveCSS("opacity", "0");
     await clipRemove.focus();
-    await expect(clipRemove.locator("..")).toHaveCSS("opacity", "1");
+    await expect(clipRemove).toHaveCSS("opacity", "1");
     const firstSlot = await photoRemove.evaluate(
       (el) => el.getBoundingClientRect().left,
     );

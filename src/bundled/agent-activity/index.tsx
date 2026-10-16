@@ -31,6 +31,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Agent Activity",
     component: ActivityAccessory,
     placement: "message",
+    decoratesMessageSummary: true,
   });
   ctx.conversation.registerAccessory({
     id: "typing-presentation",

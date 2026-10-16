@@ -9,6 +9,7 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { useKeyboardFocusVisibility } from "./shared/design-system/useKeyboardFocusVisibility";
+import { useRejectUnclaimedDrops } from "./features/messages/use-file-drop";
 
 const container = document.getElementById("root");
 
@@ -20,6 +21,7 @@ const services = createServices();
 const root = createRoot(container);
 function HostApp() {
   useKeyboardFocusVisibility();
+  useRejectUnclaimedDrops();
   return <App services={services} />;
 }
 root.render(

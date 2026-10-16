@@ -37,7 +37,7 @@ export type OpenTarget =
       /** Hint only. Resolve the actual root from verified message evidence. */
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
-      panel?: "members";
+      panel?: "members" | "shared-sessions";
     }>;
 
 const MAX_BYTES = 8192;
@@ -181,7 +181,11 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
-        if (value.panel !== undefined && value.panel !== "members")
+        if (
+          value.panel !== undefined &&
+          value.panel !== "members" &&
+          value.panel !== "shared-sessions"
+        )
           throw invalid();
         target = {
           version: 1,
@@ -197,7 +201,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.threadRootId !== undefined
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
-          ...(value.panel === "members" ? { panel: "members" } : {}),
+          ...(value.panel === "members" || value.panel === "shared-sessions"
+            ? { panel: value.panel }
+            : {}),
         };
         break;
       default:

@@ -1,224 +1,90 @@
-diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 2e6471f9..873f4d48 100644
---- a/CHANGELOG.md
-+++ b/CHANGELOG.md
-@@ -1,5 +1,9 @@
- # Change log
- 
-+## Unreleased
-+
-+- fix: isolate partial-staging patches per worktree and remove only the current run's backup. Backups now use `refs/lefthook/backup/`, not `git stash list`; legacy stashes remain untouched. See [recovery instructions](docs/usage.md#recovering-unstaged-changes) for retained backups.
-+
- ## 2.1.7
- 
- - fix: don't hash submodules when checking fail_on_changes ([#1566](https://github.com/evilmartians/lefthook/pull/1566)) by [@tiagovilasboas](https://github.com/tiagovilasboas)
-diff --git a/docs/usage.md b/docs/usage.md
-index 8a51eaf5..cec66d75 100644
---- a/docs/usage.md
-+++ b/docs/usage.md
-@@ -23,3 +23,43 @@ lefthook dump
+diff --git i/docs/usage.md w/docs/usage.md
+index 8a51eaf..aea9507 100644
+--- i/docs/usage.md
++++ w/docs/usage.md
+@@ -23,3 +23,31 @@ lefthook dump
  ```bash
  LEFTHOOK=0 git commit
  ```
 +
 +## Recovering unstaged changes
 +
-+Before running pre-commit jobs on partially staged files, Lefthook saves patches
-+in that worktree's Git directory and preserves a stash-shaped backup commit under
-+`refs/lefthook/backup/<commit>`. The patches are isolated between linked worktrees;
-+the backup refs are shared so Git garbage collection from any worktree keeps them.
-+Only the current run's backup is removed after successful restoration. Concurrent
-+runs in the **same** worktree are not supported.
++Before pre-commit jobs hide partially staged changes, Lefthook saves worktree-specific
++patches under the common Git info directory and creates a stash-shaped backup under
++`refs/lefthook/backup/<commit>`. Shared refs keep linked-worktree backups alive during
++garbage collection from any worktree. Only the current run's ref is removed, with
++compare-and-delete, after successful restoration. Existing and legacy stashes remain
++untouched. Concurrent runs within the same worktree are unsupported.
 +
-+If restoration fails, a patch is missing, or a run is interrupted before cleanup,
-+its backup ref remains. These backups do **not** appear in `git stash list`.
-+Existing user stashes and legacy `lefthook auto backup` stashes are left untouched.
++If restoration fails, patches are missing, or a run stops before cleanup, its backup
++ref remains. These backups do not appear in `git stash list`:
 +
-+List and inspect the retained backups:
-+
-+```bash
++```sh
 +git for-each-ref --format='%(refname) %(subject)' refs/lefthook/backup/
 +git stash show --patch <ref>
 +```
 +
-+Preserve any current edits before attempting recovery. In a clean worktree at the
-+backup's original base, apply the selected backup (include `--index` to restore
-+its staged state too):
++Preserve current edits first. In a clean worktree at the original base, recover both
++the index and working tree, verify the result, then remove only that backup:
 +
-+```bash
++```sh
 +git stash apply --index <ref>
-+```
-+
-+After verifying the recovered content, remove only that backup with a
-+compare-and-delete operation:
-+
-+```bash
 +git update-ref -d <ref> <commit>
 +```
 +
-+Here `<ref>` is the full backup ref and `<commit>` is its saved commit ID. Retained
-+refs are not expired automatically; review them before deleting them. Like other
-+non-branch refs, they can be included by `git push --mirror`, so do not mirror
-+recovery backups to a remote unintentionally.
-diff --git a/internal/git/repo.go b/internal/git/repo.go
-index c5d70994..a71882a0 100644
---- a/internal/git/repo.go
-+++ b/internal/git/repo.go
-@@ -84,11 +84,11 @@ type Wrapper interface {
- 	// returns wrapper.ErrNoUnstagedDiff when no diff was saved
- 	ApplyUnstagedDiff(bool) error
- 
--	// StoreStash saves the current tree into a stash for backup
--	StoreStash() error
-+	// StoreStash saves the current tree under an owned backup ref and returns its hash
-+	StoreStash() (string, error)
- 
--	// DropStash deletes the created stash
--	DropStash() error
-+	// DropStash deletes only the backup ref for the supplied hash
-+	DropStash(string) error
- 
- 	// DiscardUnstagedChanges discards the unstaged changes in given files
- 	DiscardUnstagedChanges([]string) error
-@@ -244,9 +244,9 @@ func (r *Repo) PartiallyStagedFiles() ([]string, error) {
- 	return partiallyStaged, nil
- }
- 
--func (r *Repo) SaveUnstagedChanges(files []string) error {
-+func (r *Repo) SaveUnstagedChanges(files []string) (string, error) {
- 	if err := r.wrapper.SaveUnstagedDiff(files); err != nil {
--		return err
-+		return "", err
- 	}
- 
- 	return r.wrapper.StoreStash()
-@@ -267,22 +267,23 @@ func (r *Repo) CanRestoreUnstagedChanges() bool {
- }
- 
- // RestoreUnstagedChanges applies the patch with previously unstaged changes.
--func (r *Repo) RestoreUnstagedChanges() error {
--	return r.restoreUnstagedChanges(false)
-+func (r *Repo) RestoreUnstagedChanges(backup string) error {
-+	return r.restoreUnstagedChanges(false, backup)
- }
- 
- // RestoreAllUnstagedChanges applies all unstaged changes saved before running hooks.
--func (r *Repo) RestoreAllUnstagedChanges() error {
--	return r.restoreUnstagedChanges(true)
-+func (r *Repo) RestoreAllUnstagedChanges(backup string) error {
-+	return r.restoreUnstagedChanges(true, backup)
- }
- 
--func (r *Repo) restoreUnstagedChanges(all bool) error {
-+func (r *Repo) restoreUnstagedChanges(all bool, backup string) error {
- 	err := r.wrapper.ApplyUnstagedDiff(all)
- 	if errors.Is(err, wrapper.ErrNoUnstagedDiff) {
++Here `<ref>` is the full recovery ref and `<commit>` is its saved commit ID. Retained
++refs do not expire automatically and may be included in `git push --mirror`.
+diff --git i/internal/git/repo.go w/internal/git/repo.go
+index cdffacd..e92c20d 100644
+--- i/internal/git/repo.go
++++ w/internal/git/repo.go
+@@ -282,14 +282,16 @@ func (r *Repo) restoreUnstagedChanges(all bool) error {
  		// Keep the backup if there was nothing to restore
  		r.logger.Warn(
  			"Saved unstaged changes not found. " +
--				"Restore them from the 'lefthook auto backup' stash: git stash list",
+-				"Restore them manually from the 'lefthook auto backup' stash: git stash list",
 +				"List recovery refs with git for-each-ref refs/lefthook/backup/ " +
-+				"and restore with git stash apply <ref>",
++				"and restore with git stash apply --index <ref>",
  		)
  		return nil
  	}
-@@ -290,7 +291,7 @@ func (r *Repo) restoreUnstagedChanges(all bool) error {
+ 	if err != nil {
+ 		r.logger.Warn(
+-			"Failed to restore unstaged changes." +
+-				"Restore them manually from the 'lefthook auto backup' stash: git stash list",
++			"Failed to restore unstaged changes. " +
++				"List recovery refs with git for-each-ref refs/lefthook/backup/ " +
++				"and restore with git stash apply --index <ref>",
+ 		)
  		return err
  	}
- 
--	if err = r.wrapper.DropStash(); err != nil {
-+	if err = r.wrapper.DropStash(backup); err != nil {
- 		return fmt.Errorf("failed to remove unstaged files backup: %w", err)
- 	}
- 
-diff --git a/internal/git/repo_test.go b/internal/git/repo_test.go
-index 8cf4289d..52ff59cc 100644
---- a/internal/git/repo_test.go
-+++ b/internal/git/repo_test.go
-@@ -211,7 +211,10 @@ func TestRepo_RestoreUnstagedChanges(t *testing.T) {
- 				return tt.applyErr
- 			}
- 			dropped := false
--			w.DropStashFunc = func() error {
-+			w.DropStashFunc = func(hash string) error {
-+				if hash != "backup-hash" {
-+					t.Errorf("DropStash hash = %q", hash)
-+				}
- 				dropped = true
- 				return tt.dropErr
- 			}
-@@ -223,7 +226,7 @@ func TestRepo_RestoreUnstagedChanges(t *testing.T) {
- 				&git.Paths{},
- 			)
- 
--			err := repo.RestoreUnstagedChanges()
-+			err := repo.RestoreUnstagedChanges("backup-hash")
- 
- 			if !errors.Is(err, tt.err) {
- 				t.Errorf("repo.RestoreUnstagedChanges() error = %v, want %v", err, tt.err)
-@@ -271,7 +274,10 @@ func TestRepo_RestoreAllUnstagedChanges(t *testing.T) {
- 				return tt.applyErr
- 			}
- 			dropped := false
--			w.DropStashFunc = func() error {
-+			w.DropStashFunc = func(hash string) error {
-+				if hash != "backup-hash" {
-+					t.Errorf("DropStash hash = %q", hash)
-+				}
- 				dropped = true
- 				return tt.dropErr
- 			}
-@@ -283,7 +289,7 @@ func TestRepo_RestoreAllUnstagedChanges(t *testing.T) {
- 				&git.Paths{},
- 			)
- 
--			err := repo.RestoreAllUnstagedChanges()
-+			err := repo.RestoreAllUnstagedChanges("backup-hash")
- 
- 			if !errors.Is(err, tt.err) {
- 				t.Errorf("repo.RestoreAllUnstagedChanges() error = %v, want %v", err, tt.err)
-diff --git a/internal/git/wrapper/apply_unstaged_diff_test.go b/internal/git/wrapper/apply_unstaged_diff_test.go
-index 64e0f576..4bd31b7b 100644
---- a/internal/git/wrapper/apply_unstaged_diff_test.go
-+++ b/internal/git/wrapper/apply_unstaged_diff_test.go
-@@ -15,8 +15,8 @@ import (
- 
- func TestWrapper_ApplyUnstagedDiff(t *testing.T) {
- 	errApply := errors.New("apply failed")
--	patch := filepath.Join("/repo/.git/info", "lefthook-unstaged.patch")
--	patchAll := filepath.Join("/repo/.git/info", "lefthook-unstaged-all.patch")
-+	patch := filepath.Join("/repo/.git", "lefthook-unstaged.patch")
-+	patchAll := filepath.Join("/repo/.git", "lefthook-unstaged-all.patch")
- 	apply := "git apply -v --whitespace=nowarn --recount --unidiff-zero -- "
- 
- 	for name, tt := range map[string]struct {
-diff --git a/internal/git/wrapper/drop_stash.go b/internal/git/wrapper/drop_stash.go
-index 89d0ae68..a9854fba 100644
---- a/internal/git/wrapper/drop_stash.go
-+++ b/internal/git/wrapper/drop_stash.go
-@@ -1,41 +1,18 @@
+diff --git i/internal/git/wrapper/drop_stash.go w/internal/git/wrapper/drop_stash.go
+index 2e022ac..5095095 100644
+--- i/internal/git/wrapper/drop_stash.go
++++ w/internal/git/wrapper/drop_stash.go
+@@ -1,62 +1,14 @@
  package wrapper
  
--import "regexp"
+-import (
+-	"regexp"
+-	"strings"
+-)
 -
 -var (
--	cmdListStash   = []string{"git", "stash", "list"}
--	reStashMessage = regexp.MustCompile(`^(?P<stash>[^ ]+):\s*` + stashMessage)
-+import (
-+	"errors"
-+	"fmt"
- )
+-	cmdListStash   = []string{"git", "stash", "list", "--format=%gd %H %gs"}
+-	reStashMessage = regexp.MustCompile(`^(?P<stash>[^ ]+) (?P<hash>[^ ]+) (?P<message>.*)$`)
+-)
++import "errors"
  
--func (w *Wrapper) DropStash() error {
+ func (w *Wrapper) DropStash() error {
 -	lines, err := w.cmd.cmdLines(cmdListStash)
 -	if err != nil {
 -		return err
-+// DropStash removes only this run's backup, after its changes have been restored.
-+func (w *Wrapper) DropStash(stashHash string) error {
-+	if stashHash == "" {
++	hash := w.cache.backupStashHash
++	if hash == "" {
 +		return errors.New("cannot remove an unspecified unstaged backup")
  	}
--
+ 
 -	for i := range lines {
 -		line := lines[len(lines)-i-1]
 -		matches := reStashMessage.FindStringSubmatch(line)
@@ -226,215 +92,251 @@ index 89d0ae68..a9854fba 100644
 -			continue
 -		}
 -
--		stashID := reStashMessage.SubexpIndex("stash")
+-		stash := matches[reStashMessage.SubexpIndex("stash")]
+-		hash := matches[reStashMessage.SubexpIndex("hash")]
+-		message := matches[reStashMessage.SubexpIndex("message")]
 -
--		if len(matches[stashID]) > 0 {
+-		if len(w.cache.backupStashHash) > 0 {
+-			if w.cache.backupStashHash == hash {
+-				_, err := w.cmd.cmd([]string{
+-					"git",
+-					"stash",
+-					"drop",
+-					"--quiet",
+-					"--",
+-					stash,
+-				})
+-				return err
+-			}
+-
+-			continue
+-		}
+-
+-		if strings.Contains(message, stashMessage) {
 -			_, err := w.cmd.cmd([]string{
 -				"git",
 -				"stash",
 -				"drop",
 -				"--quiet",
 -				"--",
--				matches[stashID],
+-				stash,
 -			})
 -			if err != nil {
 -				return err
 -			}
 -		}
-+	_, err := w.cmd.cmd([]string{"git", "update-ref", "-d", backupRefPrefix + stashHash, stashHash})
-+	if err != nil {
-+		return fmt.Errorf("failed to remove unstaged backup: %w", err)
- 	}
+-	}
 -
- 	return nil
+-	return nil
++	// Compare-and-delete cannot remove a sibling backup or a ref changed since save.
++	_, err := w.cmd.cmd([]string{"git", "update-ref", "-d", backupRefPrefix + hash, hash})
++	return err
  }
-diff --git a/internal/git/wrapper/drop_stash_test.go b/internal/git/wrapper/drop_stash_test.go
-index e25c2d56..7fc34138 100644
---- a/internal/git/wrapper/drop_stash_test.go
-+++ b/internal/git/wrapper/drop_stash_test.go
-@@ -12,52 +12,23 @@ import (
+diff --git i/internal/git/wrapper/drop_stash_test.go w/internal/git/wrapper/drop_stash_test.go
+index ea09c99..ce26552 100644
+--- i/internal/git/wrapper/drop_stash_test.go
++++ w/internal/git/wrapper/drop_stash_test.go
+@@ -2,107 +2,49 @@ package wrapper_test
+ 
+ import (
+ 	"errors"
+-	"testing"
+-
+-	"github.com/spf13/afero"
+-
+ 	"github.com/evilmartians/lefthook/v2/internal/git/wrapper"
+ 	"github.com/evilmartians/lefthook/v2/tests/helpers/cmdtest"
+ 	"github.com/evilmartians/lefthook/v2/tests/helpers/loggertest"
++	"github.com/spf13/afero"
++	"testing"
  )
  
  func TestWrapper_DropStash(t *testing.T) {
 -	fs := afero.NewMemMapFs()
 -	errList := errors.New("list failed")
- 	errDrop := errors.New("drop failed")
--	list := "stash@{0}: lefthook auto backup\n" +
--		"stash@{1}: On main: other\n" +
--		"stash@{2}: lefthook auto backup\n"
+-	errDrop := errors.New("drop failed")
+-	errStore := errors.New("store failed")
+-	list := "stash@{0} hash lefthook auto backup\n" +
+-		"stash@{1} hash On main: other\n" +
+-		"stash@{2} hash lefthook auto backup\n"
+-	listStored := "stash@{0} abc123 lefthook auto backup\n" +
+-		"stash@{1} def456 On main: other\n" +
+-		"stash@{2} 789fed lefthook auto backup\n"
+-	storeOk := []cmdtest.Out{
+-		{Command: "git stash create", Output: "abc123"},
+-		{Command: "git stash store --quiet --message lefthook auto backup abc123"},
+-	}
 -
 -	for name, tt := range map[string]struct {
--		outs []cmdtest.Out
--		err  error
+-		// Commands of wrapper.StoreStash() call before wrapper.DropStash()
+-		store []cmdtest.Out
+-		outs  []cmdtest.Out
+-		err   error
 -	}{
 -		"drops-from-oldest": {
 -			outs: []cmdtest.Out{
--				{Command: "git stash list", Output: list},
+-				{Command: "git stash list --format=%gd %H %gs", Output: list},
 -				{Command: "git stash drop --quiet -- stash@{2}"},
 -				{Command: "git stash drop --quiet -- stash@{0}"},
 -			},
 -		},
 -		"no-lefthook-stash": {
 -			outs: []cmdtest.Out{
--				{Command: "git stash list", Output: "stash@{0}: On main: other\n"},
+-				{Command: "git stash list --format=%gd %H %gs", Output: "stash@{0} hash On main: other\n"},
 -			},
 -		},
 -		"list-fails": {
 -			outs: []cmdtest.Out{
--				{Command: "git stash list", Err: errList},
+-				{Command: "git stash list --format=%gd %H %gs", Err: errList},
 -			},
 -			err: errList,
 -		},
 -		"drop-fails": {
 -			outs: []cmdtest.Out{
--				{Command: "git stash list", Output: list},
+-				{Command: "git stash list --format=%gd %H %gs", Output: list},
 -				{Command: "git stash drop --quiet -- stash@{2}", Err: errDrop},
 -			},
 -			err: errDrop,
 -		},
-+	for name, tt := range map[string]struct{ err error }{
-+		"drops-owned-ref": {},
-+		"drop-fails":      {err: errDrop},
- 	} {
+-		"drops-stored-only": {
+-			store: storeOk,
+-			outs: []cmdtest.Out{
+-				{Command: "git stash list --format=%gd %H %gs", Output: listStored},
+-				{Command: "git stash drop --quiet -- stash@{0}"},
+-			},
+-		},
+-		"stored-not-listed": {
+-			store: storeOk,
+-			outs: []cmdtest.Out{
+-				{Command: "git stash list --format=%gd %H %gs", Output: list},
+-			},
+-		},
+-		"drop-stored-fails": {
+-			store: storeOk,
+-			outs: []cmdtest.Out{
+-				{Command: "git stash list --format=%gd %H %gs", Output: listStored},
+-				{Command: "git stash drop --quiet -- stash@{0}", Err: errDrop},
+-			},
+-			err: errDrop,
+-		},
+-		"store-fails-drops-all": {
+-			store: []cmdtest.Out{
+-				{Command: "git stash create", Output: "abc123"},
+-				{Command: "git stash store --quiet --message lefthook auto backup abc123", Err: errStore},
+-			},
+-			outs: []cmdtest.Out{
+-				{Command: "git stash list --format=%gd %H %gs", Output: listStored},
+-				{Command: "git stash drop --quiet -- stash@{2}"},
+-				{Command: "git stash drop --quiet -- stash@{0}"},
+-			},
+-		},
+-	} {
++	errDrop := errors.New("compare-and-delete failed")
++	for name, dropErr := range map[string]error{"owned-backup": nil, "changed-ref": errDrop} {
  		t.Run(name, func(t *testing.T) {
--			cmd := cmdtest.NewFakeCmd(t, tt.outs)
+-			cmd := cmdtest.NewFakeCmd(t, append(append([]cmdtest.Out{}, tt.store...), tt.outs...))
 -			w := wrapper.New(fs, cmd, loggertest.New())
+-			if len(tt.store) > 0 {
+-				_ = w.StoreStash()
++			cmd := cmdtest.NewFakeCmd(t, []cmdtest.Out{
++				{Command: "git stash create", Output: "abc123"},
++				{Command: "git update-ref refs/lefthook/backup/abc123 abc123 "},
++				{Command: "git update-ref -d refs/lefthook/backup/abc123 abc123", Err: dropErr},
++			})
++			w := wrapper.New(afero.NewMemMapFs(), cmd, loggertest.New())
++			if err := w.StoreStash(); err != nil {
++				t.Fatal(err)
+ 			}
 -
 -			err := w.DropStash()
 -
 -			if !errors.Is(err, tt.err) {
 -				t.Errorf("wrapper.DropStash() error = %v, want %v", err, tt.err)
-+			cmd := cmdtest.NewFakeCmd(t, []cmdtest.Out{{Command: "git update-ref -d refs/lefthook/backup/abc123 abc123", Err: tt.err}})
-+			w := wrapper.New(afero.NewMemMapFs(), cmd, loggertest.New())
-+			if err := w.DropStash("abc123"); !errors.Is(err, tt.err) {
-+				t.Errorf("DropStash error = %v, want %v", err, tt.err)
++			if err := w.DropStash(); !errors.Is(err, dropErr) {
++				t.Errorf("DropStash() = %v, want %v", err, dropErr)
  			}
  		})
  	}
-+	t.Run("refuses-empty-owner", func(t *testing.T) {
-+		w := wrapper.New(afero.NewMemMapFs(), cmdtest.NewFakeCmd(t, nil), loggertest.New())
-+		if err := w.DropStash(""); err == nil {
-+			t.Error("DropStash without an owner must fail")
-+		}
-+	})
  }
-diff --git a/internal/git/wrapper/save_unstaged_diff.go b/internal/git/wrapper/save_unstaged_diff.go
-index f2f20cea..f0fe8a7f 100644
---- a/internal/git/wrapper/save_unstaged_diff.go
-+++ b/internal/git/wrapper/save_unstaged_diff.go
-@@ -3,6 +3,8 @@ package wrapper
- import "fmt"
- 
- func (w *Wrapper) SaveUnstagedDiff(files []string) error {
-+	// Keep --output and its path in one argument so Git does not mistake a linked
-+	// worktree's external Git directory for a path in an implicit --no-index diff.
- 	_, err := w.cmd.batchedCmd(
- 		[]string{
- 			"git",
-@@ -15,8 +17,7 @@ func (w *Wrapper) SaveUnstagedDiff(files []string) error {
- 			"--dst-prefix=b/",   // force prefix for consistent behavior
- 			"--patch",           // output a patch that can be applied
- 			"--submodule=short", // always use the default short format for submodules
--			"--output",
--			w.unstagedDiffPath(),
-+			"--output=" + w.unstagedDiffPath(),
- 			"--",
- 		}, files)
- 	if err != nil {
-@@ -34,8 +35,7 @@ func (w *Wrapper) SaveUnstagedDiff(files []string) error {
- 		"--dst-prefix=b/",
- 		"--patch",
- 		"--submodule=short",
--		"--output",
--		w.unstagedAllDiffPath(),
-+		"--output=" + w.unstagedAllDiffPath(),
- 		"--",
- 	})
- 	if err != nil {
-diff --git a/internal/git/wrapper/save_unstaged_diff_test.go b/internal/git/wrapper/save_unstaged_diff_test.go
-index 0bcba097..a2a4efc4 100644
---- a/internal/git/wrapper/save_unstaged_diff_test.go
-+++ b/internal/git/wrapper/save_unstaged_diff_test.go
-@@ -15,9 +15,9 @@ import (
- func TestWrapper_SaveUnstagedDiff(t *testing.T) {
- 	fs := afero.NewMemMapFs()
- 	errDiff := errors.New("diff failed")
--	diffArgs := "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output "
--	diffFiles := diffArgs + filepath.Join("/repo/.git/info", "lefthook-unstaged.patch") + " -- a b"
--	diffAll := diffArgs + filepath.Join("/repo/.git/info", "lefthook-unstaged-all.patch") + " --"
-+	diffArgs := "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output="
-+	diffFiles := diffArgs + filepath.Join("/repo/.git", "lefthook-unstaged.patch") + " -- a b"
-+	diffAll := diffArgs + filepath.Join("/repo/.git", "lefthook-unstaged-all.patch") + " --"
- 
- 	for name, tt := range map[string]struct {
- 		outs []cmdtest.Out
-diff --git a/internal/git/wrapper/store_stash.go b/internal/git/wrapper/store_stash.go
-index e99d4fd8..4d33cc9f 100644
---- a/internal/git/wrapper/store_stash.go
-+++ b/internal/git/wrapper/store_stash.go
-@@ -1,23 +1,28 @@
++
++func TestWrapper_DropStashWithoutOwnedBackup(t *testing.T) {
++	for _, storeFails := range []bool{false, true} {
++		var outs []cmdtest.Out
++		if storeFails {
++			outs = []cmdtest.Out{
++				{Command: "git stash create", Output: "abc123"},
++				{Command: "git update-ref refs/lefthook/backup/abc123 abc123 ", Err: errors.New("ref already exists")},
++			}
++		}
++		cmd := cmdtest.NewFakeCmd(t, outs)
++		w := wrapper.New(afero.NewMemMapFs(), cmd, loggertest.New())
++		if storeFails && w.StoreStash() == nil {
++			t.Fatal("expected failed save")
++		}
++		if w.DropStash() == nil {
++			t.Fatal("must refuse cleanup without an owned backup")
++		}
++	}
++}
+diff --git i/internal/git/wrapper/store_stash.go w/internal/git/wrapper/store_stash.go
+index 768fefc..a8c4ee9 100644
+--- i/internal/git/wrapper/store_stash.go
++++ w/internal/git/wrapper/store_stash.go
+@@ -1,6 +1,8 @@
  package wrapper
  
 -const stashMessage = "lefthook auto backup"
-+import (
-+	"errors"
-+	"fmt"
-+)
++import "errors"
 +
-+// Shared refs keep backups reachable during garbage collection from any worktree.
 +const backupRefPrefix = "refs/lefthook/backup/"
  
  var cmdCreateStash = []string{"git", "stash", "create"}
  
--func (w *Wrapper) StoreStash() error {
-+// StoreStash preserves the stash-shaped commit without modifying the shared stash list.
-+func (w *Wrapper) StoreStash() (string, error) {
- 	stashHash, err := w.cmd.cmd(cmdCreateStash)
- 	if err != nil {
--		return err
-+		return "", fmt.Errorf("failed to create unstaged backup: %w", err)
+@@ -10,19 +12,17 @@ func (w *Wrapper) StoreStash() error {
+ 		return err
  	}
--
--	_, err = w.cmd.cmd([]string{
--		"git",
+ 
+-	message := stashMessage
+-	if w.cache.worktree {
+-		message += " - " + w.cache.projectDirname()
++	if stashHash == "" {
++		return errors.New("cannot save an empty unstaged backup")
+ 	}
+ 
++	// Create only our ref. Shared refs keep linked-worktree backups alive during GC.
+ 	_, err = w.cmd.cmd([]string{
+ 		"git",
 -		"stash",
 -		"store",
 -		"--quiet",
 -		"--message",
--		stashMessage,
--		stashHash,
--	})
--	return err
-+	if stashHash == "" {
-+		return "", errors.New("cannot save an empty unstaged backup")
-+	}
-+	// Create only: never take ownership of a backup from an earlier run.
-+	_, err = w.cmd.cmd([]string{"git", "update-ref", backupRefPrefix + stashHash, stashHash, ""})
-+	if err != nil {
-+		return "", fmt.Errorf("failed to preserve unstaged backup: %w", err)
-+	}
-+	return stashHash, nil
- }
-diff --git a/internal/git/wrapper/store_stash_test.go b/internal/git/wrapper/store_stash_test.go
-index 5e4a0d5b..de8c6066 100644
---- a/internal/git/wrapper/store_stash_test.go
-+++ b/internal/git/wrapper/store_stash_test.go
-@@ -19,11 +19,13 @@ func TestWrapper_StoreStash(t *testing.T) {
- 	for name, tt := range map[string]struct {
- 		outs []cmdtest.Out
- 		err  error
-+		hash string
- 	}{
+-		message,
++		"update-ref",
++		backupRefPrefix + stashHash,
+ 		stashHash,
++		"",
+ 	})
+ 	if err != nil {
+ 		return err
+diff --git i/internal/git/wrapper/store_stash_test.go w/internal/git/wrapper/store_stash_test.go
+index 3ca9893..2540ea1 100644
+--- i/internal/git/wrapper/store_stash_test.go
++++ w/internal/git/wrapper/store_stash_test.go
+@@ -24,9 +24,12 @@ func TestWrapper_StoreStash(t *testing.T) {
  		"stores-created-stash": {
-+			hash: "abc123",
  			outs: []cmdtest.Out{
  				{Command: "git stash create", Output: "abc123\n"},
 -				{Command: "git stash store --quiet --message lefthook auto backup abc123"},
 +				{Command: "git update-ref refs/lefthook/backup/abc123 abc123 "},
  			},
  		},
++		"empty-backup": {
++			outs: []cmdtest.Out{{Command: "git stash create"}},
++		},
  		"create-fails": {
-@@ -35,7 +37,7 @@ func TestWrapper_StoreStash(t *testing.T) {
+ 			outs: []cmdtest.Out{
+ 				{Command: "git stash create", Err: errCreate},
+@@ -36,22 +39,22 @@ func TestWrapper_StoreStash(t *testing.T) {
  		"store-fails": {
  			outs: []cmdtest.Out{
  				{Command: "git stash create", Output: "abc123"},
@@ -443,106 +345,43 @@ index 5e4a0d5b..de8c6066 100644
  			},
  			err: errStore,
  		},
-@@ -44,7 +46,10 @@ func TestWrapper_StoreStash(t *testing.T) {
- 			cmd := cmdtest.NewFakeCmd(t, tt.outs)
- 			w := wrapper.New(fs, cmd, loggertest.New())
+-		"worktree-message": {
++		"worktree-backup": {
+ 			worktree: true,
+ 			outs: []cmdtest.Out{
+ 				{Command: "git stash create", Output: "abc123"},
+-				{Command: "git stash store --quiet --message lefthook auto backup - feature abc123"},
++				{Command: "git update-ref refs/lefthook/backup/abc123 abc123 "},
+ 			},
+ 		},
+ 		"worktree-store-fails": {
+ 			worktree: true,
+ 			outs: []cmdtest.Out{
+ 				{Command: "git stash create", Output: "abc123"},
+-				{Command: "git stash store --quiet --message lefthook auto backup - feature abc123", Err: errStore},
++				{Command: "git update-ref refs/lefthook/backup/abc123 abc123 ", Err: errStore},
+ 			},
+ 			err: errStore,
+ 		},
+@@ -71,6 +74,12 @@ func TestWrapper_StoreStash(t *testing.T) {
  
--			err := w.StoreStash()
-+			hash, err := w.StoreStash()
-+			if hash != tt.hash {
-+				t.Errorf("StoreStash hash = %q, want %q", hash, tt.hash)
+ 			err := w.StoreStash()
+ 
++			if name == "empty-backup" {
++				if err == nil {
++					t.Fatal("empty backup must fail before unstaged changes are hidden")
++				}
++				return
 +			}
- 
  			if !errors.Is(err, tt.err) {
  				t.Errorf("wrapper.StoreStash() error = %v, want %v", err, tt.err)
-@@ -52,3 +57,11 @@ func TestWrapper_StoreStash(t *testing.T) {
- 		})
- 	}
- }
-+
-+func TestWrapper_StoreStash_emptyBackup(t *testing.T) {
-+	cmd := cmdtest.NewFakeCmd(t, []cmdtest.Out{{Command: "git stash create"}})
-+	w := wrapper.New(afero.NewMemMapFs(), cmd, loggertest.New())
-+	if hash, err := w.StoreStash(); err == nil || hash != "" {
-+		t.Errorf("StoreStash() = %q, %v; want empty hash and an error", hash, err)
-+	}
-+}
-diff --git a/internal/git/wrapper/unstaged_diff_applicable_test.go b/internal/git/wrapper/unstaged_diff_applicable_test.go
-index 0129fe12..eca44dac 100644
---- a/internal/git/wrapper/unstaged_diff_applicable_test.go
-+++ b/internal/git/wrapper/unstaged_diff_applicable_test.go
-@@ -13,7 +13,7 @@ import (
- )
- 
- func TestWrapper_UnstagedDiffApplicable(t *testing.T) {
--	patch := filepath.Join("/repo/.git/info", "lefthook-unstaged.patch")
-+	patch := filepath.Join("/repo/.git", "lefthook-unstaged.patch")
- 	check := "git apply -v --whitespace=nowarn --recount --unidiff-zero --check -- " + patch
- 
- 	for name, tt := range map[string]struct {
-diff --git a/internal/git/wrapper/wrapper.go b/internal/git/wrapper/wrapper.go
-index f66bc322..de9b7b03 100644
---- a/internal/git/wrapper/wrapper.go
-+++ b/internal/git/wrapper/wrapper.go
-@@ -122,9 +122,9 @@ func (w *Wrapper) readOriginHead() string {
- }
- 
- func (w *Wrapper) unstagedDiffPath() string {
--	return filepath.Join(w.infoPath, unstagedPatchName)
-+	return filepath.Join(w.gitPath, unstagedPatchName)
- }
- 
- func (w *Wrapper) unstagedAllDiffPath() string {
--	return filepath.Join(w.infoPath, unstagedAllPatchName)
-+	return filepath.Join(w.gitPath, unstagedAllPatchName)
- }
-diff --git a/internal/run/controller/guard.go b/internal/run/controller/guard.go
-index e5f5a8aa..3814ed69 100644
---- a/internal/run/controller/guard.go
-+++ b/internal/run/controller/guard.go
-@@ -89,9 +89,10 @@ func (g *guard) withHiddenUnstagedChanges(fn func() error) error {
- 
- 	g.logger.Debug("[lefthook] saving partially staged files")
- 
--	if err := g.git.SaveUnstagedChanges(partiallyStagedFiles); err != nil {
--		g.logger.Warnf("Failed to save unstaged changes: %s\n", err)
--		return err
-+	backup, saveErr := g.git.SaveUnstagedChanges(partiallyStagedFiles)
-+	if saveErr != nil {
-+		g.logger.Warnf("Failed to save unstaged changes: %s\n", saveErr)
-+		return saveErr
- 	}
- 
- 	logger.NewBuilder(g.logger).
-@@ -142,9 +143,9 @@ func (g *guard) withHiddenUnstagedChanges(fn func() error) error {
- 
- 	var restoreErr error
- 	if restoreAllUnstagedChanges {
--		restoreErr = g.git.RestoreAllUnstagedChanges()
-+		restoreErr = g.git.RestoreAllUnstagedChanges(backup)
- 	} else {
--		restoreErr = g.git.RestoreUnstagedChanges()
-+		restoreErr = g.git.RestoreUnstagedChanges(backup)
- 	}
- 	if restoreErr != nil {
- 		g.logger.Warnf("Failed to restore unstaged files: %s", restoreErr)
-diff --git a/internal/run/controller/guard_test.go b/internal/run/controller/guard_test.go
-index 22d04efa..ca2023dc 100644
---- a/internal/run/controller/guard_test.go
-+++ b/internal/run/controller/guard_test.go
-@@ -86,17 +86,16 @@ func Test_guard_wrap(t *testing.T) {
- 			failOnChanges:        false,
- 			commands: []cmdtest.Out{
- 				{Command: "git status --short --porcelain -z", Output: "AM file1\x00 M file2\x00 A file3\x00"},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged.patch") +
- 					" -- file1", Output: ""},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged-all.patch") +
+ 			}
+diff --git i/internal/run/controller/guard_test.go w/internal/run/controller/guard_test.go
+index e964b39..c6737dc 100644
+--- i/internal/run/controller/guard_test.go
++++ w/internal/run/controller/guard_test.go
+@@ -93,10 +93,9 @@ func Test_guard_wrap(t *testing.T) {
+ 					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
  					" --", Output: ""},
  				{Command: "git stash create", Output: "<stash-hash>"},
 -				{Command: "git stash store --quiet --message lefthook auto backup <stash-hash>", Output: ""},
@@ -554,19 +393,8 @@ index 22d04efa..ca2023dc 100644
  			},
  		},
  		"stashUnstagedChanges=true failOnChanges=true with partially staged no hook changes": {
-@@ -104,20 +103,19 @@ func Test_guard_wrap(t *testing.T) {
- 			failOnChanges:        true,
- 			commands: []cmdtest.Out{
- 				{Command: "git status --short --porcelain -z", Output: "AM file1\x00 M file2\x00"},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged.patch") +
- 					" -- file1", Output: ""},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged-all.patch") +
+@@ -111,13 +110,12 @@ func Test_guard_wrap(t *testing.T) {
+ 					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
  					" --", Output: ""},
  				{Command: "git stash create", Output: "<stash-hash>"},
 -				{Command: "git stash store --quiet --message lefthook auto backup <stash-hash>", Output: ""},
@@ -581,19 +409,8 @@ index 22d04efa..ca2023dc 100644
  			},
  		},
  		"stashUnstagedChanges=true failOnChanges=true with partially staged and hook changes with diff": {
-@@ -126,14 +124,14 @@ func Test_guard_wrap(t *testing.T) {
- 			failOnChangesDiff:    true,
- 			commands: []cmdtest.Out{
- 				{Command: "git status --short --porcelain -z", Output: "AM file1\x00"},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged.patch") +
- 					" -- file1", Output: ""},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged-all.patch") +
+@@ -133,7 +131,7 @@ func Test_guard_wrap(t *testing.T) {
+ 					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
  					" --", Output: ""},
  				{Command: "git stash create", Output: "<stash-hash>"},
 -				{Command: "git stash store --quiet --message lefthook auto backup <stash-hash>", Output: ""},
@@ -611,19 +428,8 @@ index 22d04efa..ca2023dc 100644
  			},
  			err: &FailOnChangesError{[]string{"file2"}},
  		},
-@@ -261,17 +258,17 @@ func Test_guard_wrap_stageFixed(t *testing.T) {
- 			filesToStage: []string{"file2"},
- 			commands: []cmdtest.Out{
- 				{Command: "git status --short --porcelain -z", Output: "AM file1\x00"},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged.patch") +
- 					" -- file1", Output: ""},
--				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output " +
--					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
-+				{Command: "git diff --binary --unified=0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --patch --submodule=short --output=" +
-+					filepath.Join("root", ".git", "lefthook-unstaged-all.patch") +
+@@ -268,10 +265,10 @@ func Test_guard_wrap_stageFixed(t *testing.T) {
+ 					filepath.Join("root", ".git", "info", "lefthook-unstaged-all.patch") +
  					" --", Output: ""},
  				{Command: "git stash create", Output: "<stash-hash>"},
 -				{Command: "git stash store --quiet --message lefthook auto backup <stash-hash>", Output: ""},
@@ -635,44 +441,25 @@ index 22d04efa..ca2023dc 100644
  			},
  			err: errStaging,
  		},
-diff --git a/tests/helpers/gittest/wrapper.go b/tests/helpers/gittest/wrapper.go
-index 6a7c505c..a07c9080 100644
---- a/tests/helpers/gittest/wrapper.go
-+++ b/tests/helpers/gittest/wrapper.go
-@@ -19,8 +19,8 @@ type StubWrapper struct {
- 	SaveUnstagedDiffFunc          func([]string) error
- 	UnstagedDiffApplicableFunc    func() bool
- 	ApplyUnstagedDiffFunc         func(bool) error
--	StoreStashFunc                func() error
--	DropStashFunc                 func() error
-+	StoreStashFunc                func() (string, error)
-+	DropStashFunc                 func(string) error
- 	DiscardUnstagedChangesFunc    func([]string) error
- 	DiscardAllUnstagedChangesFunc func() error
- 	StageFilesFunc                func([]string) error
-@@ -57,8 +57,8 @@ func (w *StubWrapper) SaveUnstagedDiff(s []string) error          { return w.Sav
- func (w *StubWrapper) UnstagedDiffApplicable() bool { return w.UnstagedDiffApplicableFunc() }
+diff --git i/internal/version/version.go w/internal/version/version.go
+index b078d5b..40ab4dc 100644
+--- i/internal/version/version.go
++++ w/internal/version/version.go
+@@ -8,7 +8,7 @@ import (
+ 	"golang.org/x/mod/semver"
+ )
  
- func (w *StubWrapper) ApplyUnstagedDiff(b bool) error { return w.ApplyUnstagedDiffFunc(b) }
--func (w *StubWrapper) StoreStash() error              { return w.StoreStashFunc() }
--func (w *StubWrapper) DropStash() error               { return w.DropStashFunc() }
-+func (w *StubWrapper) StoreStash() (string, error)    { return w.StoreStashFunc() }
-+func (w *StubWrapper) DropStash(hash string) error    { return w.DropStashFunc(hash) }
- func (w *StubWrapper) DiscardUnstagedChanges(s []string) error {
- 	return w.DiscardUnstagedChangesFunc(s)
- }
-diff --git a/tests/integration/restore_unstaged_on_conflict.txt b/tests/integration/restore_unstaged_on_conflict.txt
-index c0373a02..289b741e 100644
---- a/tests/integration/restore_unstaged_on_conflict.txt
-+++ b/tests/integration/restore_unstaged_on_conflict.txt
-@@ -30,10 +30,12 @@ grep lineUnstaged a.txt
- ! grep line42 a.txt
- grep lineCommitted b.txt
- grep 'unrelated unstaged change' c.txt
--! exists .git/info/lefthook-unstaged.patch
--! exists .git/info/lefthook-unstaged-all.patch
-+! exists .git/lefthook-unstaged.patch
-+! exists .git/lefthook-unstaged-all.patch
+-const version = "2.2.2"
++const version = "2.2.3-buzz.1"
+ 
+ var (
+ 	// Is set via -X github.com/evilmartians/lefthook/v2/internal/version.commit={commit}.
+diff --git i/tests/integration/restore_unstaged_on_conflict.txt w/tests/integration/restore_unstaged_on_conflict.txt
+index c0373a0..9ca4cec 100644
+--- i/tests/integration/restore_unstaged_on_conflict.txt
++++ w/tests/integration/restore_unstaged_on_conflict.txt
+@@ -34,6 +34,8 @@ grep 'unrelated unstaged change' c.txt
+ ! exists .git/info/lefthook-unstaged-all.patch
  exec git stash list
  ! stdout 'lefthook auto backup'
 +exec git for-each-ref refs/lefthook/backup/
@@ -680,10 +467,10 @@ index c0373a02..289b741e 100644
  
  -- lefthook.yml --
  pre-commit:
-diff --git a/tests/integration/run_interrupt.txt b/tests/integration/run_interrupt.txt
-index 2716c53d..12335f36 100644
---- a/tests/integration/run_interrupt.txt
-+++ b/tests/integration/run_interrupt.txt
+diff --git i/tests/integration/run_interrupt.txt w/tests/integration/run_interrupt.txt
+index 2716c53..b2ba9ca 100644
+--- i/tests/integration/run_interrupt.txt
++++ w/tests/integration/run_interrupt.txt
 @@ -19,6 +19,8 @@ stderr 'Error: Interrupted'
  grep unstaged newfile.txt
  exec git stash list
@@ -693,174 +480,3 @@ index 2716c53d..12335f36 100644
  
  -- lefthook.yml --
  pre-commit:
-@@ -29,6 +31,9 @@ pre-commit:
- -- hook.sh --
- #!/usr/bin/env bash
- 
-+if [ -n "${INTERRUPT_READY:-}" ]; then
-+  printf 'ready\n' > "$INTERRUPT_READY"
-+fi
- sleep 2
- >&2 echo hook-done
- 
-@@ -46,9 +51,13 @@ echo unstaged >> newfile.txt
- # so we first need to emulate being a terminal and enable
- # job monitoring so that new PGIDs are assigned.
- set -m
-+export INTERRUPT_READY="$PWD/interrupt.ready"
-+mkfifo "$INTERRUPT_READY"
- nohup git commit -m test &
- pgid=$!
--sleep 1
-+# Wait for the job to start, after the unstaged-change guard has finished saving.
-+read -r ready < "$INTERRUPT_READY"
-+rm "$INTERRUPT_READY"
- kill -SIGINT -$pgid
- wait
- >&2 echo 'script-done'
-diff --git a/tests/integration/worktree_recovery.txt b/tests/integration/worktree_recovery.txt
-new file mode 100644
-index 00000000..569ed3b9
---- /dev/null
-+++ b/tests/integration/worktree_recovery.txt
-@@ -0,0 +1,129 @@
-+[windows] skip
-+
-+# FIFO gates hold both hooks after backup creation, without timing assumptions.
-+chmod 0700 exercise.sh
-+chmod 0700 hook.sh
-+exec sh exercise.sh
-+stdout 'worktree recovery passed'
-+
-+-- lefthook.yml --
-+pre-commit:
-+  jobs:
-+    - run: sh hook.sh
-+
-+-- hook.sh --
-+#!/bin/sh
-+set -eu
-+if [ -n "${GATE:-}" ]; then
-+  printf 'ready\n' > "$GATE.ready"
-+  read -r release < "$GATE.release"
-+fi
-+
-+-- exercise.sh --
-+#!/bin/sh
-+set -eu
-+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
-+root="$PWD"
-+a= b=
-+trap 'status=$?; if [ "$status" -ne 0 ]; then cat "$root/main.log" "$root/linked.log" "$root/linked/failed.log" 2>/dev/null || :; fi; [ -z "$a" ] || kill "$a" 2>/dev/null || :; [ -z "$b" ] || kill "$b" 2>/dev/null || :; exit "$status"' EXIT
-+git init -q -b main
-+git config user.name Fixture
-+git config user.email fixture@example.test
-+printf 'base\n' > file.txt
-+git add file.txt hook.sh lefthook.yml
-+git commit -qm initial
-+git worktree add -q -b linked linked
-+linked="$root/linked"
-+# Existing user and legacy backups must remain exactly as they are.
-+printf 'user backup\n' >> file.txt
-+legacy=$(git stash create)
-+git stash store -m 'lefthook auto backup' "$legacy"
-+git restore file.txt
-+git stash list --format='%H %gs' > expected-stashes
-+git update-ref "refs/lefthook/backup/$legacy" "$legacy" ''
-+for wt in "$root" "$linked"; do
-+  printf 'base\nstaged\n' > "$wt/file.txt"
-+  git -C "$wt" add file.txt
-+  printf '%s\n' "unstaged-$wt" >> "$wt/file.txt"
-+done
-+lefthook install
-+mkfifo "$root/main.ready" "$root/main.release" "$root/linked.ready" "$root/linked.release"
-+GATE="$root/main" git commit -qm main-change > main.log 2>&1 &
-+a=$!
-+read -r ready < "$root/main.ready"
-+main_ref=
-+for ref in $(git for-each-ref --format='%(refname)' refs/lefthook/backup/); do
-+  if [ "$ref" != "refs/lefthook/backup/$legacy" ]; then
-+    test -z "$main_ref"
-+    main_ref=$ref
-+  fi
-+done
-+test -n "$main_ref"
-+(cd "$linked" && GATE="$root/linked" git commit -qm linked-change) > linked.log 2>&1 &
-+b=$!
-+read -r ready < "$root/linked.ready"
-+# Collecting from main must retain another worktree's live backup.
-+linked_ref=
-+for ref in $(git for-each-ref --format='%(refname)' refs/lefthook/backup/); do
-+  if [ "$ref" != "$main_ref" ] && [ "$ref" != "refs/lefthook/backup/$legacy" ]; then
-+    test -z "$linked_ref"
-+    linked_ref=$ref
-+  fi
-+done
-+test -n "$linked_ref"
-+git gc --prune=now --quiet
-+git -C "$linked" cat-file -e "$linked_ref^{commit}"
-+printf 'release\n' > "$root/main.release"
-+wait "$a" || { cat main.log; exit 1; }
-+a=
-+# Main's cleanup must not delete the linked worktree's still-live backup.
-+git -C "$linked" cat-file -e "$linked_ref^{commit}"
-+printf 'release\n' > "$root/linked.release"
-+wait "$b" || { cat linked.log; exit 1; }
-+b=
-+for wt in "$root" "$linked"; do
-+  test "$(git -C "$wt" show HEAD:file.txt)" = "$(printf 'base\nstaged')"
-+  test "$(cat "$wt/file.txt")" = "$(printf 'base\nstaged\n%s' "unstaged-$wt")"
-+done
-+git stash list --format='%H %gs' > actual-stashes
-+cmp expected-stashes actual-stashes
-+test "$(git for-each-ref --format='%(refname)' refs/lefthook/backup/)" = "refs/lefthook/backup/$legacy"
-+
-+# A restoration failure must keep a recoverable owned ref, even after main gc.
-+cd "$linked"
-+printf 'base\nnext-staged\n' > file.txt
-+git add file.txt
-+printf 'precious\n' >> file.txt
-+cp file.txt expected-file
-+cat > hook.sh <<'HOOK'
-+#!/bin/sh
-+# Make both saved patches invalid so the restoration itself fails.
-+dir=$(git rev-parse --absolute-git-dir)
-+printf 'invalid patch\n' > "$dir/lefthook-unstaged.patch"
-+printf 'invalid patch\n' > "$dir/lefthook-unstaged-all.patch"
-+HOOK
-+if git commit -qm must-fail > failed.log 2>&1; then
-+  cat failed.log; exit 1
-+fi
-+backup=
-+for ref in $(git for-each-ref --format='%(refname)' refs/lefthook/backup/); do
-+  if [ "$ref" != "refs/lefthook/backup/$legacy" ]; then
-+    test -z "$backup"
-+    backup=$ref
-+  fi
-+done
-+test -n "$backup"
-+git -C "$root" gc --prune=now --quiet
-+git cat-file -e "$backup^{commit}"
-+# The backup is stash-shaped and restores the original index and worktree.
-+git restore --staged --worktree file.txt
-+git restore hook.sh
-+git stash apply --index "$backup"
-+cmp expected-file file.txt
-+# Only the owner ref is removed, never the legacy stash or another ref.
-+hash=$(git rev-parse "$backup")
-+git update-ref -d "$backup" "$hash"
-+git stash list --format='%H %gs' > actual-stashes
-+cmp "$root/expected-stashes" actual-stashes
-+printf 'worktree recovery passed\n'
---- a/internal/version/version.go
-+++ b/internal/version/version.go
-@@ -8,7 +8,7 @@
- 	"golang.org/x/mod/semver"
- )
- 
--const version = "2.1.17"
-+const version = "2.1.18-buzz.3"
- 
- var (
- 	// Is set via -X github.com/evilmartians/lefthook/v2/internal/version.commit={commit}.

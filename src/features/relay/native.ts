@@ -1,3 +1,4 @@
+import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -50,6 +51,7 @@ import {
 } from "../agents/memory";
 import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
+import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import { archiveClient } from "../archive/client";
 import {
   acceptPublish,
@@ -401,6 +403,9 @@ export async function connectNativeTransport(
   });
   return {
     ...transport,
+    audienceAuthorityCommunity: audienceAuthorityCommunity(
+      info.audience_authority,
+    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -469,6 +474,24 @@ export async function connectNativeTransport(
       "identity-archive",
       validateArchiveRequestTemplate,
     ),
+    // Artifact saves go straight to the relay, which accepts a replay of an
+    // already-accepted revision, so they skip `writer`'s 15-minute retry
+    // block below. Signing applies the artifact size bound.
+    configArtifacts: {
+      kinds: [ARTIFACT_KIND],
+      async sign(event, signal) {
+        if (event.kind !== ARTIFACT_KIND) throw new Error("Not an artifact");
+        const signed = await writer.sign(event, signal);
+        if (signed.kind !== ARTIFACT_KIND || signed.pubkey !== transport.viewer)
+          throw new Error("Invalid artifact signature");
+        return signed;
+      },
+      async publish(event, signal) {
+        if (event.kind !== ARTIFACT_KIND || event.pubkey !== transport.viewer)
+          throw new Error("Not this viewer's artifact");
+        return (await writer.publish(event, signal)) ?? "";
+      },
+    },
     async openDirectMessage(pubkeys, signal) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {
@@ -669,6 +692,7 @@ export async function connectNativeTransport(
     async readAgentMemories(
       agent: string,
       signal: AbortSignal,
+      slug?: string,
     ): Promise<MemoryListing> {
       if (!memoryAgent(agent, transport.viewer))
         throw new Error("Invalid memory target");
@@ -679,6 +703,7 @@ export async function connectNativeTransport(
         result = await invoke<unknown>("relay_agent_memories_read", {
           community: origin,
           agent,
+          slug: slug ?? null,
         });
       } catch (reason) {
         if (reason === "MemoryDenied") {

@@ -33,8 +33,10 @@ export function Select({
   placeholder,
   valueLabel,
   valueTitle,
+  valueSuffix,
   leading,
   align = "start",
+  size,
   appearance = "outlined",
 }: {
   label: string;
@@ -47,11 +49,15 @@ export function Select({
   /** Compact display text; option labels retain their full meaning. */
   valueLabel?: string | undefined;
   valueTitle?: string;
+  /** Compact metadata stays visible while the selected value truncates. */
+  valueSuffix?: string | undefined;
   /** Decorative identity artwork shown before the selected value. */
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact" | "preference";
+  /** Match adjacent controls without changing the selection treatment. */
+  size?: "sm" | "md";
   appearance?: "outlined" | "subtle";
   disabled?: boolean;
   value: string;
@@ -133,7 +139,7 @@ export function Select({
                       : "outline"
                     : "ghost"
                 }
-                size={variant === "compact" ? "sm" : "md"}
+                size={size ?? (variant === "compact" ? "sm" : "md")}
               >
                 <span className="buzz-select-value-content">
                   {leading && (
@@ -141,23 +147,30 @@ export function Select({
                       {leading}
                     </span>
                   )}
-                  <BaseSelect.Value
-                    className={
-                      variant === "compact" ? "buzz-select-value" : undefined
-                    }
-                    title={
-                      variant === "compact"
-                        ? (valueTitle ??
-                          items.find((item) => item.value === value)?.label)
-                        : undefined
-                    }
-                    placeholder={
-                      selectedValue === null ? placeholder : undefined
-                    }
-                    data-placeholder={selectedValue === null ? "" : undefined}
-                  >
-                    {valueLabel}
-                  </BaseSelect.Value>
+                  <span className="buzz-select-value-text">
+                    <BaseSelect.Value
+                      className={
+                        variant === "compact" ? "buzz-select-value" : undefined
+                      }
+                      title={
+                        variant === "compact"
+                          ? (valueTitle ??
+                            items.find((item) => item.value === value)?.label)
+                          : undefined
+                      }
+                      placeholder={
+                        selectedValue === null ? placeholder : undefined
+                      }
+                      data-placeholder={selectedValue === null ? "" : undefined}
+                    >
+                      {valueLabel}
+                    </BaseSelect.Value>
+                    {variant === "compact" && valueSuffix && (
+                      <span className="buzz-select-value-suffix">
+                        {valueSuffix}
+                      </span>
+                    )}
+                  </span>
                 </span>
                 {!(variant === "compact" && appearance === "subtle") && (
                   <BaseSelect.Icon>
@@ -249,10 +262,10 @@ export function Select({
   if (requestedVariant === "preference")
     return (
       <>
+        {/* The row names the setting; the trigger carries unavailability. */}
         <PreferenceRow
           title={label}
           subtitle={description}
-          disabled={disabled}
           trailing={control}
         />
         {error && (

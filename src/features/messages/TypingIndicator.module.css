@@ -2,6 +2,8 @@
   position: absolute;
   inset-block-end: calc(100% + var(--space-half));
   inset-inline: var(--space-4);
+  inline-size: min(calc(100% - 2 * var(--space-4)), 52rem);
+  margin-inline: auto;
   z-index: 1;
   flex-direction: row-reverse;
   justify-content: space-between;
@@ -108,5 +110,6 @@
 @media (max-width: 40.625rem) {
   .typing {
     inset-inline: var(--space-3);
+    inline-size: min(calc(100% - 2 * var(--space-3)), 52rem);
   }
 }

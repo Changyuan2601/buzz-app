@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { readJournal } from "./reading.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 
 test.use({
@@ -95,21 +96,33 @@ test("manage a channel message, peer unread state, and its thread", async ({
     `[data-channel-timeline] [data-message-id="${peer.id}"]`,
   );
   await expect(peerRow).toBeVisible();
-  await peerRow.hover();
   const peerTrigger = peerRow.getByRole("button", {
     name: "More message actions",
   });
-  await peerTrigger.click();
+  // Automatic reading can change the action while its menu opens. Establish
+  // the durable read boundary first, then exercise exact actions, not whichever
+  // toggle happens to occupy the same menu row when the click is dispatched.
+  await peerRow.click();
+  await expect
+    .poll(
+      async () =>
+        (await readJournal(page))?.state.frontiers["activity:alpha"] ?? 0,
+    )
+    .toBeGreaterThanOrEqual(peer.created_at);
   const toggle = page.getByRole("menuitem", { name: /^Mark (read|unread)$/ });
-  const initial = await toggle.textContent();
-  await toggle.click();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await peerRow.hover();
-  await peerTrigger.click();
-  await expect(toggle).toHaveText(
-    initial === "Mark read" ? "Mark unread" : "Mark read",
-  );
-  await toggle.click();
+  for (const [action, next] of [
+    ["Mark unread", "Mark read"],
+    ["Mark read", "Mark unread"],
+  ]) {
+    await peerRow.hover();
+    await peerTrigger.click();
+    await page.getByRole("menuitem", { name: action, exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await peerRow.hover();
+    await peerTrigger.click();
+    await expect(toggle).toHaveText(next);
+    await page.keyboard.press("Escape");
+  }
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await row.hover();
   await row.getByRole("button", { name: "Reply", exact: true }).click();

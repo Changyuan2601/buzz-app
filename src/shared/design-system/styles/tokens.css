@@ -291,7 +291,8 @@
   /* Reference hues kept in OKLCH, with lightness lowered only to meet 4.5:1
      for white ink. Chroma is preserved up to the sRGB gamut boundary. */
   --bubble-ink: #ffffff;
-  --bubble-neutral: #e9e9ea; /* Received fill mixed with 5% black. */
+  --bubble-neutral: #e9e9ea;
+  --bubble-received: #f3f3f4;
   --bubble-blue: #0077db;
   --bubble-green: #008934;
   --bubble-orange: #c95100;
@@ -321,7 +322,7 @@
   --neutral-action-pressed: #525252;
   --neutral-12: #000000; /* prominent controls and focus boundary   */
 
-  /* Backdrop interaction fills let the shell gradient show through. */
+  /* Backdrop interaction fills let the shell and its dot texture show through. */
   --backdrop-hover-fill: rgb(0 0 0 / 6%);
   --backdrop-pressed-fill: rgb(0 0 0 / 10%);
 
@@ -359,9 +360,11 @@
     radial-gradient(at 85% 14%, #d9d4ff 0%, transparent 57%),
     linear-gradient(154deg, #fbf8ff 0%, #e9ddf8 50%, #dce8fb 100%);
 
-  /* --- Texture. Separate from colour and gradient. --------- */
-  --texture-dots-color: #0a0a0a0f;
-  --texture-dots-size: 28px;
+  /* Decorative dots are a shade of the shell, never an independent gray.
+     Mixing in sRGB preserves the background's hue while keeping the result
+     in gamut. This is a shared texture recipe, not a component shade override. */
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 94%, black);
+  --texture-dots-size: 24px;
 
   /* --- Blur. A separate axis from translucency. ------------ */
   --blur-sm: 8px;
@@ -420,7 +423,8 @@
   --image-rim: oklch(1 0 0 / 0.1);
   --neutral-raised: #282828;
   --neutral-quiet-hover: #2e2e2e;
-  --bubble-neutral: #2e2e2e; /* Received fill mixed with 5% white. */
+  --bubble-neutral: #2e2e2e;
+  --bubble-received: #292929;
   --bubble-blue: #0077db;
   --bubble-green: #008934;
   --bubble-orange: #c95100;
@@ -505,14 +509,14 @@
     radial-gradient(at 48% 52%, rgba(109, 40, 217, 0.28) 0%, transparent 79%),
     linear-gradient(155deg, #100914 0%, #21113c 52%, #081622 100%);
 
-  --texture-dots-color: #ffffff14;
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
 }
 
 /* ============================================================
-   LAYER 1 — SEMANTIC BACKDROP CHOICES
-   Numbered slots pair one named light treatment with one named
-   dark treatment. They are the appearance-preference seam: a
-   person selects `gradient-1`, not a light-only scene name.
+   LEGACY BACKDROP SPECIMENS
+   Numbered slots remain only for the glass study in the viewer.
+   They are not app themes; the product shell uses solid --bg-app
+   with the shared hue-derived dot texture.
    ============================================================ */
 
 :root {
@@ -542,7 +546,7 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
-  --surface-message: var(--neutral-2);
+  --surface-message: var(--bubble-received);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --surface-message-own: var(--bubble-neutral);
@@ -574,6 +578,7 @@
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
+  --border-message-thread: var(--neutral-4);
   --scrollbar-thumb: var(--neutral-8);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -617,7 +622,7 @@
 
 :root[data-color-mode="dark"],
 .dark {
-  --surface-message: var(--neutral-4);
+  --surface-message: var(--bubble-received);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --surface-message-own: var(--bubble-neutral);
@@ -656,6 +661,7 @@
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
+  --border-message-thread: var(--neutral-6);
   --scrollbar-thumb: var(--neutral-9);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -703,8 +709,12 @@
    exceptions at the bottom.
    ============================================================ */
 
+.light,
 :root {
-  --bg-app: var(--gradient-1);
+  --bg-app: var(--neutral-quiet-hover);
+}
+
+:root {
   --bg-panel: var(--surface-panel); /* dark: neutral-3 */
   --bg-float: var(--surface-popover); /* dark: neutral-5 */
   --bg-scrim: #00000060;
@@ -753,7 +763,7 @@
   --bg-glass-primary-hover: var(--glass-3);
   --bg-glass-secondary: var(--glass-4);
   --bg-glass-secondary-hover: var(--glass-5);
-  --bg-chrome-selected: var(--neutral-1);
+  --bg-chrome-selected: var(--surface-panel);
 
   /* --- Geometry. Repeated relationships from Messages. ----- */
   --space-workspace-inset: var(--space-4);
@@ -800,6 +810,9 @@
   /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);
+  /* Fixed PDF artwork colors, paired in both themes. */
+  --file-pdf-surface: #ffffff;
+  --file-pdf-ink: #d32f2f;
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);
@@ -843,6 +856,7 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  --bg-app: var(--neutral-2);
   --bg-panel: var(--surface-panel);
   --border-image: var(--image-rim);
   --bg-float: var(--surface-popover);
@@ -875,6 +889,15 @@
    `text-gray-500` does not exist. Only the roles above do.
    ============================================================ */
 
+:root,
+[data-bubble-color] {
+  --surface-message-highlight: color-mix(
+    in srgb,
+    var(--surface-message-own) 20%,
+    var(--surface-panel)
+  );
+}
+
 @theme inline {
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
@@ -905,6 +928,7 @@
   --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
+  --border-color-message-thread: var(--border-message-thread);
   --border-color-prominent: var(--border-prominent);
   --border-color-floating-control: var(--border-floating-control);
   --border-color-focus: var(--border-focus);
@@ -1112,6 +1136,7 @@
 }
 
 /* Device-local message colors; scopes also paint the settings swatches. */
+
 :root[data-bubble-color="neutral"],
 [data-bubble-color="neutral"] {
   --surface-message-own: var(--bubble-neutral);

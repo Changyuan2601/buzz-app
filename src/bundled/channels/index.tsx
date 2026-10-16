@@ -3,6 +3,7 @@ import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
+import { registerSharedSessions } from "./shared-sessions-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { MessageSettings } from "./MessageSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
@@ -16,6 +17,7 @@ export const inject = [
   "agents",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
+  registerSharedSessions(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",

@@ -532,3 +532,31 @@ it("marks the row for ordinary unread and working agents", () => {
   expect(select()).not.toHaveAttribute("data-working");
   expect(badges()).not.toHaveAttribute("data-working");
 });
+
+it("marks a temporary channel with its lifetime and yields the slot to working agents", () => {
+  const state = owner();
+  const temporary: ChannelSummary = {
+    id: "alpha",
+    name: "Alpha",
+    channelType: "stream",
+    ttlSeconds: 604800,
+  };
+  const view = render(
+    <ChannelSidebarItem {...itemProps(state.session, false, temporary)} />,
+  );
+  const label = "Temporary channel. Cleans up after 7 days without activity.";
+  const marker = screen.getByRole("img", { name: label });
+  expect(marker).toHaveAttribute("title", label);
+  // Metadata inside the select surface, not a separate control.
+  expect(marker.closest("button")).toHaveAttribute("data-channel-id", "alpha");
+  act(() => state.unread(1, 1));
+  expect(document.querySelector("[data-channel-priority]")).not.toBeNull();
+  expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+  view.rerender(
+    <ChannelSidebarItem {...itemProps(state.session, true, temporary)} />,
+  );
+  expect(document.querySelector("[data-channel-working]")).not.toBeNull();
+  expect(document.querySelector("[data-channel-temporary]")).toBeNull();
+  view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
+  expect(document.querySelector("[data-channel-temporary]")).toBeNull();
+});

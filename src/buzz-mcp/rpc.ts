@@ -2,7 +2,7 @@
 // JSON-RPC message at a time, as Claude sends them over its stream-json
 // pipe to an in-process (`sdk`) server. Holds no state between messages.
 import type { BuzzClient, Context } from "./client";
-import { BUZZ_SESSION, callSessionTool } from "./session-tools";
+import { type AddedTool, callSessionTool, sessionTools } from "./session-tools";
 import type { Reply } from "./tools";
 
 type Message = Readonly<{
@@ -11,12 +11,13 @@ type Message = Readonly<{
   params?: Readonly<Record<string, unknown>>;
 }>;
 
-/** Answers `input`, listing the session's Buzz tools. Without a client,
- * tools are listed but cannot be called. */
+/** Answers `input`, listing the session's Buzz tools and the `added` ones
+ * plugins add. Without a client, tools are listed but cannot be called. */
 export async function respond(
   client: BuzzClient | undefined,
   context: Context,
   input: unknown,
+  added: readonly AddedTool[] = [],
 ) {
   const { id, method, params = {} } = (input ?? {}) as Message;
   // A notification needs no answer, but the pipe expects one.
@@ -34,13 +35,13 @@ export async function respond(
       return result({});
     case "tools/list":
       return result({
-        tools: BUZZ_SESSION.tools,
+        tools: sessionTools(added),
       });
     case "tools/call":
       try {
         const name = String(params.name);
         const args = (params.arguments ?? {}) as Record<string, unknown>;
-        const reply = await callSessionTool(client, context, name, args);
+        const reply = await callSessionTool(client, context, name, args, added);
         return result({ content: content(reply) });
       } catch (error) {
         return result({

@@ -38,6 +38,17 @@ describe("open target boundary", () => {
     expect(Object.isFrozen(target)).toBe(true);
     expect(() => parseOpenTarget({ ...target, scope: undefined })).toThrow();
   });
+  it("preserves a scoped Shared sessions opening", () => {
+    const target = parseOpenTarget({
+      ...conversation,
+      panel: "shared-sessions",
+    });
+    expect(target).toEqual({
+      ...parseOpenTarget(conversation),
+      panel: "shared-sessions",
+    });
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+  });
   it("supports local targets without account or relay and gives routes stable identity", () => {
     for (const target of [
       { version: 1, kind: "home" },

@@ -1,7 +1,12 @@
 /** Owner-view NIP-AE snapshot from a purpose-bound key-owning host. */
+/** Budgets of the development broker's single memory query. */
 export const MEMORY_EVENT_LIMIT = 256;
 export const MEMORY_WIRE_BYTES = 2 * 1024 * 1024;
 export const MEMORY_TEXT_BYTES = 1024 * 1024;
+/** Budgets of a listing from any host; the native host pages past the broker's
+ * single query, up to the same caps. */
+const LISTING_ENTRIES = 4096;
+const LISTING_TEXT_BYTES = 8 * 1024 * 1024;
 export interface MemoryEntry {
   slug: string;
   body: string;
@@ -12,9 +17,11 @@ export interface MemoryListing {
   entries: readonly MemoryEntry[];
   partial: boolean;
 }
+/** Reads every entry, or only entry `slug` when given. */
 export type MemoryReader = (
   agent: string,
   signal: AbortSignal,
+  slug?: string,
 ) => Promise<MemoryListing>;
 export type MemorySnapshot = Readonly<{
   status:
@@ -72,7 +79,7 @@ export function memoryListing(input: unknown): MemoryListing {
     !value ||
     typeof value.partial !== "boolean" ||
     !Array.isArray(value.entries) ||
-    value.entries.length > MEMORY_EVENT_LIMIT
+    value.entries.length > LISTING_ENTRIES
   )
     throw new Error("Invalid memory listing");
   const slugs = new Set<string>();
@@ -96,7 +103,7 @@ export function memoryListing(input: unknown): MemoryListing {
       createdAt: entry.createdAt,
     };
     bytes += new TextEncoder().encode(JSON.stringify(copy)).length;
-    if (bytes > MEMORY_TEXT_BYTES)
+    if (bytes > LISTING_TEXT_BYTES)
       throw new Error("Memory listing exceeds budget");
     return Object.freeze(copy);
   });
@@ -197,7 +204,7 @@ export function createAgentMemories(
   }
   /** Runtime reads do not consume mounted-view capacity. They are serialized so
    * bursts across agents still impose one bounded owner-view read per session. */
-  function read(agent: string, signal: AbortSignal) {
+  function read(agent: string, signal: AbortSignal, slug?: string) {
     const admitted = generation;
     const task = queued.then(async () => {
       signal.throwIfAborted();
@@ -206,6 +213,7 @@ export function createAgentMemories(
         closed ||
         !source ||
         !memoryAgent(agent, viewer) ||
+        (slug !== undefined && !memorySlug(slug)) ||
         !available()
       )
         throw new Error("Memory read unavailable");
@@ -217,11 +225,19 @@ export function createAgentMemories(
           controller.signal,
           AbortSignal.timeout(10000),
         ]);
-        const listing = memoryListing(await source(agent, combined));
+        const listing = memoryListing(await source(agent, combined, slug));
         combined.throwIfAborted();
         if (admitted !== generation || !available())
           throw new Error("Memory read unavailable");
-        return listing;
+        // A source may answer a one-entry read with more.
+        return slug === undefined
+          ? listing
+          : Object.freeze({
+              ...listing,
+              entries: Object.freeze(
+                listing.entries.filter((entry) => entry.slug === slug),
+              ),
+            });
       } finally {
         reads.delete(controller);
       }

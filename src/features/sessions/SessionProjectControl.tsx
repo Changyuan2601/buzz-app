@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
-  CaretUpIcon,
-  FolderSimpleIcon,
+  CaretDownIcon,
+  Cube3dSphereIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -67,12 +67,16 @@ export function SessionProjectControl({
             snapshot.status === "idle" ||
             snapshot.status === "loading"
           }
-          aria-label={`Project: ${project?.name ?? "No project"}`}
+          aria-label={project ? `Project: ${project.name}` : "Add project"}
           render={(props) => (
-            <Button {...props} variant="ghost" size="sm">
-              <FolderSimpleIcon size={16} aria-hidden="true" />
-              <span>{project?.name ?? "No project"}</span>
-              <CaretUpIcon size={12} aria-hidden="true" />
+            <Button {...props} variant="ghost" size="xs">
+              <Cube3dSphereIcon size={16} aria-hidden="true" />
+              <span>{project?.name ?? "Add project"}</span>
+              <CaretDownIcon
+                size={12}
+                className="buzz-dropdown-chevron"
+                aria-hidden="true"
+              />
             </Button>
           )}
         />

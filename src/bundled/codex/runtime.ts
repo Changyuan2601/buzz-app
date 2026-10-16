@@ -4,6 +4,7 @@ import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
+  Agents,
   Delivery,
   Models,
   StandaloneTurn,
@@ -11,15 +12,18 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
-import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
 import {
-  BUZZ_SESSION,
+  type AddedTool,
+  addedKey,
   callSessionTool,
+  sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import {
   config,
+  resolveModel,
   defaults,
   absoluteWorkspace,
   effortName,
@@ -67,8 +71,14 @@ type Request = {
   failActivity(reason: string): void;
 };
 /** `at` is when the binding last started a turn; bindings saved before it
- * existed have none. */
-type Saved = { threadId: string; workspace: string; at?: number };
+ * existed have none. `tools` is the `addedKey` of the thread's tools, absent
+ * when plugins added none. */
+type Saved = {
+  threadId: string;
+  workspace: string;
+  at?: number;
+  tools?: string;
+};
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -153,15 +163,19 @@ export class CodexRuntime {
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
-  /** Read-only model discovery, kept per agent until its settings change. */
+  /** Read-only model discovery, kept until effective model settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
   private memoryReads = new MemoryReads();
   constructor(
     private readonly spawn: Spawn,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
     private readonly storage: Storage = localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** The tools plugins add to every thread now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -173,26 +187,15 @@ export class CodexRuntime {
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
     const settings = this.resolveConfig(agent.config);
-    const key = JSON.stringify([
-      settings.workspace,
-      settings.model,
-      settings.effort,
-    ]);
+    const key = JSON.stringify([settings.model, settings.effort]);
     const existing = this.previews.get(agent.pubkey);
     if (existing?.key === key) return existing.ready;
     const server = this.open();
     const rpc = server.rpc;
     const ready = (async () => {
-      const workspace = await this.workspace(settings.workspace);
       await server.opening;
-      const normalized = await rpc.request<{
-        config: { model?: string | null };
-      }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
-      const model =
-        settings.model ||
-        normalized.config.model ||
-        models.find((row) => row.isDefault)?.model;
+      const model = resolveModel(settings.model, models);
       const offered = models.map((row) => {
         const efforts = row.supportedReasoningEfforts.map(
           ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
@@ -211,9 +214,10 @@ export class CodexRuntime {
       // A configured model this Codex does not list still leaves the
       // listed ones to pick, so the picker stays.
       return !model || models.some((row) => row.model === model)
-        ? { current: model ?? "", models: offered }
+        ? { current: model ?? "", models: offered, sendDefaults: true }
         : {
             current: model,
+            sendDefaults: true,
             models: [{ id: model, label: model, efforts: [] }, ...offered],
           };
     })();
@@ -672,11 +676,15 @@ export class CodexRuntime {
       );
       const text = await prompt();
       if (text === undefined) return { ok: true };
-      const memory = await this.core({ agent, scope }, signal);
+      const memory = await this.core(agent.pubkey, signal);
       signal.throwIfAborted();
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
-        { ...params, ephemeral: true, dynamicTools: DYNAMIC_TOOLS },
+        {
+          ...params,
+          ephemeral: true,
+          dynamicTools: dynamicTools(this.added()),
+        },
       );
       once.threadId = started.thread.id;
       server.threads.set(once.threadId, agent.pubkey);
@@ -811,7 +819,7 @@ export class CodexRuntime {
     if (
       !turn ||
       call.namespace !== "buzz" ||
-      !BUZZ_SESSION.tools.some((tool) => tool.name === call.tool)
+      !sessionTools(this.added()).some((tool) => tool.name === call.tool)
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
@@ -831,14 +839,19 @@ export class CodexRuntime {
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {
+      relayAuthor: this.reads(agent.pubkey)?.relayAuthor?.(),
+      audienceAuthorityCommunity: this.reads(
+        agent.pubkey,
+      )?.audienceAuthorityCommunity?.(),
+      signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
       spawn: this.spawn,
       cwd: turn.workspace,
       check,
       signal: turn.signal,
-      memories: async () => {
-        const { entries } = await this.memories(owner, turn.signal);
+      memories: async (slug) => {
+        const listing = await this.memories(owner, turn.signal, slug);
         check();
-        return entries;
+        return listing;
       },
       remembered: () => {
         const reads = this.reads(agent.pubkey);
@@ -853,7 +866,13 @@ export class CodexRuntime {
           ...(request.conversation.topLevel ? { topLevel: true } : {}),
         }
       : {};
-    const reply = await callSessionTool(client, context, call.tool, args);
+    const reply = await callSessionTool(
+      client,
+      context,
+      call.tool,
+      args,
+      this.added(),
+    );
     const final = call.tool === "send" && args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
@@ -870,36 +889,24 @@ export class CodexRuntime {
       ],
     };
   }
-  /** The agent's memory, as its community's reads give it. */
+  /** The agent's memory, or only entry `slug`, as its community's reads give
+   * it. */
   private async memories(
     request: Pick<Request, "scope" | "agent">,
     signal: AbortSignal,
+    slug?: string,
   ) {
     const { pubkey } = request.agent;
     const reads = this.reads(pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("Buzz is not connected to this community");
     const { connection } = reads;
-    const listing = await this.memoryReads.read(reads, pubkey, signal);
+    const listing = await this.memoryReads.read(reads, pubkey, signal, slug);
     signal.throwIfAborted();
     const current = this.reads(pubkey);
     if (current?.scope !== request.scope || current.connection !== connection)
       throw new Error("Buzz is not connected to this community");
     return listing;
-  }
-  /** The agent's `core` memory for a turn: its text, `null` when it has none,
-   * or undefined when it could not be read, so the turn goes on without it. */
-  private async core(
-    request: Pick<Request, "scope" | "agent">,
-    signal: AbortSignal,
-  ) {
-    try {
-      return coreOf(await this.memories(request, signal));
-    } catch (error) {
-      signal.throwIfAborted();
-      console.warn("Codex could not read the agent's memory", error);
-      return undefined;
-    }
   }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
@@ -950,15 +957,11 @@ export class CodexRuntime {
   ) {
     const normalized = await rpc.request<{
       config: {
-        model?: string | null;
         mcp_servers?: Record<string, Record<string, unknown>>;
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
-    const own =
-      settings.model ||
-      normalized.config.model ||
-      models.find((row) => row.isDefault)?.model;
+    const own = resolveModel(settings.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
     const picked = models.find((row) => row.model === pick.model);
     const selected = picked ?? models.find((row) => row.model === own);
@@ -1069,7 +1072,12 @@ export class CodexRuntime {
       );
       active.model = model;
       active.effort = effort;
-      const resuming = existing?.workspace === workspace;
+      // Resume restores the thread's tools, so one started with other added
+      // tools starts fresh.
+      const added = this.added();
+      const tools = addedKey(added);
+      const resuming =
+        existing?.workspace === workspace && (existing.tools ?? "") === tools;
       let started: { thread: { id: string; cwd: string } };
       try {
         started = await rpc.request<typeof started>(
@@ -1079,7 +1087,7 @@ export class CodexRuntime {
             ...(resuming
               ? { threadId: existing?.threadId, excludeTurns: true }
               : {
-                  dynamicTools: DYNAMIC_TOOLS,
+                  dynamicTools: dynamicTools(added),
                 }),
           },
         );
@@ -1092,7 +1100,7 @@ export class CodexRuntime {
           throw error;
         started = await rpc.request<typeof started>("thread/start", {
           ...params,
-          dynamicTools: DYNAMIC_TOOLS,
+          dynamicTools: dynamicTools(added),
         });
       }
       active.threadId = started.thread.id;
@@ -1104,7 +1112,7 @@ export class CodexRuntime {
       });
       const [context, memory] = await Promise.all([
         this.history(request, signal),
-        this.core(request, signal),
+        this.core(request.agent.pubkey, signal),
       ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
@@ -1124,6 +1132,7 @@ export class CodexRuntime {
         threadId: started.thread.id,
         workspace,
         at: Date.now(),
+        ...(tools ? { tools } : {}),
       });
       ready();
       this.status(agent.pubkey, key, "Working");
@@ -1242,13 +1251,13 @@ function follow(
     },
   };
 }
-/** The Buzz tools every new thread gets. */
-const DYNAMIC_TOOLS = [
+/** The Buzz tools, with those plugins add, that a new thread gets. */
+const dynamicTools = (added: readonly AddedTool[]) => [
   {
     type: "namespace",
     name: "buzz",
     description: "Read and act in Buzz as this agent.",
-    tools: BUZZ_SESSION.tools.map((tool) => ({
+    tools: sessionTools(added).map((tool) => ({
       type: "function",
       ...tool,
     })),

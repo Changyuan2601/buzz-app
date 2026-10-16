@@ -615,7 +615,7 @@ it("discards the unsaved privacy step and draft when creation closes and reopens
   expect(props.onCreate).not.toHaveBeenCalled();
 });
 
-it.each(["work", ""])(
+it.each(["work", "", "starred"])(
   "derives the title and fixed destination from the opening group %j",
   async (initialGroup) => {
     const user = userEvent.setup();
@@ -626,18 +626,28 @@ it.each(["work", ""])(
         open
         onOpenChange={() => {}}
         onCreate={onCreate}
-        initialGroup={initialGroup}
+        initialGroup={initialGroup === "starred" ? "" : initialGroup}
+        initialStarred={initialGroup === "starred"}
         destinations={[{ id: "work", name: "Work", icon: "📚" }]}
       />,
     );
-    const title = initialGroup
-      ? "Create a channel in Work"
-      : "Create a channel";
+    const title =
+      initialGroup === "starred"
+        ? "Create a channel in Starred"
+        : initialGroup
+          ? "Create a channel in Work"
+          : "Create a channel";
     expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
     expect(
       screen.queryByRole("combobox", { name: "Destination group" }),
     ).not.toBeInTheDocument();
-    if (initialGroup)
+    if (initialGroup === "starred")
+      expect(
+        screen
+          .getByRole("dialog")
+          .querySelector("[data-sidebar-group-icon] svg"),
+      ).toBeInTheDocument();
+    else if (initialGroup)
       expect(
         screen
           .getByRole("dialog")
@@ -657,7 +667,8 @@ it.each(["work", ""])(
               agents: [],
               canvas: "",
               templateId: "",
-              groupId: initialGroup,
+              groupId: initialGroup === "starred" ? "" : initialGroup,
+              ...(initialGroup === "starred" ? { starred: true } : {}),
             },
           }
         : {}),
@@ -706,10 +717,44 @@ it.each([true, false])(
   },
 );
 
-it("does not relabel an ungrouped frozen retry with the group used to reopen it", async () => {
+it.each([false, true])(
+  "does not relabel an ungrouped frozen retry from its opening section (Starred: %s)",
+  async (initialStarred) => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => {});
+    const pending = { name: "Frozen", visibility: "open" as const };
+    render(
+      <CreateChannelDialog
+        {...setupProps()}
+        open
+        onOpenChange={() => {}}
+        onCreate={onCreate}
+        pending={pending}
+        initialGroup="work"
+        initialStarred={initialStarred}
+        destinations={[{ id: "work", name: "Work" }]}
+      />,
+    );
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Create a channel");
+    await user.click(screen.getByRole("button", { name: "Retry channel" }));
+    expect(onCreate).toHaveBeenCalledExactlyOnceWith(pending);
+  },
+);
+
+it("retains the Starred destination when a frozen creation is reopened from a custom group", async () => {
   const user = userEvent.setup();
   const onCreate = vi.fn(async () => {});
-  const pending = { name: "Frozen", visibility: "open" as const };
+  const pending = {
+    name: "Frozen star",
+    visibility: "open" as const,
+    setup: {
+      agents: [],
+      canvas: "",
+      groupId: "",
+      templateId: "",
+      starred: true,
+    },
+  };
   render(
     <CreateChannelDialog
       {...setupProps()}
@@ -721,7 +766,12 @@ it("does not relabel an ungrouped frozen retry with the group used to reopen it"
       destinations={[{ id: "work", name: "Work" }]}
     />,
   );
-  expect(screen.getByRole("dialog")).toHaveAccessibleName("Create a channel");
+  expect(screen.getByRole("dialog")).toHaveAccessibleName(
+    "Create a channel in Starred",
+  );
+  expect(
+    screen.getByRole("region", { name: "Channel setup summary" }),
+  ).toHaveTextContent("Destination: Starred.");
   await user.click(screen.getByRole("button", { name: "Retry channel" }));
   expect(onCreate).toHaveBeenCalledExactlyOnceWith(pending);
 });

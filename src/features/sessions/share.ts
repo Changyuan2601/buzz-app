@@ -12,6 +12,8 @@ import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { MemberAdditionIntent } from "../channel-members/members";
+import { messageLinkParts } from "../messages/message-link-parts";
+import { sessionLinkName } from "./metadata";
 
 /** Sharing changes access, never presentation or Me placement. */
 export function canShareConversation(
@@ -33,8 +35,18 @@ export function canShareConversation(
 
 export const sessionLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
-export const sessionLinkMessage = (id: string) =>
-  `[Session · ${id.slice(0, 8)}](${sessionLink(id)})`;
+export const sessionLinkMessage = (id: string, name = id.slice(0, 8)) =>
+  `[Session: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${sessionLink(id)})`;
+
+/** A saved share keeps its original label even when the session is renamed. */
+function matchesSessionLink(content: string, id: string) {
+  const parts = messageLinkParts(content).filter((part) => part.text !== "");
+  return (
+    parts.length === 1 &&
+    parts[0]?.url === sessionLink(id) &&
+    /^Session(?:: | · )/.test(parts[0]?.label ?? "")
+  );
+}
 
 /** Outbox can finish a delivered link even after its in-process share was reset. */
 export function isSessionLinkReceipt(item: OutgoingEvent) {
@@ -46,7 +58,7 @@ export function isSessionLinkReceipt(item: OutgoingEvent) {
     match[2] &&
     item.recovery?.value === "1" &&
     item.event.kind === 9 &&
-    item.event.content === sessionLinkMessage(match[1]) &&
+    matchesSessionLink(item.event.content, match[1]) &&
     item.event.tags.some(([name, value]) => name === "h" && value === match[2])
   );
 }
@@ -184,7 +196,7 @@ export async function publishSessionLink(
           event.id === previousId &&
           event.kind === 9 &&
           event.pubkey === session.viewer &&
-          event.content === sessionLinkMessage(sourceId) &&
+          matchesSessionLink(event.content, sourceId) &&
           event.tags.some(
             ([name, value]) => name === "h" && value === destinationId,
           ),
@@ -199,7 +211,7 @@ export async function publishSessionLink(
     existing &&
     (existing.event.kind !== 9 ||
       existing.event.pubkey !== session.viewer ||
-      existing.event.content !== sessionLinkMessage(sourceId) ||
+      !matchesSessionLink(existing.event.content, sourceId) ||
       !existing.event.tags.some(
         ([name, value]) => name === "h" && value === destinationId,
       ))
@@ -226,10 +238,13 @@ export async function publishSessionLink(
     existing?.event.id ??
     session.messages.send(
       destinationId,
-      sessionLinkMessage(sourceId),
+      sessionLinkMessage(sourceId, sessionLinkName(source)),
       [],
       [],
       recovery,
+      [],
+      {},
+      [sourceId],
     );
   onQueued(id);
   if (existing?.delivery === "failed" || existing?.delivery === "unknown")

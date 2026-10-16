@@ -222,6 +222,54 @@ it("reads back expired delivery with strong consistency without re-signing or pu
     vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
   ).toBe(false);
 });
+it("publishes config artifacts straight to the relay, re-sending identical bytes and keeping typed refusals", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.configArtifacts);
+  expect(transport.configArtifacts.kinds).toEqual([45010]);
+  // Older than the message writer's 15-minute retry block.
+  const event = signed(viewer, {
+    kind: 45010,
+    created_at: 1699990000,
+    content: "{}",
+    tags: [
+      ["h", "channel"],
+      ["d", "agent"],
+    ],
+  });
+  const signal = new AbortController().signal;
+  respond = () => ({
+    body: { accepted: true, event_id: event.id, message: "" },
+  });
+  await transport.configArtifacts.publish(event, signal);
+  await transport.configArtifacts.publish(event, signal);
+  const sent = requests.filter((request) => request.path === "/events");
+  expect(sent).toHaveLength(2);
+  expect(sent[0]?.body).toBe(sent[1]?.body);
+  expect(JSON.parse(sent[0]?.body ?? "null")).toEqual(
+    JSON.parse(JSON.stringify(event)),
+  );
+  respond = () => ({
+    body: {
+      accepted: false,
+      event_id: event.id,
+      message: "rate-limited: quota exceeded; retry in 9s",
+    },
+  });
+  const refused = await transport.configArtifacts
+    .publish(event, signal)
+    .catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(PublishRejected);
+  expect((refused as Error).message).toBe(
+    "rate-limited: quota exceeded; retry in 9s",
+  );
+  respond = () => ({ status: 409, body: { error: "conflict" } });
+  await expect(
+    transport.configArtifacts.publish(event, signal),
+  ).rejects.toThrow(/^conflict:/);
+  await expect(
+    transport.configArtifacts.publish({ ...event, kind: 9 }, signal),
+  ).rejects.toThrow("Not this viewer's artifact");
+});
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.useRealTimers();
@@ -1424,7 +1472,7 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   });
   dispatch.mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_memories_read");
-    expect(args).toEqual({ community, agent: agent.pubkey });
+    expect(args).toEqual({ community, agent: agent.pubkey, slug: null });
     return { entries: [], partial: true };
   });
   expect(await transport.readAgentMemories?.(agent.pubkey, signal)).toEqual({
@@ -2180,4 +2228,28 @@ it("cancellation during ingress prevents further chunks and final upload", async
       .mock.calls.filter(([command]) => command === "relay_upload_chunk"),
   ).toHaveLength(1);
   expect(uploads).toHaveLength(0);
+});
+
+it("binds audience authority to the advertised community and rejects unknown versions", async () => {
+  const communityId = "11111111-1111-4111-8111-111111111111";
+  discovery = {
+    audience_authority: {
+      version: 1,
+      community_id: communityId,
+      max_sources: 100,
+    },
+  };
+  expect(
+    (await connectNativeTransport(community)).audienceAuthorityCommunity,
+  ).toBe(communityId);
+  discovery = {
+    audience_authority: {
+      version: 2,
+      community_id: communityId,
+      max_sources: 100,
+    },
+  };
+  expect(
+    (await connectNativeTransport(community)).audienceAuthorityCommunity,
+  ).toBeUndefined();
 });

@@ -12,6 +12,7 @@ type ButtonVariant =
   | "attention"
   | "inverted"
   | "link"
+  | "plain"
   | "primary"
   | "quiet";
 type ButtonSize = "inline" | "xs" | "sm" | "md" | "lg" | "compact" | "default";
