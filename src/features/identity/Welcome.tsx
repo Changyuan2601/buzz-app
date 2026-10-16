@@ -14,10 +14,7 @@ import { FindCommunity } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
 import type { Communities } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
-import {
-  CircleNotchIcon,
-  CopyIcon,
-} from "../../shared/design-system/icons/index";
+import { CopyIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   type BuilderlabTenant,
@@ -27,10 +24,18 @@ import {
 import { CommunityUrlField } from "./CommunityUrlField";
 import { JoinCommunity } from "./JoinCommunity";
 import { KeyChoice } from "./KeyChoice";
+import { KeyImport } from "./KeyImport";
 import { KeyReveal } from "./KeyReveal";
 import { ProfileStep } from "./ProfileStep";
 import type { Identity } from "./service";
-import { createSetup, firstRunSteps, wait } from "./setup";
+import {
+  createSetup,
+  firstRunSteps,
+  importKey,
+  type SetupPause,
+  wait,
+} from "./setup";
+import { SetupProgress } from "./SetupProgress";
 import { SetupWindowHeader } from "./SetupWindowHeader";
 
 /**
@@ -106,6 +111,9 @@ export function Welcome({
         { status: "paused", at: "key-choice" },
       );
   };
+  /** Between pauses nothing runs: no key exists until a choice resumes setup. */
+  const pause = (at: SetupPause) =>
+    void setup.start([], { status: "paused", at });
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
     setFinding(undefined);
@@ -225,22 +233,7 @@ export function Welcome({
             />
           )
         ) : progress.status === "running" ? (
-          <>
-            <h1 id="welcome-title" className="text-title text-primary">
-              Setting up Buzz
-            </h1>
-            <p
-              role="status"
-              className="flex items-center gap-2 text-body text-secondary"
-            >
-              <CircleNotchIcon
-                size={18}
-                aria-hidden="true"
-                className="motion-safe:animate-spin"
-              />
-              {progress.label}
-            </p>
-          </>
+          <SetupProgress label={progress.label} />
         ) : progress.status === "paused" ? (
           progress.at === "key-choice" ? (
             <KeyChoice
@@ -254,6 +247,17 @@ export function Welcome({
                   at: "key-reveal",
                 })
               }
+              onImport={() => pause("key-import")}
+            />
+          ) : progress.at === "key-import" ? (
+            // An imported key is already backed up wherever it came from, so
+            // it skips the backup and reveal pages.
+            <KeyImport
+              onBack={() => pause("key-choice")}
+              onImport={async (nsec) => {
+                await importKey(identity, nsec);
+                void setup.start([]);
+              }}
             />
           ) : (
             <KeyReveal

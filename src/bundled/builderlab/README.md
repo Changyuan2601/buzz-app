@@ -116,7 +116,8 @@ agents are not migrated into this type.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): a backed-up-key lookup
   and a key backup are placeholders until Builderlab serves them; the user
-  chooses who keeps the device key before it is created.
+  chooses who keeps the device key before it is created, or brings one they
+  already have.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

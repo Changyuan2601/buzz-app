@@ -1,8 +1,8 @@
 import type { Identity } from "./service";
 
 export type SetupStep = Readonly<{ label: string; run: () => Promise<void> }>;
-/** Where setup rests for a decision: the key-management choice, or the nsec reveal. */
-export type SetupPause = "key-choice" | "key-reveal";
+/** Where setup rests for a decision: the key-management choice, an import, or the nsec reveal. */
+export type SetupPause = "key-choice" | "key-import" | "key-reveal";
 export type SetupSnapshot = Readonly<
   | { status: "idle" }
   | { status: "running"; label: string }
@@ -15,15 +15,29 @@ type Resting = Extract<SetupSnapshot, { status: "paused" | "done" }>;
 export const wait = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** `identity.create` reports failure through its snapshot, not by throwing. */
-async function createKey(identity: Identity) {
-  await identity.create();
+/** `identity.create` and `importKey` report failure through the snapshot, not by throwing. */
+function saved(identity: Identity) {
   const state = identity.snapshot();
   if (state.status === "ready") return;
   throw new Error(
     (state.status === "missing" && state.error) ||
       "Your key could not be saved on this device.",
   );
+}
+
+async function createKey(identity: Identity) {
+  await identity.create();
+  saved(identity);
+}
+
+/**
+ * Stores a key the user already has through the key setup screen's native
+ * import command, which takes the nsec as typed. Not a step: a refusal belongs
+ * under the import page's field, not on the failed page.
+ */
+export async function importKey(identity: Identity, nsec: string) {
+  await identity.importKey(nsec);
+  saved(identity);
 }
 
 /**

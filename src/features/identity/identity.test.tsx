@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -15,7 +16,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { EventTemplate } from "nostr-tools";
-import { npubEncode } from "nostr-tools/nip19";
+import { npubEncode, nsecEncode } from "nostr-tools/nip19";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   createIdentity,
@@ -40,6 +41,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 const viewer = "ab".repeat(32);
 const key = "nsec-fixture-only";
+/** A real key for the import journeys: native import takes the bech32 nsec as typed. */
+const owned = keypair();
+const ownedNsec = nsecEncode(owned.secret);
 const credential: Credential = {
   value: "private-token",
   account: {
@@ -731,6 +735,7 @@ function landingRelay(
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "identity_restore") return null;
     if (command === "identity_create") return created;
+    if (command === "identity_import") return owned.pubkey;
     if (command === "identity_export") return key;
     if (command !== "relay_http")
       throw new Error(`Unexpected command ${command}`);
@@ -1103,15 +1108,15 @@ it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands o
   );
   await release(1);
   // The lookup found nothing, so setup pauses for the key choice before any
-  // key exists. The import choice has no backend yet.
+  // key exists.
   expect(
     screen.getByRole("heading", { name: "Set up your key" }),
   ).toBeVisible();
   expect(screen.getByText(/backed-up key for a@example\.com/)).toBeVisible();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   expect(
-    screen.getByRole("button", { name: "I already have a key — Coming soon" }),
-  ).toBeDisabled();
+    screen.getByRole("button", { name: "I already have a key" }),
+  ).toBeEnabled();
   expect(
     screen.getByRole("button", { name: "I want to manage my own key" }),
   ).toBeEnabled();
@@ -1954,6 +1959,294 @@ it("a key creation failure on the own-key path stops setup before any reveal, an
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_create",
+  ]);
+  identity.dispose();
+});
+
+const keyField = () => screen.getByLabelText("Private key (nsec)");
+const continueWithKey = () =>
+  screen.getByRole("button", { name: "Continue with this key" });
+const invalidKeyCopy =
+  "That doesn’t look like a valid nsec. Paste an nsec1 key.";
+/** Connect with the placeholders resolved, then open the import page from the choice. */
+async function keyImportPage(
+  user: ReturnType<typeof userEvent.setup>,
+  identity: Identity,
+  delay = vi.fn().mockResolvedValue(undefined),
+) {
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      delay={delay}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Connect with Builderlab" }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "I already have a key" }),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Enter your private key" }),
+  ).toBeVisible();
+  return delay;
+}
+
+it("I already have a key opens Enter your private key, classifies what is pasted, and Back returns to the choice with nothing created", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await keyImportPage(user, identity);
+  expect(
+    screen.getByText(/Paste your private key to sign in to Buzz\./),
+  ).toBeVisible();
+  // Masked, sensitive and focused on arrival; nothing to continue with yet.
+  expect(keyField()).toHaveFocus();
+  expect(keyField()).toHaveAttribute("type", "password");
+  expect(keyField()).toHaveAttribute("autocomplete", "off");
+  expect(keyField()).toHaveAttribute("spellcheck", "false");
+  expect(continueWithKey()).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Reveal private key" }),
+  ).toBeDisabled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.paste("hello");
+  expect(screen.getByRole("alert")).toHaveTextContent(invalidKeyCopy);
+  expect(keyField()).toHaveAccessibleDescription(invalidKeyCopy);
+  expect(continueWithKey()).toBeDisabled();
+  await user.clear(keyField());
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.paste(
+    "ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p",
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Password-protected backups aren’t supported here yet.",
+  );
+  expect(continueWithKey()).toBeDisabled();
+  await user.clear(keyField());
+  await user.paste(ownedNsec);
+  // A valid key previews its public identity as an npub, never hex, and
+  // unlocks Continue; Reveal shows the typed key and Hide masks it again.
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(keyField()).toHaveAccessibleDescription(
+    `Public identity: ${npubEncode(owned.pubkey)}`,
+  );
+  expect(screen.queryByText(owned.pubkey)).toBeNull();
+  expect(continueWithKey()).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  expect(keyField()).toHaveAttribute("type", "text");
+  expect(keyField()).toHaveValue(ownedNsec);
+  await user.click(screen.getByRole("button", { name: "Hide private key" }));
+  expect(keyField()).toHaveAttribute("type", "password");
+  // Back discards the typed key and offers every choice again; no key was made.
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  for (const name of [
+    "Manage my keys for me",
+    "I want to manage my own key",
+    "I already have a key",
+  ])
+    expect(screen.getByRole("button", { name })).toBeEnabled();
+  await user.click(
+    screen.getByRole("button", { name: "I already have a key" }),
+  );
+  expect(keyField()).toHaveValue("");
+  expect(continueWithKey()).toBeDisabled();
+  expect(identity.snapshot().status).toBe("missing");
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
+  identity.dispose();
+});
+
+it("Continue with this key imports the pasted nsec behind Importing your key, then lands on Join a community with no backup or reveal", async () => {
+  const imported = deferred<string>();
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_import") return imported.promise;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  const delay = await keyImportPage(user, identity);
+  await user.paste(ownedNsec);
+  // Enter in the field submits, like the Continue button.
+  await user.keyboard("{Enter}");
+  expect(invoke).toHaveBeenCalledWith("identity_import", { nsec: ownedNsec });
+  expect(
+    screen.getByRole("heading", { name: "Setting up Buzz" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Importing your key…");
+  expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await act(async () => imported.resolve(owned.pubkey));
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(
+    screen.queryByRole("heading", { name: "Your private identity key" }),
+  ).toBeNull();
+  // Only the two prelude placeholders waited: an imported key is not backed up.
+  expect(delay.mock.calls).toEqual([[2000], [2000]]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_import",
+  ]);
+  identity.dispose();
+});
+
+it("a native import refusal stays on the import page with the key kept, and Back still returns to the choice", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_import")
+      return Promise.reject(
+        "An identity is already saved; nothing was overwritten",
+      );
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await keyImportPage(user, identity);
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "An identity is already saved; nothing was overwritten",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Enter your private key" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeNull();
+  expect(keyField()).toHaveValue(ownedNsec);
+  expect(continueWithKey()).toBeEnabled();
+  expect(identity.snapshot().status).toBe("missing");
+  // Editing the key replaces the refusal with the live classification.
+  await user.type(keyField(), "x");
+  expect(screen.getByRole("alert")).toHaveTextContent(invalidKeyCopy);
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("heading", { name: "Set up your key" }),
+  ).toBeVisible();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "identity_import",
+  ]);
+  identity.dispose();
+});
+
+it("a dropped or chosen key file fills the field from its first line, and an oversize file is refused", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await keyImportPage(user, identity);
+  const form = screen
+    .getByRole("heading", { name: "Enter your private key" })
+    .closest("form");
+  if (!form) throw new Error("The import page is not a form");
+  const dropped = new File(
+    [`\n  ${ownedNsec}  \nnot the key\n`],
+    "buzz-key.txt",
+    { type: "text/plain" },
+  );
+  fireEvent(
+    form,
+    createEvent.drop(form, {
+      dataTransfer: { types: ["Files"], files: [dropped] },
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await waitFor(() => expect(keyField()).toHaveValue(ownedNsec));
+  expect(keyField()).toHaveAttribute("type", "password");
+  expect(keyField()).toHaveAccessibleDescription(
+    `Public identity: ${npubEncode(owned.pubkey)}`,
+  );
+  expect(continueWithKey()).toBeEnabled();
+  const picker = screen.getByLabelText("Key file");
+  await user.upload(
+    picker,
+    new File([new Uint8Array(1025)], "big.txt", { type: "text/plain" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That file is too large to be a private key.",
+  );
+  expect(keyField()).toHaveValue(ownedNsec);
+  await user.upload(
+    picker,
+    new File(["hello\n"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(keyField()).toHaveValue("hello"));
+  expect(screen.getByRole("alert")).toHaveTextContent(invalidKeyCopy);
+  expect(continueWithKey()).toBeDisabled();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
+  identity.dispose();
+});
+
+it("an imported key on the tenant path lands on Join Community for the landing URL", async () => {
+  const relay = landingRelay("https://relay.example.com");
+  relay.info.resolve();
+  const delay = vi.fn().mockResolvedValue(undefined);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      connect={vi.fn().mockResolvedValue(credential)}
+      tenants={tenants}
+      delay={delay}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: "Connect with Builderlab" });
+  await user.type(urlField(), "relay.example.com{Enter}");
+  await user.click(
+    await screen.findByRole("button", { name: "I already have a key" }),
+  );
+  await user.click(keyField());
+  await user.paste(ownedNsec);
+  await user.click(continueWithKey());
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(
+    screen.queryByRole("heading", { name: "Join a community" }),
+  ).toBeNull();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  // Checking for a backed-up key is the only placeholder on this path.
+  expect(delay.mock.calls).toEqual([[2000]]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+    "relay_http",
+    "relay_http",
+    "identity_import",
+    "relay_http",
+    "relay_http",
   ]);
   identity.dispose();
 });

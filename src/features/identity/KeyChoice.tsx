@@ -2,12 +2,13 @@ import { Button } from "../../shared/design-system/ui/Button";
 
 /**
  * Pause after the backed-up-key lookup found nothing: who looks after the key.
- * Both live choices create the key next; the import path has no backend yet.
+ * The first two choices create the key next; the third brings an existing one.
  */
 export function KeyChoice({
   email,
   onManaged,
   onOwn,
+  onImport,
 }: {
   /** The signed-in Builderlab account the lookup ran for. */
   email: string | undefined;
@@ -15,6 +16,8 @@ export function KeyChoice({
   onManaged: () => void;
   /** The user keeps the only copy: create the key, then show it. */
   onOwn: () => void;
+  /** The user already has a key: open the import page. */
+  onImport: () => void;
 }) {
   return (
     <>
@@ -37,9 +40,8 @@ export function KeyChoice({
         <Button size="sm" onClick={onOwn}>
           I want to manage my own key
         </Button>
-        {/* Import takes the key setup screen's path once a backend decides what to do with it. */}
-        <Button size="sm" disabled>
-          I already have a key — Coming soon
+        <Button size="sm" onClick={onImport}>
+          I already have a key
         </Button>
       </div>
     </>

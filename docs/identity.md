@@ -36,8 +36,8 @@ backends exist (`src/features/identity/setup.ts`), and the lookup always
 answers that no key was found. Setup then pauses on **Set up your key**: it
 says no backed-up key was found for the signed-in email and that Builderlab
 can keep a copy so you can sign in on other devices, and offers **Manage my
-keys for me**, a smaller **I want to manage my own key**, and **I already have
-a key**, disabled as *Coming soon*. Manage runs **Creating keys** — the only
+keys for me** and two smaller choices, **I want to manage my own key** and
+**I already have a key**. Manage runs **Creating keys** — the only
 step that does real work: it generates a Nostr key through the same native
 create command as the key setup screen, so the next launch opens as a
 returning user — then *Backing up your key*, a `[TODO]` placeholder; nothing
@@ -48,7 +48,20 @@ sensitive data](#ui-and-sensitive-data)) with **Copy private key**, a checkbox
 this up for me**, which runs the backup placeholder, and **Continue without
 backing up**, enabled only once the box is ticked. The page reads the key
 through the same `identity_export` command Settings → Profile uses; there is no
-save-to-file. Key-only setup (a community no tenant hosts) has no account to
+save-to-file. **I already have a key** opens **Enter your private key** while
+setup stays paused: a masked private-key field — paste or type an `nsec1…` key,
+or drop or choose a text file of at most 1 KiB whose first line is one — with
+**Reveal private key**, a live *Public identity* npub preview under a valid key
+(never hex), and classified messages for anything else: a NIP-49 `ncryptsec1…`
+backup is refused as *Password-protected backups aren’t supported here yet*
+(the app has no NIP-49 decryption), other text as *That doesn’t look like a
+valid nsec*. **Back** returns to Set up your key with the typed key discarded;
+**Continue with this key**, enabled only for a valid nsec, stores it through the
+same native import command as the key setup screen (`identity_import`, which
+takes the nsec as typed) behind *Importing your key…*. A native refusal — an
+invalid key, or a key already saved in this slot — appears under the field with
+the form kept. An imported key is already backed up wherever it came from, so
+it skips the backup and reveal pages. Key-only setup (a community no tenant hosts) has no account to
 look a backup up in or back up to, so it runs **Creating keys** alone with no
 choice or reveal page. A failed step shows **Couldn’t finish setup** with the
 error and **Back** to the welcome screen. Setup then lands on
@@ -270,7 +283,11 @@ the key on the OS clipboard; the UI warns about that. The one exception is the
 first-run **Your private identity key** page, which fetches and shows the nsec on
 arrival (`PrivateKey` with `initiallyRevealed`): choosing to keep the only copy
 is the gesture. The same Hide, blur, hiding and unmount rules clear it there,
-and Reveal is offered again once it is hidden.
+and Reveal is offered again once it is hidden. The first-run **Enter your
+private key** page is the other: the typed, pasted or file-read nsec lives only
+in that page's state, masked until **Reveal private key**, and crosses IPC once,
+on **Continue with this key**, through `identity_import`; leaving the page
+discards it, and nothing logs or persists it.
 
 The app UI passes a private string through IPC only during explicit import/export
 interaction. JavaScript/IPC string memory is not guaranteed zeroized. Native
