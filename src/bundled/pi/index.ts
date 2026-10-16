@@ -21,8 +21,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
-  const runtime = new PiRuntime(host, (pubkey) =>
-    ownerReads(agents.relay(pubkey), pubkey),
+  const runtime = new PiRuntime(
+    host,
+    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
+    (pubkey, signal) => agents.core(pubkey, signal),
+    () => agents.tools(),
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
@@ -72,6 +75,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
       {
@@ -83,6 +87,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ],
     models: (agent) => runtime.models(agent),
     run: (delivery) => runtime.run(delivery),
+    runOnce: (turn) => runtime.runOnce(turn),
     timeoutMs: HANDOVER_MS,
   });
 };

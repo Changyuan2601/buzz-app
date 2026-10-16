@@ -36,7 +36,10 @@ const MODELS: Record<
   string,
   { id: string; name: string; thinking: string[] }[]
 > = {
-  anthropic: [{ id: "claude-x", name: "Claude X", thinking: ["off", "high"] }],
+  anthropic: [
+    { id: "claude-x", name: "Claude X", thinking: ["off", "high"] },
+    { id: "claude-o", name: "Claude O", thinking: ["off"] },
+  ],
   openai: [{ id: "gpt-x", name: "GPT X", thinking: ["off", "low"] }],
 };
 
@@ -185,7 +188,7 @@ it("starts New agent's Model field on Pi's default, with the provider kept to it
       "Pi default (Anthropic · claude-x)",
     ),
   );
-  expect(screen.getByLabelText("Describe what I should do")).toBeVisible();
+  expect(screen.getByLabelText("Instructions")).toBeVisible();
 });
 
 it("saves a provider's key with Pi's login, needs a model for it, and tests it", async () => {
@@ -333,6 +336,46 @@ it("keeps Try again's providers for what the dialog's Use allows", async () => {
     "aria-disabled",
     "true",
   );
+});
+
+it("shows the provider, model and thinking level in Identity, and the provider's setup in Settings", async () => {
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(fakePi()),
+    runtime: fakeRuntime(),
+  });
+  const save = vi.fn(async () => {});
+  // As the agent's profile shows it: one form, a section at a time.
+  const { rerender } = render(
+    <SettingsTab agent={AGENT} save={save} settingsSection="identity" />,
+  );
+  const provider = screen.getByRole("combobox", { name: "Model provider" });
+  await waitFor(() => expect(provider).toHaveTextContent("Anthropic"));
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  // Pi's medium is high on a model without it.
+  await waitFor(() => expect(thinking).toHaveTextContent("High"));
+  expect(screen.getByLabelText("Instructions")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
+  expect(screen.queryByText("Anthropic is set up in Pi.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+
+  await choose("Thinking", "High");
+  // A level the new model doesn't have goes back to Pi's.
+  await choose("Model", "Claude O");
+  expect(thinking).toHaveTextContent("Off");
+  await choose("Model", "Claude X");
+  await choose("Thinking", "Off");
+
+  rerender(<SettingsTab agent={AGENT} save={save} settingsSection="runtime" />);
+  expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
+  expect(screen.getByText("Anthropic is set up in Pi.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Test connection" })).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Workspace" })).toBeVisible();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith({
+    ...DEFAULT_CONFIG,
+    model: "claude-x",
+    effort: "off",
+  });
 });
 
 it("saves a key on Enter without saving the agent's settings", async () => {

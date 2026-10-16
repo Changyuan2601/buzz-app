@@ -232,7 +232,7 @@ export function serve({
 
   /** The model a turn runs on: the owner's pick, the agent's, or else Pi's
    * default. */
-  async function choose({ provider, model, pick = {} }) {
+  async function choose({ provider, model, thinking, pick = {} }) {
     const defaults = await piDefaults(dir);
     const id = provider || defaults.provider;
     const modelId =
@@ -251,7 +251,7 @@ export function serve({
       model: { provider: id, modelId },
       thinkingLevel: clampThinkingLevel(
         found,
-        pick.thinking || defaults.thinking || THINKING,
+        pick.thinking || thinking || defaults.thinking || THINKING,
       ),
     };
   }

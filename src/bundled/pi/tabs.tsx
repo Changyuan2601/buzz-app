@@ -1,8 +1,15 @@
 // Pi's New agent choices and agent settings. Providers, their keys and their
 // models are Pi's own: listed from it, and keys saved with its login.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
@@ -20,6 +27,8 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { effortLabel } from "../claude-code/runtime";
 import {
   type Config,
   DEFAULT_CONFIG,
@@ -27,7 +36,15 @@ import {
   type Place,
   config as readConfig,
 } from "./runtime";
-import type { PiModel, PiSetup, Provider, Providers, Tested } from "./setup";
+import {
+  DEFAULT_THINKING,
+  type PiModel,
+  type PiSetup,
+  type Provider,
+  type Providers,
+  runsAt,
+  type Tested,
+} from "./setup";
 import { TURN_LIMIT } from "./transcript";
 
 const message = (error: unknown) =>
@@ -106,6 +123,15 @@ const unknownProvider = (choice: Choice, providers: Providers | undefined) => {
 const unusable = (choice: Choice, providers: Providers | undefined) =>
   Boolean(unknownProvider(choice, providers)) ||
   modelless(choice, providers?.defaults);
+/** The thinking levels of a choice's model, once its provider's are read. */
+const levelsOf = (
+  choice: Choice,
+  defaults: Providers["defaults"] | undefined,
+  models: readonly PiModel[] | undefined,
+) =>
+  models?.find(
+    (model) => model.id === (choice.model || defaultModel(choice, defaults)),
+  )?.thinking;
 
 export function createTabs({
   setup,
@@ -114,18 +140,22 @@ export function createTabs({
   setup: PiSetup;
   runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
 }>) {
-  /** The provider, its key and its model, and a test that they answer.
-   * `listing` is the surface's own read, so what it gates agrees with this. */
+  /** The provider, its key and its model, and a test that they answer. As
+   * `rows` of the agent's settings, only the provider and model: the rest is
+   * `ProviderSetup`'s. `listing` is the surface's own read, so what it gates
+   * agrees with this. */
   function ProviderFields({
     value,
     onChange,
     listing,
     reload,
+    rows = false,
   }: Readonly<{
     value: Choice;
     onChange(value: Choice): void;
     listing: Read<Providers>;
     reload(): void;
+    rows?: boolean;
   }>) {
     const providers = listing.value;
     const fallback = providers?.defaults.provider;
@@ -135,13 +165,6 @@ export function createTabs({
       () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
       id,
     );
-    // A result belongs to the choice it tested.
-    const choice = `${value.provider}\u0000${value.model}`;
-    const [result, setResult] = useState<{
-      choice: string;
-      tested: Tested | "testing";
-    }>();
-    const tested = result?.choice === choice ? result.tested : undefined;
     const named = (key: string | undefined) =>
       providers?.providers.find((item) => item.id === key)?.name ?? key;
     const modelDefault = defaultModel(value, providers?.defaults);
@@ -151,8 +174,11 @@ export function createTabs({
       <>
         <Select
           label="Model provider"
-          variant="field"
+          variant={rows ? "preference" : "field"}
           value={value.provider}
+          {...(rows && !value.provider && fallback
+            ? { valueLabel: named(fallback) }
+            : {})}
           disabled={!providers}
           {...(listing.status === "error"
             ? { error: listing.error }
@@ -167,7 +193,9 @@ export function createTabs({
                       description:
                         "Pi's settings name no provider. Choose one.",
                     }
-                  : {})}
+                  : rows && provider && !provider.configured
+                    ? { description: `Set up ${provider.name} in Settings.` }
+                    : {})}
           groups={[
             {
               label: "",
@@ -193,7 +221,7 @@ export function createTabs({
             <Button onClick={reload}>Try again</Button>
           </div>
         )}
-        {provider && (
+        {!rows && provider && (
           <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
         )}
         <ModelPicker
@@ -214,35 +242,88 @@ export function createTabs({
           disabled={Boolean(unknown)}
           onChange={(model) => onChange({ ...value, model })}
         />
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            disabled={unusable(value, providers) || tested === "testing"}
-            loading={tested === "testing"}
-            onClick={async () => {
-              setResult({ choice, tested: "testing" });
-              setResult({
-                choice,
-                tested: await setup.test(value).catch((error: unknown) => ({
-                  ok: false,
-                  message: message(error),
-                })),
-              });
-            }}
-          >
-            Test connection
-          </Button>
-          {tested && tested !== "testing" && (
-            <p
-              role={tested.ok ? "status" : "alert"}
-              className={
-                tested.ok ? "m-0 text-body-sm" : "buzz-field-error m-0"
-              }
-            >
-              {tested.message}
-            </p>
-          )}
-        </div>
+        {!rows && (
+          <TestConnection
+            choice={value}
+            disabled={unusable(value, providers)}
+          />
+        )}
       </>
+    );
+  }
+
+  /** The agent's provider's key, and a test that it answers. */
+  function ProviderSetup({
+    choice,
+    listing,
+    reload,
+  }: Readonly<{
+    choice: Choice;
+    listing: Read<Providers>;
+    reload(): void;
+  }>) {
+    const id = choice.provider || listing.value?.defaults.provider;
+    const provider = listing.value?.providers.find((item) => item.id === id);
+    return (
+      <>
+        {listing.status === "error" && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={reload}>Try again</Button>
+            <p role="alert" className="buzz-field-error m-0">
+              {listing.error}
+            </p>
+          </div>
+        )}
+        {provider && (
+          <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
+        )}
+        <TestConnection
+          choice={choice}
+          disabled={unusable(choice, listing.value)}
+        />
+      </>
+    );
+  }
+
+  /** Asks the provider and model for one short reply. */
+  function TestConnection({
+    choice,
+    disabled,
+  }: Readonly<{ choice: Choice; disabled: boolean }>) {
+    // A result belongs to the choice it tested.
+    const key = `${choice.provider}\u0000${choice.model}`;
+    const [result, setResult] = useState<{
+      key: string;
+      tested: Tested | "testing";
+    }>();
+    const tested = result?.key === key ? result.tested : undefined;
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          disabled={disabled || tested === "testing"}
+          loading={tested === "testing"}
+          onClick={async () => {
+            setResult({ key, tested: "testing" });
+            setResult({
+              key,
+              tested: await setup.test(choice).catch((error: unknown) => ({
+                ok: false,
+                message: message(error),
+              })),
+            });
+          }}
+        >
+          Test connection
+        </Button>
+        {tested && tested !== "testing" && (
+          <p
+            role={tested.ok ? "status" : "alert"}
+            className={tested.ok ? "m-0 text-body-sm" : "buzz-field-error m-0"}
+          >
+            {tested.message}
+          </p>
+        )}
+      </div>
     );
   }
 
@@ -648,12 +729,29 @@ export function createTabs({
     );
   }
 
-  function SettingsTab({ agent, save, settingsHost }: AgentViewProps<Config>) {
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    settingsSection,
+    settingsContent,
+  }: AgentViewProps<Config>) {
+    const form = useId();
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
     const [listing, reload] = useRead(() => setup.providers(), "providers");
+    const defaults = listing.value?.defaults;
+    const id = draft.provider || defaults?.provider || "";
+    const [models] = useRead(
+      () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
+      id,
+    );
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -670,64 +768,116 @@ export function createTabs({
         setSaving(false);
       }
     };
+    // Undefined until the model's levels are read.
+    const levels = levelsOf(draft, defaults, models.value);
+    const level = defaults?.thinking ?? DEFAULT_THINKING;
+    const resting = effortLabel(levels ? runsAt(levels, level) : level);
+    const efforts = [
+      { value: "", label: `${resting} · Default` },
+      // A saved level the model doesn't have, or not yet read.
+      ...(draft.effort && !levels?.includes(draft.effort)
+        ? [
+            {
+              value: draft.effort,
+              label: levels
+                ? `${effortLabel(draft.effort)} (unavailable)`
+                : effortLabel(draft.effort),
+            },
+          ]
+        : []),
+      ...(levels ?? []).map((id) => ({ value: id, label: effortLabel(id) })),
+    ];
     return (
       <form
-        className="grid gap-4"
+        id={form}
+        className="grid gap-4 [container-type:inline-size]"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {settingsHost?.typeControl?.(configChanged)}
-        <ProviderFields
-          value={draft}
-          onChange={(choice) => setDraft({ ...draft, ...choice })}
-          listing={listing}
-          reload={reload}
-        />
-        <Field
-          label="Workspace"
-          description="The folder Pi works in. Use ~/ for your home folder."
-        >
-          <Input
-            value={draft.workspace}
-            onValueChange={(workspace) => setDraft({ ...draft, workspace })}
-          />
-        </Field>
-        <Select
-          label="Conversations"
-          variant="field"
-          value={draft.scope}
-          groups={SCOPES}
-          onValueChange={(value) =>
-            setDraft({
-              ...draft,
-              scope: value === "channel" ? "channel" : "thread",
-            })
-          }
-        />
-        <AgentInstructions
-          value={draft.instructions}
-          disabled={false}
-          description="Added to every conversation's system prompt, after Buzz's own."
-          onChange={(instructions) => setDraft({ ...draft, instructions })}
-        />
         {error && (
-          <p role="alert" className="buzz-field-error">
+          <p
+            ref={saveErrorRef}
+            tabIndex={-1}
+            role="alert"
+            className="buzz-field-error"
+          >
             {error}
           </p>
         )}
-        <div>
-          <Button
-            type="submit"
-            variant="prominent"
-            loading={saving}
-            disabled={!changed || unusable(draft, listing.value)}
-            focusableWhenDisabled
-          >
-            Save
-          </Button>
-        </div>
+        {settingsSection !== "runtime" && (
+          <>
+            <SettingsGroup>
+              {settingsHost?.typeControl?.(configChanged)}
+              <ProviderFields
+                rows
+                value={draft}
+                onChange={(choice) => {
+                  // A level the new model doesn't have goes back to Pi's;
+                  // another provider's models aren't read yet.
+                  const next =
+                    choice.provider === draft.provider
+                      ? levelsOf(choice, defaults, models.value)
+                      : [];
+                  setDraft({
+                    ...draft,
+                    ...choice,
+                    effort:
+                      !next || next.includes(draft.effort) ? draft.effort : "",
+                  });
+                }}
+                listing={listing}
+                reload={reload}
+              />
+              <Select
+                label="Thinking"
+                variant="preference"
+                value={draft.effort}
+                {...(!draft.effort ? { valueLabel: resting } : {})}
+                groups={[{ label: "", options: efforts }]}
+                onValueChange={(effort) => setDraft({ ...draft, effort })}
+              />
+            </SettingsGroup>
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={false}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <ProviderSetup choice={draft} listing={listing} reload={reload} />
+            <Field
+              label="Workspace"
+              description="The folder Pi works in. Use ~/ for your home folder."
+            >
+              <Input
+                value={draft.workspace}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </Field>
+            <Select
+              label="Conversations"
+              variant="preference"
+              value={draft.scope}
+              groups={SCOPES}
+              onValueChange={(value) =>
+                setDraft({
+                  ...draft,
+                  scope: value === "channel" ? "channel" : "thread",
+                })
+              }
+            />
+          </>
+        )}
+        <AgentSaveButton
+          form={form}
+          saving={saving}
+          disabled={!changed || unusable(draft, listing.value)}
+        />
+        {settingsSection !== "identity" && settingsContent}
       </form>
     );
   }

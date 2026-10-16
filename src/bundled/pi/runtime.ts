@@ -2,39 +2,42 @@
 // Pi host (pi.ts), each with its own Pi durable storage, where each Buzz
 // conversation is one Pi conversation. A delivery becomes a prompt in the
 // harness format, submitted to its conversation; one that arrives while Pi
-// works steers the run. A watch or timer wake runs as a one-off conversation
-// in its Interest's lane. Pi acts in Buzz with the in-process Buzz tools,
-// signed by the agent's native-held key. The runtime reports a turn that
-// fails, and posts the answer of a mention's turn that never used `send`.
+// works steers the run. A watch or timer runs as a standalone turn
+// (`runOnce`), in a one-off conversation. Pi acts in Buzz with the in-process
+// Buzz tools, signed by the agent's native-held key. The runtime reports a
+// turn that fails, and posts the answer of a mention's turn that never used
+// `send`.
 import { appClient } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
+import { type AddedTool, turnNote } from "../../buzz-mcp/session-tools";
 import type { Tool } from "../../buzz-mcp/tools";
-import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  MemoryReads,
+  READ_TIMEOUT_MS,
+} from "../../features/agent-harness/core-memory";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
+  Agents,
   Delivery,
   Models,
+  StandaloneTurn,
+  TurnResult,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
-import { Lanes } from "../claude-code/lanes";
 import {
-  ATTENTION_REVIEW,
   CONTEXT_LIMIT,
   type Scope,
   steerPrompt,
   systemPrompt,
-  timerPrompt,
   turnPrompt,
-  watchPrompt,
 } from "../claude-code/prompt";
 import { effortLabel } from "../claude-code/runtime";
-import { ONCE_DEADLINE_MS } from "../claude-code/sessions";
 import {
   Pi,
   type PiEvent,
@@ -42,7 +45,7 @@ import {
   type ToolCall,
   type ToolResult,
 } from "./pi";
-import { PiSetup } from "./setup";
+import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
 
 export type Config = Readonly<{
@@ -50,6 +53,8 @@ export type Config = Readonly<{
   provider: string;
   /** One of the provider's models; empty uses the one Pi's settings name. */
   model: string;
+  /** A thinking level the model has; empty uses the one Pi's settings name. */
+  effort: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
@@ -59,6 +64,7 @@ export type Config = Readonly<{
 export const DEFAULT_CONFIG: Config = Object.freeze({
   provider: "",
   model: "",
+  effort: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
@@ -68,11 +74,9 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-const MEMORY_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 
-type Settled = { ok: boolean; error?: string };
 /** Where a mention's turn replies: its thread, or the top of a Me chat. */
 type Where = Readonly<{ channel: string; root: string; topLevel: boolean }>;
 const replyTags = ({ channel, root, topLevel }: Where) => [
@@ -107,11 +111,6 @@ type Entry = {
   /** The team sections of the latest run. */
   team: string;
   name?: string;
-  /** Whether the owner has attention on: turns get its tools, guidance and
-   * the end-of-turn review. */
-  attention: boolean;
-  /** Watch and timer turns, one lane per Interest. */
-  lanes: Lanes;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Each conversation's latest posting policy, as in Claude: when its turns
@@ -147,6 +146,10 @@ export class PiRuntime {
     private readonly host: Pick<Host, "spawn">,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
+    /** The tools plugins add to every conversation now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -162,30 +165,26 @@ export class PiRuntime {
     for (const [pubkey, entry] of this.agents)
       if (!current.has(pubkey)) {
         entry.closed = true;
-        entry.lanes.stop();
         this.agents.delete(pubkey);
         void this.pi.request("close", { agent: pubkey }).catch(() => undefined);
       }
     for (const agent of agents) {
       const entry = this.agents.get(agent.pubkey);
       if (!entry) continue;
-      // Turned off, its waiting watch and timer turns are dropped.
-      if (!agent.attentionEnabled) entry.lanes.clear();
       entry.config = config(agent.config);
       entry.name = agent.name;
-      entry.attention = agent.attentionEnabled;
     }
   }
 
   /** The models of the agent's provider, with the thinking levels each has.
-   * Without a pick, a turn runs the configured one at Pi's default level. */
+   * Without a pick, a turn runs the configured model and level. */
   async models(agent: Agent<Config>): Promise<Models> {
-    const { provider, model } = config(agent.config);
+    const { provider, model, effort } = config(agent.config);
     const { defaults } = await this.setup.providers();
     const id = provider || defaults.provider;
     if (!id) return { current: "", models: [] };
     const listed = await this.setup.models(id);
-    const level = defaults.thinking ?? "medium";
+    const level = effort || defaults.thinking || DEFAULT_THINKING;
     return {
       current:
         model || (id === defaults.provider ? (defaults.model ?? "") : ""),
@@ -193,7 +192,7 @@ export class PiRuntime {
         id: item.id,
         label: item.label,
         efforts: item.thinking.map((id) => ({ id, label: effortLabel(id) })),
-        ...(item.thinking.includes(level) ? { effort: level } : {}),
+        effort: runsAt(item.thinking, level),
       })),
     };
   }
@@ -247,10 +246,7 @@ export class PiRuntime {
   }
 
   dispose() {
-    for (const entry of this.agents.values()) {
-      entry.closed = true;
-      entry.lanes.stop();
-    }
+    for (const entry of this.agents.values()) entry.closed = true;
     this.agents.clear();
     void this.pi.dispose();
   }
@@ -269,32 +265,23 @@ export class PiRuntime {
     step,
     acknowledged,
     superseded,
-    current,
   }: Delivery) {
+    // Watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention") return ignored?.();
     // Pi runs commands as you; mentions need owner or delegated authority.
-    // A watch is the agent's own attention: its event is observed data,
-    // framed as such, from anyone.
-    if (trigger.type === "mention") {
-      if (
-        !(await fromOwner(
-          trigger.event,
-          agent.owner,
-          workflowOf(this.reads(agent.pubkey), agent.pubkey),
-        ))
-      ) {
-        ignored?.();
-        return;
-      }
-      signal.throwIfAborted();
-    }
+    if (
+      !(await fromOwner(
+        trigger.event,
+        agent.owner,
+        workflowOf(this.reads(agent.pubkey), agent.pubkey),
+      ))
+    )
+      return ignored?.();
+    signal.throwIfAborted();
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
     entry.team = team ?? "";
     const pick = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
-    if (trigger.type !== "mention") {
-      workingUntil(this.wake(entry, agent, trigger, current, pick));
-      return;
-    }
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -317,7 +304,7 @@ export class PiRuntime {
     let sends = 0;
     const handed = (async () => {
       await wait;
-      await this.open(entry, agent.pubkey);
+      await this.open(agent.pubkey);
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.pubkey,
         key,
@@ -365,7 +352,7 @@ export class PiRuntime {
     })();
     const where = { channel, root, topLevel };
     const settled = handed
-      .then(async (): Promise<Settled> => {
+      .then(async (): Promise<TurnResult> => {
         const waited = await this.settle(
           entry,
           agent.pubkey,
@@ -389,7 +376,7 @@ export class PiRuntime {
           : { ok: false, error: unanswered(waited) };
       })
       .catch(
-        (error: unknown): Settled => ({ ok: false, error: message(error) }),
+        (error: unknown): TurnResult => ({ ok: false, error: message(error) }),
       )
       .then((result) => {
         this.forget(entry, request);
@@ -417,6 +404,59 @@ export class PiRuntime {
     });
   }
 
+  /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
+   * Pi conversation, stopped when `signal` aborts. */
+  async runOnce({
+    delivery,
+    key,
+    signal,
+    prompt,
+  }: StandaloneTurn): Promise<TurnResult> {
+    const { agent, team } = delivery;
+    const entry = this.entry(agent, config(delivery.config));
+    entry.handle = agent;
+    entry.team = team ?? "";
+    const pick = {
+      ...(delivery.model ? { model: delivery.model } : {}),
+      ...(delivery.effort ? { effort: delivery.effort } : {}),
+    };
+    let stop: (() => void) | undefined;
+    try {
+      await this.open(agent.pubkey);
+      signal.throwIfAborted();
+      const text = await prompt();
+      if (text === undefined) return { ok: true };
+      const turn = await this.turnOf(entry, agent.pubkey, pick);
+      signal.throwIfAborted();
+      const { submission, conversation } = await this.pi.request<{
+        submission: number;
+        conversation: number;
+      }>("once", {
+        agent: agent.pubkey,
+        text,
+        request: `${key}/${crypto.randomUUID()}`,
+        ...turn,
+      });
+      // A removed agent's storage is closed, and stays so.
+      stop = () => {
+        if (!entry.closed)
+          void this.pi
+            .request("abort", { agent: agent.pubkey, conversation })
+            .catch(() => undefined);
+      };
+      signal.addEventListener("abort", stop, { once: true });
+      if (signal.aborted) stop();
+      const waited = await this.settle(entry, agent.pubkey, submission);
+      return waited.status === "unanswered"
+        ? { ok: false, error: unanswered(waited) }
+        : { ok: true };
+    } catch (error) {
+      return { ok: false, error: message(error) };
+    } finally {
+      if (stop) signal.removeEventListener("abort", stop);
+    }
+  }
+
   /** Runs a Buzz tool for Pi, for the conversation that called it. */
   async tool(call: ToolCall): Promise<ToolResult> {
     const entry = this.agents.get(call.agent);
@@ -427,7 +467,7 @@ export class PiRuntime {
       appClient(handle, {
         spawn: this.spawn,
         cwd: entry.config.workspace,
-        memories: async () => (await this.memories(call.agent)).entries,
+        memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
       });
     const reply = (await respond(
@@ -439,10 +479,7 @@ export class PiRuntime {
         method: "tools/call",
         params: { name: call.name, arguments: call.arguments },
       },
-      {
-        offered: entry?.attention ?? false,
-        ...(handle ? { api: handle.attention } : {}),
-      },
+      this.added(),
     )) as { result?: { content: unknown[]; isError?: boolean } };
     const result = reply.result ?? { content: [], isError: true };
     const sent = entry && call.name === "send" && !result.isError;
@@ -493,12 +530,12 @@ export class PiRuntime {
 
   /** Opens the agent's storage in the host, with its Buzz tools as they are
    * now. The host does nothing for one already open with these tools. */
-  private async open(entry: Entry, pubkey: string) {
+  private async open(pubkey: string) {
     const listed = (await respond(
       undefined,
       {},
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
-      { offered: entry.attention },
+      this.added(),
     )) as { result: { tools: readonly Tool[] } };
     await this.pi.request("open", {
       agent: pubkey,
@@ -511,7 +548,7 @@ export class PiRuntime {
   private async settle(entry: Entry, pubkey: string, submission: number) {
     for (let attempt = 0; ; attempt++)
       try {
-        if (attempt) await this.open(entry, pubkey);
+        if (attempt) await this.open(pubkey);
         return await this.pi.request<Waited>("wait", {
           agent: pubkey,
           submission,
@@ -522,18 +559,20 @@ export class PiRuntime {
       }
   }
 
-  /** What a turn runs with: the agent's model or the owner's pick, its
-   * prompt with fresh `core` memory, and its workspace. */
+  /** What a turn runs with: the agent's model and thinking level or the
+   * owner's pick, its prompt with fresh `core` memory, and its workspace. */
   private async turnOf(
     entry: Entry,
     pubkey: string,
     pick: Readonly<{ model?: string; effort?: string }>,
   ) {
-    const { provider, model, workspace, instructions, scope } = entry.config;
+    const { provider, model, effort, workspace, instructions, scope } =
+      entry.config;
     const memory = await this.core(pubkey);
     return {
       provider,
       model,
+      thinking: effort,
       // Apart, so a request that steers a working run changes only these.
       pick: { model: pick.model, thinking: pick.effort },
       cwd: workspace,
@@ -543,7 +582,6 @@ export class PiRuntime {
         ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
         instructions,
         team: entry.team,
-        attention: entry.attention,
         ...(memory === undefined ? {} : { memory }),
       }),
     };
@@ -573,123 +611,10 @@ export class PiRuntime {
     });
   }
 
-  /** A watch or timer wake: a one-off turn in its Interest's lane, as in
-   * Claude. The host says whether it is still `current`, asked when its lane
-   * starts it and again once Pi has opened the agent. Its prompt is built
-   * then, from the attention as it is. */
-  private wake(
-    entry: Entry,
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    current: () => boolean,
-    pick: Readonly<{ model?: string; effort?: string }>,
-  ): Promise<Settled> {
-    const id = trigger.slug.replace(/^watch\//, "");
-    const lane = (trigger.type === "watch" ? trigger.watch : trigger.timer)
-      .interest_id;
-    let settle!: (result: Settled) => void;
-    const settled = new Promise<Settled>((resolve) => {
-      settle = resolve;
-    });
-    const dropped = (why: string) => {
-      console.warn(`Pi dropped a ${trigger.type} turn: ${why}`);
-      settle({ ok: true });
-    };
-    const queued = entry.lanes.add(
-      lane,
-      async () => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          if (!current()) return settle({ ok: true });
-          await this.open(entry, agent.pubkey);
-          const text = await this.wakePrompt(agent, trigger, id, current);
-          if (!text) return settle({ ok: true });
-          const { submission, conversation } = await this.pi.request<{
-            submission: number;
-            conversation: number;
-          }>("once", {
-            agent: agent.pubkey,
-            text,
-            request: `${trigger.type}/${id}/${crypto.randomUUID()}`,
-            ...(await this.turnOf(entry, agent.pubkey, pick)),
-          });
-          timer = setTimeout(
-            () =>
-              void this.pi
-                .request("abort", { agent: agent.pubkey, conversation })
-                .catch(() => undefined),
-            ONCE_DEADLINE_MS,
-          );
-          const waited = await this.settle(entry, agent.pubkey, submission);
-          if (waited.status === "unanswered")
-            console.warn(
-              `Pi ${trigger.type} turn failed: ${id}`,
-              unanswered(waited),
-            );
-          settle(
-            waited.status === "unanswered"
-              ? { ok: false, error: unanswered(waited) }
-              : { ok: true },
-          );
-        } catch (error) {
-          settle({ ok: false, error: message(error) });
-        } finally {
-          clearTimeout(timer);
-        }
-      },
-      () => dropped("attention was turned off or the agent stopped"),
-    );
-    if (queued !== "queued")
-      dropped(
-        queued === "full"
-          ? `too many are waiting (Interest ${lane})`
-          : "the agent stopped",
-      );
-    return settled;
-  }
-
-  /** The prompt for a wake as its watch or timer now is, or undefined when
-   * it should no longer run. */
-  private async wakePrompt(
-    agent: AgentHandle,
-    trigger: Exclude<Delivery["trigger"], { type: "mention" }>,
-    id: string,
-    stillCurrent: () => boolean,
-  ) {
-    const { attention } = agent;
-    if (!stillCurrent()) return undefined;
-    const current = (await attention.show(trigger.slug)).object;
-    const type = trigger.type === "watch" ? "event" : "timer";
-    if (!current || current.type !== type) return undefined;
-    const interest = (await attention.show(`interest/${current.interest_id}`))
-      .object;
-    const instructions =
-      interest?.type === "interest"
-        ? { instructions: interest.instructions }
-        : {};
-    const text =
-      trigger.type === "watch"
-        ? watchPrompt({
-            id,
-            interest: current.interest_id,
-            ...instructions,
-            event: trigger.event,
-            ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
-          })
-        : timerPrompt({
-            id,
-            interest: current.interest_id,
-            prompt: current.type === "timer" ? current.prompt : "",
-            ...instructions,
-            spent: trigger.spent,
-          });
-    // Asked again: the attention can change while it is read.
-    return stillCurrent() ? `${text}\n\n${ATTENTION_REVIEW}` : undefined;
-  }
-
-  /** `text` with the end-of-turn attention review, when attention is on. */
+  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
   private review(entry: Entry, text: string) {
-    return entry.attention ? `${text}\n\n${ATTENTION_REVIEW}` : text;
+    const note = turnNote(entry.handle);
+    return note ? `${text}\n\n${note}` : text;
   }
 
   /** Says in the thread that a turn failed, so nobody waits on it. Tells the
@@ -804,8 +729,6 @@ export class PiRuntime {
       config: initial,
       team: "",
       name: agent.name,
-      attention: agent.attention.enabled(),
-      lanes: new Lanes(),
       policies: new Map(),
       receipts: new Map(),
       active: new Map(),
@@ -823,25 +746,17 @@ export class PiRuntime {
     return spawn;
   }
 
-  /** The agent's memory, as its community's reads give it. */
-  private memories(pubkey: string) {
+  /** The agent's memory, or only entry `slug`, as its community's reads give
+   * it. */
+  private memories(pubkey: string, slug?: string) {
     const reads = this.reads(pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
       pubkey,
-      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      AbortSignal.timeout(READ_TIMEOUT_MS),
+      slug,
     );
-  }
-  /** The agent's `core` memory for a turn's prompt: its text, `null` when it
-   * has none, or undefined when it could not be read. */
-  private async core(pubkey: string) {
-    try {
-      return coreOf(await this.memories(pubkey));
-    } catch (error) {
-      console.warn("Pi could not read the agent's memory", error);
-      return undefined;
-    }
   }
   private forgetMemory(pubkey: string) {
     const reads = this.reads(pubkey);

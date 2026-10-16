@@ -33,9 +33,11 @@ installs work.
    in some other way (OAuth, cloud credentials) says to run `pi`, then `/login`.
    Choose a model, click **Test connection**, then **Use**. Name the agent and
    click **Create agent**.
-3. The agent's **Settings** tab has the same provider fields. It also has the
-   **Workspace** (default `~/.buzz`), thread or channel **Conversations**, and
-   **Instructions**.
+3. Open the agent. Its **Identity** tab has the **Model provider**, **Model**,
+   **Thinking** level (Pi's default, or one the model has) and
+   **Instructions**. Its **Settings** tab has the provider's key with **Test
+   connection**, the **Workspace** (default `~/.buzz`), and thread or channel
+   **Conversations**.
 4. In a channel, send: `@Pi create hello.txt containing hello in the workspace,
    read it back, and report what you found` (use the agent's actual name).
    Expect steps under your message, one reply in the thread, and the file in the
@@ -53,7 +55,8 @@ installs work.
    read from Pi's storage.
 
 The composer's model picker offers the agent's provider's models, and each
-model's thinking levels, for one turn.
+model's thinking levels, for one turn. Without a pick, a turn runs the
+agent's saved model and Thinking level.
 
 ## Checks
 
@@ -94,9 +97,10 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 
 ## Limits and boundaries
 
-- Only the owner's events, or ones the owner delegated, start work. Watches and
-  timers run as one-off Pi conversations in their Interest's lane. Each has a
-  5-minute deadline, as in Claude.
+- Only the owner's events, or ones the owner delegated, start work. Watches,
+  timers and catch-ups run as standalone turns, each a one-off Pi
+  conversation, in the lanes and with the 5-minute deadline Buzz's agent
+  runner gives every harness.
 - Pi has the coding tools `read`, `write`, `edit` and `bash`, in the workspace,
   with no sandbox or approvals, like Claude's `bypassPermissions`. Buzz's tools
   are offered as `buzz_<name>` (`buzz_send`, `buzz_read`, …), since `read` and

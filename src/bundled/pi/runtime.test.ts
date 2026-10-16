@@ -1,10 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
-import type { Agent, Delivery } from "../../features/agents/service";
+import type {
+  Agent,
+  Delivery,
+  StandaloneTurn,
+} from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
-import { ATTENTION_REVIEW } from "../claude-code/prompt";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
 
@@ -42,14 +45,6 @@ const reply = (id: string, content: string, created_at = 110) =>
       ["p", self],
     ],
   });
-const timer = (id: string, interest: string) =>
-  ({
-    type: "timer",
-    slug: `watch/${id}`,
-    timer: { prompt: `Run ${id}`, interest_id: interest },
-    interest: { type: "interest", instructions: `Report ${interest} in #ops.` },
-    spent: false,
-  }) as Delivery["trigger"];
 
 function setup(handlers: Readonly<Record<string, Handler>> = {}) {
   let submissions = 0;
@@ -95,8 +90,11 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
-  const runtime = new PiRuntime({ spawn: host.spawn }, (pubkey) =>
-    ownerReads(relay, pubkey),
+  const core = vi.fn(async () => null as string | null | undefined);
+  const runtime = new PiRuntime(
+    { spawn: host.spawn },
+    (pubkey) => ownerReads(relay, pubkey),
+    core,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -114,33 +112,16 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
     attention: {
       enabled: () => true,
       classifier: () => "unavailable" as const,
-      show: vi.fn(async (slug: string) => {
-        const object = objects.get(slug) ?? null;
-        return {
-          result: object ? "found" : "not-found",
-          object,
-          expected_state: "object-v1:test",
-        };
-      }),
+      show: vi.fn(),
       interests: vi.fn(() => ["ops"]),
       watches: vi.fn(() => []),
       write: vi.fn(),
     },
   };
-  const objects = new Map<string, Record<string, unknown>>();
   const deliver = (
     trigger: Delivery["trigger"],
     extra: Partial<Delivery<Config>> = {},
   ) => {
-    if (trigger.type === "timer") {
-      objects.set(trigger.slug, {
-        ...trigger.timer,
-        type: "timer",
-        enabled: true,
-      });
-      if (trigger.interest)
-        objects.set(`interest/${trigger.timer.interest_id}`, trigger.interest);
-    }
     const receipt = {
       workingUntil: vi.fn<Delivery["workingUntil"]>(),
       ignored: vi.fn(),
@@ -154,7 +135,6 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
       agent,
       config: DEFAULT_CONFIG,
       signal: new AbortController().signal,
-      current: () => true,
       ...receipt,
       ...extra,
     } as unknown as Delivery);
@@ -168,7 +148,27 @@ function setup(handlers: Readonly<Record<string, Handler>> = {}) {
       ok: boolean;
       error?: string;
     }>;
-  return { runtime, host, deliver, settled, published, agent, session };
+  const runOnce = (
+    key: string,
+    text: string | undefined,
+    signal = new AbortController().signal,
+  ) =>
+    runtime.runOnce({
+      delivery: { agent, config: DEFAULT_CONFIG },
+      key,
+      signal,
+      prompt: async () => text,
+    } as unknown as StandaloneTurn);
+  return {
+    runtime,
+    host,
+    deliver,
+    runOnce,
+    settled,
+    published,
+    agent,
+    session,
+  };
 }
 
 it("hands an owner's mention to its thread's Pi conversation", async () => {
@@ -469,20 +469,46 @@ it("leaves a removed agent's turn in Pi's storage without a report", async () =>
   expect(published).toEqual([]);
 });
 
-it("runs a timer as a one-off conversation with the attention review", async () => {
-  const { host, deliver, settled, published } = setup({
+it("runs a standalone turn in a one-off conversation", async () => {
+  const { host, runOnce, published } = setup({
     wait: () => ({ status: "done", answer: 5, text: "Nothing to report." }),
   });
-  const turn = deliver(timer("t1", "ops"));
-  await turn.run;
-  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  await expect(runOnce("timer/t1", "Run t1")).resolves.toEqual({ ok: true });
   const [once] = host.requests("once");
   expect(String(once?.params.request)).toMatch(/^timer\/t1\//);
-  expect(String(once?.params.text)).toContain("Run t1");
-  expect(String(once?.params.text)).toContain(ATTENTION_REVIEW);
+  expect(once?.params.text).toBe("Run t1");
   expect(host.requests("deliver")).toEqual([]);
   // A wake's answer is for Pi alone; it acts with its tools.
   expect(published).toEqual([]);
+});
+
+it("starts no standalone turn once its prompt is no longer wanted", async () => {
+  const { host, runOnce } = setup();
+  await expect(runOnce("watch/w1", undefined)).resolves.toEqual({ ok: true });
+  expect(host.requests("once")).toEqual([]);
+});
+
+it("stops a standalone turn's conversation when its signal aborts", async () => {
+  const waiting = deferred<unknown>();
+  const { host, runOnce } = setup({
+    wait: () => waiting.promise,
+    abort: () => {
+      waiting.resolve({ status: "unanswered", reason: "aborted" });
+      return {};
+    },
+  });
+  const stop = new AbortController();
+  const turn = runOnce("timer/t1", "Run t1", stop.signal);
+  await vi.waitFor(() => expect(host.requests("wait")).toHaveLength(1));
+  stop.abort();
+  await expect(turn).resolves.toEqual({
+    ok: false,
+    error: "The turn was stopped",
+  });
+  expect(host.requests("abort")[0]?.params).toEqual({
+    agent: self,
+    conversation: 99,
+  });
 });
 
 it("offers the provider's models with the thinking levels each supports", async () => {
@@ -514,7 +540,29 @@ it("offers the provider's models with the thinking levels each supports", async 
         id: "claude-y",
         label: "Claude Y",
         efforts: [{ id: "off", label: "Off" }],
+        effort: "off",
       },
     ],
+  });
+  // The agent's saved level is Pi's, or the nearest a model has.
+  const saved = {
+    pubkey: self,
+    config: { ...DEFAULT_CONFIG, effort: "medium" },
+  } as Agent<Config>;
+  const efforts = (await runtime.models(saved)).models.map(
+    (model) => model.effort,
+  );
+  expect(efforts).toEqual(["high", "off"]);
+});
+
+it("runs a turn at the agent's saved thinking level, apart from a pick", async () => {
+  const { host, deliver } = setup();
+  await deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    { config: { ...DEFAULT_CONFIG, effort: "low" } },
+  ).run;
+  expect(host.requests("deliver")[0]?.params).toMatchObject({
+    thinking: "low",
+    pick: {},
   });
 });
