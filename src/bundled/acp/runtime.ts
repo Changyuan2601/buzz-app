@@ -121,8 +121,21 @@ export class AcpRuntime {
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
         entry.name !== agent.name
       ) {
-        // A harness keeps running what it started with: stop it for the new.
-        if (launchOf(entry.config) !== launchOf(next)) entry.harness.stop();
+        // A harness keeps running what it started with. A new launch retires
+        // the agent's sessions, busy ones too, so no later message can queue
+        // on the old process while it exits.
+        if (launchOf(entry.config) !== launchOf(next)) {
+          this.stop(entry);
+          const { team, memory, handle, contexts } = entry;
+          Object.assign(this.entry(agent.pubkey, next, true), {
+            name: agent.name,
+            team,
+            memory,
+            handle,
+            contexts,
+          });
+          continue;
+        }
         entry.config = next;
         entry.name = agent.name;
         entry.sessions.reconfigure();
@@ -434,9 +447,10 @@ export class AcpRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config): Entry {
+  /** The agent's entry, made from `initial` if it has none or `replace`. */
+  private entry(pubkey: string, initial: Config, replace = false): Entry {
     const existing = this.agents.get(pubkey);
-    if (existing) return existing;
+    if (existing && !replace) return existing;
     const entry: Entry = {
       config: initial,
       team: "",
