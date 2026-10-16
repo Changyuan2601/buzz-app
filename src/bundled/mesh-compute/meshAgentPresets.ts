@@ -20,7 +20,7 @@ export const MESH_AGENT_PRESETS: readonly MeshAgentPreset[] = [
   {
     id: "buzz-concierge",
     name: "Buzz Concierge",
-    summary: "A conversation to help you create and try your first agent.",
+    summary: "Name your first agent and connect it to your preferred AI.",
     mode: "chat",
     fits: "small",
     prompt: conciergePrompt,

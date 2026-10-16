@@ -92,8 +92,8 @@ export function FirstAgentOnboarding({
     >
       <main className="grid gap-4" aria-label="Buzz Concierge onboarding">
         <p className="m-0 text-body-md">
-          Let's make your first agent together. We'll choose its job, name and
-          harness in a private Solo conversation.
+          Let's get your agent ready. First you'll give me a name, then connect
+          me to your preferred AI in a private Solo conversation.
         </p>
         <p className="m-0 text-body-sm text-secondary">
           This prototype uses the MeshLLM community's shared compute. Join it to

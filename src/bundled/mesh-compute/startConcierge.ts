@@ -114,10 +114,59 @@ async function start(agents: Agents, relay: RelayData, signal: AbortSignal) {
   if (
     live?.place !== "here" ||
     live.owner !== viewer ||
-    live.type !== MESH_TYPE ||
+    (!receipt?.messageId && live.type !== MESH_TYPE) ||
     agents.relay(live.pubkey)?.snapshot().scope !== scope
   )
     throw new Error("This Concierge is unavailable in your community.");
+  // Reopening an established chat must not replace a chosen harness or role.
+  if (receipt?.messageId) {
+    const current = meshAgentConfig(live.config);
+    if (live.type === MESH_TYPE && current.preset === CONCIERGE_PRESET) {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(current.prompt),
+      );
+      check();
+      const hash = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      // Only exact shipped prototype guides: retain owner-written prompts.
+      if (
+        [
+          "b98c020507363fee2b02889b0e6e5bf990b34dee74901099622cf750c859c963",
+          "9daf27f40fed25e56547b13d90d31668d0622b495ce467251c068de2c02690a3",
+          "5554662fee08a55d3b78508cb53f817953948496ce613121d8b44027916d0986",
+        ].includes(hash)
+      ) {
+        const latest = agents.find(live.pubkey);
+        if (
+          latest?.type !== MESH_TYPE ||
+          JSON.stringify(latest.config) !== JSON.stringify(live.config)
+        )
+          throw new Error(
+            "The agent changed. Reopen onboarding before continuing.",
+          );
+        await agents.save(live.pubkey, { config: { ...current, prompt } });
+        check();
+      }
+    }
+    if (!receipt.creationId)
+      throw new Error(
+        "Onboarding delivery is incomplete. Check the existing conversation.",
+      );
+    await session.workSessions.delivered(receipt.creationId);
+    check();
+    await session.workSessions.refresh(receipt.id);
+    await session.mePlacement.refresh();
+    check();
+    if (!session.mePlacement.has(receipt.id))
+      throw new Error(
+        "This conversation was moved out of Solo. Open it there before continuing.",
+      );
+    await session.workSessions.delivered(receipt.messageId);
+    check();
+    return { scope, channelId: receipt.id };
+  }
   // Throwing save verifies persistence even if create returned optimistic config.
   const config = {
     ...meshAgentConfig(live.config),
@@ -139,7 +188,7 @@ async function start(agents: Agents, relay: RelayData, signal: AbortSignal) {
     );
   receipt ??= {
     id: crypto.randomUUID(),
-    text: "Help me create my first agent.",
+    text: "Help me name you and connect you to my preferred AI.",
     agent: live.pubkey,
   };
   save(receipt);

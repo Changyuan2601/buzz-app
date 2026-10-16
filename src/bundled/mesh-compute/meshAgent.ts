@@ -393,7 +393,7 @@ export class MeshAgentRuntime {
               config.preset === "buzz-concierge"
                 ? {
                     ...config,
-                    prompt: `${config.prompt}\n\nAvailable local harnesses (use the exact key in the draft's harness field):\n${(this.deps.harnesses?.() ?? []).map((type) => `${type.key}: ${type.title}`).join("\n")}`,
+                    prompt: `${config.prompt}\n\nCurrent saved agent name: ${JSON.stringify(agent.name)}. You are this same agent; use its saved name.\nAvailable local harnesses (use the exact key in the draft's harness field):\n${(this.deps.harnesses?.() ?? []).map((type) => `${type.key}: ${type.title}`).join("\n")}`,
                   }
                 : config,
               agent.pubkey,

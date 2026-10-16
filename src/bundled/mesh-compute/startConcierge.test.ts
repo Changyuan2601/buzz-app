@@ -2,6 +2,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Agents } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
+import legacyPrompt from "./fixtures/concierge-legacy.md?raw";
+import currentPrompt from "./BUZZ_CONCIERGE.md?raw";
 import { readView } from "../../shared/view-state";
 import { readSelectedAssistant } from "../../features/sessions/selected-assistant";
 import { startConcierge, ONBOARDING_COMMUNITY } from "./startConcierge";
@@ -99,7 +101,7 @@ it("creates a private Solo conversation, confirms admission, sends one genuine w
   );
   expect(f.session.messages.send).toHaveBeenCalledExactlyOnceWith(
     result.channelId,
-    "Help me create my first agent.",
+    "Help me name you and connect you to my preferred AI.",
     [pubkey],
   );
   expect(readSelectedAssistant(scope, result.channelId)).toBe(pubkey);
@@ -212,4 +214,87 @@ it("coalesces concurrent starts even when Concierge already exists", async () =>
   await Promise.all([first, second]);
   expect(f.session.workSessions.create).toHaveBeenCalledTimes(1);
   expect(f.session.messages.send).toHaveBeenCalledTimes(1);
+});
+
+it("reopens a renamed and retyped agent without resetting its harness, instructions or selection", async () => {
+  const f = fixture();
+  const result = await startConcierge(
+    f.agents,
+    f.relay,
+    new AbortController().signal,
+  );
+  const live = f.agents.find(pubkey);
+  if (!live) throw new Error("Missing Concierge fixture");
+  f.setAgent({
+    ...live,
+    name: "Milo",
+    type: "buzz.codex/codex",
+    config: { instructions: "My personal assistant", model: "chosen" },
+  });
+  vi.mocked(f.agents.save).mockClear();
+  expect(
+    await startConcierge(f.agents, f.relay, new AbortController().signal),
+  ).toEqual(result);
+  expect(f.agents.find(pubkey)).toMatchObject({
+    name: "Milo",
+    type: "buzz.codex/codex",
+    config: { instructions: "My personal assistant", model: "chosen" },
+  });
+  expect(f.agents.save).not.toHaveBeenCalled();
+  expect(f.session.messages.send).toHaveBeenCalledTimes(1);
+  expect(f.agents.create).toHaveBeenCalledTimes(1);
+});
+
+it("upgrades only an exact shipped legacy guide when reopening an established chat", async () => {
+  const f = fixture();
+  await startConcierge(f.agents, f.relay, new AbortController().signal);
+  const live = f.agents.find(pubkey);
+  if (!live) throw new Error("Missing fixture");
+  f.setAgent({
+    ...live,
+    config: { preset: CONCIERGE_PRESET, mode: "chat", prompt: legacyPrompt },
+  });
+  await startConcierge(f.agents, f.relay, new AbortController().signal);
+  expect(f.agents.find(pubkey)?.config).toMatchObject({
+    prompt: currentPrompt,
+  });
+  f.setAgent({
+    ...live,
+    config: {
+      preset: CONCIERGE_PRESET,
+      mode: "chat",
+      prompt: "My custom concierge guide",
+    },
+  });
+  vi.mocked(f.agents.save).mockClear();
+  await startConcierge(f.agents, f.relay, new AbortController().signal);
+  expect(f.agents.save).not.toHaveBeenCalled();
+});
+it("loads persisted Solo placement after restart and distinguishes genuine absence or a read failure", async () => {
+  const f = fixture();
+  const result = await startConcierge(
+    f.agents,
+    f.relay,
+    new AbortController().signal,
+  );
+  let loaded = false;
+  vi.spyOn(f.session.mePlacement, "has").mockImplementation(() => loaded);
+  f.session.mePlacement.refresh.mockImplementation(async () => {
+    loaded = true;
+  });
+  expect(
+    await startConcierge(f.agents, f.relay, new AbortController().signal),
+  ).toEqual(result);
+  loaded = false;
+  f.session.mePlacement.refresh.mockResolvedValue(undefined);
+  await expect(
+    startConcierge(f.agents, f.relay, new AbortController().signal),
+  ).rejects.toThrow("moved out of Solo");
+  f.session.mePlacement.refresh.mockRejectedValue(
+    new Error("Placement read failed"),
+  );
+  await expect(
+    startConcierge(f.agents, f.relay, new AbortController().signal),
+  ).rejects.toThrow("Placement read failed");
+  expect(f.agents.create).toHaveBeenCalledTimes(1);
 });

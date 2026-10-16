@@ -26,7 +26,7 @@ import { meTarget } from "../me/routes";
 import { startConcierge } from "./startConcierge";
 import { MeshCreateSetup } from "./MeshCreateSetup";
 import {
-  conciergeCreation,
+  conciergeSetup,
   conciergeDraft,
   conciergeHarnesses,
   ConciergeDraft,
@@ -179,8 +179,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = ctx.host?.spawn?.bind(ctx.host);
   if (isTauri() && spawn && ctx.agents) {
     const agents = ctx.agents;
-    const creation = conciergeCreation(agents, ctx.relay);
-    ctx.effect(() => () => creation.dispose());
+    const setup = conciergeSetup(agents, ctx.relay);
+    ctx.effect(() => () => setup.dispose());
     ctx.conversation.registerMessage({
       id: "concierge-draft",
       title: "Agent setup",
@@ -190,7 +190,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           message={message}
           agents={agents}
           relay={ctx.relay}
-          creation={creation}
+          setup={setup}
         />
       ),
     });

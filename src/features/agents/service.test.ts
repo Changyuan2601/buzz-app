@@ -28,7 +28,7 @@ import {
 import { memoryStorage } from "./test-fakes";
 import { allowMeshAgentWatch } from "../../bundled/mesh-compute/meshAgent";
 import {
-  conciergeCreation,
+  conciergeSetup,
   CONCIERGE_PRESET,
   MESH_TYPE,
 } from "../../bundled/mesh-compute/Concierge";
@@ -1976,7 +1976,7 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
   expect(storage.getItem("buzz.agents.v1")).toContain(bot);
 });
 
-it("Concierge never admits optimistic tool-enabled defaults and pauses unknown creation across reload", async () => {
+it("Concierge retypes the same key through durable service persistence and rolls back on failure", async () => {
   const storage = memoryStorage();
   const { service, native, ctx, relay, session } = await setup({ storage });
   ctx
@@ -1991,81 +1991,77 @@ it("Concierge never admits optimistic tool-enabled defaults and pauses unknown c
     });
   const concierge = await service.create({
     type: MESH_TYPE,
-    name: "Buzz Concierge",
+    name: "Milo",
     config: { preset: CONCIERGE_PRESET, mode: "chat" },
   });
-  const add = vi.fn(async () => {});
   Object.assign(session, {
     viewer,
-    outbox: { supports: () => true },
-    memberAdditions: { add },
     channels: {
       list: () => ({
         channels: [
           {
             id: channel,
             name: "onboarding",
-            channelType: "stream",
+            channelType: "session",
             members: [viewer, concierge.pubkey],
           },
         ],
       }),
     },
   });
-  const id = "f".repeat(64);
   const message = {
-    id,
+    id: "f".repeat(64),
     authorId: concierge.pubkey,
     channelId: channel,
     content:
-      '```buzz-agent\n{"name":"Idea Buddy","instructions":"Offer three concise ideas.","test":"Suggest a community event."}\n```',
+      '```buzz-agent\n{"action":"connect","harness":"example/echo","instructions":"Offer three concise ideas.","test":"Suggest a community event."}\n```',
   } as ChannelMessage;
   const write = storage.setItem.bind(storage);
   let unavailable = true;
   vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
-    if (
-      unavailable &&
-      key === "buzz.agents.v1" &&
-      JSON.parse(value).agents[sibling]
-    )
+    if (unavailable && key === "buzz.agents.v1")
       throw new Error("QuotaExceededError");
     write(key, value);
   });
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.stubGlobal("localStorage", memoryStorage());
   try {
-    const creation = conciergeCreation(service, relay);
-    await expect(creation.create(message)).rejects.toThrow(
+    await expect(conciergeSetup(service, relay).apply(message)).rejects.toThrow(
       "QuotaExceededError",
     );
-    expect(service.find(sibling)).toMatchObject({ config: { mode: "agent" } });
-    expect(add).not.toHaveBeenCalled();
-    expect(storage.getItem("buzz.agents.v1")).toContain(
-      `"onboardingAttempt":"${id}"`,
-    );
-    const reloaded = conciergeCreation(service, relay);
-    expect(reloaded.unresolved(message)).toBe(true);
-    await expect(reloaded.create(message)).rejects.toThrow(
-      "earlier creation did not finish",
-    );
-    expect(native.create).toHaveBeenCalledTimes(2);
+    expect(service.find(concierge.pubkey)).toMatchObject({
+      type: MESH_TYPE,
+      name: "Milo",
+      config: { preset: CONCIERGE_PRESET, mode: "chat" },
+    });
+    expect(native.setType.mock.calls).toEqual([
+      [concierge.pubkey, "example/echo"],
+      [concierge.pubkey, MESH_TYPE],
+    ]);
     unavailable = false;
-    await creation.create(message);
-    expect(service.find(sibling)).toMatchObject({
-      config: {
-        mode: "chat",
-        prompt: "Offer three concise ideas.",
-        onboardingSource: id,
-      },
+    await conciergeSetup(service, relay).apply(message);
+    expect(service.find(concierge.pubkey)).toMatchObject({
+      type: "example/echo",
+      name: "Milo",
+      config: { reply: "Offer three concise ideas." },
     });
-    expect(add).toHaveBeenCalledExactlyOnceWith(channel, sibling);
-    await service.save(sibling, {
-      config: { ...(service.find(sibling)?.config as object), mode: "agent" },
+    expect(storage.getItem("buzz.agents.v1")).toContain(
+      "Offer three concise ideas.",
+    );
+    expect(native.create).toHaveBeenCalledTimes(1);
+    expect(session.channels.list().channels[0]?.members).toEqual([
+      viewer,
+      concierge.pubkey,
+    ]);
+    await service.save(concierge.pubkey, {
+      config: { reply: "Later personal edit" },
     });
-    await expect(reloaded.create(message)).rejects.toThrow("settings differ");
-    expect(add).toHaveBeenCalledTimes(1);
-    expect(native.create).toHaveBeenCalledTimes(2);
+    await conciergeSetup(service, relay).apply(message);
+    expect(service.find(concierge.pubkey)?.config).toEqual({
+      reply: "Later personal edit",
+    });
+    expect(native.setType).toHaveBeenCalledTimes(3);
   } finally {
-    warn.mockRestore();
+    vi.unstubAllGlobals();
   }
 });
 

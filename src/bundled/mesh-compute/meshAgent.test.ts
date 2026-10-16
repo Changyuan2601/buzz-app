@@ -710,3 +710,23 @@ it("queues new top-level Solo follow-ups in one conversation", async () => {
   await Promise.all([one, two]);
   expect(f.publish).toHaveBeenCalledTimes(3);
 });
+
+it("gives Concierge its saved name and registered harness choices for the self-onboarding script", async () => {
+  const chat = vi.fn<MeshAgentDeps["chat"]>(
+    async () => "What would you like to name me?",
+  );
+  const { runtime, delivery } = setup(
+    { chat, harnesses: () => [{ key: "example/local", title: "Local" }] },
+    OWNER,
+    {
+      mode: "chat",
+      preset: "buzz-concierge",
+      prompt: "Name me, then connect me.",
+    },
+  );
+  await runtime.run(delivery());
+  expect(chat).toHaveBeenCalledOnce();
+  const messages = chat.mock.calls[0]?.[1];
+  expect(messages?.[0]?.content).toContain('Current saved agent name: "M"');
+  expect(messages?.[0]?.content).toContain("example/local: Local");
+});
