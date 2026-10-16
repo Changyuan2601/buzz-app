@@ -4,6 +4,7 @@ import type { Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
+import { REQUEST_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 import { flush } from "../goose/goose-testing";
 import { fakeHarness } from "./acp-testing";
 import { approve, type Config, DEFAULT_CONFIG } from "./config";
@@ -77,14 +78,18 @@ function setup(options: Parameters<typeof fakeHarness>[0] = {}) {
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
   };
-  const deliver = (event: RelayEvent, config: Config) => {
+  const deliver = (
+    event: RelayEvent,
+    config: Config,
+    signal = new AbortController().signal,
+  ) => {
     const ignored = vi.fn();
     const run = runtime.run({
       trigger: { type: "mention", event },
       channelId: channel,
       agent,
       config,
-      signal: new AbortController().signal,
+      signal,
       workingUntil: () => undefined,
       ignored,
     } as unknown as Delivery);
@@ -245,5 +250,67 @@ describe("AcpRuntime", () => {
       "--port",
       "0",
     ]);
+  });
+
+  it("never queues on a busy session once its launch changes", async () => {
+    for (const approved of [true, false]) {
+      const config = await confirmed();
+      const { fake, deliver, sync, published } = setup({
+        hold: true,
+        holdExit: true,
+      });
+      sync(config);
+      const first = message("1", "@Opal hello");
+      await deliver(first, config).run;
+      await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+      const edited = { ...config, args: ["acp", "--port", "0"] };
+      const next = approved ? await confirmed({ args: edited.args }) : edited;
+      sync(next);
+      // The old process is killed but has not exited, and its turn is open.
+      await vi.waitFor(() => expect(fake.harnesses[0]?.killed).toBe(true));
+      // In the same conversation as the turn still running.
+      const reply = message("2", "@Opal again");
+      reply.tags.push(["e", first.id, "", "reply"]);
+      await deliver(reply, next).run;
+      if (approved) {
+        await vi.waitFor(() =>
+          expect(fake.harnesses[1]?.turns).toHaveLength(1),
+        );
+        expect(fake.harnesses[1]?.turns[0]?.text).toContain("@Opal again");
+      } else
+        await vi.waitFor(() =>
+          expect(published.map((p) => p.content).join("\n")).toContain(
+            "Confirm this agent's command in its settings.",
+          ),
+        );
+      expect(fake.harnesses[0]?.sent("session/prompt")).toHaveLength(1);
+    }
+  });
+
+  it("leaves nothing running when a delivery is cancelled while the harness starts", async () => {
+    const config = await confirmed();
+    const { fake, deliver, sync } = setup({
+      silent: ["initialize"],
+    });
+    sync(config);
+    const cancel = new AbortController();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await deliver(message("1", "@Opal hello"), config, cancel.signal).run;
+      // The approval digest resolves outside the fake clock.
+      while (!fake.harnesses[0]?.sent("initialize").length)
+        await new Promise((resolve) => setImmediate(resolve));
+      cancel.abort(new Error("cancelled"));
+      // The start is shared by the agent's messages, so the cancel gives up
+      // only this one; the unanswered start is then bounded and killed.
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(() => expect(fake.harnesses[0]?.killed).toBe(true));
+    await flush(50);
+    expect(fake.harnesses).toHaveLength(1);
+    expect(fake.harnesses[0]?.sent("session/new")).toEqual([]);
+    expect(fake.servers.every((server) => server.closed)).toBe(true);
   });
 });

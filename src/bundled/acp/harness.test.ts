@@ -42,9 +42,13 @@ describe("check", () => {
       BUZZ_AUTH_TAG: null,
       BUZZ_RELAY_URL: null,
     });
-    expect(Object.keys(harness?.options.env ?? {}).at(-1)).toBe(
+    // The protected blanks come after the owner's env, so they win.
+    expect(Object.keys(harness?.options.env ?? {})).toEqual([
+      "FOO",
+      "BUZZ_PRIVATE_KEY",
+      "BUZZ_AUTH_TAG",
       "BUZZ_RELAY_URL",
-    );
+    ]);
     expect(harness?.killed).toBe(true);
     // Check opens no session.
     expect(harness?.sent("session/new")).toEqual([]);
