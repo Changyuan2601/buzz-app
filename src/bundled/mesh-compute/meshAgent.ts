@@ -1,3 +1,4 @@
+import { conciergeDraft } from "./conciergeDraft";
 // Mesh delivery policy and per-conversation ordering. Agent mode delegates to
 // the required inline Rust/GDK adapter; Chat uses one leased completion.
 // No helper process, ACP session, MCP bridge or alternate inference provider.
@@ -379,7 +380,15 @@ export class MeshAgentRuntime {
       const wholeChannel = topLevel || config.scope === "channel";
       const read = () =>
         conversationMessages(delivery, event, channelId, wholeChannel).catch(
-          () => [] as EventData[],
+          (error) => {
+            if (
+              topLevel &&
+              config.mode === "chat" &&
+              config.preset === "buzz-concierge"
+            )
+              throw error;
+            return [] as EventData[];
+          },
         );
       let reply: string;
       if (config.mode === "chat") {
@@ -404,6 +413,20 @@ export class MeshAgentRuntime {
           ),
           signal,
         );
+        // The opening choices are an app contract, not optional model prose.
+        // Preserve existing action cards and only supply the missing first card.
+        if (
+          config.preset === "buzz-concierge" &&
+          topLevel &&
+          reply.trim() &&
+          earlier.length < 49 && // A full 50-event read cannot prove this is the first card.
+          conciergeDraft(reply)?.action !== "start" &&
+          !earlier.some(
+            (item) =>
+              item.pubkey === agent.pubkey && conciergeDraft(item.content),
+          )
+        )
+          reply = '```buzz-agent\n{"action":"start"}\n```';
       } else {
         const cwd = await untilAborted(
           resolveWorkspace(this.deps, config.workspace),

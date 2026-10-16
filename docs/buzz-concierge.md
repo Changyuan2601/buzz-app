@@ -13,7 +13,10 @@ The editable script is
 [`BUZZ_CONCIERGE.md`](../src/bundled/mesh-compute/BUZZ_CONCIERGE.md).
 The welcome card offers **Use this agent** and **Create a new agent**, then a
 labelled name field. Both paths show the registered AI buttons and reuse the
-existing account/model/workspace setup dialogs.
+existing account/model/workspace setup dialogs. For the first successful Solo/DM
+reply, the runtime guarantees the opening card even if the shared model replies
+with prose or an unusable action block. It preserves prior action cards; failed
+or potentially truncated history reads cannot restart the setup by guessing.
 
 The guide asks one short question at a time:
 

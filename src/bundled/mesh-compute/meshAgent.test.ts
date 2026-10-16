@@ -730,3 +730,104 @@ it("gives Concierge its saved name and registered harness choices for the self-o
   expect(messages?.[0]?.content).toContain('Current saved agent name: "M"');
   expect(messages?.[0]?.content).toContain("example/local: Local");
 });
+
+it("supplies the first Solo Concierge action card when the model replies with prose", async () => {
+  const f = setup(
+    {
+      solo: async () => true,
+      chat: async () => "Would you like to use me or create an agent?",
+    },
+    OWNER,
+    { mode: "chat", preset: "buzz-concierge" },
+  );
+  await f.runtime.run(f.delivery());
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: '```buzz-agent\n{"action":"start"}\n```',
+  });
+});
+it("does not add another opening card after an existing Concierge action", async () => {
+  const f = setup(
+    { solo: async () => true, chat: async () => "Use the choices above." },
+    OWNER,
+    { mode: "chat", preset: "buzz-concierge" },
+  );
+  f.query.mockResolvedValue([
+    {
+      ...EVENT,
+      id: "2".repeat(64),
+      pubkey: "b".repeat(64),
+      content: '```buzz-agent\n{"action":"start"}\n```',
+    },
+  ]);
+  await f.runtime.run(f.delivery());
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "Use the choices above.",
+  });
+});
+it("preserves a model's explicit valid Concierge action instead of replacing it", async () => {
+  const card = '```buzz-agent\n{"action":"rename","name":"Alloy"}\n```';
+  const f = setup({ solo: async () => true, chat: async () => card }, OWNER, {
+    mode: "chat",
+    preset: "buzz-concierge",
+  });
+  f.query.mockResolvedValue([
+    {
+      ...EVENT,
+      id: "2".repeat(64),
+      pubkey: AGENT,
+      content: '```buzz-agent\n{"action":"start"}\n```',
+    },
+  ]);
+  await f.runtime.run(f.delivery());
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: card });
+});
+
+it.each([
+  "```buzz-agent\n{broken}\n```",
+  '```buzz-agent\n{"action":"rename","name":"Alloy"}\n```',
+  '```buzz-agent\n{"action":"start"}\n```\n```buzz-agent\n{"action":"start"}\n```',
+])(
+  "keeps the opening choices deterministic for unusable or out-of-order model output: %s",
+  async (reply) => {
+    const f = setup(
+      { solo: async () => true, chat: async () => reply },
+      OWNER,
+      { mode: "chat", preset: "buzz-concierge" },
+    );
+    await f.runtime.run(f.delivery());
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: '```buzz-agent\n{"action":"start"}\n```',
+    });
+  },
+);
+
+it("reports unavailable Concierge history instead of treating it as a new onboarding", async () => {
+  const f = setup({ solo: async () => true }, OWNER, {
+    mode: "chat",
+    preset: "buzz-concierge",
+  });
+  f.query.mockRejectedValueOnce(new Error("History unavailable"));
+  await f.runtime.run(f.delivery());
+  expect(f.deps.chat).not.toHaveBeenCalled();
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "⚠️ Mesh agent couldn't answer: History unavailable",
+  });
+});
+it("does not infer absence of an older card from a full history window", async () => {
+  const f = setup(
+    { solo: async () => true, chat: async () => "Continue your setup above." },
+    OWNER,
+    { mode: "chat", preset: "buzz-concierge" },
+  );
+  f.query.mockResolvedValue(
+    Array.from({ length: 50 }, (_, i) => ({
+      ...EVENT,
+      id: String(i).padStart(64, "0"),
+      content: "Earlier chat",
+    })),
+  );
+  await f.runtime.run(f.delivery());
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "Continue your setup above.",
+  });
+});
