@@ -432,6 +432,35 @@ describe("Mesh agent runtime", () => {
     });
   });
 
+  it("keeps the admitted Me decision when placement changes while queued", async () => {
+    let me = true;
+    const meChat = vi.fn(async () => me);
+    const { runtime, delivery, inline, publish } = setup({ meChat });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    inline.run.mockImplementation(async () => {
+      await gate;
+      return { text: "done" };
+    });
+    const first = runtime.run(delivery());
+    await vi.waitFor(() => expect(inline.run).toHaveBeenCalledTimes(1));
+    me = false;
+    release();
+    await first;
+    expect(meChat).toHaveBeenCalledTimes(1);
+    expect(inline.run.mock.calls[0]?.[0].context).toEqual({ channel: "chan" });
+    expect(publish).toHaveBeenLastCalledWith({
+      kind: 9,
+      content: "done",
+      tags: [
+        ["h", "chan"],
+        ["p", OWNER],
+      ],
+    });
+  });
+
   it("does not answer when the Me placement can't be read", async () => {
     const { runtime, delivery, inline, publish } = setup({
       meChat: async () => {
