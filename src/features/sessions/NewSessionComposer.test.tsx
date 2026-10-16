@@ -4,12 +4,16 @@ import { webcrypto } from "node:crypto";
 import { sectionTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
-import { NewSessionComposer } from "./NewSessionComposer";
+import { NewSessionComposer, resetNewChatProject } from "./NewSessionComposer";
 import { readSelectedAssistant } from "./selected-assistant";
+import { createWorkSessions } from "../relay/work-sessions";
+import { createOutbox } from "../relay/outbox";
+import { keypair, signed } from "../relay/testing";
+import { sessionDescription } from "./metadata";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -220,6 +224,8 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     ),
     "Fresh start",
     undefined,
+    undefined,
+    false,
   );
 });
 
@@ -680,6 +686,9 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     order.push("send");
     return "d".repeat(64);
   });
+  test.workSessions.delivered.mockRejectedValueOnce(
+    new Error("Unknown creation"),
+  );
   const onStarted = vi.fn();
   const user = userEvent.setup();
   const view = (focusRequest: number | AbortSignal = 0) => (
@@ -691,16 +700,21 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
       onStarted={onStarted}
     />
   );
+  writeView("test", "sessions:settings", "Legacy Canvas");
   let mounted = render(view());
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Session settings…" }),
-  );
-  await user.type(
-    await screen.findByRole("textbox", { name: "Canvas" }),
-    "Keep the change small",
-  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
+  const canvas = await screen.findByRole("textbox", { name: /^Instructions/ });
+  expect(canvas).toHaveValue("Legacy Canvas");
+  await user.clear(canvas);
+  await user.type(canvas, "Keep the change small");
+  await user.click(screen.getByRole("radio", { name: /^Temporary/ }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Session settings" }),
+    ).toHaveFocus(),
+  );
+  expect(screen.queryByRole("menu")).toBeNull();
   expect(test.workSessions.create).not.toHaveBeenCalled();
   expect(saveCanvas).not.toHaveBeenCalled();
   mounted.unmount();
@@ -709,14 +723,27 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     name: "Message this session",
   });
   expect(composer).toHaveFocus();
-  const actions = screen.getByRole("button", { name: "Session actions" });
+  const actions = screen.getByRole("button", { name: "Session settings" });
   actions.focus();
   expect(actions).toHaveFocus();
   mounted.rerender(view(new AbortController().signal));
   expect(composer).toHaveFocus();
   await user.type(composer, "Build this");
   await user.keyboard("{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Unknown creation",
+  );
+  expect(test.workSessions.create.mock.calls[0]?.[3]).toBe(604800);
+  mounted.unmount();
+  // A changed local setting must not replace the frozen first-attempt lifetime.
+  writeView("test", "sessions:settings", {
+    canvas: "Other settings",
+    ttlSeconds: 86400,
+  });
+  render(view());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalled());
+  expect(test.workSessions.create).toHaveBeenCalledOnce();
   expect(saveCanvas).toHaveBeenCalledWith(
     expect.any(String),
     "Keep the change small",
@@ -929,7 +956,7 @@ it("keeps the Me draft and creates nothing until capacity admission succeeds", a
   const f = setup();
   const user = userEvent.setup();
   const started = vi.fn();
-  f.mePlacement.admit.mockRejectedValueOnce(new Error("Me storage is full"));
+  f.mePlacement.admit.mockRejectedValueOnce(new Error("Solo storage is full"));
   writeView("me-full", "me:new-draft", "Keep this thought");
   const view = render(
     <NewSessionComposer
@@ -940,7 +967,7 @@ it("keeps the Me draft and creates nothing until capacity admission succeeds", a
     />,
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByText("Me storage is full");
+  await screen.findByText("Solo storage is full");
   expect(f.workSessions.create).not.toHaveBeenCalled();
   expect(f.messages.send).not.toHaveBeenCalled();
   const id = f.mePlacement.admit.mock.calls[0]?.[0];
@@ -966,64 +993,257 @@ it("keeps the Me draft and creates nothing until capacity admission succeeds", a
   );
 });
 
-it("opens and saves local draft settings in a fresh Me-only group", async () => {
-  vi.stubGlobal("crypto", webcrypto);
-  try {
-    const f = setup();
-    const refreshMe = vi.fn(async () => {});
-    const refreshMessages = vi.fn(async () => {
-      throw new Error("Wrong namespace");
+it.each([false, true])(
+  "opens and saves local draft settings in a fresh Me-only group, failed initial read=%s",
+  async (failedRead) => {
+    vi.stubGlobal("crypto", webcrypto);
+    try {
+      const f = setup();
+      const refreshMe = vi.fn(async () => {});
+      if (failedRead)
+        refreshMe.mockRejectedValueOnce(new Error("Settings unavailable"));
+      const refreshMessages = vi.fn(async () => {
+        throw new Error("Wrong namespace");
+      });
+      Object.assign(f.session, {
+        mePreferences: {
+          writable: true,
+          refresh: refreshMe,
+          snapshot: () => ({
+            status: "ready",
+            data: {
+              sections: [{ id: "me-only", name: "Work" }],
+              assignments: {},
+            },
+          }),
+        },
+        sidebarPreferences: { refresh: refreshMessages },
+        channelKit: {
+          refresh: async () => {},
+          snapshot: () => ({ status: "ready", entries: [] }),
+        },
+      });
+      const view = () => (
+        <NewSessionComposer
+          standalone
+          personal
+          session={f.session}
+          scope="me-settings"
+          sectionId="me-only"
+          onStarted={() => {}}
+        />
+      );
+      const user = userEvent.setup();
+      const mounted = render(view());
+      const open = async () => {
+        await user.click(
+          screen.getByRole("button", { name: "Session settings" }),
+        );
+      };
+      await open();
+      if (failedRead) {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "Settings unavailable",
+        );
+        expect(screen.queryByText("Loading settings…")).toBeNull();
+        expect(
+          screen.getByRole("button", { name: "Save changes" }),
+        ).toBeDisabled();
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        refreshMe.mockImplementationOnce(() => held);
+        try {
+          await user.click(
+            screen.getByRole("button", { name: "Retry settings" }),
+          );
+          await waitFor(() => expect(refreshMe).toHaveBeenCalledTimes(2));
+          expect(screen.getByRole("status")).toHaveTextContent(
+            "Loading settings…",
+          );
+          expect(screen.queryByRole("alert")).toBeNull();
+          expect(
+            screen.getByRole("button", { name: "Save changes" }),
+          ).toBeDisabled();
+        } finally {
+          release();
+        }
+      }
+      await user.type(
+        await screen.findByRole("textbox", { name: /^Instructions/ }),
+        "Keep this Me draft",
+      );
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      expect(refreshMe).toHaveBeenCalledTimes(failedRead ? 2 : 1);
+      expect(refreshMessages).not.toHaveBeenCalled();
+      mounted.unmount();
+      render(view());
+      await open();
+      expect(
+        await screen.findByRole("textbox", { name: /^Instructions/ }),
+      ).toHaveValue("Keep this Me draft");
+      expect(
+        screen.getByRole("button", { name: "Save changes" }),
+      ).toBeEnabled();
+      expect(f.workSessions.create).not.toHaveBeenCalled();
+      expect(f.messages.send).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.each(["draft", "nonnumber draft", "receipt"])(
+  "invalid stored %s lifetime fails visibly without a new create",
+  async (source) => {
+    const h = setup();
+    writeView("test", "sessions:new-draft", "Keep this draft");
+    if (source !== "receipt")
+      writeView("test", "sessions:settings", {
+        canvas: "",
+        ttlSeconds: source === "draft" ? -1 : "broken",
+      });
+    else
+      writeView("test", "sessions:pending", {
+        id: parent.id,
+        text: "Keep this draft",
+        ttlSeconds: -1,
+        creationId: "c".repeat(64),
+      });
+    const user = userEvent.setup();
+    render(
+      <NewSessionComposer
+        session={h.session}
+        scope="test"
+        onStarted={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "duration could not be verified",
+    );
+    expect(h.workSessions.create).not.toHaveBeenCalled();
+    expect(h.workSessions.delivered).not.toHaveBeenCalled();
+  },
+);
+
+it("freezes lifetime even when the first create fails before receiving an event ID", async () => {
+  const h = setup(),
+    user = userEvent.setup(),
+    started = vi.fn();
+  Object.assign(h.session, {
+    canvas: { read: async () => undefined, save: vi.fn(async () => {}) },
+  });
+  h.workSessions.create.mockImplementationOnce(() => {
+    throw new Error("Creation unavailable");
+  });
+  writeView("test", "sessions:settings", { ttlSeconds: 600 });
+  writeView("test", "sessions:new-draft", "Keep this prompt");
+  const view = () => (
+    <NewSessionComposer
+      standalone
+      session={h.session}
+      scope="test"
+      onStarted={started}
+    />
+  );
+  const mounted = render(view());
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
+  const temporary = await screen.findByRole("radio", { name: /^Temporary/ });
+  await user.click(screen.getByRole("radio", { name: /^Ongoing/ }));
+  await user.click(temporary);
+  expect(temporary).toHaveAccessibleDescription(
+    "Archives after 10 minutes without activity.",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Creation unavailable",
+  );
+  mounted.unmount();
+  writeView("test", "sessions:settings", { ttlSeconds: 86400 });
+  render(view());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(h.workSessions.create.mock.calls.map((call) => call[3])).toEqual([
+    600, 600,
+  ]);
+});
+
+it.each([-1, "broken"])(
+  "parent-linked settings hide and clear invalid inherited lifetime %s",
+  async (ttlSeconds) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    Object.assign(h.session, {
+      canvas: { read: async () => undefined, save: vi.fn(async () => {}) },
     });
-    Object.assign(f.session, {
-      mePreferences: {
-        writable: true,
-        refresh: refreshMe,
-        snapshot: () => ({
-          status: "ready",
-          data: {
-            sections: [{ id: "me-only", name: "Work" }],
-            assignments: {},
-          },
-        }),
-      },
-      sidebarPreferences: { refresh: refreshMessages },
-      channelKit: {
-        refresh: async () => {},
-        snapshot: () => ({ status: "ready", entries: [] }),
-      },
+    writeView("test", `sessions:channel:${parent.id}:settings`, {
+      canvas: "Keep parent Canvas",
+      ttlSeconds,
     });
-    const view = () => (
+    writeView(
+      "test",
+      `sessions:channel:${parent.id}:new-draft`,
+      "Keep parent prompt",
+    );
+    render(
       <NewSessionComposer
         standalone
-        personal
-        session={f.session}
-        scope="me-settings"
-        sectionId="me-only"
-        onStarted={() => {}}
-      />
+        session={h.session}
+        parent={parent}
+        scope="test"
+        onStarted={started}
+      />,
     );
-    const user = userEvent.setup();
-    const mounted = render(view());
-    const open = async () => {
-      await user.click(screen.getByRole("button", { name: "Session actions" }));
-      await user.click(
-        await screen.findByRole("menuitem", { name: "Chat settings…" }),
-      );
-      return screen.findByRole("textbox", { name: "Canvas" });
-    };
-    await user.type(await open(), "Keep this Me draft");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(refreshMe).toHaveBeenCalledOnce();
-    expect(refreshMessages).not.toHaveBeenCalled();
-    mounted.unmount();
-    render(view());
-    expect(await open()).toHaveValue("Keep this Me draft");
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
-    expect(f.workSessions.create).not.toHaveBeenCalled();
-    expect(f.messages.send).not.toHaveBeenCalled();
-  } finally {
-    vi.unstubAllGlobals();
-  }
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "duration could not be verified",
+    );
+    expect(h.workSessions.create).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Session settings" }));
+    expect(
+      await screen.findByRole("textbox", { name: /^Instructions/ }),
+    ).toHaveValue("Keep parent Canvas");
+    expect(screen.queryByRole("radio", { name: /^Ongoing/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /^Temporary/ })).toBeNull();
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(h.workSessions.create.mock.calls[0]?.[3]).toBeUndefined();
+  },
+);
+
+it("invalid stored Canvas is safely editable without dropping a malformed lifetime", async () => {
+  const h = setup(),
+    user = userEvent.setup();
+  writeView("test", "sessions:settings", {
+    canvas: { invalid: true },
+    ttlSeconds: "broken",
+  });
+  writeView("test", "sessions:new-draft", "Keep this prompt");
+  render(
+    <NewSessionComposer
+      standalone
+      session={h.session}
+      scope="test"
+      onStarted={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
+  const canvas = await screen.findByRole("textbox", { name: /^Instructions/ });
+  expect(canvas).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "duration could not be verified",
+  );
+  expect(h.workSessions.create).not.toHaveBeenCalled();
 });
 
 async function projectSetup() {
@@ -1071,6 +1291,150 @@ async function projectSetup() {
   return { ...f, saveCanvas };
 }
 
+it.each([false, true])(
+  "re-entering a mounted project clears changed defaults and preserves pending starts (pending=%s)",
+  async (submitted) => {
+    const f = await projectSetup();
+    const started = vi.fn();
+    const scope = `project-reset-${submitted}`;
+    const key = "me:section:work";
+    writeView(scope, `${key}:new-project`, "other");
+    writeView(scope, `${key}:settings`, "other edited instructions");
+    if (submitted)
+      writeView(scope, `${key}:pending`, {
+        id: "22222222-2222-4222-8222-222222222222",
+        text: "Keep me",
+        setup: {
+          sectionId: "other",
+          agents: [],
+          canvas: "other edited instructions",
+        },
+      });
+    render(
+      <NewSessionComposer
+        personal
+        standalone
+        sectionId="work"
+        session={f.session}
+        scope={scope}
+        onStarted={started}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Project: Other" }),
+    ).toBeVisible();
+    act(() => resetNewChatProject(scope, true, "work"));
+    expect(
+      await screen.findByRole("button", {
+        name: submitted ? "Project: Other" : "Project: Work",
+      }),
+    ).toBeVisible();
+    if (!submitted) {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Session settings" }),
+      );
+      expect(
+        await screen.findByRole("textbox", { name: /^Instructions/ }),
+      ).toHaveValue("work instructions");
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await userEvent.type(screen.getByRole("textbox"), "Start in Work");
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(f.mePlacement.set).toHaveBeenCalledWith(expect.any(String), true, {
+      sectionId: submitted ? "other" : "work",
+    });
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      submitted ? "other edited instructions" : "work instructions",
+      undefined,
+    );
+  },
+);
+
+it("re-entering a project while a start loads its defaults keeps the submitted project", async () => {
+  const f = await projectSetup();
+  const started = vi.fn();
+  const user = userEvent.setup();
+  const scope = "project-reset-loading";
+  writeView(scope, "me:section:work:new-project", "other");
+  let release = () => {};
+  const loading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.spyOn(f.session.channelKit, "refresh").mockReturnValue(loading);
+  f.mePlacement.admit.mockRejectedValueOnce(new Error("Admission unavailable"));
+  render(
+    <NewSessionComposer
+      personal
+      standalone
+      sectionId="work"
+      session={f.session}
+      scope={scope}
+      onStarted={started}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "Start in Other");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  act(() => resetNewChatProject(scope, true, "work"));
+  release();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Admission unavailable",
+  );
+  expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(f.mePlacement.set).toHaveBeenCalledWith(expect.any(String), true, {
+    sectionId: "other",
+  });
+  expect(f.saveCanvas).toHaveBeenCalledWith(
+    expect.any(String),
+    "other instructions",
+    undefined,
+  );
+});
+
+it("keeps a locally chosen project when its persistence fails and other draft writes succeed", async () => {
+  const f = await projectSetup();
+  const started = vi.fn();
+  const user = userEvent.setup();
+  const scope = "project-write-failure";
+  const key = `buzz-view.v1:${JSON.stringify([scope, "me:section:work:new-project"])}`;
+  const setItem = Storage.prototype.setItem;
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new Error("Storage unavailable");
+      setItem.call(this, name, value);
+    });
+  try {
+    render(
+      <NewSessionComposer
+        personal
+        sectionId="work"
+        session={f.session}
+        scope={scope}
+        onStarted={started}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Other" }),
+    );
+    await user.type(screen.getByRole("textbox"), "Keep this project");
+    expect(
+      screen.getByRole("button", { name: "Project: Other" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(f.mePlacement.admit).toHaveBeenCalledWith(expect.any(String), {
+      sectionId: "other",
+    });
+  } finally {
+    storage.mockRestore();
+  }
+});
+
 it("inherits the project's defaults for two consecutive new chats", async () => {
   const f = await projectSetup();
   const user = userEvent.setup();
@@ -1109,11 +1473,16 @@ it.each(
     ),
   ),
 )(
-  "switching projects uses new defaults and clears old settings (saved=$saved, remount=$remount, fromProject=$fromProject)",
+  "switching projects uses new defaults and retains independent naming/lifetime (saved=$saved, remount=$remount, fromProject=$fromProject)",
   async ({ saved, remount, fromProject }) => {
     const f = await projectSetup();
     const user = userEvent.setup();
     const started = vi.fn();
+    const draftKey = fromProject ? "me:section:work" : "me";
+    writeView("switch-project", `${draftKey}:settings`, {
+      name: "My chosen title",
+      ttlSeconds: 600,
+    });
     const view = () => (
       <NewSessionComposer
         standalone
@@ -1126,11 +1495,10 @@ it.each(
     );
     const mounted = render(view());
     const openSettings = async () => {
-      await user.click(screen.getByRole("button", { name: "Session actions" }));
       await user.click(
-        await screen.findByRole("menuitem", { name: "Chat settings…" }),
+        screen.getByRole("button", { name: "Session settings" }),
       );
-      return screen.findByRole("textbox", { name: "Canvas" });
+      return screen.findByRole("textbox", { name: /^Instructions/ });
     };
     if (saved) {
       const canvas = await openSettings();
@@ -1155,6 +1523,10 @@ it.each(
     }
     const canvas = await openSettings();
     await waitFor(() => expect(canvas).toHaveValue("other instructions"));
+    expect(
+      screen.getByRole("textbox", { name: "Session name (optional)" }),
+    ).toHaveValue("My chosen title");
+    expect(screen.getByRole("radio", { name: /^Temporary/ })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await user.type(screen.getByRole("textbox"), "New project chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -1167,6 +1539,13 @@ it.each(
     expect(f.mePlacement.admit).toHaveBeenCalledWith(expect.any(String), {
       sectionId: "other",
     });
+    expect(f.workSessions.create).toHaveBeenCalledWith(
+      expect.any(String),
+      "My chosen title",
+      undefined,
+      600,
+      true,
+    );
   },
 );
 
@@ -1301,7 +1680,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await screen.findByText(
-    "Me can only use your available agents. Check mentions and section defaults.",
+    "Solo chats can only use your available agents. Check mentions and section defaults.",
   );
   expect(f.workSessions.create).not.toHaveBeenCalled();
   await user.click(
@@ -1316,3 +1695,281 @@ it("allows changing an unavailable assistant before any remote creation", async 
     ["a".repeat(64)],
   );
 });
+
+it.each(["", "Make contrast accessible"])(
+  "freezes the chosen or first-prompt name %j before asynchronous setup",
+  async (name) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    writeView("test", "sessions:settings", { name, ttlSeconds: 600 });
+    writeView("test", "sessions:new-draft", "Original prompt");
+    h.workSessions.create.mockImplementationOnce(() => {
+      throw new Error("Unavailable");
+    });
+    const view = () => (
+      <NewSessionComposer
+        session={h.session}
+        scope="test"
+        onStarted={started}
+      />
+    );
+    const mounted = render(view());
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
+    mounted.unmount();
+    writeView("test", "sessions:settings", { name: "Later name" });
+    render(view());
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("{Control>}a{/Control}Replacement prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    for (const call of h.workSessions.create.mock.calls) {
+      expect(call[1]).toBe(name || "Original prompt");
+      expect(call[4]).toBe(false);
+    }
+    expect(h.messages.send).toHaveBeenCalledOnce();
+  },
+);
+it("draft naming shares the existing Save and persists locally without creation", async () => {
+  const h = setup(),
+    user = userEvent.setup();
+  render(
+    <NewSessionComposer
+      standalone
+      session={h.session}
+      scope="test"
+      onStarted={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
+  const input = await screen.findByRole("textbox", {
+    name: "Session name (optional)",
+  });
+  await waitFor(() => expect(input).toBeEnabled());
+  await user.type(input, "Named draft");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(screen.getByRole("button", { name: "Session settings" }));
+  expect(
+    await screen.findByRole("textbox", { name: "Session name (optional)" }),
+  ).toHaveValue("Named draft");
+  expect(h.workSessions.create).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  { source: "draft", fields: { name: null } },
+  { source: "draft", fields: { name: 7 } },
+  { source: "draft", fields: { name: { invalid: true } } },
+  { source: "draft", fields: { name: "x".repeat(121) } },
+  { source: "receipt", fields: { name: { invalid: true } } },
+])(
+  "rejects malformed persisted naming before start side effects: $source $fields",
+  async ({ source, fields }) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    const refreshPreferences = vi.fn(async () => {});
+    const refreshSetup = vi.fn(async () => {});
+    const readCanvas = vi.fn(async () => undefined);
+    const saveCanvas = vi.fn(async () => {});
+    const refreshAgents = vi.fn(async () => {});
+    Object.assign(h.session, {
+      channelKit: { refresh: refreshSetup },
+      mePreferences: {
+        refresh: refreshPreferences,
+        snapshot: () => ({
+          data: { sections: [{ id: "work", name: "Work" }] },
+        }),
+      },
+      canvas: { read: readCanvas, save: saveCanvas },
+      agentChoices: { ...h.session.agentChoices, refresh: refreshAgents },
+    });
+    const key = "me:section:work";
+    writeView("test", `${key}:new-draft`, "Keep this draft");
+    if (source === "draft") writeView("test", `${key}:settings`, fields);
+    else
+      writeView("test", `${key}:pending`, {
+        id: parent.id,
+        text: "Keep this draft",
+        ...fields,
+      });
+    render(
+      <NewSessionComposer
+        personal
+        session={h.session}
+        scope="test"
+        sectionId="work"
+        onStarted={started}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/name/i);
+    for (const operation of [
+      refreshPreferences,
+      refreshSetup,
+      readCanvas,
+      saveCanvas,
+      refreshAgents,
+      h.mePlacement.admit,
+      h.mePlacement.set,
+      h.mePlacement.refresh,
+      h.workSessions.create,
+      h.workSessions.delivered,
+      h.workSessions.refresh,
+      h.workSessions.invite,
+      h.workSessions.addAgents,
+      h.messages.send,
+      started,
+    ]) {
+      expect(operation).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it.each(
+  [false, true].flatMap((personal) =>
+    [false, true].map((explicit) => ({ personal, explicit })),
+  ),
+)(
+  "naming crosses the real composer → creation/outbox boundary with frozen intent (personal=$personal, explicit=$explicit)",
+  async ({ personal, explicit }) => {
+    const h = setup();
+    const viewer = keypair();
+    const publish = vi.fn(async (_event: Parameters<typeof signed>[1]) => {});
+    const sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
+      signed(viewer, template),
+    );
+    const outbox = createOutbox(
+      viewer.pubkey,
+      { kinds: [9, 9007], sign, publish },
+      { load: () => [], save() {} },
+    );
+    const lifetime = new AbortController();
+    const namespace = personal ? "me" : "sessions";
+    writeView("real-creation", `${namespace}:settings`, {
+      name: explicit ? "Chosen title" : "",
+      ttlSeconds: 600,
+    });
+    writeView("real-creation", `${namespace}:new-draft`, "Original prompt");
+    let observed = outbox.outbox.snapshot();
+    let channelList = {
+      status: "ready" as const,
+      channels: [] as {
+        id: string;
+        name: string;
+        channelType: "session";
+        members: string[];
+      }[],
+    };
+    const channels = {
+      ...h.session.channels,
+      list: () => {
+        const next = outbox.outbox.snapshot();
+        if (next !== observed) {
+          observed = next;
+          channelList = {
+            status: "ready",
+            channels: next
+              .filter(({ event }) => event.kind === 9007)
+              .map(({ event }) => ({
+                id: event.tags.find(([key]) => key === "h")?.[1] ?? "",
+                name: "Chosen title",
+                channelType: "session",
+                members: [viewer.pubkey],
+              })),
+          };
+        }
+        return channelList;
+      },
+    };
+    const workSessions = createWorkSessions(
+      outbox.outbox,
+      channels,
+      { read: async () => [] },
+      lifetime.signal,
+    );
+    const session = {
+      ...h.session,
+      viewer: viewer.pubkey,
+      channels,
+      workSessions,
+      messages: {
+        ...h.session.messages,
+        send: (id: string, text: string) =>
+          outbox.outbox.send({ kind: 9, content: text, tags: [["h", id]] }),
+      },
+    } as RelaySession;
+    const started = vi.fn();
+    const mounted = render(
+      <NewSessionComposer
+        personal={personal}
+        session={session}
+        scope="real-creation"
+        onStarted={started}
+      />,
+    );
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(started).toHaveBeenCalledOnce());
+      const created = publish.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.kind === 9007);
+      expect(created?.tags).toContainEqual([
+        "name",
+        explicit ? "Chosen title" : "Original prompt",
+      ]);
+      expect(created?.tags).toContainEqual([
+        "about",
+        sessionDescription(undefined, personal),
+      ]);
+      expect(created?.tags).toContainEqual(["ttl", "600"]);
+      expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([
+        9007, 9,
+      ]);
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      mounted.unmount();
+      lifetime.abort();
+      outbox.dispose();
+    }
+  },
+);
+
+it.each([
+  { fields: { name: "Frozen title" }, title: "Frozen title" },
+  { fields: { name: "" }, title: "Original receipt prompt" },
+  { fields: {}, title: "Original receipt prompt" },
+])(
+  "recovers pending receipts without changing original intent: $fields",
+  async ({ fields, title }) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    writeView("test", "sessions:pending", {
+      id: parent.id,
+      text: "Original receipt prompt",
+      ...fields,
+    });
+    render(
+      <NewSessionComposer
+        session={h.session}
+        scope="test"
+        onStarted={started}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(h.workSessions.create).toHaveBeenCalledWith(
+      parent.id,
+      title,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(h.workSessions.create).toHaveBeenCalledOnce();
+    expect(h.messages.send).toHaveBeenCalledOnce();
+  },
+);

@@ -1,5 +1,5 @@
 import { watchPageErrors } from "./page-errors.mjs";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -103,13 +103,11 @@ test.beforeEach(async ({ page }) => {
     page.getByRole("button", { name: "Play voice note", exact: true }),
   ).toBeVisible();
 });
-// WebKit defers voice-card media reads until the first click and keeps issuing
-// them until the page closes, so a test that ends just after a click can close
-// the page under a media route still reading bytes from it. Those reads serve
-// no assertion once the test has finished.
 test.afterEach(async ({ page }) => {
-  await page.unrouteAll({ behavior: "ignoreErrors" });
+  // Media routes evaluate in the page; finish them before its fixture closes.
+  await page.unrouteAll({ behavior: "wait" });
 });
+
 async function record(page) {
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
@@ -170,12 +168,10 @@ test("record, preview, send and play the chat card with speed and seeking", {
     "stroke",
     "rgb(255, 255, 255)",
   );
-  await expect(draftPlay).toHaveCSS("clip-path", /^path\(/);
-  await expect(draftCard.locator("[data-image-outline] path")).toHaveAttribute(
-    "d",
-    / c .* a /,
-  );
-  // The background is smoothed separately so the floating remove control escapes.
+  await expect(draftPlay).toHaveCSS("clip-path", "none");
+  await expect(draftPlay).toHaveCSS("border-radius", "7px");
+  await expect(draftCard).toHaveCSS("border-radius", "10px");
+  // The draft uses concentric circular corners and an inset remove control.
   await draftCard
     .getByRole("button", { name: "Remove voice note" })
     .click({ trial: true });

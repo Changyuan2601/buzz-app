@@ -1,5 +1,8 @@
 import { expect, it, vi } from "vitest";
-import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
+import {
+  sessionDescription,
+  SESSION_CHANNEL_DESCRIPTION,
+} from "../sessions/metadata";
 import { createWorkSessions } from "./work-sessions";
 import type { Outbox, OutgoingEvent } from "./outbox";
 import type { ChannelQueries } from "./contracts";
@@ -1475,8 +1478,20 @@ it("starts a standalone session using existing private-channel creation without 
       ["about", `${SESSION_CHANNEL_DESCRIPTION}\nparent:${parent}`],
     ],
   });
+  test.service.create(id, "Solo", undefined, undefined, true);
+  expect(test.outbox.send).toHaveBeenLastCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Solo"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", `${SESSION_CHANNEL_DESCRIPTION}\npersonal`],
+    ],
+  });
   expect(() => test.service.create(id, "Child", id)).toThrow(/own parent/);
-  expect(test.outbox.send).toHaveBeenCalledTimes(2);
+  expect(test.outbox.send).toHaveBeenCalledTimes(3);
 });
 
 it("creates an ordinary stream with explicit visibility and optional description", () => {
@@ -1749,4 +1764,49 @@ it("refuses a new labeled channel without signing when the relay does not advert
   } finally {
     owner.dispose();
   }
+});
+
+it("standalone session creation sends validated TTL in its single durable outbox command", () => {
+  const h = setup();
+  const id = "11111111-1111-4111-8111-111111111111";
+  h.service.create(id, "Work", undefined, 600);
+  expect(h.outbox.send).toHaveBeenCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Work"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["ttl", "600"],
+    ],
+  });
+  for (const ttl of [0, -1, 1.5, 2147483648, NaN])
+    expect(() => h.service.create(id, "Work", undefined, ttl)).toThrow(
+      "duration",
+    );
+  expect(() =>
+    h.service.create(id, "Work", "22222222-2222-4222-8222-222222222222", 600),
+  ).toThrow("standalone");
+  expect(h.outbox.send).toHaveBeenCalledOnce();
+});
+
+it("creates a custom title and lifetime in one legacy-compatible command without a rename", () => {
+  const h = setup(),
+    id = "11111111-1111-4111-8111-111111111111";
+  h.service.create(id, "Named", undefined, 600);
+  expect(h.outbox.send).toHaveBeenCalledOnce();
+  expect(h.outbox.send).toHaveBeenCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Named"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", sessionDescription()],
+      ["ttl", "600"],
+    ],
+  });
 });

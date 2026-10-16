@@ -195,6 +195,7 @@ function fixture() {
 }
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
   const f = fixture();
+  expect(screen.getByRole("img", { name: "Berd" })).toBeVisible();
   const row = screen.getByRole("button", { name: /^Planning/ });
   expect(
     row.querySelector('[data-channel-unread-title="true"]'),
@@ -301,3 +302,36 @@ it("opens a typing-only agent's profile activity in its Me conversation", async 
   );
   expect(f.open).toHaveBeenLastCalledWith(meTarget(scope, id));
 });
+
+it.each(["disconnected", "connecting", "error"] as const)(
+  "keeps Solo's brand visible while %s without offering unavailable chat creation",
+  (status) => {
+    const owner = createRelaySession(null);
+    owners.push(owner);
+    const snapshot = { status, generation: 1, scope, session: owner.session };
+    const relay: RelayData = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry() {},
+      disconnect() {},
+      async clearCache() {},
+    };
+    // No navigation is needed until the connected history is mounted.
+    const navigator = { open: vi.fn() } as unknown as Navigation;
+    render(
+      <MeSidebar
+        relay={relay}
+        navigator={navigator}
+        target={meTarget(scope)}
+      />,
+    );
+    const sidebar = screen.getByRole("complementary", { name: "Solo sidebar" });
+    expect(within(sidebar).getByRole("img", { name: "Berd" })).toBeVisible();
+    expect(within(sidebar).getByRole("status")).toHaveTextContent(
+      "Connect to a community",
+    );
+    expect(
+      within(sidebar).queryByRole("button", { name: "New chat" }),
+    ).toBeNull();
+  },
+);

@@ -145,7 +145,7 @@ export function SearchChoices({
           id={highlight.listId}
           role="listbox"
           aria-label="Search results"
-          className="search-palette-results"
+          className="search-palette-results interaction-panel"
         >
           {groups
             .filter(
@@ -179,7 +179,7 @@ export function SearchChoices({
                         tabIndex={-1}
                         aria-selected={selected === key}
                         aria-current={false}
-                        selected={selected === key}
+                        highlighted={selected === key}
                         data-search-result=""
                         aria-keyshortcuts={
                           shortcutNumbers.has(key)

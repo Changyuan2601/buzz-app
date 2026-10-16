@@ -11,8 +11,10 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
+import { config } from "./config";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
+import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
 
 // The plugin registers only in the Mac/Linux desktop app.
@@ -43,6 +45,7 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
+  configured: { model?: string; model_reasoning_effort?: string } = {},
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -115,6 +118,7 @@ function fixture(
       if (request.method === "config/read")
         result = {
           config: {
+            ...configured,
             mcp_servers: {
               "company.tools": {
                 command: "secret-tool",
@@ -266,10 +270,23 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
+  // The host's copy of `core` memory, which needs no relay read.
+  const core = vi.fn(
+    async (
+      _pubkey: string,
+      _signal?: AbortSignal,
+    ): Promise<string | null | undefined> =>
+      memories.find((memory) => memory.slug === "core")?.body ?? null,
+  );
+  /** The tools plugins add, as the runtime reads them at each use. */
+  const added: AddedTool[] = [];
   const runtime = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
+    core,
     store,
+    config,
+    () => added,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -303,6 +320,14 @@ function fixture(
   }));
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
   const media = vi.fn(async () => btoa("\x89PNG\r\n"));
+  /** The owner's attention switch, and the objects the host holds. */
+  const attention = { on: false };
+  const objects = new Map<string, Record<string, unknown>>();
+  const attentionWrite = vi.fn(async (slug: string) => ({
+    result: "found",
+    object: objects.get(slug) ?? null,
+    expected_state: "object-v1:written",
+  }));
   const agent = {
     pubkey,
     owner,
@@ -312,6 +337,23 @@ function fixture(
     upload,
     media,
     remember,
+    attention: {
+      enabled: () => attention.on,
+      classifier: () => "unavailable" as const,
+      show: vi.fn(async (slug: string) => {
+        const object = objects.get(slug) ?? null;
+        return {
+          result: object ? "found" : "not-found",
+          object,
+          expected_state: "object-v1:test",
+        };
+      }),
+      interests: vi.fn(() =>
+        [...objects.keys()].filter((slug) => slug.startsWith("interest/")),
+      ),
+      watches: vi.fn(() => []),
+      write: attentionWrite,
+    },
   };
   runtime.sync([{ pubkey } as Agent]);
   let id = 0;
@@ -343,7 +385,7 @@ function fixture(
       workingUntil,
       current: () => true,
     };
-    if (result.trigger.type !== "timer")
+    if ("event" in result.trigger)
       events.push(result.trigger.event as EventData);
     return result;
   };
@@ -361,6 +403,8 @@ function fixture(
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
+        core,
+        tools: () => added,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -435,13 +479,35 @@ function fixture(
       },
     });
   };
+  /** Hands over a watch or timer as the agent runner does: a standalone turn
+   * in its Interest's lane, which the runner holds. */
+  const wakeTurn = (delivery: Delivery) => {
+    const { trigger } = delivery;
+    if (trigger.type === "mention") throw new Error("Expected a wake");
+    delivery.workingUntil(
+      wake(
+        delivery.agent,
+        trigger,
+        delivery.current,
+        (key, prompt) =>
+          runtime.runOnce({ delivery, key, signal: delivery.signal, prompt }),
+        "Codex",
+      ),
+    );
+  };
   return {
     runtime,
+    added,
+    wake: wakeTurn,
     tool,
+    attention,
+    objects,
+    attentionWrite,
     query,
     fileReads,
     memoryOpen,
     memoryRead,
+    core,
     memoryView,
     remember,
     upload,
@@ -760,6 +826,7 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   expect(one).toBe(two);
   await expect(one).resolves.toEqual({
     current: "test-model",
+    sendDefaults: true,
     models: [
       {
         id: "test-model",
@@ -792,6 +859,36 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   f.spawn.mockRejectedValueOnce(new Error("offline"));
   await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
 });
+it("refreshes model discovery only when effective model or effort changes", async () => {
+  const f = fixture();
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  const one = f.runtime.preview(agent);
+  await one;
+  expect(
+    f.runtime.preview({ ...agent, config: { workspace: "/tmp/other" } }),
+  ).toBe(one);
+  const two = f.runtime.preview({ ...agent, config: { model: "deep-model" } });
+  expect(two).not.toBe(one);
+  await expect(two).resolves.toMatchObject({ current: "deep-model" });
+  const three = f.runtime.preview({
+    ...agent,
+    config: { model: "deep-model", effort: "xhigh" },
+  });
+  expect(three).not.toBe(two);
+  await expect(three).resolves.toMatchObject({
+    current: "deep-model",
+    models: expect.arrayContaining([
+      expect.objectContaining({ id: "deep-model", effort: "xhigh" }),
+    ]),
+  });
+  expect(
+    f.runtime.preview({
+      ...agent,
+      config: { model: "deep-model", effort: "xhigh" },
+    }),
+  ).toBe(three);
+  expect(f.sent.filter((wire) => wire.method === "model/list")).toHaveLength(3);
+});
 it("shares model discovery with active turns and another agent", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -805,6 +902,14 @@ it("shares model discovery with active turns and another agent", async () => {
   expect(f.process.end).not.toHaveBeenCalled();
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("ignores changes to local Codex model preferences in the composer", async () => {
+  const configured = { model: "deep-model" };
+  const f = fixture([], undefined, false, configured);
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
+  configured.model = "test-model";
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
 });
 it("still offers the listed models when the configured one is not listed", async () => {
   const f = fixture();
@@ -829,6 +934,41 @@ it("previews each model at the configured effort when it has it", async () => {
   const { models } = await f.runtime.preview(agent);
   expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
 });
+it.each([
+  ["", "", "test-model", "medium"],
+  ["test-model", "high", "test-model", "high"],
+  ["deep-model", "", "deep-model", "high"],
+  ["deep-model", "xhigh", "deep-model", "xhigh"],
+])(
+  "resolves Buzz model %s and thinking %s independently of local Codex preferences",
+  async (model, effort, expected, expectedEffort) => {
+    const f = fixture([], undefined, false, {
+      model: "deep-model",
+      model_reasoning_effort: "xhigh",
+    });
+    const delivery = {
+      ...f.delivery("work"),
+      config: { workspace: "/tmp/codex-test", model, effort },
+    };
+    const preview = await f.runtime.preview({
+      pubkey,
+      config: delivery.config,
+    } as Agent);
+    expect(preview.current).toBe(expected);
+    expect(preview.models.find((row) => row.id === expected)?.effort).toBe(
+      expectedEffort,
+    );
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({
+      model: expected,
+      effort: expectedEffort,
+    });
+    expect(
+      f.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({ model: expected });
+  },
+);
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
@@ -992,7 +1132,7 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
 it("cuts delayed history off before the request, including same-second messages and edits", async () => {
   const f = fixture();
   const first = f.delivery("CURRENT_REQUEST");
-  if (first.trigger.type === "timer") throw new Error("Expected a mention");
+  if (!("event" in first.trigger)) throw new Error("Expected a mention");
   first.trigger.event.tags.push(["ms", "300"]);
   const gate = deferred<EventData[]>();
   const previous: EventData = {
@@ -1023,7 +1163,7 @@ it("cuts delayed history off before the request, including same-second messages 
     ]);
   await f.runtime.run(first);
   const later = f.delivery("LATER_REQUEST");
-  if (later.trigger.type === "timer") throw new Error("Expected a mention");
+  if (!("event" in later.trigger)) throw new Error("Expected a mention");
   later.trigger.event.tags.push(["ms", "400"]);
   try {
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
@@ -1162,8 +1302,7 @@ it("closes a native process returned after runtime disposal", async () => {
 it("ignores non-owner messages without spawning", async () => {
   const f = fixture();
   const other = f.delivery("work");
-  if (other.trigger.type !== "timer")
-    other.trigger.event.pubkey = "f".repeat(64);
+  if ("event" in other.trigger) other.trigger.event.pubkey = "f".repeat(64);
   const ignored = vi.fn();
   await f.runtime.run({ ...other, ignored });
   expect(ignored).toHaveBeenCalledOnce();
@@ -1287,6 +1426,7 @@ it("starts no work when the agent stops while its channel is read", async () => 
         }
       );
     },
+    async () => undefined,
     { getItem: () => null, setItem: () => {} } as unknown as Storage,
   );
   runtimes.push(runtime);
@@ -1341,7 +1481,7 @@ it("answers another agent its owner attested, telling the owner of failures", as
     .update(`nostr:agent-auth:${sibling}:`)
     .digest();
   const ask = f.delivery("work");
-  if (ask.trigger.type !== "timer") {
+  if ("event" in ask.trigger) {
     ask.trigger.event.pubkey = sibling;
     ask.trigger.event.tags.push([
       "auth",
@@ -1702,7 +1842,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it.each(["v2", "v3"])(
+it.each(["v2", "v3", "v5"])(
   "starts fresh instead of restoring a %s binding, whose tools are out of date",
   async (version) => {
     const f = fixture();
@@ -1852,82 +1992,31 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish).toHaveBeenCalledTimes(count);
 });
 
-it("gives each turn the agent's current core memory, and goes on without it when unreadable", async () => {
+it("starts each turn from the host's core memory, reading none from the relay", async () => {
   const f = fixture();
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const memory = (index: number) =>
-    (
-      f.starts()[index]?.params as
-        | { additionalContext?: Record<string, { value: string }> }
-        | undefined
-    )?.additionalContext?.["buzz.instructions"]?.value;
-  await f.runtime.run(f.delivery("@Codex first"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(memory(0)).toContain(
-    "Current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
-  );
-  f.complete(0, "FIRST");
-  await f.remember("core", "I am Codex.", 0);
-  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(memory(1)).toContain(
-    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
-  );
-  f.complete(1, "SECOND");
-  f.memoryRead.mockRejectedValueOnce(new Error("offline"));
-  await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-  expect(memory(2)).toContain("TEST_INSTRUCTIONS");
-  expect(memory(2)).not.toContain("<core-memory>");
-  expect(warn).toHaveBeenCalledWith(
-    "Codex could not read the agent's memory",
-    expect.any(Error),
-  );
-  f.complete(2, "THIRD");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
-  warn.mockRestore();
-});
-
-it("gives a turn no memory read through a connection that was replaced", async () => {
-  const f = fixture();
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  type Listing = Awaited<ReturnType<typeof f.memoryRead>>;
-  let release!: (listing: Listing) => void;
-  f.memoryRead.mockImplementationOnce(
-    () =>
-      new Promise<Listing>((resolve) => {
-        release = resolve;
-      }),
-  );
   const instructions = (index: number) =>
     (
       f.starts()[index]?.params as
         | { additionalContext?: Record<string, { value: string }> }
         | undefined
     )?.additionalContext?.["buzz.instructions"]?.value;
+  f.core.mockResolvedValueOnce("I am Codex.");
   await f.runtime.run(f.delivery("@Codex first"));
-  await vi.waitFor(() => expect(f.memoryRead).toHaveBeenCalledTimes(1));
-  const freshRead = vi.fn(async () => ({
-    entries: [{ slug: "core", body: "I am the new owner's.", createdAt: 1 }],
-    partial: false,
-  }));
-  f.snapshot.session = {
-    ...f.snapshot.session,
-    agentMemories: { ...f.snapshot.session.agentMemories, read: freshRead },
-  };
-  release({
-    entries: [{ slug: "core", body: "I am the old owner's.", createdAt: 1 }],
-    partial: false,
-  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(instructions(0)).not.toContain("old owner");
-  expect(instructions(0)).not.toContain("<core-memory>");
+  expect(instructions(0)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  expect(f.core).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
+  expect(f.memoryRead).not.toHaveBeenCalled();
   f.complete(0, "FIRST");
+  // The host could not read it: the turn goes on without it.
+  f.core.mockResolvedValueOnce(undefined);
   await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(freshRead).toHaveBeenCalledTimes(1);
-  expect(instructions(1)).toContain("I am the new owner's.");
-  warn.mockRestore();
+  expect(instructions(1)).toContain("TEST_INSTRUCTIONS");
+  expect(instructions(1)).not.toContain("<core-memory>");
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
 });
 
 it("splits turn context into ordered values that Codex does not truncate", async () => {
@@ -2001,66 +2090,6 @@ it("gives a resumed conversation the agent's current name", async () => {
   });
 });
 
-it("does not declare core missing when the owner listing is partial", async () => {
-  const f = fixture();
-  f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
-  await f.runtime.run(f.delivery("partial"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const start = f.starts()[0];
-  expect(start).toBeDefined();
-  const instructions = (
-    start?.params as {
-      additionalContext?: Record<string, { value: string }>;
-    }
-  )?.additionalContext?.["buzz.instructions"]?.value;
-  expect(instructions).toContain("TEST_INSTRUCTIONS");
-  expect(instructions).not.toContain("No core memory found");
-  expect(instructions).not.toContain("<core-memory>");
-});
-
-it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
-  const f = fixture();
-  const gate = deferred<void>();
-  const read = vi.fn(async () => {
-    await gate.promise;
-    return {
-      entries: [
-        {
-          slug: "core",
-          body: "CONCURRENT CORE",
-          eventId: "6".repeat(64),
-          createdAt: 1,
-        },
-      ],
-      partial: false,
-    };
-  });
-  const memories = createAgentMemories(read, owner, () => true);
-  f.snapshot.session.agentMemories =
-    memories.capability as unknown as typeof f.snapshot.session.agentMemories;
-
-  await Promise.all(
-    Array.from({ length: 5 }, (_, index) =>
-      f.runtime.run(
-        f.delivery(`concurrent ${index}`, index.toString(16).repeat(64)),
-      ),
-    ),
-  );
-  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
-  expect(f.starts()).toHaveLength(0);
-
-  gate.resolve();
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(5));
-  for (const start of f.starts())
-    expect(start.params).toMatchObject({
-      additionalContext: {
-        "buzz.instructions": {
-          value: expect.stringContaining("CONCURRENT CORE"),
-        },
-      },
-    });
-});
-
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -2090,10 +2119,15 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     ],
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
-  expect(f.memoryRead).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  // The turn's own `core` read, then mem_set's read and a fresh post-write read.
-  expect(f.memoryRead).toHaveBeenCalledTimes(3);
+  // mem_set's read and a fresh post-write read, each of one entry by its slug;
+  // the turn's `core` came from the host.
+  expect(
+    f.memoryRead.mock.calls.map((call: unknown[]) => [call[0], call[2]]),
+  ).toEqual([
+    [pubkey, "mem/test"],
+    [pubkey, "mem/test"],
+  ]);
   expect(
     (
       await f.tool("send", {
@@ -2256,7 +2290,7 @@ it("keeps each thread's activity in a shared session and does not move it to wat
   const watch = delivery("watched message", root);
   if (watch.trigger.type !== "mention") throw new Error("Expected mention");
   const watched = { step: vi.fn(), acknowledged: vi.fn(), superseded: vi.fn() };
-  await f.runtime.run({
+  f.wake({
     ...watch,
     ...watched,
     trigger: {
@@ -2273,10 +2307,15 @@ it("keeps each thread's activity in a shared session and does not move it to wat
       },
     },
   });
+  // The watch runs as a one-off turn of its own, never steered into a
+  // conversation; this one has no saved watch, so it does not run at all.
+  const wakeDone = f.workingUntil.mock.calls.at(-1)?.[0];
+  await expect(wakeDone).resolves.toEqual({ ok: true });
   await vi.waitFor(() =>
-    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(2),
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
   );
-  // A tool call waits for the steering chain, establishing that the watch was taken.
+  expect(f.sent.filter((w) => w.method === "thread/start")).toHaveLength(1);
+  // A tool call waits for the steering chain, establishing that it was taken.
   await f.tool("send", {
     audience: "everyone",
     text: "Progress",
@@ -2471,7 +2510,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v5:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v6:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2508,11 +2547,379 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v5:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
   await f.complete();
+});
+
+it("always offers the attention tools and guidance, keeps the thread when attention goes off, and says so in the turn", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  f.objects.set("interest/ops", {
+    type: "interest",
+    instructions: "Watch ops",
+  });
+  await f.runtime.run(f.delivery("@Codex with attention"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = (index: number) =>
+    f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as {
+      developerInstructions: string;
+      dynamicTools: { tools: { name: string }[] }[];
+    };
+  const names = (index: number) =>
+    thread(index)?.dynamicTools[0]?.tools.map((tool) => tool.name) ?? [];
+  expect(names(0)).toEqual(expect.arrayContaining(["send", "interest_show"]));
+  expect(thread(0)?.developerInstructions).toContain("## Attention");
+  const start = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(start.input[0]?.text).toMatch(
+    /<attention>\nHandle the work that caused this turn/,
+  );
+  // An attention call goes to the agent's attention, through the shared tools.
+  const shown = await f.tool("interest_show", { id: "ops" });
+  expect(JSON.stringify(shown?.result)).toContain("Watch ops");
+  // Turned off mid-turn, the listed tools refuse rather than write.
+  f.attention.on = false;
+  const refused = await f.tool("interest_remove", {
+    id: "ops",
+    expected_state: "object-v1:test",
+  });
+  expect(JSON.stringify(refused?.result)).toContain("Attention is off");
+  expect(f.attentionWrite).not.toHaveBeenCalled();
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Off, the thread is resumed with the same tools and instructions; only
+  // the turn says that attention is off.
+  await f.runtime.run(f.delivery("@Codex without attention"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  const next = f.starts()[1]?.params as { input: { text: string }[] };
+  expect(next.input[0]?.text).toMatch(
+    /<attention>\nYour owner has attention off/,
+  );
+  expect(next.input[0]?.text).not.toContain("Handle the work");
+  const off = await f.tool("interest_show", { id: "ops" }, 1);
+  expect(JSON.stringify(off)).toContain("Attention is off");
+  await f.complete(1);
+});
+
+it("offers the tools plugins add, runs them as the agent here, and starts a new thread when they change", async () => {
+  const f = fixture();
+  const call = vi.fn(async () => "created");
+  f.added.push({
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object", properties: { title: { type: "string" } } },
+    call,
+  });
+  await f.runtime.run(f.delivery("@Codex make a task"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const names = (index: number) =>
+    (
+      f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
+        | { dynamicTools: { tools: { name: string }[] }[] }
+        | undefined
+    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
+  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+  const reply = await f.tool("tasks_create", { title: "Ship it" });
+  expect(JSON.stringify(reply?.result)).toContain("created");
+  expect(call).toHaveBeenCalledWith(
+    expect.objectContaining({ pubkey }),
+    { channel: "channel", root },
+    { title: "Ship it" },
+  );
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Unchanged, the thread resumes with the tools it has.
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  const saved = JSON.parse(
+    f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+  );
+  expect(Object.values(saved)).toEqual([
+    expect.objectContaining({ tools: expect.any(String) }),
+  ]);
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Removed, resuming would keep the old tool, so a new thread starts.
+  f.added.length = 0;
+  await f.runtime.run(f.delivery("@Codex once more"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  expect(names(1)).not.toContain("tasks_create");
+  const gone = await f.tool("tasks_create", { title: "Late" });
+  expect(JSON.stringify(gone)).toContain("No active Buzz tool");
+  expect(call).toHaveBeenCalledTimes(1);
+  await f.complete();
+});
+
+it("runs a watch or timer as a one-off ephemeral turn with the attention tools, and saves nothing", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  f.objects.set("interest/ops", {
+    type: "interest",
+    instructions: "Watch ops",
+  });
+  const watch = {
+    type: "event",
+    enabled: true,
+    interest_id: "ops",
+    since: 0,
+    channels: "all",
+    kinds: [9],
+  } as const;
+  f.objects.set("watch/deploys", watch);
+  const base = f.delivery("someone else's message");
+  if (base.trigger.type !== "mention") throw new Error("Expected mention");
+  const event = { ...base.trigger.event, pubkey: "f".repeat(64) };
+  const acknowledged = vi.fn();
+  f.wake({
+    ...base,
+    acknowledged,
+    trigger: { type: "watch", event, slug: "watch/deploys", watch },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as {
+    ephemeral?: boolean;
+    dynamicTools: { tools: { name: string }[] }[];
+  };
+  expect(started.ephemeral).toBe(true);
+  expect(started.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+    "watch_update",
+  );
+  const text = (
+    f.starts()[0]?.params as { input: { text: string }[] } | undefined
+  )?.input[0]?.text;
+  expect(text).toContain(
+    '<watch-task>\nThis turn was started by watch "deploys"',
+  );
+  expect(text).toContain('<interest id="ops">\nWatch ops\n</interest>');
+  expect(text).toContain("<observed-message>");
+  expect(text).toMatch(/<attention>\nHandle the work/);
+  // The observed author is not the owner, and the watch still runs; it
+  // answers no one, so `send` has no default destination.
+  const send = await f.tool("send", { audience: "everyone", text: "x" });
+  expect(send?.result).toMatchObject({
+    success: false,
+    contentItems: [{ text: "channel is required here." }],
+  });
+  expect(f.publish).not.toHaveBeenCalled();
+  const shown = await f.tool("interest_show", { id: "ops" });
+  expect(JSON.stringify(shown?.result)).toContain("Watch ops");
+  await f.complete(0, "");
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+  expect(acknowledged).not.toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+      true,
+    ),
+  );
+  expect(f.runtime.sessions(pubkey)).toEqual([]);
+  expect([...f.storage.values()].join()).not.toContain("thread-1");
+  // After the turn, its tools no longer answer.
+  const late = await f.tool("interest_show", { id: "ops" }, 0);
+  expect(JSON.stringify(late)).toContain("No active Buzz tool");
+  // A timer runs the same way, on a thread of its own.
+  const timer = {
+    type: "timer",
+    enabled: true,
+    interest_id: "ops",
+    prompt: "Check the deploys",
+  };
+  // Timers live with watches, under `watch/`.
+  f.objects.set("watch/daily", timer);
+  f.wake({
+    ...base,
+    trigger: {
+      type: "timer",
+      slug: "watch/daily",
+      timer,
+      spent: false,
+    } as unknown as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const timed = (
+    f.starts()[1]?.params as { input: { text: string }[] } | undefined
+  )?.input[0]?.text;
+  expect(timed).toContain("Timer: daily");
+  expect(timed).toContain("Prompt: Check the deploys");
+  expect(
+    (f.starts()[1]?.params as { threadId: string } | undefined)?.threadId,
+  ).toBe("thread-2");
+  await f.complete(1, "");
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+});
+
+it("drops a wake that is no longer current", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  const watch = {
+    type: "event",
+    enabled: true,
+    interest_id: "ops",
+    since: 0,
+    channels: "all",
+    kinds: [9],
+  } as const;
+  f.objects.set("interest/ops", {
+    type: "interest",
+    instructions: "Watch ops",
+  });
+  f.objects.set("watch/deploys", watch);
+  const deliver = (current: () => boolean) => {
+    const base = f.delivery("watched");
+    if (base.trigger.type !== "mention") throw new Error("Expected mention");
+    return f.wake({
+      ...base,
+      current,
+      trigger: {
+        type: "watch",
+        event: base.trigger.event,
+        slug: "watch/deploys",
+        watch,
+      },
+    });
+  };
+  await deliver(() => true);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "");
+  // One whose watch is no longer wanted does not run.
+  await deliver(() => false);
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  // A watch that was removed does not run either.
+  f.objects.delete("watch/deploys");
+  await deliver(() => true);
+  await expect(f.workingUntil.mock.calls[2]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+});
+
+const wakeWatch = {
+  type: "event",
+  enabled: true,
+  interest_id: "ops",
+  since: 0,
+  channels: "all",
+  kinds: [9],
+} as const;
+function watchDelivery(
+  f: ReturnType<typeof fixture>,
+  extra: Partial<Delivery> = {},
+): Delivery {
+  f.attention.on = true;
+  f.objects.set("interest/ops", { type: "interest", instructions: "Ops" });
+  f.objects.set("watch/deploys", wakeWatch);
+  const base = f.delivery("watched");
+  if (base.trigger.type !== "mention") throw new Error("Expected mention");
+  return {
+    ...base,
+    ...extra,
+    trigger: {
+      type: "watch",
+      event: base.trigger.event,
+      slug: "watch/deploys",
+      watch: wakeWatch,
+    },
+  };
+}
+
+it("ends a queued mention with the attention note current when it starts", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // A different model cannot steer, so this one waits for the first turn.
+  await f.runtime.run({ ...f.delivery("@Codex second"), model: "deep-model" });
+  f.attention.on = false;
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const text = (
+    f.starts()[1]?.params as { input: { text: string }[] } | undefined
+  )?.input[0]?.text;
+  expect(text).toMatch(/<attention>\nYour owner has attention off/);
+  await f.complete(1, "SECOND");
+});
+
+it("stops a wake when its turn signal aborts, and lists it as needing attention", async () => {
+  const f = fixture();
+  const turn = new AbortController();
+  f.wake(watchDelivery(f, { signal: turn.signal }));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  turn.abort(new Error("The turn ran past its deadline"));
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "The turn ran past its deadline",
+  });
+  expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
+  expect(f.runtime.sessions(pubkey)).toEqual([
+    {
+      key: "watch/deploys",
+      status: "Needs attention",
+      detail: "The turn ran past its deadline",
+    },
+  ]);
+});
+
+it("ends a removed agent's wake shells before letting go of its thread", async () => {
+  const f = fixture();
+  const b = second(f);
+  f.wake(watchDelivery(f));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = (f.starts()[0]?.params as { threadId: string } | undefined)
+    ?.threadId;
+  // Removing the agent aborts its wake; the other agent keeps the server.
+  f.runtime.sync([{ pubkey: b.agent.pubkey } as Agent]);
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+    ok: false,
+  });
+  const methods = f.sent
+    .filter(
+      (wire) =>
+        (wire.params as { threadId?: string } | undefined)?.threadId === thread,
+    )
+    .map((wire) => wire.method);
+  expect(methods).toEqual(
+    expect.arrayContaining([
+      "turn/interrupt",
+      "thread/backgroundTerminals/clean",
+      "thread/backgroundTerminals/list",
+      "thread/unsubscribe",
+    ]),
+  );
+  expect(methods.indexOf("thread/backgroundTerminals/list")).toBeLessThan(
+    methods.indexOf("thread/unsubscribe"),
+  );
+  expect(f.process.end).not.toHaveBeenCalled();
 });
 
 describe("codexStep", () => {
@@ -2565,6 +2972,9 @@ describe("programs", () => {
 
 /** Files the fixture's channel in its owner's Me. */
 function inMe(f: ReturnType<typeof fixture>) {
+  f.snapshot.session.channels.list = () => ({
+    channels: [{ id: "channel", name: "test", channelType: "session" }],
+  });
   f.personal.add("channel");
   return f.personal;
 }
@@ -2676,12 +3086,15 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   ]);
 });
 
-it("fails a mention it cannot place, even in Messages, until the placement can be read", async () => {
+it("fails a session mention it cannot place until the placement can be read", async () => {
   const f = fixture();
+  f.snapshot.session.channels.list = () => ({
+    channels: [{ id: "channel", name: "test", channelType: "session" }],
+  });
   const placement = f.snapshot.session.mePlacement;
   placement.state = { status: "error", error: "Recipe read failed" };
   await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
-    "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
   );
   expect(placement.refresh).toHaveBeenCalledOnce();
   expect(f.starts()).toEqual([]);
@@ -2701,6 +3114,17 @@ it("keeps Messages routing for a channel filed in someone else's Me", async () =
   inMe(f);
   Object.assign(f.snapshot, { viewer: "9".repeat(64) });
   await f.runtime.run(f.delivery("@Codex hi"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("reply_to");
+  await f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
+  const f = fixture();
+  f.personal.add("channel");
+  await f.runtime.run(f.delivery("@Codex converted"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(inputText(f.starts()[0])).toContain("reply_to");
   await f.complete(0, "DONE");

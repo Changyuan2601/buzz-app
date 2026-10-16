@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
-  fireEvent,
   render,
   screen,
   waitFor,
@@ -18,6 +17,7 @@ import {
   AgentsService,
   type AgentCommunities,
 } from "../../features/agents/service";
+import { AgentDefaults } from "../agents/AgentDefaults";
 import { AgentsPage } from "../agents/AgentsPage";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -66,6 +66,7 @@ function provideAgents(
     portable: vi.fn(),
     port: vi.fn(),
     rename: vi.fn(),
+    beginDelete: vi.fn(),
     setPicture: vi.fn(),
     setType: vi.fn(),
     remove: vi.fn(),
@@ -73,6 +74,7 @@ function provideAgents(
     publish: vi.fn(),
     publishProfile: vi.fn(),
     query: vi.fn(),
+    searchProfiles: vi.fn(),
     upload: vi.fn(),
     media: vi.fn(),
     remember: vi.fn(),
@@ -112,7 +114,12 @@ it.each([undefined, "", "http://builderlab.example"])(
         /not configured|does not support/,
       );
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
-      expect(native.invoke).not.toHaveBeenCalled();
+      // Agents reads its own classifier key; Builderlab makes no native call.
+      expect(
+        native.invoke.mock.calls.filter(
+          ([command]) => command !== "jev_classifier_status",
+        ),
+      ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
@@ -233,24 +240,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       { key: "block.builderlab/builderlab", title: "Builderlab" },
     ]);
     expect(agents.types()[0]?.defaults()).toEqual({ config: {} });
-    const picker = render(
-      <AgentsPage agents={agents} relay={community.relay} />,
-    );
+    const picker = render(<AgentDefaults agents={agents} />);
     const providerUser = userEvent.setup();
     await providerUser.click(
-      screen.getByRole("button", { name: "More agent actions" }),
-    );
-    await providerUser.hover(
-      await screen.findByRole("menuitem", { name: "Provider settings" }),
-    );
-    const providers = await screen.findByRole("menu", {
-      name: "Provider settings",
-    });
-    await waitFor(() =>
-      expect(providers).not.toHaveAttribute("data-starting-style"),
-    );
-    fireEvent.click(
-      within(providers).getByRole("menuitem", {
+      await screen.findByRole("button", {
         name: "Log in to Builderlab, attention",
       }),
     );
@@ -455,10 +448,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     );
     expect(agents.find(browserKey)?.unfinished).toBeUndefined();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
-    expect(
-      screen.getByRole("tab", { name: "Instructions" }),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Instructions" }));
+    expect(screen.getByRole("tab", { name: "Identity" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
     const instructions = await screen.findByRole("textbox", {
       name: "Instructions",
     });
@@ -498,6 +489,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
 
     // Confirmed deletion waits for login before provider or community removal.
     await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
     await user.click(screen.getByRole("button", { name: "Delete agent" }));
     const deletion = screen.getByRole("dialog", { name: "Delete Browser?" });
     const remove = within(deletion).getByRole("button", { name: "Delete" });

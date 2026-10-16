@@ -1,4 +1,5 @@
 import {
+  ArrowUpRightIcon,
   DownloadIcon,
   FileTextIcon,
 } from "../../shared/design-system/icons/index";
@@ -61,7 +62,11 @@ export function FileAttachment({
             : "File unavailable"}
         </span>
       </span>
-      {proxySource && <DownloadIcon size={20} aria-hidden="true" />}
+      {proxySource ? (
+        <DownloadIcon size={20} aria-hidden="true" />
+      ) : (
+        <ArrowUpRightIcon size={20} aria-hidden="true" />
+      )}
     </>
   );
   if (!source) return <UnavailableFileAttachment displayName={displayName} />;

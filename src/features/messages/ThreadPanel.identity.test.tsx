@@ -133,13 +133,21 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   ]);
   bodyRender.mockClear();
 
+  const retainedReply = screen.getByText("Reply body");
+  const retainedRow = retainedReply.closest("[data-message-id]");
   const appended = message(bobKey, "a", "Appended reply body", 3, [
     ["e", root.id, "", "root"],
     ["e", root.id, "", "reply"],
   ]);
   await act(async () => page.respond([root, appended]));
   expect(await screen.findByText("Appended reply body")).toBeInTheDocument();
+  // The previous last bubble re-renders to join the new same-author reply.
+  // Its mounted content stays intact; unrelated rows still do not render.
+  expect(screen.getByText("Reply body")).toBe(retainedReply);
+  expect(retainedRow?.querySelector("[data-stack-next]")).not.toBeNull();
   expect(bodyRender.mock.calls).toEqual([
+    ["Reply body"],
+    ["Reply body"],
     ["Appended reply body"],
     ["Appended reply body"],
   ]);

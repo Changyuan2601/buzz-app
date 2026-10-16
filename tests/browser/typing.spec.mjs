@@ -177,12 +177,35 @@ for (const scope of ["channel", "thread"]) {
     expect(
       await history.evaluate((el) => el.scrollHeight - el.clientHeight),
     ).toBeGreaterThan(100);
+    // Real layout proves the channel and thread share the same composer gap.
+    await edge(page, -1, history);
+    const jump = history.locator("button[data-jump-to-latest]");
+    await expect(jump).toBeVisible();
+    await expect
+      .poll(async () => {
+        const button = await jump.boundingBox();
+        const form = await composer.boundingBox();
+        return form.y - button.y - button.height;
+      })
+      .toBe(12);
+    // The shadow needs room inside the overflow clip, not just a correct button gap.
+    const jumpBounds = await jump.boundingBox();
+    const historyBounds = await history.boundingBox();
+    expect(
+      historyBounds.y + historyBounds.height - jumpBounds.y - jumpBounds.height,
+    ).toBe(12);
+    await jump.click();
+    await expect(jump).toBeHidden();
+    await expect.poll(gap).toBeLessThan(2);
+    const bottomInset = await history.evaluate((el) =>
+      Number.parseFloat(getComputedStyle(el).paddingBottom),
+    );
     const idle = await history.boundingBox();
     const idleComposer = await composer.boundingBox();
     // The viewport meets the composer, but the final message has scrollable
     // breathing room. It must disappear with content, not remain a fixed strip.
     expect(Math.abs(idle.y + idle.height - idleComposer.y)).toBeLessThan(1);
-    const endPadding = 12; // Default interface size: the shared space-3 token.
+    const endPadding = 32; // Room for the floating typing row and its gap.
     const tailGap = async () => {
       const tail = await history
         .locator("[data-message-id]")
@@ -225,7 +248,7 @@ for (const scope of ["channel", "thread"]) {
         .boundingBox();
       expect(tail.y).toBeGreaterThanOrEqual(idle.y - 2);
       expect(tail.y + tail.height).toBeLessThanOrEqual(
-        idle.y + idle.height + 2,
+        idle.y + idle.height - bottomInset + 2,
       );
     };
     await expect(indicator).toHaveCount(0);
@@ -238,6 +261,13 @@ for (const scope of ["channel", "thread"]) {
     // changing either viewport or the user's bottom-reading position.
     expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y);
     expect(typingBounds.y + typingBounds.height).toBeLessThan(idleComposer.y);
+    const tailBounds = await history
+      .locator("[data-message-id]")
+      .last()
+      .boundingBox();
+    expect(
+      typingBounds.y - tailBounds.y - tailBounds.height,
+    ).toBeGreaterThanOrEqual(2);
     await stable();
     app.activity({ ...target, kind: 9 });
     await expect(indicator).toHaveCount(0);

@@ -9,7 +9,7 @@ pub(super) fn render(value: &str) -> Result<String, String> {
         .map_err(|_| "Couldn’t create the pairing code.")?;
     let size = code.width();
     let mut center = ((size * size) as f64 * 0.1).sqrt().floor() as usize;
-    if center % 2 == 0 {
+    if center.is_multiple_of(2) {
         center -= 1;
     }
     let start = (size - center) / 2;

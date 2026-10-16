@@ -157,10 +157,19 @@ test("message activity opens a grouped preview and the agent's profile without l
     ["e", root.id],
   ]);
   const requestRow = thread.locator(`[data-message-id="${root.id}"]`);
+  const messageActions = requestRow.getByRole("group", {
+    name: "Message actions",
+    includeHidden: true,
+  });
   await expect(requestRow.locator('[data-reaction="✅"]')).toBeVisible();
-  await expect(requestRow.locator('[data-reaction="👀"]')).toHaveAccessibleName(
-    "👀: 2 people",
-  );
+  const eyes = requestRow.locator('[data-reaction="👀"]');
+  await expect(eyes).toHaveCount(2);
+  await expect(
+    eyes.and(page.locator(`[data-reaction-author="${getPublicKey(keys[0])}"]`)),
+  ).toHaveAccessibleName("👀: Agent 1");
+  await expect(
+    eyes.and(page.locator(`[data-reaction-author="${getPublicKey(human)}"]`)),
+  ).toHaveAccessibleName(`👀: ${getPublicKey(human).slice(0, 10)}`);
   await expect(requestRow.locator('[data-reaction="💬"]')).toBeVisible();
   const typingTags = [
     ["h", "alpha"],
@@ -180,6 +189,10 @@ test("message activity opens a grouped preview and the agent's profile without l
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
     for (const width of [1440, 800, 390]) {
+      // Resize with the channel toolbar revealed: the overlay thread pane
+      // must cover it, even if the pointer has not moved off its old row.
+      await page.setViewportSize({ width: 1440, height: 950 });
+      await row.hover();
       await page.setViewportSize({ width, height: 950 });
       await expect(bubble).toBeVisible();
       const groupBox = await region.boundingBox();
@@ -199,10 +212,29 @@ test("message activity opens a grouped preview and the agent's profile without l
         exact: true,
       });
       await expect(popup).toBeVisible();
+      await bubble.focus();
+      // Native top-layer message actions must step aside for the activity
+      // portal, including when its trigger retains keyboard focus.
+      await expect
+        .poll(() =>
+          messageActions.evaluate((bar) => bar.matches(":popover-open")),
+        )
+        .toBe(false);
       await expect(
         popup.getByRole("button", { name: /^View activity for/ }),
       ).toHaveCount(2);
       await expect(popup.getByRole("button")).toHaveCount(2);
+      const lastActivity = popup.getByRole("button").last();
+      await expect
+        .poll(() =>
+          lastActivity.evaluate((button) => {
+            const box = button.getBoundingClientRect();
+            return button.contains(
+              document.elementFromPoint(box.x + box.width / 2, box.bottom - 2),
+            );
+          }),
+        )
+        .toBe(true);
       for (const text of [
         "Agent activity",
         "Latest reported activity for this message.",
@@ -245,6 +277,11 @@ test("message activity opens a grouped preview and the agent's profile without l
       await page.keyboard.press("Escape");
       await expect(popup).toBeHidden();
       await expect(bubble).toBeFocused();
+      await expect
+        .poll(() =>
+          messageActions.evaluate((bar) => bar.matches(":popover-open")),
+        )
+        .toBe(true);
     }
   }
   await page.emulateMedia({ reducedMotion: "reduce" });

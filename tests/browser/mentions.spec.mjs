@@ -1,5 +1,5 @@
 import { npubEncode } from "nostr-tools/nip19";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,6 @@ test("settings-enabled mentions fixture renders the composer and preference", as
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",
@@ -42,7 +41,6 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",
@@ -534,7 +532,6 @@ test("selected mentions inside code remain visible through draft restore and cha
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",

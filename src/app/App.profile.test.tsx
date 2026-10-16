@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
-  act,
   cleanup,
   render,
   screen,
@@ -17,7 +16,6 @@ import { createServices, type AppServices } from "./services";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
 import { composerDOMFixture } from "../features/messages/composer-testing";
-import type { ComposerInputElement } from "../features/messages/composer-dom";
 
 composerDOMFixture();
 
@@ -139,147 +137,43 @@ async function setup(connectionError = false) {
   return user;
 }
 
-it("focuses an unavailable profile on first opening and returns focus after Escape", async () => {
-  const user = await setup(true);
-  await user.click(
-    await screen.findByRole("button", { name: "Open Settings" }),
-  );
-  await screen.findByRole("region", { name: "Settings" });
-  const trigger = screen.getByRole("button", { name: "Your profile" });
-  act(() => trigger.focus());
-  await user.keyboard("{Enter}");
-  const menu = await screen.findByRole("menu");
-  expect(
-    within(menu).getByRole("menuitem", { name: "View your profile" }),
-  ).toHaveFocus();
-  await user.keyboard("{Enter}");
-  await waitFor(() => expect(menu).not.toBeInTheDocument());
-  const panel = screen.getByRole("complementary", { name: "Profile" });
-  expect(panel).toHaveTextContent(
-    "Connect to a community to view this profile.",
-  );
-  expect(panel).toHaveFocus();
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(panel).not.toBeInTheDocument());
-  expect(trigger).toHaveFocus();
-});
-
-it("opens the viewer's community profile from the account menu avatar", async () => {
+it("opens profile settings from the account menu header", async () => {
   const user = await setup();
-  const trigger = screen.getByRole("button", { name: "Your profile" });
-  await user.click(trigger);
+  await user.click(screen.getByRole("button", { name: "Your profile" }));
   const menu = await screen.findByRole("menu", { name: "Community name" });
-  await user.click(screen.getByRole("menuitem", { name: "View your profile" }));
+  await user.click(
+    within(menu).getByRole("menuitem", {
+      name: "Community name, edit profile",
+    }),
+  );
   await waitFor(() => expect(menu).not.toBeInTheDocument());
-  const panel = await screen.findByRole("complementary", { name: "Profile" });
+  const settings = await screen.findByRole("region", { name: "Settings" });
   expect(
-    await within(panel).findByRole("heading", { name: "Community name" }),
+    await within(settings).findByText(
+      "Update this community’s profile. Other community profiles stay unchanged.",
+    ),
   ).toBeVisible();
-  // The panel takes focus itself; the closing menu must not pull it back.
-  expect(
-    within(panel).getByRole("region", { name: "Profile details" }),
-  ).toHaveFocus();
-  expect(
-    within(panel).queryByRole("button", { name: "Message" }),
-  ).not.toBeInTheDocument();
-  await user.click(
-    within(panel).getByRole("button", { name: "Close Profile panel" }),
-  );
-  await waitFor(() => expect(panel).not.toBeInTheDocument());
-  expect(trigger).toHaveFocus();
 });
 
-it("refocuses the retained profile on repeat openings and returns focus after Escape", async () => {
+it("opens Plugins from the account menu and switches back to profile settings", async () => {
   const user = await setup();
-  const trigger = screen.getByRole("button", { name: "Your profile" });
-  await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View your profile" }),
-  );
-  const panel = await screen.findByRole("complementary", { name: "Profile" });
-  const details = within(panel).getByRole("region", {
-    name: "Profile details",
-  });
-  const channels = within(panel).getByRole("tab", { name: "Channels" });
-  await user.click(channels);
-
-  for (const keyboard of [false, true]) {
-    await user.click(trigger);
-    const menu = await screen.findByRole("menu");
-    // Base UI moves focus into an opened menu on the next animation frame.
-    // Keys pressed before then reach the header trigger, which ignores Home.
-    await waitFor(() =>
-      expect(menu).toContainElement(document.activeElement as HTMLElement),
-    );
-    const viewProfile = within(menu).getByRole("menuitem", {
-      name: "View your profile",
-    });
-    if (keyboard) {
-      await user.keyboard("{Home}");
-      expect(viewProfile).toHaveFocus();
-      await user.keyboard("{Enter}");
-    } else {
-      await user.click(viewProfile);
-    }
-    await waitFor(() => expect(menu).not.toBeInTheDocument());
-    expect(panel).toContainElement(document.activeElement as HTMLElement);
-    expect(within(panel).getByRole("region", { name: "Profile details" })).toBe(
-      details,
-    );
-    expect(channels).toHaveAttribute("aria-selected", "true");
-  }
-
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(panel).not.toBeInTheDocument());
-  expect(trigger).toHaveFocus();
-});
-
-it("opens the viewer's profile from New message without discarding recipients or the draft", async () => {
-  const user = await setup();
-  await user.click(await screen.findByRole("button", { name: "New message" }));
-  const composing = await screen.findByRole("region", { name: "New message" });
-  await user.click(
-    await screen.findByRole("option", { name: "Draft recipient" }),
-  );
-  const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
-  });
-  await user.click(editor);
-  await user.type(editor, "Keep this unsent draft");
-  const assertDraft = () => {
-    expect(screen.getByRole("region", { name: "New message" })).toBe(composing);
-    expect(
-      within(composing).getByRole("textbox", {
-        name: "Message Draft recipient",
-      }),
-    ).toBe(editor);
-    expect(editor).toHaveTextContent("Keep this unsent draft");
-    expect(
-      within(composing).getByRole("button", { name: "Remove Draft recipient" }),
-    ).toBeVisible();
-  };
-
-  const trigger = screen.getByRole("button", { name: "Your profile" });
-  await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View your profile" }),
-  );
-  const panel = await screen.findByRole("complementary", { name: "Profile" });
+  await user.click(screen.getByRole("button", { name: "Your profile" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Plugins" }));
+  const settings = await screen.findByRole("region", { name: "Settings" });
   expect(
-    await within(panel).findByRole("heading", { name: "Community name" }),
+    await within(settings).findByRole("region", {
+      name: "Plugins",
+    }),
   ).toBeVisible();
-  assertDraft();
-
+  await user.click(screen.getByRole("button", { name: "Your profile" }));
   await user.click(
-    within(panel).getByRole("button", { name: "Close Profile panel" }),
+    await screen.findByRole("menuitem", {
+      name: "Community name, edit profile",
+    }),
   );
-  await waitFor(() => expect(panel).not.toBeInTheDocument());
-  assertDraft();
-  await user.click(editor);
-  act(() => {
-    editor.focus();
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-  });
-  await user.keyboard(" and keep editing");
-  expect(editor).toHaveTextContent("Keep this unsent draft and keep editing");
+  expect(
+    await within(settings).findByRole("region", {
+      name: "Profile",
+    }),
+  ).toBeVisible();
 });

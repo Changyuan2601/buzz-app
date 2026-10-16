@@ -48,7 +48,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
     await expect(messages(page)).toBeVisible();
     const choices = await pageChoices(page);
     await expect(
-      choices.getByRole("option", { name: "Messages", exact: true }),
+      choices.getByRole("option", { name: "Multiplayer", exact: true }),
     ).toBeVisible();
     await expect(
       choices.getByRole("option", { name: "Home", exact: true }),
@@ -64,7 +64,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   await page.getByRole("button", { name: "Search Buzz" }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   await expect(
-    dialog.getByRole("option", { name: "Messages", exact: true }),
+    dialog.getByRole("option", { name: "Multiplayer", exact: true }),
   ).toBeVisible();
   await expect(
     dialog.getByRole("option", { name: "Home", exact: true }),
@@ -143,7 +143,7 @@ test("Channels stays enabled despite saved disabled settings and has no switch",
   await expect(
     page.getByRole("switch", { name: "Enable Channels", exact: true }),
   ).toHaveCount(0);
-  await openPage(page, "Messages");
+  await openPage(page, "Multiplayer");
   await expect(messages(page)).toBeVisible();
 });
 
@@ -174,7 +174,7 @@ test("launch retains plugin-configuration recovery without Home", async ({
     .click();
   const recoveredChoices = await pageChoices(page);
   await expect(
-    recoveredChoices.getByRole("option", { name: "Messages", exact: true }),
+    recoveredChoices.getByRole("option", { name: "Multiplayer", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page

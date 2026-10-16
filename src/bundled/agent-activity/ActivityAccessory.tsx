@@ -37,6 +37,7 @@ import {
 } from "../../features/agents/local-activity";
 import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noSubscribe = () => () => {};
 /** Activity belongs to the exact triggering message, not the composer. */
@@ -265,9 +266,7 @@ function ActivityBubble({
               items={entries.map((entry) => ({
                 id: entry.agent,
                 name: entry.name,
-                src: entry.picture
-                  ? props.session.media(entry.picture)
-                  : undefined,
+                src: avatarMedia(entry.picture, props.session.media),
                 shape: "squircle",
               }))}
             />
@@ -433,7 +432,7 @@ function ActivityAvatar({
 }) {
   return (
     <Avatar
-      src={entry.picture ? session.media(entry.picture) : null}
+      src={avatarMedia(entry.picture, session.media)}
       alt={entry.name}
       fallback={entry.name}
       size={size}

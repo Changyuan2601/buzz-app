@@ -2,11 +2,15 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, expect, test } from "vitest";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import type { RegisteredPanel } from "../../features/panels/service";
+import type {
+  PanelOpening,
+  RegisteredPanel,
+} from "../../features/panels/service";
 import {
+  channelTabs,
   panelTabId,
-  type PanelOpening,
   useChannelTabState,
 } from "./useChannelTabState";
 
@@ -212,6 +216,7 @@ test("opening a thread selects it, deduplicates its root and restores each chann
       channelId: "alpha",
       messageId: "reply-b",
       replyRequest: 2,
+      attentionRequest: 1,
       pane: "side",
     },
     {
@@ -429,6 +434,17 @@ test("revisiting a history entry restores its selection without closing threads"
   expect(h.result.current.selected).toBe("thread:alpha:root");
 });
 
+test("a new channel visit shows the conversation unless it keeps the current selection", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => h.result.current.openThreadTab("alpha", "root", "root", "select"));
+  act(() => h.result.current.moveTab("thread:alpha:root", "main", 0));
+  act(() => h.result.current.enterVisit("one:channel", undefined, true));
+  expect(h.result.current.mainSelected).toBe("thread:alpha:root");
+  act(() => h.result.current.enterVisit("two:channel"));
+  expect(h.result.current.mainSelected).toBeUndefined();
+});
+
 test("Back restores an empty side pane as hidden while retaining the later thread", () => {
   const session = {} as RelaySession;
   const h = renderHook(() => useChannelTabState(session, "alpha"));
@@ -486,3 +502,211 @@ test("the returned state keeps its identity across unrelated re-renders", () => 
   mounted.rerender({ channel: "beta" });
   expect(mounted.result.current).not.toBe(selected);
 });
+
+test("agents open thread tabs in the background and never close a shown one", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  // An empty side pane stays closed; nothing is selected for the viewer.
+  act(() => {
+    expect(tabs.open("alpha", "r1")).toBe(true);
+  });
+  expect(page.result.current).toMatchObject({
+    paneOpen: false,
+    selected: "thread",
+    tabs: [{ id: "thread:alpha:r1", channelId: "alpha", messageId: "r1" }],
+  });
+  expect(tabs.open("alpha", "r1")).toBe(false);
+  // Behind the closed pane it is not shown, so the agent can close it again.
+  expect(tabs.list("alpha")).toEqual([
+    { root: "r1", pane: "side", shown: false },
+  ]);
+  // The viewer opens another thread and one from another channel; an agent's
+  // later tab leaves their selection, and agents never see the other channel's.
+  act(() => page.result.current.openThreadTab("beta", "r3", "r3"));
+  act(() => page.result.current.openThreadTab("alpha", "r2", "r2"));
+  act(() => {
+    tabs.open("alpha", "r4");
+  });
+  expect(page.result.current).toMatchObject({
+    paneOpen: true,
+    selected: "thread:alpha:r2",
+  });
+  expect(tabs.list("alpha")).toEqual([
+    { root: "r1", pane: "side", shown: false },
+    { root: "r2", pane: "side", shown: true },
+    { root: "r4", pane: "side", shown: false },
+  ]);
+  expect(tabs.close("alpha", "r2")).toBe("shown");
+  expect(tabs.close("alpha", "r3")).toBe("missing");
+  expect(tabs.close("alpha", "r9")).toBe("missing");
+  act(() => {
+    expect(tabs.close("alpha", "r1")).toBe("closed");
+  });
+  expect(page.result.current.tabs.map((tab) => tab.id)).toEqual([
+    "thread:beta:r3",
+    "thread:alpha:r2",
+    "thread:alpha:r4",
+  ]);
+  expect(page.result.current.selected).toBe("thread:alpha:r2");
+  // Other channels and the Me page keep their own tabs.
+  expect(tabs.list("beta")).toEqual([]);
+  const me = renderHook(() => useChannelTabState(session, "alpha", "me"));
+  expect(me.result.current.tabs).toEqual([]);
+});
+
+test("an agent's tab leaves a page's side panel showing", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => page.result.current.setSidePanel(true));
+  act(() => {
+    tabs.open("alpha", "r1");
+  });
+  expect(page.result.current.paneOpen).toBe(true);
+});
+
+test("an agent's main-pane tab leaves the conversation showing", () => {
+  setThreadPlacementPreference("main");
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => {
+    tabs.open("alpha", "r1");
+  });
+  expect(page.result.current).toMatchObject({
+    mainSelected: undefined,
+    paneOpen: true,
+    tabs: [{ id: "thread:alpha:r1", pane: "main" }],
+  });
+  act(() => page.result.current.selectMain("thread:alpha:r1"));
+  expect(tabs.list("alpha")).toEqual([
+    { root: "r1", pane: "main", shown: true },
+  ]);
+  expect(tabs.close("alpha", "r1")).toBe("shown");
+});
+
+function tabSession(
+  channels: readonly ChannelSummary[] = [{ id: "alpha", name: "Alpha" }],
+) {
+  return {
+    channels: { list: () => ({ channels }) },
+  } as unknown as RelaySession;
+}
+
+test.each(["channel", "page", "community", "unmount"])(
+  "agents can close a selected tab after leaving its %s",
+  (destination) => {
+    const session = tabSession();
+    const tabs = channelTabs(session);
+    const page = renderHook(
+      (props) => useChannelTabState(props.session, props.channel, props.page),
+      { initialProps: { session, channel: "alpha", page: "messages" } },
+    );
+    act(() => page.result.current.openThreadTab("alpha", "side", "side"));
+    act(() =>
+      page.result.current.openThreadTab(
+        "alpha",
+        "main",
+        "main",
+        undefined,
+        "main",
+      ),
+    );
+    expect(tabs.list("alpha").every((tab) => tab.shown)).toBe(true);
+    if (destination === "unmount") page.unmount();
+    else
+      page.rerender({
+        session: destination === "community" ? tabSession() : session,
+        channel: destination === "channel" ? "beta" : "alpha",
+        page: destination === "page" ? "me" : "messages",
+      });
+    expect(tabs.list("alpha").every((tab) => !tab.shown)).toBe(true);
+    act(() => {
+      expect(tabs.close("alpha", "side")).toBe("closed");
+      expect(tabs.close("alpha", "main")).toBe("closed");
+    });
+    expect(tabs.list("alpha")).toEqual([]);
+  },
+);
+
+test("remounting a retained workspace protects its selected tabs again", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => page.result.current.openThreadTab("alpha", "r1", "r1"));
+  page.unmount();
+  expect(tabs.list("alpha")[0]?.shown).toBe(false);
+  renderHook(() => useChannelTabState(session, "alpha"));
+  expect(tabs.list("alpha")[0]?.shown).toBe(true);
+  expect(tabs.close("alpha", "r1")).toBe("shown");
+});
+
+test.each(["missing", "readOnly", "archived", "cached"])(
+  "agents cannot open a thread unavailable to the owner (%s)",
+  (reason) => {
+    const channels =
+      reason === "missing"
+        ? []
+        : [{ id: "alpha", name: "Alpha", [reason]: true }];
+    const session = tabSession(channels);
+    const tabs = channelTabs(session);
+    expect(() => tabs.open("alpha", "r1")).toThrow(
+      "Your owner cannot open threads in this channel.",
+    );
+    expect(tabs.list("alpha")).toEqual([]);
+  },
+);
+
+test("an agent's tab name stays with the tab until cleared", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => page.result.current.openThreadTab("alpha", "r1", "r1"));
+  expect(tabs.rename("alpha", "r9", "Missing")).toBe(false);
+  act(() => {
+    expect(tabs.rename("alpha", "r1", "Launch plan")).toBe(true);
+  });
+  expect(tabs.list("alpha")).toEqual([
+    { root: "r1", pane: "side", name: "Launch plan", shown: true },
+  ]);
+  // Reopening, moving and remounting keep the same tab and its name.
+  act(() => page.result.current.openThreadTab("alpha", "reply", "r1", "reply"));
+  act(() => page.result.current.moveTab("thread:alpha:r1", "main", 0));
+  page.unmount();
+  const remounted = renderHook(() => useChannelTabState(session, "alpha"));
+  expect(remounted.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", pane: "main", name: "Launch plan" },
+  ]);
+  // A provisional tab that resolves to the same root merges into the named one.
+  act(() => remounted.result.current.openThreadTab("alpha", "r2", "hint"));
+  act(() =>
+    remounted.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+  );
+  expect(remounted.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", name: "Launch plan" },
+  ]);
+  expect(remounted.result.current.tabs).toHaveLength(1);
+  act(() => {
+    tabs.rename("alpha", "r1", "  ");
+  });
+  expect(remounted.result.current.tabs[0]).toMatchObject({ name: undefined });
+});
+
+test.each(["foreground", "background"])(
+  "a renamed provisional tab keeps its name when it merges into an unnamed tab (%s)",
+  (branch) => {
+    const session = tabSession();
+    const page = renderHook(() => useChannelTabState(session, "alpha"));
+    act(() => page.result.current.openThreadTab("alpha", "r1", "r1"));
+    act(() => page.result.current.openThreadTab("alpha", "r2", "hint"));
+    act(() =>
+      page.result.current.renameTab("thread:alpha:hint", "Launch plan"),
+    );
+    if (branch === "background")
+      act(() => page.result.current.select("thread:alpha:r1"));
+    act(() => page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"));
+    expect(page.result.current.tabs).toHaveLength(1);
+    expect(page.result.current.tabs[0]).toMatchObject({ name: "Launch plan" });
+  },
+);

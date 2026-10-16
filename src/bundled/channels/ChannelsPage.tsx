@@ -9,7 +9,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
-import { useChannelTabState } from "./useChannelTabState";
+import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -30,6 +30,8 @@ import {
   parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { useSessionConversions } from "../../features/sessions/conversion";
+import { ConvertSession } from "../../features/sessions/ConvertSession";
 import { SessionShare } from "../sessions/SessionShare";
 import {
   SessionColumn,
@@ -37,6 +39,8 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
+import { flushSync } from "react-dom";
 import {
   useCallback,
   useEffect,
@@ -57,7 +61,7 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { Panels } from "../../features/panels/service";
+import { panelOpening, type Panels } from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
@@ -67,18 +71,21 @@ import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
-import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
-import type { Attachment } from "../../features/relay/contracts";
+  ConversationChannel,
+  ConversationComposer,
+} from "../../features/conversation/Conversation";
+import { MessageManagementStatus } from "../../features/messages/MessageManagement";
+import type {
+  Attachment,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function ChannelsPage({
   extensions,
@@ -508,13 +515,18 @@ function ChannelWorkspace({
   const committedVisit = useRef<{
     currentId: string | undefined;
     queries: RelaySession;
+    channelType: string | undefined;
   }>(undefined);
   const continuingVisit =
     committedVisit.current?.currentId === currentId &&
     committedVisit.current?.queries === queries;
   useLayoutEffect(() => {
-    committedVisit.current = { currentId, queries };
-  }, [currentId, queries]);
+    committedVisit.current = {
+      currentId,
+      queries,
+      channelType: current?.channelType,
+    };
+  }, [currentId, queries, current?.channelType]);
   const tabState = useChannelTabState(queries, currentId);
   const { settings, setSettings, retireMenuEntries } = tabState;
   useEffect(() => {
@@ -527,7 +539,22 @@ function ChannelWorkspace({
     };
   }, [currentId, composingMessage, draftParent]);
 
+  const conversions = useSessionConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const [conversion, setConversion] = useState<{
+    channelId: string;
+    navigation: PageNavigation | undefined;
+    trigger: HTMLElement | null;
+  }>();
+  // Type changes are the result, not a new visit. Actual navigation retires the form.
+  useEffect(() => {
+    setConversion((previous) =>
+      previous &&
+      (previous.channelId !== currentId || previous.navigation !== navigation)
+        ? undefined
+        : previous,
+    );
+  }, [currentId, navigation]);
   const [settingsFocus, requestSettingsFocus] = useState(0);
   const showingSettings =
     tabState.paneOpen &&
@@ -639,20 +666,13 @@ function ChannelWorkspace({
     ],
   );
   const conversationIcon = (item: (typeof channels)[number]) => {
-    const Icon = channelIcon(item);
     const person = item.participants?.[0];
-    const picture = person ? profiles.get(person)?.picture : undefined;
-    return item.channelType === "dm" ? (
-      <span className={tabStyles.icon}>
-        <Avatar
-          alt=""
-          fallback={item.name}
-          size="fill"
-          src={picture ? queries.media(picture) : null}
-        />
-      </span>
-    ) : (
-      <Icon size="1rem" />
+    return (
+      <ConversationIcon
+        item={item}
+        picture={person ? profiles.get(person)?.picture : undefined}
+        media={queries.media}
+      />
     );
   };
   const channelConversation = useRef<HTMLDivElement>(null);
@@ -674,16 +694,32 @@ function ChannelWorkspace({
     threadId: routedThread?.messageId,
     mainPane: true,
     routed: routedThread,
-    onCloseThread: (tab, active) => {
+    onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a
       // later Back/Forward visit is the only way to reopen it.
+      // That channel visit keeps the tab selected in place of the closed one.
       if (
         routedThread?.channelId === tab.channelId &&
         routedThread.messageId === tab.messageId
-      )
+      ) {
         select(tab.channelId);
+        const entry = navigator?.snapshot().entry.id;
+        if (entry) tabState.enterVisit(`${entry}:channel`, undefined, true);
+      }
       const trigger = threadTrigger.current;
-      if (trigger) returnFocus.current = { trigger, channelId: currentId };
+      // While tabs remain, the opener takes focus only from within their pane.
+      if (
+        trigger &&
+        (last ||
+          trigger
+            .closest("[data-panel-workspace], [data-main-workspace]")
+            ?.hasAttribute(
+              tabPane(tab) === "main"
+                ? "data-main-workspace"
+                : "data-panel-workspace",
+            ))
+      )
+        returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),
@@ -702,8 +738,58 @@ function ChannelWorkspace({
         entry.panel.channelMenu.eligible(current, queries)
       ),
   });
+  const focusConversation = useRef(false);
+  const closeAllTabs = () => {
+    if (!secondary.closeAllTabs()) return false;
+    returnFocus.current = undefined;
+    focusConversation.current = true;
+    return true;
+  };
+  // The channel owns this command, including sessions without a main tab strip.
+  useLayoutEffect(() => {
+    const close = (event: Event) => {
+      const workspace = historyContainer.current?.closest(
+        "[data-channel-workspace]",
+      );
+      if (
+        event.defaultPrevented ||
+        !workspace?.isConnected ||
+        workspace.closest('[hidden], [inert], [aria-hidden="true"]') ||
+        !workspace.getClientRects().length ||
+        document.querySelector('dialog[open], [aria-modal="true"]')
+      )
+        return;
+      flushSync(() => {
+        if (closeAllTabs()) event.preventDefault();
+      });
+    };
+    window.addEventListener("buzz:close-all-tabs", close);
+    return () => window.removeEventListener("buzz:close-all-tabs", close);
+  });
   // The page's thread opener wins after the tab owner restores its fallback.
   useLayoutEffect(() => {
+    if (focusConversation.current) {
+      focusConversation.current = false;
+      const focused = document.activeElement;
+      // Keep typing in surviving content. A removed tab or closing context menu
+      // needs a focus destination; clearing unrelated tabs does not.
+      const preserved =
+        focused instanceof HTMLElement &&
+        focused !== document.body &&
+        focused.isConnected &&
+        !focused.closest(
+          '[inert], [hidden], [aria-hidden="true"], [role="menu"]',
+        );
+      if (!preserved) {
+        const target =
+          channelConversation.current
+            ?.closest("[data-main-workspace]")
+            ?.querySelector<HTMLElement>(
+              '[role="tab"][data-tab-value="conversation"]',
+            ) ?? settingsTrigger.current;
+        target?.focus({ preventScroll: true });
+      }
+    }
     const pending = returnFocus.current;
     if (!pending) return;
     if (pending.channelId !== currentId || !pending.trigger.isConnected) {
@@ -846,6 +932,20 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
@@ -990,9 +1090,9 @@ function ChannelWorkspace({
           return true;
         }
       }
-      const candidate = panels.resolve(url);
-      const context = linkContext.current;
-      if (context.channelId && candidate) {
+      const { channelId, routedThread } = linkContext.current;
+      const next = channelId && panelOpening(panels, channelId, url, rootId);
+      if (next) {
         setSettings(undefined);
         panelTrigger.current =
           returnFocus ??
@@ -1000,16 +1100,8 @@ function ChannelWorkspace({
             ? document.activeElement
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
-        if (!fromThread && context.routedThread) select(context.channelId);
-        open(
-          {
-            channelId: context.channelId,
-            ...(rootId && { rootId }),
-            panel: candidate,
-            target: url,
-          },
-          fromThread,
-        );
+        if (!fromThread && routedThread) select(channelId);
+        open(next, fromThread);
         return true;
       }
       return false;
@@ -1148,21 +1240,16 @@ function ChannelWorkspace({
           <ChannelBody
             onContentReady={setContentReadyChannel}
             viewer={viewer}
-            extensions={extensions}
             key={current.id}
-            queries={queries}
-            scope={scope}
-            channelId={current.id}
             cached={cached}
+            // The composer below mounts TypingIndicator for members of a live channel.
+            activityLane={!current.readOnly && !current.cached}
             navigation={
               flatSession || !requestedMessage || exact?.inTimeline
                 ? navigation
                 : undefined
             }
-            onOpenLink={openLink}
-            canOpenLink={canOpenLink}
             onOpenThread={flatSession ? undefined : openThread}
-            onOpenMediaReview={openMediaReview}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -1222,15 +1309,16 @@ function ChannelWorkspace({
         />
       )}
       {current && (!current.readOnly || current.cached) && (
-        <MessageComposer
-          sessionConversation={current.channelType === "session"}
-          extensions={extensions}
+        <ConversationComposer
           key={`composer:${current.id}`}
-          session={queries}
-          scope={scope}
-          channelId={current.id}
-          channelName={current.name}
           autoFocus={
+            // Conversion remounts the body, but isn't a new conversation opening.
+            // Let its dialog restore focus instead of the replacement composer.
+            !(
+              continuingVisit &&
+              committedVisit.current?.channelType === "session" &&
+              current.channelType !== "session"
+            ) &&
             // The bound request arrives after the composer's first render.
             (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
               "preserve" &&
@@ -1239,8 +1327,6 @@ function ChannelWorkspace({
             !requestedThread &&
             !routedThread
           }
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
           label={
             current.channelType === "session"
               ? "Message this session"
@@ -1253,7 +1339,12 @@ function ChannelWorkspace({
     </SessionColumn>
   );
   const workspace = (
-    <div ref={split.ref} style={split.style} className={styles.board}>
+    <div
+      data-channel-workspace=""
+      ref={split.ref}
+      style={split.style}
+      className={styles.board}
+    >
       {current && membersOpen && (
         <ChannelMembersDialog
           key={current.id}
@@ -1339,7 +1430,7 @@ function ChannelWorkspace({
             />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new conversations from Me. Channel-nested sessions are no
+              Start new conversations from Solo. Channel-nested sessions are no
               longer available.
             </p>
           ) : (
@@ -1368,6 +1459,13 @@ function ChannelWorkspace({
                     session={queries}
                     channel={current}
                     signal={navigation?.signal}
+                    onConvert={(trigger) =>
+                      setConversion({
+                        channelId: current.id,
+                        navigation,
+                        trigger,
+                      })
+                    }
                   />
                 </SessionHeading>
               ) : null}
@@ -1377,6 +1475,10 @@ function ChannelWorkspace({
                 <div className={styles.mainWorkspace}>
                   <PanelWorkspace
                     main
+                    tabMenu={{
+                      key: JSON.stringify([scope, currentId]),
+                      closeAll: closeAllTabs,
+                    }}
                     drag={secondary.drag.main}
                     label="Channel tabs"
                     focusOnMount={false}
@@ -1410,6 +1512,16 @@ function ChannelWorkspace({
                           session={queries}
                           origin={navigation?.signal}
                           trigger={settingsTrigger}
+                          finishConversion={
+                            current && conversions.has(current.id)
+                              ? () =>
+                                  setConversion({
+                                    channelId: current.id,
+                                    navigation,
+                                    trigger: settingsTrigger.current,
+                                  })
+                              : undefined
+                          }
                           openDetails={() => {
                             drawer.close();
                             requestSettingsFocus((value) => value + 1);
@@ -1457,7 +1569,7 @@ function ChannelWorkspace({
                             );
                           }}
                         />
-                        {current && !showingChannelPanel && (
+                        {current && hasChannelPanel && !showingChannelPanel && (
                           <span className={panelStyles.paneToggle}>
                             <IconButton
                               ref={splitTrigger}
@@ -1470,8 +1582,6 @@ function ChannelWorkspace({
                                   : "Open tab pane"
                               }
                               aria-expanded={!!showingChannelPanel}
-                              disabled={!hasChannelPanel}
-                              focusableWhenDisabled
                               onClick={() =>
                                 tabState.setPaneOpen(!showingChannelPanel)
                               }
@@ -1515,22 +1625,23 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
-      {showingMediaReview && (
-        <MediaReviewViewer
-          extensions={extensions}
-          attachment={showingMediaReview.attachment}
-          session={queries}
-          scope={scope}
-          channelId={showingMediaReview.channelId}
-          channelName={showingMediaReview.channelName}
-          messageId={showingMediaReview.messageId}
-          initialTime={showingMediaReview.initialTime}
-          hasComments={showingMediaReview.hasComments}
-          restoreFocus={mediaReviewTrigger}
-          onOpenLink={openLink}
-          close={() => setMediaReview(undefined)}
-        />
-      )}
+      {conversion &&
+        conversion.channelId === currentId &&
+        conversion.navigation === navigation && (
+          <ConvertSession
+            session={queries}
+            id={conversion.channelId}
+            signal={conversion.navigation?.signal}
+            close={() => setConversion(undefined)}
+            finalFocus={() =>
+              conversion.navigation?.signal.aborted
+                ? false
+                : conversion.trigger?.isConnected
+                  ? conversion.trigger
+                  : (settingsTrigger.current ?? false)
+            }
+          />
+        )}
       {secondary.drag.feedback}
       {secondary.hosts}
       <p role="status" className="sr-only">
@@ -1564,6 +1675,10 @@ function ChannelWorkspace({
                       icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
                     />
                   }
+                  tabMenu={{
+                    key: JSON.stringify([scope, currentId]),
+                    closeAll: closeAllTabs,
+                  }}
                   drag={secondary.drag.side}
                   value={selectedTab}
                   focusOnMount={
@@ -1608,9 +1723,29 @@ function ChannelWorkspace({
     </div>
   );
   return (
-    <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
-    </MessageManagement>
+    // The review reads thread-tab links like the workspace.
+    <LinkThreadTabContext value={openLinkedThread}>
+      <ConversationChannel
+        session={queries}
+        scope={scope}
+        extensions={extensions}
+        channel={current}
+        interactions={{
+          onOpenLink: openLink,
+          canOpenLink,
+          onOpenMediaReview: openMediaReview,
+        }}
+        mediaReview={
+          showingMediaReview && {
+            ...showingMediaReview,
+            restoreFocus: mediaReviewTrigger,
+            close: () => setMediaReview(undefined),
+          }
+        }
+      >
+        {workspace}
+      </ConversationChannel>
+    </LinkThreadTabContext>
   );
 }
 
@@ -1626,4 +1761,30 @@ export function mediaReviewForDestination<
     (review.entryId === undefined || review.entryId === entryId)
     ? review
     : undefined;
+}
+
+/** A DM tab shows the other participant in a 1rem slot, so it asks for the
+ * relay thumbnail message rows already loaded rather than the original. */
+export function ConversationIcon({
+  item,
+  picture,
+  media,
+}: {
+  item: Pick<ChannelSummary, "name" | "channelType" | "private">;
+  picture: string | undefined;
+  media: RelaySession["media"];
+}) {
+  const Icon = channelIcon(item);
+  return item.channelType === "dm" ? (
+    <span className={tabStyles.icon}>
+      <Avatar
+        alt=""
+        fallback={item.name}
+        size="fill"
+        src={avatarMedia(picture, media)}
+      />
+    </span>
+  ) : (
+    <Icon size="1rem" />
+  );
 }

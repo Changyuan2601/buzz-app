@@ -176,6 +176,13 @@ export function TextareaExamples() {
   />
 </Field>`}
       >
+        <Field label="Outlined instructions">
+          <Textarea
+            appearance="outlined"
+            rows={3}
+            placeholder="Describe what I should do"
+          />
+        </Field>
         <Field label="On a floating surface">
           <Textarea
             surface="panel"
@@ -413,6 +420,14 @@ export function SelectExamples() {
         />
         <Select
           label="Filter"
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
+        <Select
+          label="Input-height filter"
+          variant="compact"
+          size="md"
           value={inline}
           onValueChange={setInline}
           groups={workspaceGroups}

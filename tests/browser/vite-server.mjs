@@ -1,13 +1,162 @@
-import { createServer as createViteServer } from "vite";
-import { mkdtemp, rm } from "node:fs/promises";
+import react from "@vitejs/plugin-react";
+import {
+  build as viteBuild,
+  createServer as createViteServer,
+  optimizeDeps,
+  preview as vitePreview,
+  resolveConfig,
+} from "vite";
+import { constants } from "node:fs";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-// Parallel fixture servers must not invalidate each other's optimized imports.
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const seedVariable = "BUZZ_FIXTURE_VITE_DEPS";
+// Every fixture page is in this scan. Add a dependency here only when a test
+// imports it outside these pages, for example from page.evaluate.
+const fixtureOptimizeDeps = {
+  entries: ["index.html", "tests/**/*.html", "src/**/*.html"],
+  include: ["@jsquash/webp/encode.js"],
+};
+// Fixture plugins may only add server middleware or rewrite index HTML. Neither
+// changes optimized dependencies, so they all run as one stable plugin.
+const fixtureHooks = new Set(["name", "configureServer", "transformIndexHtml"]);
+
+// Vite reuses a dependency cache only when its config hash matches. Fixtures
+// leave the other hashed settings at their defaults; fixing the root, plugin
+// names and optimizeDeps lets every fixture server reuse one prepared cache.
+function fixtureConfig({ plugins = [], optimizeDeps: custom, css, ...config }) {
+  if (css)
+    throw new Error(
+      "Fixture servers own their CSS pipeline; see fixtureConfig in vite-server.mjs",
+    );
+  if (custom)
+    throw new Error(
+      "Fixture servers share one dependency optimizer; add dependencies to fixtureOptimizeDeps in vite-server.mjs",
+    );
+  if (config.root !== undefined && resolve(config.root) !== resolve(root))
+    throw new Error(
+      `Fixture servers serve the repository root, not ${config.root}`,
+    );
+  const flat = plugins.flat(Infinity).filter(Boolean);
+  const isReact = (plugin) => plugin.name.startsWith("vite:react");
+  const framework = flat.filter(isReact);
+  return {
+    ...config,
+    root,
+    plugins: [
+      ...(framework.length ? framework : react()),
+      fixturePlugin(flat.filter((plugin) => !isReact(plugin))),
+    ],
+    optimizeDeps: fixtureOptimizeDeps,
+  };
+}
+
+function fixturePlugin(plugins) {
+  for (const plugin of plugins)
+    for (const [key, value] of Object.entries(plugin))
+      if (
+        !fixtureHooks.has(key) ||
+        (key !== "name" && typeof value !== "function")
+      )
+        throw new Error(
+          `Fixture plugin ${plugin.name} uses ${key}; fixture plugins may only define configureServer and transformIndexHtml functions`,
+        );
+  return {
+    name: "buzz-fixture-server",
+    async configureServer(server) {
+      const after = [];
+      for (const plugin of plugins) {
+        const result = await plugin.configureServer?.(server);
+        if (typeof result === "function") after.push(result);
+      }
+      return async () => {
+        for (const run of after) await run();
+      };
+    },
+    async transformIndexHtml(html, context) {
+      for (const plugin of plugins) {
+        if (!plugin.transformIndexHtml) continue;
+        html = await plugin.transformIndexHtml(html, context);
+        if (typeof html !== "string")
+          throw new Error(`Fixture plugin ${plugin.name} must return HTML`);
+      }
+      return html;
+    },
+  };
+}
+
+// Vite sets NODE_ENV when it is unset: build() and preview() to production,
+// a dev server to development. The value stays for the rest of the process.
+// Dependency cache hashes include NODE_ENV, so a production value left by an
+// earlier build makes a later fixture server discard its prepared cache and
+// optimize again inside a test. A development value makes a later app build
+// report import.meta.env.DEV as true. Browser tests therefore call build,
+// preview and fixture servers through this module, which restores NODE_ENV.
+async function keepNodeEnv(run) {
+  const nodeEnv = process.env.NODE_ENV;
+  try {
+    return await run();
+  } finally {
+    if (nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = nodeEnv;
+  }
+}
+
+export const build = (config) => keepNodeEnv(() => viteBuild(config));
+export const preview = (config) => keepNodeEnv(() => vitePreview(config));
+
+// Run once per test run, before any test: it scans and bundles the fixture
+// dependencies so no server does that work inside a navigation budget.
+export async function prepareFixtureDependencies() {
+  const cacheDir = await mkdtemp(join(tmpdir(), "buzz-fixture-vite-deps-"));
+  try {
+    await keepNodeEnv(async () => {
+      const config = await resolveConfig(
+        {
+          ...fixtureConfig({ configFile: false, envDir: false }),
+          cacheDir,
+          logLevel: "error",
+        },
+        "serve",
+      );
+      await optimizeDeps(config);
+    });
+  } catch (error) {
+    await rm(cacheDir, { recursive: true, force: true });
+    throw error;
+  }
+  process.env[seedVariable] = cacheDir;
+  return async () => {
+    delete process.env[seedVariable];
+    await rm(cacheDir, { recursive: true, force: true });
+  };
+}
+
+// Playwright's globalSetup.
+export default prepareFixtureDependencies;
+
+// Parallel fixture servers must not invalidate each other's optimized imports,
+// so each one gets its own copy of the prepared cache.
 export async function createServer(config) {
+  const seed = process.env[seedVariable];
+  if (!seed && process.env.TEST_WORKER_INDEX !== undefined)
+    throw new Error(
+      "Fixture dependencies are not prepared; add tests/browser/vite-server.mjs as the Playwright config's globalSetup",
+    );
+  const fixture = fixtureConfig(config);
   const cacheDir = await mkdtemp(join(tmpdir(), "buzz-fixture-vite-"));
   try {
-    const server = await createViteServer({ ...config, cacheDir });
+    if (seed)
+      await cp(seed, cacheDir, {
+        recursive: true,
+        mode: constants.COPYFILE_FICLONE,
+      });
+    const server = await keepNodeEnv(() =>
+      createViteServer({ ...fixture, cacheDir }),
+    );
     const close = server.close.bind(server);
     server.close = async () => {
       try {

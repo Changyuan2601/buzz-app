@@ -10,8 +10,13 @@ import {
   lifecycleChannelId,
   lifecycleTemplate,
 } from "../features/relay/channel-lifecycle-protocol";
+import {
+  PROFILE_SEARCH_MAX,
+  PROFILE_SEARCH_QUERY_MAX,
+} from "../features/relay/profile-search";
 import { sessionMetadata } from "../features/sessions/metadata";
-import type { BuzzClient, BuzzEvent, Context, Upload } from "./client";
+import { threadReference } from "../features/relay/thread-reference";
+import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
@@ -128,6 +133,15 @@ export const TOOLS: readonly Tool[] = [
   tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
     "url",
   ]),
+  tool(
+    "tabs",
+    "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
+    {
+      action: { type: "string", enum: ["open", "close", "rename"] },
+      thread: str,
+      name: str,
+    },
+  ),
 ];
 
 /** Message kinds as the CLI reads them. */
@@ -135,6 +149,12 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
+/** A read's page size and scan budget. */
+const PAGE = 500;
+const MAX_EVENTS = 10_000;
+const CHANNEL_BYTES = 16_384;
+const CHANNEL_PARTIAL =
+  "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.";
 /** The `channel` arguments each action takes. */
 const ACTIONS: Readonly<Record<string, readonly string[]>> = {
   details: [],
@@ -309,31 +329,55 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async channels(tools, args) {
     const { client } = tools;
-    const memberships = await client.query([
-      { kinds: [39002], "#p": [client.pubkey], limit: 500 },
-    ]);
-    const ids = [
-      ...new Set(memberships.map((event) => tag(event, "d")).filter(Boolean)),
-    ] as string[];
+    const ids = new Set<string>();
+    const membershipsComplete = await tools.scan(
+      { kinds: [39002], "#p": [client.pubkey] },
+      (event) => {
+        const id = tag(event, "d");
+        if (id) ids.add(id);
+        return true;
+      },
+    );
     const all = args.all === true;
-    if (!ids.length && !all) return "No channels.";
-    const channels = await client.query([
-      all
-        ? { kinds: [39000], limit: 500 }
-        : { kinds: [39000], "#d": ids, limit: ids.length },
-    ]);
     const q = text(args.q)?.toLowerCase();
-    const rows = channels
-      .map((event) => {
-        const flags = [
-          tag(event, "t") === "stream" ? "" : tag(event, "t"),
-          has(event, "private") ? "private" : "",
-          has(event, "archived") ? "archived" : "",
-          ids.includes(tag(event, "d") ?? "") ? "" : "not joined",
-        ].filter(Boolean);
-        return `${tag(event, "d")} ${tag(event, "name") ?? ""}${flags.length ? ` (${flags.join(", ")})` : ""}`;
-      })
-      .filter((row) => !q || row.toLowerCase().includes(q));
+    const rows: string[] = [];
+    const encoder = new TextEncoder();
+    // Reserve the partial-result notice even when the last row fills the budget.
+    let bytes = encoder.encode(CHANNEL_PARTIAL).length;
+    const channelsComplete =
+      !ids.size && !all
+        ? true
+        : await tools.scan(
+            all ? { kinds: [39000] } : { kinds: [39000], "#d": [...ids] },
+            (event) => {
+              const id = tag(event, "d") ?? "";
+              const flags = [
+                tag(event, "t") === "stream" ? "" : tag(event, "t"),
+                has(event, "private") ? "private" : "",
+                has(event, "archived") ? "archived" : "",
+                ids.has(id)
+                  ? ""
+                  : membershipsComplete
+                    ? "not joined"
+                    : "membership unknown",
+              ].filter(Boolean);
+              const row = `${id} ${tag(event, "name") ?? ""}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+              if (q && !row.toLowerCase().includes(q)) return true;
+              if (rows.length === PAGE) return false;
+              const size = encoder.encode(row).length + 1;
+              if (bytes + size > CHANNEL_BYTES) {
+                // Preserve a usable ID when one channel has oversized details.
+                const brief = `${id} (details omitted; use channel for details)`;
+                if (bytes + encoder.encode(brief).length + 1 <= CHANNEL_BYTES)
+                  rows.push(brief);
+                return false;
+              }
+              rows.push(row);
+              bytes += size;
+              return true;
+            },
+          );
+    if (!membershipsComplete || !channelsComplete) rows.push(CHANNEL_PARTIAL);
     return rows.join("\n") || "No channels.";
   },
 
@@ -433,11 +477,21 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const ids = list(args.ids).map(pubkey);
     const q = text(args.q)?.toLowerCase();
     if (!ids.length && !q) throw new Error("Give ids or q.");
-    const profiles = await client.query([
-      ids.length
-        ? { kinds: [0], authors: ids, limit: ids.length }
-        : { kinds: [0], search: q, limit: 100 },
-    ]);
+    // Name search matches only name and display_name, best match first;
+    // NIP-50 search matches the whole profile, so text in avatars or `about`
+    // can fill its results and hide the person asked for. Name search refuses
+    // a query longer than its limit, so a longer name uses NIP-50 search.
+    const named =
+      !ids.length && q && [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
+    const profiles =
+      named?.filter((event) => event.kind === 0) ??
+      (await client.query([
+        ids.length
+          ? { kinds: [0], authors: ids, limit: ids.length }
+          : { kinds: [0], search: q, limit: 100 },
+      ]));
     const rows = newest(profiles)
       .map((event) => {
         const profile = parse(event.content);
@@ -448,7 +502,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             : "";
         return { name, row: `${event.pubkey} ${name}${about}` };
       })
-      .filter(({ name }) => !q || ids.length || name.toLowerCase().includes(q));
+      .filter(
+        ({ name }) =>
+          !q || ids.length || named || name.toLowerCase().includes(q),
+      );
     return rows.map(({ row }) => row).join("\n") || "No users.";
   },
 
@@ -490,27 +547,33 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async mem_get(tools, args) {
-    const entries = await tools.client.memories();
     const slug = text(args.slug);
-    if (!slug)
-      return (
-        entries
-          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-          .join("\n") || "No memory."
-      );
+    if (!slug) {
+      const { entries, partial } = await tools.client.memories();
+      const lines = entries
+        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+        .join("\n");
+      if (!partial) return lines || "No memory.";
+      if (!lines) throw new Error("Memory could not be read; try again.");
+      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+    }
     const key = memorySlug(slug);
-    return (
-      entries.find((entry) => entry.slug === key)?.body ?? `No memory ${key}.`
-    );
+    const { entries, partial } = await tools.client.memories(key);
+    const body = entries.find((entry) => entry.slug === key)?.body;
+    if (body !== undefined) return body;
+    if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
+    return `No memory ${key}.`;
   },
 
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
-    // Unreadable memory still takes a write, dated now.
-    const current = (await tools.client.memories().catch(() => [])).find(
-      (entry) => entry.slug === key,
-    );
+    // A write must be dated after the entry it replaces, so it waits for a
+    // read that finds the entry or confirms there is none.
+    const { entries, partial } = await tools.client.memories(key);
+    const current = entries.find((entry) => entry.slug === key);
+    if (!current && partial)
+      throw new Error(`Memory ${key} could not be read; try again.`);
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },
@@ -520,16 +583,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
     const content = await tools.body(args, false);
-    if (content === undefined) {
-      const [head] = await client.query([
-        { kinds: [40100], "#h": [channel], limit: 1 },
-      ]);
-      return head?.content || "No canvas.";
-    }
-    // The newest canvas wins, so a write must be dated after the current one.
     const [head] = await client.query([
       { kinds: [40100], "#h": [channel], limit: 1 },
     ]);
+    if (!head && !(await tools.metadata(channel))) throw unseen(channel);
+    if (content === undefined) return head?.content || "No canvas.";
+    // The newest canvas wins, so a write must be dated after the current one.
     const wait = head ? (head.created_at + 1) * 1000 - Date.now() : 0;
     if (wait > 5000) throw new Error("The canvas was just changed; try again.");
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
@@ -545,6 +604,51 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!type?.startsWith("image/"))
       throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
     return { data, type };
+  },
+
+  async tabs(tools, args) {
+    const { client, context } = tools;
+    const tabs = client.tabs;
+    if (!tabs)
+      throw new Error(
+        "Tabs are kept in Buzz Desktop and are unavailable here.",
+      );
+    // Only the channel the agent works in, so it never pulls the owner
+    // toward another conversation.
+    const channel = context.channel;
+    if (!channel) throw new Error("Tabs need a channel to work in.");
+    if (args.action === undefined) {
+      const open = tabs.list(channel);
+      return open.length
+        ? open
+            .map(
+              (tab) =>
+                `${tab.root} ${tab.pane}${tab.name ? ` ${JSON.stringify(tab.name)}` : ""}${tab.shown ? " (shown)" : ""}`,
+            )
+            .join("\n")
+        : "No thread tabs open.";
+    }
+    if (
+      args.action !== "open" &&
+      args.action !== "close" &&
+      args.action !== "rename"
+    )
+      throw new Error("action must be open, close or rename.");
+    const event = await tools.event(required(args, "thread"));
+    if (tag(event, "h") !== channel)
+      throw new Error(`${event.id} is not in this channel.`);
+    // Resolve the root as the reader does, so the tab matched is the one shown.
+    const root = threadReference(event)?.rootId ?? event.id;
+    if (args.action === "open")
+      return tabs.open(channel, root) ? `opened ${root}` : "already open";
+    if (args.action === "rename")
+      return tabs.rename(channel, root, optional(args, "name") ?? "")
+        ? "renamed"
+        : "not open";
+    const closed = tabs.close(channel, root);
+    if (closed === "shown")
+      throw new Error("Your owner is looking at that tab, so it stays open.");
+    return closed === "closed" ? "closed" : "not open";
   },
 };
 
@@ -595,6 +699,23 @@ class Tools {
     return [["e", root, "", "reply"]];
   }
 
+  /** Visit matching events in relay order, retaining only what the caller needs.
+   * False means the scan or caller's output budget stopped the listing. */
+  async scan(filter: Filter, visit: (event: BuzzEvent) => boolean) {
+    let count = 0;
+    for (let cursor = {}; ; ) {
+      const limit = Math.min(PAGE, MAX_EVENTS - count + 1);
+      const page = await this.client.query([{ ...filter, ...cursor, limit }]);
+      for (const event of page) {
+        if (++count > MAX_EVENTS || !visit(event)) return false;
+      }
+      const last = page.at(-1);
+      if (!last || page.length < limit) return true;
+      // The relay reads newest first, then by id.
+      cursor = { until: last.created_at, before_id: last.id };
+    }
+  }
+
   members(channel: string) {
     return this.once(`members/${channel}`, () => this.roster(channel));
   }
@@ -619,7 +740,7 @@ class Tools {
 
   async details(channel: string) {
     const metadata = await this.metadata(channel);
-    if (!metadata) throw new Error(`No channel ${channel} that you can see.`);
+    if (!metadata) throw unseen(channel);
     const role = (await this.roster(channel)).find(
       (member) => member.pubkey === this.client.pubkey,
     )?.role;
@@ -720,7 +841,7 @@ class Tools {
 
   async update(channel: string, args: Args) {
     const metadata = await this.metadata(channel);
-    if (!metadata) throw new Error(`No channel ${channel} that you can see.`);
+    if (!metadata) throw unseen(channel);
     const wanted: [string, string][] = [];
     if (args.name !== undefined)
       wanted.push(["name", canonicalDetailsName(required(args, "name"))]);
@@ -1035,6 +1156,12 @@ async function until<T>(load: () => Promise<T>, done: (value: T) => boolean) {
   }
   return value;
 }
+
+/** A channel without visible metadata, including a newly created channel. */
+const unseen = (channel: string) =>
+  new Error(
+    `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
+  );
 
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>

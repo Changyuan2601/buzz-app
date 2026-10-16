@@ -50,7 +50,9 @@ test("pasting copied messages into the composer restores chips, the recipient an
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
   await expect(
-    row.getByRole("button", { name: "View Fixture Reader profile" }),
+    row
+      .locator("p")
+      .getByRole("button", { name: "View Fixture Reader profile" }),
   ).toBeVisible();
   await expect(row.getByRole("link", { name: "#Beta" })).toBeVisible();
   await expect(row.getByRole("link", { name: "Alpha" })).toHaveCount(2);
@@ -205,5 +207,33 @@ test("pasting copied messages into the composer restores chips, the recipient an
   await expect.poll(() => app.report.publications.length).toBe(3);
   expect(app.report.publications[2].event.content).toBe(
     "[#Beta](buzz://channel/beta)",
+  );
+});
+
+// Browser integration: external clipboard HTML paints a labelled link in the
+// actual composer and survives publication through the session.
+test("external linked text stays linked in the composer and sent message", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.click();
+  await pasteInto(input, {
+    text: "Read the guide",
+    html: '<p>Read <a href="https://example.com/guide">the guide</a></p>',
+  });
+  await expect(input).toHaveJSProperty(
+    "value",
+    "Read [the guide](https://example.com/guide)",
+  );
+  await expect(input.locator("[data-link-renderer]")).toHaveText("the guide");
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.content).toBe(
+    "Read [the guide](https://example.com/guide)",
   );
 });

@@ -189,8 +189,8 @@ readingTest(
     await expectAnchor(page, reloadedAnchor);
     const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
     await expect(jumpToLatest).toBeVisible();
-    await expect(jumpToLatest).toHaveCSS("border-radius", "12px");
-    await expect(jumpToLatest.locator("..")).toHaveCSS("border-radius", "12px");
+    await expect(jumpToLatest).toHaveCSS("border-radius", "26px");
+    await expect(jumpToLatest.locator("..")).toHaveCSS("border-radius", "26px");
     await jumpToLatest.focus();
     await page.keyboard.press("Enter");
     await expect(history(page)).toBeFocused();

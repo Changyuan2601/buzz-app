@@ -1,5 +1,164 @@
-use buzzodz_plugins::{bundled_manifests, Manager};
+use buzzodz_plugins::{bundled_manifests, sign_release, Manager};
+use image::{codecs::png::PngEncoder, ExtendedColorType, ImageEncoder as _};
+use nostr::key::SecretKey;
 use std::{fs, path::PathBuf};
+
+fn png(width: u32, height: u32) -> Vec<u8> {
+    let mut encoded = vec![];
+    PngEncoder::new(&mut encoded)
+        .write_image(
+            &vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+    encoded
+}
+fn install_error(manager: &Manager, source: &std::path::Path) -> String {
+    match manager.install(source) {
+        Ok(_) => panic!("installation should fail"),
+        Err(error) => error,
+    }
+}
+fn decode_content_icon(encoded: Option<&str>) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    encoded.map(|value| {
+        base64::engine::general_purpose::STANDARD
+            .decode(value)
+            .unwrap()
+    })
+}
+
+fn jpg(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = vec![];
+    image::codecs::jpeg::JpegEncoder::new(&mut bytes)
+        .write_image(
+            &vec![128; width as usize * height as usize * 3],
+            width,
+            height,
+            ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    bytes
+}
+
+#[test]
+fn both_signed_icon_formats_survive_reload_restart_and_rollback() {
+    let (temp, manager, source) = fixture();
+    let key = SecretKey::generate().to_secret_hex();
+    let png_bytes = png(1, 1);
+    let first_jpg = jpg(2, 1);
+    fs::write(source.join("icon.png"), &png_bytes).unwrap();
+    fs::write(source.join("icon.jpg"), &first_jpg).unwrap();
+    sign_release(&source, &key).unwrap();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    let content = manager.content("example.page", &first.revision).unwrap();
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(png_bytes.as_slice())
+    );
+    assert_eq!(
+        decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+        Some(first_jpg.as_slice())
+    );
+    assert!(first.icon_jpg_revision.is_some());
+    let serialized = serde_json::to_value(&content).unwrap();
+    assert!(serialized["iconPng"].is_string());
+    assert!(serialized["iconJpg"].is_string());
+    let registry: serde_json::Value =
+        serde_json::from_slice(&fs::read(temp.path().join("profiles/test/registry.json")).unwrap())
+            .unwrap();
+    let entry = &registry["installed"]["example.page"];
+    assert!(entry.get("readmeRevision").is_none());
+    assert!(entry.get("iconRevision").is_none());
+    assert!(entry["iconPngRevision"].is_string());
+    assert!(entry["iconJpgRevision"].is_string());
+
+    fs::write(source.join("icon.jpg"), jpg(1, 2)).unwrap();
+    sign_release(&source, &key).unwrap();
+    let second = manager
+        .reload("example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_ne!(first.icon_jpg_revision, second.icon_jpg_revision);
+    assert_eq!(first.icon_png_revision, second.icon_png_revision);
+    assert_eq!(first.publisher, second.publisher);
+
+    // A different, valid JPEG still fails the signature check when substituted.
+    let mut artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(source.join("plugin.artifact.json")).unwrap()).unwrap();
+    use base64::Engine as _;
+    artifact["iconJpg"] =
+        serde_json::json!(base64::engine::general_purpose::STANDARD.encode(&first_jpg));
+    fs::write(
+        source.join("plugin.artifact.json"),
+        serde_json::to_vec(&artifact).unwrap(),
+    )
+    .unwrap();
+    assert!(install_error(&manager, &source).contains("plugin release x tag"));
+
+    let reopened = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+    let rolled_back = reopened
+        .change("rollback", "example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(rolled_back.icon_jpg_revision, first.icon_jpg_revision);
+    let content = reopened.content("example.page", &first.revision).unwrap();
+    assert_eq!(
+        decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+        Some(first_jpg.as_slice())
+    );
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(png_bytes.as_slice())
+    );
+}
+
+#[test]
+fn jpeg_only_packages_validate_type_decode_and_resource_bounds() {
+    let (_temp, manager, source) = fixture();
+    let bytes = jpg(1, 1);
+    fs::write(source.join("icon.jpg"), &bytes).unwrap();
+    let plugin = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    let content = manager.content("example.page", &plugin.revision).unwrap();
+    assert!(content.icon_png.is_none());
+    assert_eq!(
+        decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+        Some(bytes.as_slice())
+    );
+    for (bytes, expected) in [
+        (png(1, 1), "JPEG"),
+        (vec![0xff, 0xd8, 0xff, 0xe0], "valid JPEG"),
+        (vec![0; 1024 * 1024 + 1], "size limit"),
+        (jpg(4097, 1), "dimensions"),
+        (jpg(1025, 1024), "1,048,576"),
+    ] {
+        fs::write(source.join("icon.jpg"), bytes).unwrap();
+        assert!(
+            install_error(&manager, &source).contains(expected),
+            "{expected}"
+        );
+    }
+}
 fn fixture() -> (tempfile::TempDir, Manager, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
@@ -79,6 +238,159 @@ fn install_enable_update_rollback_and_remove_survive_restart() {
         reopened.catalog().unwrap().plugins.len(),
         bundled_manifests().len()
     );
+}
+
+#[test]
+fn readme_and_icon_are_versioned_read_on_demand_and_preserved_by_rollback() {
+    let (temp, manager, source) = fixture();
+    let first_icon = png(2, 1);
+    fs::write(source.join("README.md"), "# First\n").unwrap();
+    fs::write(source.join("icon.png"), &first_icon).unwrap();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    assert!(first.readme_revision.is_some());
+    assert!(first.icon_png_revision.is_some());
+    let content = manager.content("example.page", &first.revision).unwrap();
+    assert_eq!(content.readme.as_deref(), Some("# First\n"));
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(first_icon.as_slice())
+    );
+
+    let second_icon = png(1, 2);
+    fs::write(source.join("README.md"), "# Second\n").unwrap();
+    fs::write(source.join("icon.png"), &second_icon).unwrap();
+    let second = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    assert_ne!(second.readme_revision, first.readme_revision);
+    assert_ne!(second.icon_png_revision, first.icon_png_revision);
+    assert!(manager.content("example.page", &first.revision).is_err());
+
+    let reopened = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+    let rolled_back = reopened
+        .change("rollback", "example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(rolled_back.revision, first.revision);
+    assert_eq!(rolled_back.readme_revision, first.readme_revision);
+    assert_eq!(rolled_back.icon_png_revision, first.icon_png_revision);
+    let content = reopened
+        .content("example.page", &rolled_back.revision)
+        .unwrap();
+    assert_eq!(content.readme.as_deref(), Some("# First\n"));
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(first_icon.as_slice())
+    );
+}
+
+#[test]
+fn package_assets_are_optional_and_reject_invalid_boundaries() {
+    let (_temp, manager, source) = fixture();
+    let installed = manager.install(&source).unwrap();
+    let plugin = installed
+        .plugins
+        .iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(plugin.readme_revision, None);
+    assert_eq!(plugin.icon_png_revision, None);
+    let content = manager.content("example.page", &plugin.revision).unwrap();
+    assert!(content.readme.is_none());
+    assert!(content.icon_png.is_none());
+    let registry: serde_json::Value = serde_json::from_slice(
+        &fs::read(_temp.path().join("profiles/test/registry.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = &registry["installed"]["example.page"];
+    for key in ["readmeRevision", "iconPngRevision", "iconJpgRevision"] {
+        assert!(entry.get(key).is_none(), "{key}");
+    }
+
+    fs::write(source.join("README.md"), [0xff]).unwrap();
+    assert!(install_error(&manager, &source).contains("UTF-8"));
+    fs::write(source.join("README.md"), vec![b'x'; 256 * 1024 + 1]).unwrap();
+    assert!(install_error(&manager, &source).contains("size limit"));
+    fs::remove_file(source.join("README.md")).unwrap();
+
+    fs::write(source.join("icon.png"), b"not a png").unwrap();
+    assert!(install_error(&manager, &source).contains("PNG"));
+    let mut corrupt = b"\x89PNG\r\n\x1a\n".to_vec();
+    corrupt.extend_from_slice(b"broken");
+    fs::write(source.join("icon.png"), corrupt).unwrap();
+    assert!(install_error(&manager, &source).contains("valid PNG"));
+    fs::write(source.join("icon.png"), vec![0; 1024 * 1024 + 1]).unwrap();
+    assert!(install_error(&manager, &source).contains("size limit"));
+    fs::write(source.join("icon.png"), png(4097, 1)).unwrap();
+    assert!(install_error(&manager, &source).contains("dimensions"));
+    fs::write(source.join("icon.png"), png(1025, 1024)).unwrap();
+    assert!(install_error(&manager, &source).contains("1,048,576"));
+}
+
+#[test]
+fn signed_asset_updates_keep_publisher_and_detect_tampering() {
+    let (_temp, manager, source) = fixture();
+    let key = SecretKey::generate().to_secret_hex();
+    fs::write(source.join("README.md"), "signed first").unwrap();
+    fs::write(source.join("icon.png"), png(1, 1)).unwrap();
+    let publisher = sign_release(&source, &key).unwrap();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(first.publisher.as_deref(), Some(publisher.as_str()));
+
+    fs::write(source.join("README.md"), "signed second").unwrap();
+    fs::write(source.join("icon.png"), png(2, 1)).unwrap();
+    assert_eq!(sign_release(&source, &key).unwrap(), publisher);
+    let second = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(second.publisher.as_deref(), Some(publisher.as_str()));
+    assert_ne!(second.readme_revision, first.readme_revision);
+    assert_ne!(second.icon_png_revision, first.icon_png_revision);
+
+    let mut artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(source.join("plugin.artifact.json")).unwrap()).unwrap();
+    artifact["readme"] = serde_json::json!("tampered");
+    fs::write(
+        source.join("plugin.artifact.json"),
+        serde_json::to_vec(&artifact).unwrap(),
+    )
+    .unwrap();
+    assert!(install_error(&manager, &source).contains("Invalid or ambiguous plugin release x tag"));
+
+    let rolled_back = manager
+        .change("rollback", "example.page")
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap();
+    let content = manager
+        .content("example.page", &rolled_back.revision)
+        .unwrap();
+    assert_eq!(content.readme.as_deref(), Some("signed first"));
 }
 #[test]
 fn folder_reload_updates_current_revision_and_preserves_disabled_state() {
@@ -216,6 +528,39 @@ fn reload_rejects_invalid_sources_without_changing_revision() {
     )
     .is_ok());
     assert!(manager.reload("example.page").is_err());
+}
+#[test]
+fn reload_rejects_nonconforming_reserved_asset_until_source_migrates() {
+    let (_temp, manager, source) = fixture();
+    let installed = |manager: &Manager| {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+    };
+    manager.install(&source).unwrap();
+    let first = installed(&manager);
+    // Older hosts ignored this filename; it is now a reserved package asset.
+    fs::write(source.join("icon.png"), png(2048, 2048)).unwrap();
+    let Err(error) = manager.reload("example.page") else {
+        panic!("reload should reject the nonconforming icon");
+    };
+    assert!(error.contains("icon.png"), "{error}");
+    assert!(install_error(&manager, &source).contains("icon.png"));
+    assert_eq!(installed(&manager).revision, first.revision);
+    assert!(installed(&manager).icon_png_revision.is_none());
+
+    fs::rename(source.join("icon.png"), source.join("icon-2048.png")).unwrap();
+    manager.reload("example.page").unwrap();
+    assert_eq!(installed(&manager).revision, first.revision);
+    fs::write(source.join("icon.png"), png(1024, 1024)).unwrap();
+    manager.reload("example.page").unwrap();
+    let migrated = installed(&manager);
+    assert_ne!(migrated.revision, first.revision);
+    assert!(migrated.icon_png_revision.is_some());
 }
 #[cfg(unix)]
 #[test]

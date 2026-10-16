@@ -261,7 +261,7 @@ async fn run_command(
         || input.is_some_and(|value| {
             command
                 .max_input_bytes
-                .map_or(true, |limit| value.len() as u64 > limit)
+                .is_none_or(|limit| value.len() as u64 > limit)
         })
     {
         return None;

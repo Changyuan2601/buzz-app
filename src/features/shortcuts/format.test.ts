@@ -18,6 +18,11 @@ it("renders glyphs in Control, Option, Shift, Command order on Apple platforms",
   expect(
     formatBinding({ key: "k", mod: true, shift: true, alt: true }, true).text,
   ).toBe("⌥⇧⌘K");
+  expect(formatBinding({ key: "a", mod: true, ctrl: true }, true)).toEqual({
+    parts: ["⌃", "⌘", "A"],
+    text: "⌃⌘A",
+    label: "Control Command A",
+  });
   expect(formatBinding({ key: ",", mod: true }, true)).toEqual({
     parts: ["⌘", ","],
     text: "⌘,",

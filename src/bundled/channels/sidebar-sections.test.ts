@@ -17,7 +17,7 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("forums")).toBe(false);
   expect(isChannelSectionKey("dms")).toBe(false);
 });
-it("allows channel drops into Starred without treating it as a create-channel section", () => {
+it("allows channel drops into Starred without making it a persistent empty section", () => {
   for (const key of ["starred", "channels", "group:work"])
     expect(isChannelDropSectionKey(key)).toBe(true);
   for (const key of ["forums", "dms"])

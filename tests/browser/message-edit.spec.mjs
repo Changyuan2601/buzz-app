@@ -1,11 +1,11 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import react from "@vitejs/plugin-react";
 import { createServer } from "./vite-server.mjs";
 
 // Browser boundary: native caret/focus and undo in the real decorated composer,
 // plus channel/session wiring and responsive edit-header geometry. State and
 // eligibility matrices live in colocated unit/component tests.
-test("Up edits in the existing composer and restores native focus, draft history and attachments", async ({
+test("Up and Cmd+Up edit in the existing composer and restore native focus, draft history and attachments", async ({
   page,
 }, testInfo) => {
   const server = await createServer({
@@ -66,7 +66,9 @@ test("Up edits in the existing composer and restores native focus, draft history
     await input.press("ControlOrMeta+z");
     await expect(input).toHaveJSProperty("value", "Unsent draft");
     await input.fill("");
-    await input.press("ArrowUp");
+    await input.press("Meta+ArrowUp");
+    await expect(editor).toBeFocused();
+    await expect(editor).toHaveJSProperty("value", source);
     for (const theme of ["light", "dark"]) {
       await page.evaluate(
         (theme) => (document.documentElement.dataset.colorMode = theme),

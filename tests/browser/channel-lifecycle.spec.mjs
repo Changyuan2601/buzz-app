@@ -124,7 +124,9 @@ test("archive confirmation returns focus on cancel and retains the conversation 
     name: "Archive channel: Lifecycle channel",
   });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await expect(
+    dialog.getByRole("button", { name: "Archive channel" }),
+  ).toBeFocused();
   await dialog.screenshot({
     path: testInfo.outputPath("lifecycle-confirmation.png"),
   });
@@ -260,7 +262,7 @@ test("delete confirmation without typing purges the selected channel and survive
     .getByRole("menuitem", { name: "Delete channel", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Delete channel: Lifecycle channel",
+    name: "Delete Lifecycle channel?",
   });
   const confirm = dialog.getByRole("button", {
     name: "Delete channel",
@@ -369,9 +371,9 @@ for (const action of ["archive", "hide"]) {
   });
 }
 
-// Escape must not bubble through the navigation
-// disclosure. A DOM emulator cannot prove visibility or modal inertness here.
-test("pending modal Escape in narrow navigation preserves visible recovery after uncertainty", async ({
+// Pending actions release the modal without blocking narrow navigation.
+// A browser proves the page remains usable after an uncertain result.
+test("pending toast in narrow navigation preserves visible recovery after uncertainty", async ({
   page,
   app,
 }) => {
@@ -408,47 +410,29 @@ test("pending modal Escape in narrow navigation preserves visible recovery after
       .getByRole("button", { name: "Archive channel", exact: true })
       .click();
     await seen;
+    await expect(dialog).toHaveCount(0);
+    const pending = page.getByRole("dialog", {
+      name: "Archiving channel…",
+      exact: true,
+    });
+    await expect(pending).toBeVisible();
+    await expect(pending).not.toHaveAttribute("aria-modal", "true");
     await expect(
-      dialog.getByRole("button", { name: "Cancel", exact: true }),
-    ).toBeDisabled();
-    // Disabled submit controls can drop focus to body. Clicking the modal's
-    // explanation restores native dialog focus and exercises ancestor bubbling.
-    await dialog
-      .getByText("Archive this channel for everyone", { exact: false })
-      .click();
-    expect(
-      await dialog.evaluate((element) =>
-        element.contains(document.activeElement),
-      ),
-    ).toBe(true);
-    await page.keyboard.press("Escape");
-    await expect(dialog).toBeVisible();
-    await expect(page.locator("#shell-navigation")).toHaveAttribute(
-      "data-expanded",
-      "true",
-    );
-    await expect(dialog).toHaveAttribute("aria-modal", "true");
-    await page.keyboard.press("Tab");
-    expect(
-      await dialog.evaluate((element) =>
-        element.contains(document.activeElement),
-      ),
-    ).toBe(true);
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeEnabled();
   } finally {
     release();
   }
-  await expect(dialog.getByRole("alert")).toContainText(
-    "The request may have taken effect.",
-  );
+  const failure = page.getByRole("dialog", {
+    name: "Archive channel failed",
+    exact: true,
+  });
+  await expect(failure).toContainText("The request may have taken effect.");
   await expect(
-    dialog.getByRole("button", { name: "Archive channel", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    dialog.getByRole("button", { name: "Cancel", exact: true }),
-  ).toBeEnabled();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(row).toBeFocused();
+    failure.getByRole("button", { name: "Archive channel", exact: true }),
+  ).toHaveCount(0);
+  await failure.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(failure).toHaveCount(0);
   // Recovery must leave the page usable, not silently inert under a hidden modal.
   await page
     .getByRole("button", { name: "Hide navigation", exact: true })
@@ -494,7 +478,7 @@ test.describe("legacy sessions", () => {
       .getByRole("menuitem", { name: "Delete channel", exact: true })
       .click();
     const deletion = page.getByRole("dialog", {
-      name: "Delete channel: Lifecycle channel",
+      name: "Delete Lifecycle channel?",
     });
     await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(deletion).toHaveCount(0);

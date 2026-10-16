@@ -38,6 +38,8 @@ export type ChannelSummary = Readonly<{
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
+  /** Signed metadata cleanup interval in seconds; absent means ongoing or unknown. */
+  ttlSeconds?: number;
   /** Exact members from the relay-signed roster; absent means unknown. */
   members?: readonly string[];
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */
@@ -173,7 +175,7 @@ export type ChannelWindow = Readonly<{
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
 export type PublicChannelSearch = Readonly<{
   channels: readonly ChannelSummary[];
-  /** The relay returned a full metadata page, so some channels were not checked. */
+  /** The metadata read stopped at its bound, so some channels were not checked. */
   partial: boolean;
 }>;
 /** What a channel-only link may show about a channel the reader may not have

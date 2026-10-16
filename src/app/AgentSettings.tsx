@@ -1,3 +1,5 @@
+import type { Agents } from "../features/agents/service";
+import { AgentDefaults } from "../bundled/agents/AgentDefaults";
 import { useState, type ReactNode } from "react";
 import {
   setRememberAgentsPreference,
@@ -10,9 +12,11 @@ import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreference
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 
 export function AgentSettings({
+  agents,
   archive,
   active = true,
 }: {
+  agents?: Agents | undefined;
   archive?: ReactNode;
   active?: boolean;
 }) {
@@ -23,6 +27,7 @@ export function AgentSettings({
   return (
     <section aria-labelledby="agent-settings-title">
       <Header id="agent-settings-title" title="Agents" />
+      {agents && active && <AgentDefaults agents={agents} />}
       {archive}
       <div className="mt-section-gap">
         <InlineHeader title="Messages" />

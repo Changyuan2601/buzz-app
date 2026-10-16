@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   ChannelPanelContext,
+  PanelContext,
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
@@ -15,11 +16,26 @@ type Opening = {
   target: string;
   trigger: HTMLElement | null;
 };
+/** The page's tab workspace, which owns `channelPlacement: "tab"` panels. */
+export type ChannelPanelTabs = {
+  pressed(panel: RegisteredPanel, context: ChannelPanelContext): boolean;
+  toggle(
+    panel: RegisteredPanel,
+    context: ChannelPanelContext,
+    target: string,
+  ): void;
+};
 /** Page-local presentation; optional plugins retain their own work outside this mount. */
 export function useChannelPanels(
   panels: Panels,
   context?: ChannelPanelContext,
   onOpen?: () => void,
+  tabs?: ChannelPanelTabs,
+  /** Opens a target as a channel tab; drawer panels and launchers share it. */
+  opener?: Readonly<{
+    canOpen(target: string): boolean;
+    open(target: string): boolean;
+  }>,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -57,6 +73,14 @@ export function useChannelPanels(
     setOpened((current) => (current === opening ? undefined : current));
     if (opening.trigger?.isConnected) opening.trigger.focus();
   };
+  const openingContext = (opening: Opening): PanelContext => ({
+    channelId: opening.context.channelId,
+    canOpen: (target) => !!opener?.canOpen(target),
+    open: (target) =>
+      activeOpening.current === opening && !!opener?.open(target),
+  });
+  const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
+    mounted.current === binding && panels.snapshot().includes(panel);
   return {
     close: () => setOpened(undefined),
     launchers: context && (
@@ -66,22 +90,29 @@ export function useChannelPanels(
           .map((panel) => {
             const Launcher = panel.channelLauncher;
             if (!Launcher) return null;
+            const tabbed = panel.channelPlacement === "tab";
+            if (tabbed && !tabs) return null;
             return (
               <Launcher
                 key={`${panel.key}:${panel.revision}`}
                 context={context}
-                pressed={selected?.panel === panel}
-                available={() =>
-                  mounted.current === context &&
-                  panels.snapshot().includes(panel)
+                pressed={
+                  tabbed
+                    ? !!tabs?.pressed(panel, context)
+                    : selected?.panel === panel
+                }
+                available={() => bound(context, panel)}
+                // Presentation can ask during render, before the binding is live.
+                canOpen={(target) =>
+                  panels.snapshot().includes(panel) && !!opener?.canOpen(target)
+                }
+                open={(target) =>
+                  bound(context, panel) && !!opener?.open(target)
                 }
                 toggle={(target) => {
-                  if (
-                    mounted.current !== context ||
-                    !panels.snapshot().includes(panel)
-                  )
-                    return;
-                  if (selected?.panel === panel) hide(selected);
+                  if (!bound(context, panel)) return;
+                  if (tabbed) tabs?.toggle(panel, context, target);
+                  else if (selected?.panel === panel) hide(selected);
                   else {
                     onOpen?.();
                     setOpened({
@@ -114,6 +145,7 @@ export function useChannelPanels(
           panel={selected.panel}
           target={selected.target}
           channelContext={context}
+          context={openingContext(selected)}
           close={() => hide(selected)}
         />
       </Panel>
@@ -129,6 +161,7 @@ export function useChannelPanels(
               panel={selected.panel}
               target={selected.target}
               channelContext={context}
+              context={openingContext(selected)}
               close={() => hide(selected)}
             />
           </section>

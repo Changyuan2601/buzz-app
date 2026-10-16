@@ -57,13 +57,13 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   await expect(dialog).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "Leave channel", exact: true }),
-  ).toHaveAttribute("data-variant", "prominent");
+  ).toHaveAttribute("data-variant", "subtle");
   await expect(
     dialog.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeFocused();
   await expect(
     dialog.getByRole("button", { name: "Cancel", exact: true }),
-  ).toHaveAttribute("data-variant", "subtle");
+  ).toHaveAttribute("data-variant", "prominent");
   await dialog.screenshot({
     path: testInfo.outputPath("leave-confirmation.png"),
   });
@@ -97,14 +97,15 @@ test("management Leave restores focus on cancel, holds pending, and completes th
       .getByRole("button", { name: "Leave channel", exact: true })
       .click();
     await seen;
-    await expect(
-      dialog.getByRole("button", { name: "Leave channel", exact: true }),
-    ).toBeDisabled();
-    await expect(
-      dialog.getByRole("button", { name: "Cancel", exact: true }),
-    ).toBeDisabled();
+    await expect(dialog).toHaveCount(0);
+    const pending = page.getByRole("dialog", {
+      name: "Leaving channel…",
+      exact: true,
+    });
+    await expect(pending).toBeVisible();
+    await expect(pending).not.toHaveAttribute("aria-modal", "true");
     await page.keyboard.press("Escape");
-    await expect(dialog).toBeVisible();
+    await expect(pending).toBeVisible();
     await expect(
       page.locator(`[data-channel-id="${channelId}"]`),
     ).toBeVisible();

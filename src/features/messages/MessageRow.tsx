@@ -1,3 +1,4 @@
+import { formatItemTimestamp } from "../../shared/datetime";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
   TypingPresentation,
@@ -18,11 +19,16 @@ import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
-import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
+import {
+  DayDivider,
+  MessageTimestamp,
+  MessageTimestampHint,
+} from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
 import { usePresenceStatus } from "../presence/react";
+import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
@@ -42,6 +48,7 @@ import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
+import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import {
@@ -76,6 +83,7 @@ import {
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
@@ -90,7 +98,7 @@ export type MessageRowProps = {
   agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string, size?: "small"): string | undefined;
-  /** Receives the thread the link was opened from: the row's root, or the row. */
+  /** Receives the thread the link was opened from: the row’s root, or the row. */
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
@@ -104,7 +112,11 @@ export type MessageRowProps = {
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
+  viewer?: string | undefined;
+  stackPrevious?: boolean;
+  stackNext?: boolean;
   alignViewer?: boolean;
+
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -154,7 +166,11 @@ function MessageRowContent({
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
+  viewer = session?.viewer,
+  stackPrevious = layout === "continuation",
+  stackNext = false,
   alignViewer = false,
+
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -166,6 +182,7 @@ function MessageRowContent({
   /** The message as its body shows, when that differs from `row`. */
   shownRow?: ChannelMessage;
 }) {
+  const [avatarFocused, setAvatarFocused] = useState(false);
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
   const reactions = row.reactions;
@@ -238,9 +255,7 @@ function MessageRowContent({
           `${row.workflowOwnerId.slice(0, 10)}…`,
       )
     : undefined;
-  const picture = profile?.picture
-    ? media(profile.picture, "small")
-    : undefined;
+  const picture = avatarMedia(profile?.picture, media);
   const target = profileTarget(row.authorId, {
     agent: !!(row.agentEnvelope || agentPubkeys?.has(row.authorId)),
   });
@@ -282,6 +297,14 @@ function MessageRowContent({
   const displayRow = timeReply
     ? { ...shown, content: timeReply.content }
     : shown;
+  const attachmentOnly =
+    !row.content.trim() &&
+    !row.diff &&
+    !row.agentEnvelope &&
+    row.attachments.length > 0 &&
+    row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
+  // Own-message surface colours apply to a bubble, never to a shown thread root.
+  const ownBubble = !shownRow && !!viewer && row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -361,7 +384,7 @@ function MessageRowContent({
       {action.title}
     </MenuItem>
   ));
-  // Preserve attachment order; only adjacent images share a list.
+  // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
     if (!safeMessageUrl(attachment.url)) continue;
@@ -409,6 +432,74 @@ function MessageRowContent({
       largeEmoji={emojiOnly}
     />
   );
+  const avatar = row.workflowOwnerId ? (
+    <Avatar
+      alt="Workflow"
+      fallback="Workflow"
+      fallbackContent={<LightningIcon size={20} />}
+      shape="squircle"
+      size={
+        compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
+      }
+    />
+  ) : clickable ? (
+    <IconButton
+      size={layout === "timeline" ? "default" : "sm"}
+      shape="round"
+      aria-label={`View ${name} profile`}
+      onFocus={() => setAvatarFocused(true)}
+      onBlur={(event) => {
+        // A window blur keeps this element as the browser's return-focus target.
+        if (
+          event.relatedTarget === null &&
+          document.activeElement === event.currentTarget
+        )
+          return;
+        setAvatarFocused(false);
+      }}
+      aria-describedby={presence !== "unknown" ? presenceId : undefined}
+      onClick={(event) => {
+        event.currentTarget.focus();
+        openLink(target);
+      }}
+      icon={
+        <>
+          <Avatar
+            src={picture}
+            alt=""
+            fallback={name}
+            size={compactAvatar ? "small" : "fill"}
+            shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+          {presence !== "unknown" && (
+            <span className="sr-only select-none" id={presenceId}>
+              Presence: {presence}
+            </span>
+          )}
+        </>
+      }
+    />
+  ) : (
+    <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
+      <Avatar
+        src={picture}
+        alt={
+          presence === "unknown"
+            ? ""
+            : avatarShape === "squircle"
+              ? "Agent"
+              : `${name} avatar`
+        }
+        fallback={name}
+        size={
+          compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
+        }
+        shape={avatarShape}
+        statusBadge={presence === "unknown" ? undefined : presence}
+      />
+    </span>
+  );
   return (
     <div data-message-id={row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
@@ -416,87 +507,27 @@ function MessageRowContent({
         ref={rowRef}
         className={styles.message}
         data-layout={layout}
+        data-stack-previous={stackPrevious || undefined}
+        data-stack-next={stackNext || undefined}
         data-viewer-message={
-          alignViewer && row.authorId === session?.viewer ? "" : undefined
+          alignViewer && row.authorId === viewer ? "" : undefined
         }
+        data-own={(!attachmentOnly && ownBubble) || undefined}
       >
-        {layout === "continuation" ? (
-          <span className={styles.messageGutter}>
-            <MessageTimestamp createdAt={row.createdAt} compact />
-          </span>
-        ) : row.workflowOwnerId ? (
-          <Avatar
-            alt="Workflow"
-            fallback="Workflow"
-            fallbackContent={<LightningIcon size={20} />}
-            shape="squircle"
-            size={
-              compactAvatar
-                ? "small"
-                : layout === "timeline"
-                  ? "large"
-                  : "default"
-            }
-          />
-        ) : clickable ? (
-          <IconButton
-            size={layout === "timeline" ? "default" : "sm"}
-            shape="round"
-            aria-label={`View ${name} profile`}
-            aria-describedby={presence !== "unknown" ? presenceId : undefined}
-            onClick={(event) => {
-              event.currentTarget.focus();
-              openLink(target);
-            }}
-            icon={
-              <>
-                <Avatar
-                  src={picture}
-                  alt=""
-                  fallback={name}
-                  size={compactAvatar ? "small" : "fill"}
-                  shape={avatarShape}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />
-                {presence !== "unknown" && (
-                  <span className="sr-only select-none" id={presenceId}>
-                    Presence: {presence}
-                  </span>
-                )}
-              </>
-            }
-          />
-        ) : (
-          <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
-            <Avatar
-              src={picture}
-              alt={
-                presence === "unknown"
-                  ? ""
-                  : avatarShape === "squircle"
-                    ? "Agent"
-                    : `${name} avatar`
-              }
-              fallback={name}
-              size={
-                compactAvatar
-                  ? "small"
-                  : layout === "timeline"
-                    ? "large"
-                    : "default"
-              }
-              shape={avatarShape}
-              statusBadge={presence === "unknown" ? undefined : presence}
-            />
-          </span>
-        )}
+        <span className={styles.messageGutter} />
+
         <div className={styles.messageBody}>
-          {opened && session && (
+          {opened && session && extensions?.actions && (
             <ContributionBoundary key={contributionKey(opened)} fallback={null}>
-              <opened.component
-                message={row}
-                session={session}
-                close={() => setOpenAction(undefined)}
+              <WithTargetOpener
+                component={opened.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={opened}
               />
             </ContributionBoundary>
           )}
@@ -517,294 +548,400 @@ function MessageRowContent({
               onDismiss={() => setReporting(undefined)}
             />
           )}
-          <div className={styles.messageHeader}>
-            {!row.membership && (
-              <MessageActionBar
-                rowRef={rowRef}
-                menuTriggerRef={menuTrigger}
-                messageId={row.id}
-                onReply={
-                  (onReply ? () => onReply(row.id) : undefined) ??
-                  (onOpenThread
-                    ? () =>
-                        onOpenThread(
-                          row.threadRootId ?? row.id,
-                          row.threadRootId ?? row.id,
-                          "reply",
-                        )
-                    : undefined)
-                }
-                replyDisabled={
-                  !!(
-                    row.delivery && !["accepted", "seen"].includes(row.delivery)
-                  ) ||
-                  archived ||
-                  (!!session?.channels.get && (!listed || readOnly))
-                }
-                onSendToChannel={
-                  session &&
-                  listed &&
-                  !archived &&
-                  !readOnly &&
-                  row.threadRootId &&
-                  row.authorId === session.viewer &&
-                  !row.agentEnvelope &&
-                  !row.diff &&
-                  (!row.delivery ||
-                    ["accepted", "seen"].includes(row.delivery)) &&
-                  session.outbox?.supports(9)
-                    ? () => {
-                        session.messages.sendToChannel(row, getThreadRoot?.());
-                      }
-                    : undefined
-                }
-                link={messageCopyLink(row, scope)}
-                copyText={() =>
-                  messageCopyText(row, directory.profiles, directory.agents)
-                }
-                quickControls={
-                  quickControls ??
-                  (canReact && session && scope && extensions ? (
-                    <MessageReactionControls
-                      row={row}
-                      session={session}
-                      scope={scope}
-                      tools={extensions.tools}
-                      inline={extensions.inline}
-                      disabled={
-                        !!row.delivery &&
-                        !["accepted", "seen"].includes(row.delivery)
-                      }
-                    />
-                  ) : undefined)
-                }
-                leadingItems={
-                  session ? (
-                    <MessageReadStateItem row={row} session={session} />
-                  ) : undefined
-                }
-                overflowItems={
-                  <>
-                    {overflowItems ??
-                      (session ? (
-                        <MessageManagementItems row={row} session={session} />
-                      ) : undefined)}
-                    {actionItems}
-                    {activityItem}
-                    {reportItem}
-                  </>
-                }
-              />
+          <div
+            className={styles.messageContent}
+            data-bubble={(!attachmentOnly && !shownRow) || undefined}
+          >
+            {/* A live append must not remove the reader's current focus target. */}
+            {(!stackNext || avatarFocused) && (
+              <div className={styles.messageAvatar}>{avatar}</div>
             )}
-            {/* Screen-reader text stays out of selections: the clipboard carries
-                what the reader saw, so a continuation copies without a byline. */}
-            <div
-              className={
-                layout === "continuation"
-                  ? "sr-only select-none"
-                  : styles.byline
-              }
-            >
-              {row.workflowOwnerId && workflowOwnerName ? (
-                <WorkflowByline
-                  ownerId={row.workflowOwnerId}
-                  ownerName={workflowOwnerName}
-                  signer={row.signerId ?? row.authorId}
-                  canOpenLink={canOpenLink}
-                  onOpenLink={openLink}
+            <div className={styles.messageHeader}>
+              {!row.membership && (
+                <MessageActionBar
+                  rowRef={rowRef}
+                  menuTriggerRef={menuTrigger}
+                  messageId={row.id}
+                  onReply={
+                    (onReply ? () => onReply(row.id) : undefined) ??
+                    (onOpenThread
+                      ? () =>
+                          onOpenThread(
+                            row.threadRootId ?? row.id,
+                            row.threadRootId ?? row.id,
+                            "reply",
+                          )
+                      : undefined)
+                  }
+                  replyDisabled={
+                    !!(
+                      row.delivery &&
+                      !["accepted", "seen"].includes(row.delivery)
+                    ) ||
+                    archived ||
+                    (!!session?.channels.get && (!listed || readOnly))
+                  }
+                  onSendToChannel={
+                    session &&
+                    listed &&
+                    !archived &&
+                    !readOnly &&
+                    row.threadRootId &&
+                    row.authorId === session.viewer &&
+                    !row.agentEnvelope &&
+                    !row.diff &&
+                    (!row.delivery ||
+                      ["accepted", "seen"].includes(row.delivery)) &&
+                    session.outbox?.supports(9)
+                      ? () => {
+                          session.messages.sendToChannel(
+                            row,
+                            getThreadRoot?.(),
+                          );
+                        }
+                      : undefined
+                  }
+                  link={messageCopyLink(row, scope)}
+                  copyText={() =>
+                    messageCopyText(row, directory.profiles, directory.agents)
+                  }
+                  quickControls={
+                    <>
+                      {stackPrevious && (
+                        <span
+                          className={styles.keyboardMessageTime}
+                          data-message-keyboard-time
+                          aria-hidden="true"
+                        >
+                          {formatItemTimestamp(row.createdAt, {
+                            withTime: true,
+                          })}
+                        </span>
+                      )}
+                      {quickControls ??
+                        (canReact && session && scope && extensions ? (
+                          <MessageReactionControls
+                            row={row}
+                            session={session}
+                            scope={scope}
+                            tools={extensions.tools}
+                            inline={extensions.inline}
+                            disabled={
+                              !!row.delivery &&
+                              !["accepted", "seen"].includes(row.delivery)
+                            }
+                          />
+                        ) : undefined)}
+                    </>
+                  }
+                  leadingItems={
+                    session ? (
+                      <MessageReadStateItem row={row} session={session} />
+                    ) : undefined
+                  }
+                  overflowItems={
+                    <>
+                      {overflowItems ??
+                        (session ? (
+                          <MessageManagementItems row={row} session={session} />
+                        ) : undefined)}
+                      {actionItems}
+                      {activityItem}
+                      {reportItem}
+                    </>
+                  }
                 />
-              ) : (
-                <strong className={styles.author}>{name}</strong>
               )}
-              {layout !== "continuation" && (
-                <MessageTimestamp createdAt={row.createdAt} />
-              )}
-              {session &&
-                actions.map(
-                  (action) =>
-                    action.marker && (
-                      <ContributionBoundary
-                        key={contributionKey(action)}
-                        fallback={null}
-                      >
-                        <action.marker message={row} session={session} />
-                      </ContributionBoundary>
-                    ),
-                )}
-            </div>
-          </div>
-          {row.sentFromThread && (
-            <div className={styles.sentFromThread}>
-              Sent from{" "}
-              <MessageLink
-                url={`buzz://message?${new URLSearchParams({ channel: row.channelId, id: row.sentFromThread.rootId, thread: row.sentFromThread.rootId })}`}
-                registry={extensions?.links}
-                session={session}
-                scope={scope}
-                onOpenLink={openLink}
-                label={
-                  row.sentFromThread.excerpt
-                    ? `Thread — ${row.sentFromThread.excerpt}`
-                    : "Thread"
+              {/* Screen-reader text stays out of selections: the clipboard carries
+                what the reader saw, so a continuation copies without a byline. */}
+              <div
+                className={
+                  stackPrevious ? "sr-only select-none" : styles.byline
                 }
-              />
+              >
+                {row.workflowOwnerId && workflowOwnerName ? (
+                  <WorkflowByline
+                    ownerId={row.workflowOwnerId}
+                    ownerName={workflowOwnerName}
+                    signer={row.signerId ?? row.authorId}
+                    canOpenLink={canOpenLink}
+                    onOpenLink={openLink}
+                  />
+                ) : (
+                  <span className={styles.authorWithStatus}>
+                    <strong className={styles.author}>{name}</strong>
+                    {session && !stackPrevious && (
+                      <UserStatusDisplay
+                        session={session}
+                        userId={row.authorId}
+                        compact
+                        focusable={false}
+                      />
+                    )}
+                  </span>
+                )}
+                {!stackPrevious && (
+                  <MessageTimestamp createdAt={row.createdAt} />
+                )}
+                {session &&
+                  actions.map(
+                    (action) =>
+                      action.marker && (
+                        <ContributionBoundary
+                          key={contributionKey(action)}
+                          fallback={null}
+                        >
+                          <action.marker message={row} session={session} />
+                        </ContributionBoundary>
+                      ),
+                  )}
+              </div>
             </div>
-          )}
-          {timeReply && (
-            <span className={styles.mediaTimeLink}>
-              {onMediaTime ? (
-                <Button
-                  size="sm"
-                  type="button"
-                  onClick={() => onMediaTime(timeReply.anchor.seconds)}
+            {row.sentFromThread && (
+              <div className={styles.sentFromThread}>
+                Sent from{" "}
+                <MessageLink
+                  url={`buzz://message?${new URLSearchParams({ channel: row.channelId, id: row.sentFromThread.rootId, thread: row.sentFromThread.rootId })}`}
+                  registry={extensions?.links}
+                  session={session}
+                  scope={scope}
+                  onOpenLink={openLink}
+                  label={
+                    row.sentFromThread.excerpt
+                      ? `Thread — ${row.sentFromThread.excerpt}`
+                      : "Thread"
+                  }
+                />
+              </div>
+            )}
+            <MessageTimestampHint
+              createdAt={stackPrevious ? row.createdAt : undefined}
+              attachments={attachmentGroups.length > 0}
+            >
+              {!attachmentOnly && (
+                <div
+                  className={shownRow ? undefined : styles.messageBubble}
+                  data-message-action-anchor
+                  data-own={ownBubble || undefined}
+                  data-long-text={
+                    row.content.length > 160 ||
+                    row.content.includes("\n") ||
+                    undefined
+                  }
                 >
-                  {timeReply.label}
-                </Button>
-              ) : (
-                <span>{timeReply.label}</span>
+                  {timeReply && (
+                    <span className={styles.mediaTimeLink}>
+                      {onMediaTime ? (
+                        <Button
+                          size="sm"
+                          type="button"
+                          onClick={() => onMediaTime(timeReply.anchor.seconds)}
+                        >
+                          {timeReply.label}
+                        </Button>
+                      ) : (
+                        <span>{timeReply.label}</span>
+                      )}
+                    </span>
+                  )}
+                  {extensions?.messages ? (
+                    <MessageBody registry={extensions.messages} message={row}>
+                      {body}
+                    </MessageBody>
+                  ) : (
+                    body
+                  )}
+                </div>
               )}
-            </span>
-          )}
-          {extensions?.messages ? (
-            <MessageBody registry={extensions.messages} message={row}>
-              {body}
-            </MessageBody>
+              {attachmentGroups.length > 0 && (
+                <div
+                  className={styles.messageAttachments}
+                  data-message-attachments
+                >
+                  {attachmentGroups.map((group) => {
+                    const images = group[0]?.kind === "image";
+                    const files = group[0]?.kind === "file";
+                    const items = group.map((attachment, index) => {
+                      const url = safeMessageUrl(attachment.url);
+                      if (!url) return null;
+                      const source = media(url);
+                      if (attachment.kind === "file")
+                        return (
+                          <FileAttachment
+                            key={url}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            onOpenLink={openLink}
+                          />
+                        );
+                      if (attachment.kind === "audio") {
+                        if (
+                          source &&
+                          (isProxySource(source) || isNativeMediaSource(source))
+                        )
+                          return extensions?.attachments ? (
+                            <AttachmentView
+                              key={url}
+                              registry={extensions.attachments}
+                              attachment={{ ...attachment, url }}
+                              source={source}
+                              fallback={
+                                <AudioAttachment
+                                  attachment={{ ...attachment, url }}
+                                  source={source}
+                                />
+                              }
+                            />
+                          ) : (
+                            <AudioAttachment
+                              key={url}
+                              attachment={{ ...attachment, url }}
+                              source={source}
+                            />
+                          );
+                        return (
+                          <FileAttachment
+                            key={url}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            onOpenLink={openLink}
+                          />
+                        );
+                      }
+                      if (attachment.kind === "image") {
+                        return (
+                          <AttachmentImage
+                            key={url}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            cached={cached}
+                            keepMounted={keepRowMounted}
+                            label={
+                              group.length > 1
+                                ? `Open image ${index + 1} of ${group.length}`
+                                : "Open image attachment"
+                            }
+                            {...(onOpenMediaReview
+                              ? {
+                                  onOpenReview: (item, seconds) =>
+                                    onOpenMediaReview(
+                                      row.id,
+                                      item,
+                                      seconds,
+                                      row.replyCount > 0 ||
+                                        (!!row.threadRootId &&
+                                          row.threadRootId !== row.id),
+                                    ),
+                                }
+                              : {})}
+                          />
+                        );
+                      }
+                      return (
+                        <MediaAttachment
+                          key={url}
+                          attachment={{ ...attachment, url }}
+                          media={media}
+                          mode={mediaMode}
+                          {...(attachment.kind === "video" &&
+                          mediaSeekTo !== undefined
+                            ? {
+                                seekTo: mediaSeekTo,
+                                ...(mediaSeekRequest !== undefined
+                                  ? { seekRequest: mediaSeekRequest }
+                                  : {}),
+                              }
+                            : {})}
+                          {...(onMediaPlayback
+                            ? { onPlayback: onMediaPlayback }
+                            : {})}
+                          {...(onOpenMediaReview
+                            ? {
+                                onOpenReview: (item, seconds) =>
+                                  onOpenMediaReview(
+                                    row.id,
+                                    item,
+                                    seconds,
+                                    row.replyCount > 0 ||
+                                      (!!row.threadRootId &&
+                                        row.threadRootId !== row.id),
+                                  ),
+                              }
+                            : {})}
+                        />
+                      );
+                    });
+                    return images ? (
+                      <div className={styles.imageGroup} key={group[0]?.url}>
+                        {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
+                        <div
+                          className={styles.imageList}
+                          role="group"
+                          aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
+                        >
+                          {items}
+                        </div>
+                      </div>
+                    ) : files ? (
+                      <div className={styles.fileGroup} key={group[0]?.url}>
+                        {items}
+                      </div>
+                    ) : (
+                      items
+                    );
+                  })}
+                </div>
+              )}
+            </MessageTimestampHint>
+          </div>
+          {session && scope && extensions ? (
+            <MessageReactions
+              onFocusedRemoval={() => menuTrigger.current?.focus()}
+              row={row}
+              session={session}
+              scope={scope}
+              tools={extensions.tools}
+              inline={extensions.inline}
+              profiles={directory.profiles}
+              disabled={
+                !canReact ||
+                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+              }
+            />
           ) : (
-            body
+            reactions.length > 0 && (
+              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
+                {reactions.flatMap((reaction) =>
+                  [
+                    ...new Set(reaction.events.map((event) => event.authorId)),
+                  ].map((authorId) => (
+                    <span
+                      key={JSON.stringify([
+                        reaction.content,
+                        reaction.emoji?.url,
+                        authorId,
+                      ])}
+                    >
+                      {extensions ? (
+                        <InlineText
+                          registry={extensions.inline}
+                          content={{
+                            text: reaction.content,
+                            message: row,
+                            reaction,
+                          }}
+                          media={media}
+                        />
+                      ) : (
+                        reaction.content
+                      )}
+                    </span>
+                  )),
+                )}
+              </div>
+            )
           )}
           <DeliveryNotice row={row} retry={retry} />
-          {attachmentGroups.map((group) => {
-            const images = group[0]?.kind === "image";
-            const files = group[0]?.kind === "file";
-            const items = group.map((attachment, index) => {
-              const url = safeMessageUrl(attachment.url);
-              if (!url) return null;
-              const source = media(url);
-              if (attachment.kind === "file")
-                return (
-                  <FileAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    onOpenLink={openLink}
-                  />
-                );
-              if (attachment.kind === "audio") {
-                if (
-                  source &&
-                  (isProxySource(source) || isNativeMediaSource(source))
-                )
-                  return extensions?.attachments ? (
-                    <AttachmentView
-                      key={url}
-                      registry={extensions.attachments}
-                      attachment={{ ...attachment, url }}
-                      source={source}
-                      fallback={
-                        <AudioAttachment
-                          attachment={{ ...attachment, url }}
-                          source={source}
-                        />
-                      }
-                    />
-                  ) : (
-                    <AudioAttachment
-                      key={url}
-                      attachment={{ ...attachment, url }}
-                      source={source}
-                    />
-                  );
-                return (
-                  <FileAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    onOpenLink={openLink}
-                  />
-                );
-              }
-              if (attachment.kind === "image") {
-                return (
-                  <AttachmentImage
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    cached={cached}
-                    keepMounted={keepRowMounted}
-                    label={
-                      group.length > 1
-                        ? `Open image ${index + 1} of ${group.length}`
-                        : "Open image attachment"
-                    }
-                    {...(onOpenMediaReview
-                      ? {
-                          onOpenReview: (item, seconds) =>
-                            onOpenMediaReview(
-                              row.id,
-                              item,
-                              seconds,
-                              row.replyCount > 0 ||
-                                (!!row.threadRootId &&
-                                  row.threadRootId !== row.id),
-                            ),
-                        }
-                      : {})}
-                  />
-                );
-              }
-              return (
-                <MediaAttachment
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  media={media}
-                  mode={mediaMode}
-                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
-                    ? {
-                        seekTo: mediaSeekTo,
-                        ...(mediaSeekRequest !== undefined
-                          ? { seekRequest: mediaSeekRequest }
-                          : {}),
-                      }
-                    : {})}
-                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
-                  {...(onOpenMediaReview
-                    ? {
-                        onOpenReview: (item, seconds) =>
-                          onOpenMediaReview(
-                            row.id,
-                            item,
-                            seconds,
-                            row.replyCount > 0 ||
-                              (!!row.threadRootId &&
-                                row.threadRootId !== row.id),
-                          ),
-                      }
-                    : {})}
-                />
-              );
-            });
-            return images ? (
-              <div className={styles.imageGroup} key={group[0]?.url}>
-                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
-                <div
-                  className={styles.imageList}
-                  role="group"
-                  aria-label={`${group.length} ${group.length === 1 ? "image" : "images"}`}
-                >
-                  {items}
-                </div>
-                {group.length > 1 && (
-                  <div className={styles.imageCount}>{group.length} images</div>
-                )}
-              </div>
-            ) : files ? (
-              <div className={styles.fileGroup} key={group[0]?.url}>
-                {items}
-              </div>
-            ) : (
-              items
-            );
-          })}
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
               registry={extensions.accessories}
@@ -828,52 +965,6 @@ function MessageRowContent({
               open={onOpenLink}
             />
           )}
-          {session && scope && extensions ? (
-            <MessageReactions
-              onFocusedRemoval={() => menuTrigger.current?.focus()}
-              row={row}
-              session={session}
-              scope={scope}
-              tools={extensions.tools}
-              inline={extensions.inline}
-              profiles={directory.profiles}
-              disabled={
-                !canReact ||
-                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
-              }
-            />
-          ) : (
-            reactions.length > 0 && (
-              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
-                {reactions.map((reaction) => (
-                  <span
-                    key={JSON.stringify([
-                      reaction.content,
-                      reaction.emoji?.url,
-                    ])}
-                  >
-                    {extensions ? (
-                      <InlineText
-                        registry={extensions.inline}
-                        content={{
-                          text: reaction.content,
-                          message: row,
-                          reaction,
-                        }}
-                        media={media}
-                      />
-                    ) : (
-                      reaction.content
-                    )}{" "}
-                    {
-                      new Set(reaction.events.map((event) => event.authorId))
-                        .size
-                    }
-                  </span>
-                ))}
-              </div>
-            )
-          )}
           {(row.replyCount > 0 ||
             (!row.threadRootId && threadAgents.length > 0)) &&
             onOpenThread && (
@@ -881,6 +972,7 @@ function MessageRowContent({
                 variant="ghost"
                 size="sm"
                 data-thread-summary=""
+                data-reply-connector={row.replyCount > 0 || undefined}
                 data-first-participant-shape={
                   agentPubkeys?.has(row.participants[0] ?? "")
                     ? "squircle"
@@ -919,9 +1011,7 @@ function MessageRowContent({
                       return (
                         <Avatar
                           key={agent.pubkey}
-                          src={
-                            agent.avatar ? media(agent.avatar, "small") : null
-                          }
+                          src={avatarMedia(agent.avatar, media)}
                           alt=""
                           fallback={name}
                           size="compact"
@@ -952,10 +1042,20 @@ function MessageRowContent({
 export const MessageRow = memo(function AudienceMessageRow(
   props: MessageRowProps,
 ) {
-  return props.row.audience === "agents" ? (
-    <AgentsMessageRow {...props} />
-  ) : (
-    <FullMessageRow {...props} />
+  const { onOpenLink, canOpenLink, row } = props;
+  const rootId = row.threadRootId ?? row.id;
+  // Plugin content in this row opens targets as the row's own links do.
+  return (
+    <TargetOpenerProvider
+      canOpen={(target) => canOpenLink?.(target) ?? false}
+      open={(target) => onOpenLink(target, { rootId })}
+    >
+      {row.audience === "agents" ? (
+        <AgentsMessageRow {...props} />
+      ) : (
+        <FullMessageRow {...props} />
+      )}
+    </TargetOpenerProvider>
   );
 });
 
@@ -981,7 +1081,7 @@ function AgentsMessageRow(props: MessageRowProps) {
     return {
       pubkey,
       name,
-      picture: profile?.picture ? media(profile.picture, "small") : undefined,
+      picture: avatarMedia(profile?.picture, media),
       shape: agent ? ("squircle" as const) : ("circle" as const),
     };
   };
@@ -1063,11 +1163,16 @@ function AgentsMessageRow(props: MessageRowProps) {
         </button>
         {open && (
           <div className={styles.audienceBody}>
+            <div className="text-caption">
+              <MessageTimestamp createdAt={row.createdAt} />
+            </div>
             <FullMessageRow
               {...props}
               shownRow={body}
               day={false}
               layout="continuation"
+              stackPrevious
+              stackNext
             />
           </div>
         )}

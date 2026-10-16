@@ -62,7 +62,9 @@ import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/Keyboa
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
-  return <ThemePicker value={value} onValueChange={setValue} />;
+  return (
+    <ThemePicker value={value} onValueChange={setValue} messageColor="blue" />
+  );
 }
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
@@ -763,6 +765,7 @@ function TabsSpecimen() {
     "Harness log",
   ]);
   const [selectedClosable, setSelectedClosable] = useState("Thread");
+  const [attentionRequest, requestAttention] = useState(0);
   const [destination, setDestination] = useState<Destination>("messages");
   const [panelDestination, setPanelDestination] =
     useState<Destination>("messages");
@@ -773,6 +776,15 @@ function TabsSpecimen() {
   }));
   return (
     <div className="component-specimen-stack">
+      <Button
+        disabled={!closable.includes("Thread")}
+        onClick={() => {
+          setSelectedClosable("Thread");
+          requestAttention((value) => value + 1);
+        }}
+      >
+        Reopen thread
+      </Button>
       <SpecimenGroup
         label="Closable navigation tabs — shared sidebar control"
         code={`{closable.length ? (
@@ -821,6 +833,8 @@ function TabsSpecimen() {
             items={closable.map((label) => ({
               value: label,
               label,
+              attentionRequest:
+                label === "Thread" ? attentionRequest : undefined,
               icon:
                 label === "Profile" ? (
                   <Avatar alt="" fallback="Ada" size="fill" />
@@ -1174,11 +1188,12 @@ function NavigationItemSpecimen() {
         </div>
       </SpecimenGroup>
       <SpecimenGroup
-        label="Picker option — even padding and immediate hover feedback"
+        label="Picker option — transient highlight and immediate hover feedback"
         code={`<div className="w-full max-w-sm">
   <NavigationItem
     variant="option"
     label="Alex"
+    highlighted
     icon={<Avatar fallback="Alex" alt="" size="default" />}
   />
   <NavigationItem
@@ -1193,6 +1208,7 @@ function NavigationItemSpecimen() {
           <NavigationItem
             variant="option"
             label="Alex"
+            highlighted
             icon={<Avatar fallback="Alex" alt="" size="default" />}
           />
           <NavigationItem
@@ -1938,12 +1954,22 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       <div>
         <InlineHeader title="Profile" />
         <SettingsGroup layout="form">
-          <Field label="Display name">
+          <Field label="Display name" optional>
             <Input defaultValue="Alex" />
+          </Field>
+          <Field label="Folder" nativeLabel={false}>
+            <FieldButton dropdown={false}>~/Development/project</FieldButton>
           </Field>
           <div className="flex justify-end">
             <Button>Save profile</Button>
           </div>
+        </SettingsGroup>
+      </div>
+      <div>
+        <InlineHeader title="Attached folders" />
+        <SettingsGroup layout="cards">
+          <PreferenceRow title="Project" subtitle="~/Development/project" />
+          <PreferenceRow title="Reference" subtitle="~/Documents/reference" />
         </SettingsGroup>
       </div>
     </div>
@@ -2009,6 +2035,21 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ]}
 />`}
     >
+      <InlineHeader title="Active section" />
+      <Accordion
+        variant="section"
+        items={[
+          {
+            value: "done",
+            title: "Completed section",
+            content: (
+              <p className="text-body">
+                Content aligns with adjacent sections.
+              </p>
+            ),
+          },
+        ]}
+      />
       <Accordion
         items={[
           {
@@ -2029,6 +2070,16 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
                 Focus a heading and press Enter or Space to expand it.
               </p>
             ),
+          },
+        ]}
+      />
+      <Accordion
+        variant="settings"
+        items={[
+          {
+            value: "memory",
+            title: "Core memory",
+            content: <p className="text-body-sm">Supporting agent context.</p>,
           },
         ]}
       />

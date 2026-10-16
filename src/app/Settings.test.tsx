@@ -10,6 +10,8 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import { createCommunityMembership } from "../bundled/moderation/membership";
@@ -18,10 +20,21 @@ import {
   type SettingsCard,
   type SettingsCards,
 } from "../features/settings/service";
+import type { ClientSnapshot } from "../features/communities/service";
 import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
 
 afterEach(cleanup);
+
+// The shared sidebar's resize handle measures its panel.
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
 
 function registry(initial: Contribution<SettingsCard>[]) {
   let entries: readonly Contribution<SettingsCard>[] = initial;
@@ -100,6 +113,203 @@ const host = {
     snapshot: () => communityState,
   },
 } as unknown as Parameters<typeof Settings>[0];
+
+it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
+  const ready = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            manifest: {
+              id: "buzz.voice-notes",
+              name: "Voice Notes",
+              apiVersion: 1,
+              description: "Record voice notes and play them in conversations.",
+              discovery: {
+                category: "communication",
+                ...(essentials ? { tags: ["  essentials  "] } : {}),
+              },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "buzz.channels",
+              name: "Channels",
+              apiVersion: 1,
+              description: "Navigate channels and hold conversations in Buzz.",
+              discovery: {
+                category: "communication",
+                ...(essentials ? { tags: ["Essentials"] } : {}),
+              },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "buzz.codex",
+              name: "Codex",
+              apiVersion: 1,
+              description: "Run local Codex coding agents in Buzz.",
+              discovery: {
+                category: "agents",
+                ...(essentials ? { tags: ["Essentials"] } : {}),
+              },
+            },
+            source: "bundled",
+            enabled: true,
+            revision: "bundled",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          {
+            manifest: {
+              id: "example.invoices",
+              name: "Invoices",
+              apiVersion: 1,
+              description: "Reconcile invoices without leaving Buzz.",
+              discovery: { category: "finance" },
+            },
+            source: "external",
+            enabled: false,
+            revision: "one",
+            previous: null,
+            reloadable: true,
+            error: null,
+          },
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const { cards } = registry([]);
+  ready.configuration.catalog.plugins.unshift({
+    source: "bundled",
+    enabled: true,
+    revision: "bundled",
+    previous: null,
+    reloadable: false,
+    error: null,
+    manifest: {
+      id: "example.messages",
+      name: "Messages",
+      apiVersion: 1,
+      description: "Read messages.",
+      discovery: { category: "communication" },
+    },
+  });
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={
+        {
+          subscribe: () => () => {},
+          snapshot: () => ready,
+          change: vi.fn(async () => true),
+          reload: vi.fn(async () => true),
+          dismissError: vi.fn(),
+        } as unknown as Parameters<typeof Settings>[0]["plugins"]
+      }
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  const content = screen.getByRole("region", { name: "Plugins" });
+  expect(
+    within(content)
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent),
+  ).toEqual(["Communication3 plugins", "Agents1 plugin", "Other1 plugin"]);
+  const communication = within(content)
+    .getByRole("heading", {
+      name: /^Communication/,
+    })
+    .closest("section");
+  expect(communication).not.toBeNull();
+  expect(
+    within(communication as HTMLElement)
+      .getAllByRole("article")
+      .map(
+        (row) =>
+          within(row).getByText(/^(Channels|Voice Notes|Messages)$/)
+            .textContent,
+      ),
+  ).toEqual(
+    essentials
+      ? ["Channels", "Voice Notes", "Messages"]
+      : ["Channels", "Messages", "Voice Notes"],
+  );
+  expect(within(content).getAllByRole("article")).toHaveLength(5);
+  expect(
+    within(content).queryAllByRole("img", { name: "Essential" }),
+  ).toHaveLength(essentials ? 3 : 0);
+  expect(within(content).queryByText("Essential")).toBeNull();
+  if (essentials) {
+    const voiceRow = within(content)
+      .getByText("Voice Notes")
+      .closest("article");
+    expect(voiceRow).not.toBeNull();
+    const row = within(voiceRow as HTMLElement);
+    expect(row.getByRole("img", { name: "Essential" }).nextElementSibling).toBe(
+      row.getByRole("switch", { name: "Enable Voice Notes" }),
+    );
+  }
+  expect(
+    within(content).queryByRole("switch", { name: "Enable Channels" }),
+  ).toBeNull();
+  expect(
+    within(communication as HTMLElement).getByRole("switch", {
+      name: "Enable Voice Notes",
+    }),
+  ).toBeEnabled();
+  expect(content).toHaveTextContent(
+    "Navigate channels and hold conversations in Buzz.",
+  );
+  expect(content).toHaveTextContent("Run local Codex coding agents in Buzz.");
+
+  const other = within(content)
+    .getByRole("heading", { name: /^Other/ })
+    .closest("section");
+  expect(other).not.toBeNull();
+  expect(within(other as HTMLElement).getByText("Invoices")).toBeVisible();
+  expect(
+    within(other as HTMLElement).getByText(
+      "Reconcile invoices without leaving Buzz.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(other as HTMLElement).getByRole("switch", {
+      name: "Enable Invoices",
+    }),
+  ).toBeVisible();
+  expect(
+    within(content).queryByRole("heading", { name: "Finance" }),
+  ).toBeNull();
+  expect(
+    within(content).queryByRole("button", {
+      name: "Essentials only",
+    }),
+  ).toBeNull();
+});
 
 it("uses contributed icons in community and account navigation", () => {
   const { cards } = registry([
@@ -380,3 +590,75 @@ it.each(["primary", null])(
     expect(hosted(shell as HTMLElement).querySelector("svg")).not.toBeNull();
   },
 );
+
+it("retains departure confirmation until local cleanup settles", async () => {
+  let client: ClientSnapshot = {
+    ...communityState,
+    status: "ready",
+    relayAvailable: true,
+  };
+  const listeners = new Set<() => void>();
+  let finish!: () => void;
+  const cleanupFinished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const leave = vi.fn(async () => {
+    client = { ...client, selected: null, memberships: [] };
+    for (const listener of listeners) listener();
+    await cleanupFinished;
+    return [];
+  });
+  const { cards } = registry([]);
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <Settings
+        {...host}
+        cards={cards}
+        communities={{
+          ...host.communities,
+          subscribe: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+          snapshot: () => client,
+          leave,
+        }}
+      />
+    </ToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Leave or remove" }));
+  await user.click(
+    screen.getByRole("button", { name: "Remove from this device" }),
+  );
+  try {
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Remove from this device",
+      }),
+    );
+    await waitFor(() => expect(leave).toHaveBeenCalledOnce());
+    expect(client.memberships).toEqual([]);
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    expect(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Cancel",
+      }),
+    ).toBeDisabled();
+  } finally {
+    await act(async () => finish());
+  }
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByRole("button", { name: "Profile" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(screen.queryByRole("button", { name: "Leave or remove" })).toBeNull();
+  expect(
+    screen.getByText(
+      "Primary was removed from this device. Your membership wasn’t changed. You can add it again later.",
+    ),
+  ).toBeVisible();
+});

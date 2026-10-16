@@ -82,12 +82,14 @@ export function createChannelKit({
     if (pending && after) await pending;
     if (pending) return pending;
     const generation = epoch;
-    update({
-      ...state,
-      status: "loading",
-      error: undefined,
-      transient: undefined,
-    });
+    // A loaded catalog stays ready while it revalidates in the background.
+    if (state.status !== "ready")
+      update({
+        ...state,
+        status: "loading",
+        error: undefined,
+        transient: undefined,
+      });
     pending = (async () => {
       try {
         const events = await fresh([

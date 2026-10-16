@@ -1,3 +1,5 @@
+const emptyPanels: never[] = [];
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
@@ -12,7 +14,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { InboxPage } from "./InboxPage";
+import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { archiveKey, readArchives } from "./archive";
 import { viewRevision } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -37,6 +39,7 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
+import { mediaUrl } from "../../features/relay/transport";
 import {
   decodeReadState,
   signReadState,
@@ -398,6 +401,71 @@ it.each(["Threads", "Mentions"])(
     await waitFor(() => expect(rows()).toHaveLength(2));
   },
 );
+
+it("archives and restores the open conversation from the Archive shortcut", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  expect(h.archive.current).toBeUndefined();
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Archive conversation" }),
+    ).toBeEnabled(),
+  );
+  act(() => h.archive.current?.());
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(1),
+  );
+  // Like the header button, archiving the open conversation advances.
+  expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
+  await chooseFilter("Archived", "Show");
+  fireEvent.click(list().getByRole("button", { name: /^Open / }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Restore conversation" }),
+    ).toBeEnabled(),
+  );
+  act(() => h.archive.current?.());
+  await waitFor(() =>
+    expect(list().queryAllByRole("button", { name: /^Open / })).toHaveLength(0),
+  );
+});
+
+it("offers the Archive shortcut only while the visible header's Archive is enabled", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  const header = () =>
+    screen.getByRole("button", { name: "Archive conversation" });
+  await waitFor(() => expect(header()).toBeEnabled());
+  expect(h.archive.current).toBeDefined();
+  act(() => h.archive.current?.());
+  // While the header's Archive is disabled, so is the shortcut.
+  expect(header()).toBeDisabled();
+  expect(h.archive.current).toBeUndefined();
+  await waitFor(() => expect(header()).toBeEnabled());
+  expect(h.archive.current).toBeDefined();
+  // Drafts hides the conversation, so the shortcut cannot archive it unseen.
+  await chooseFilter("Drafts");
+  expect(
+    screen.queryByRole("button", { name: "Archive conversation" }),
+  ).toBeNull();
+  expect(h.archive.current).toBeUndefined();
+});
 
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
   const h = fixture();
@@ -1330,7 +1398,7 @@ function fixture(
             ...(options.archivedChannel ? [["archived", "true"]] : []),
           ]),
     ]),
-    profile(alice, { name: "Alice" }),
+    profile(alice, { name: "Alice", picture: alicePicture }),
     ...roots,
     mention,
     reply,
@@ -1429,7 +1497,10 @@ function fixture(
         }
         return filters.flatMap(answer);
       },
-      media: () => undefined,
+      // The real sizing rewrite behind a pass-through proxy, so rows resolve
+      // relay-hosted pictures to the variant they actually requested.
+      media: (url, size) =>
+        mediaUrl(url, (proxied) => proxied, "https://relay.test", size),
       ...(options.withWriter
         ? {
             writer: {
@@ -1561,6 +1632,7 @@ function fixture(
     clearCache: owner.clearCache,
   };
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+  const archive: ArchiveShortcut = {};
   return {
     owner,
     session: observedSession,
@@ -1713,12 +1785,25 @@ function fixture(
     mention,
     reply,
     open,
+    archive,
     journal: () => journal,
     view: (
       <StrictMode>
         <InboxPage
+          host={
+            {
+              relay,
+              navigation: { open },
+              panels: {
+                subscribe: () => () => {},
+                snapshot: () => emptyPanels,
+                resolve: () => undefined,
+              },
+            } as unknown as ConversationHostServices
+          }
           relay={relay}
           navigator={{ open } as unknown as Navigation}
+          archive={archive}
         />
       </StrictMode>
     ),
@@ -1771,6 +1856,8 @@ function fixture(
     },
   };
 }
+/** Relay-hosted, so `media()` decides which variant the row loads. */
+const alicePicture = `https://relay.test/media/${"a".repeat(64)}.png`;
 const rows = () =>
   within(
     screen.getByRole("list", { name: "Inbox conversations" }),
@@ -1948,6 +2035,11 @@ it("excludes archived-channel mentions and threads without hiding active DMs", a
   );
   expect(rows()).toHaveLength(1);
   expect(rows()[0]).toHaveTextContent("A direct reply");
+  // The sender avatar reuses the thumbnail message rows load, not the original.
+  expect(rows()[0]?.querySelector("img")).toHaveAttribute(
+    "src",
+    alicePicture.replace(/\.png$/, ".thumb.jpg"),
+  );
   await chooseFilter("Mentions");
   expect(rows()).toHaveLength(0);
   await chooseFilter("Threads");
@@ -3184,7 +3276,7 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: "Reply to thread",
+      name: sessionChannel ? "Message #Design" : "Reply to thread",
     });
     fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
@@ -3207,7 +3299,10 @@ it.each([true, false])(
     const sent = h.published[0];
     if (!sent) throw Error("Missing publication");
     expect(sent.tags).toContainEqual(["h", "room"]);
-    expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
+    // A session is flat: Inbox replies continue it at the top level.
+    expect(sent.tags.some(([name]) => name === "e")).toBe(!sessionChannel);
+    if (!sessionChannel)
+      expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
     expect(sent.tags.filter(([name]) => name === "p")).toEqual(
       sessionChannel ? [["p", h.agent.pubkey]] : [],
     );
@@ -3226,7 +3321,7 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Reply to thread",
+    name: "Message #Design",
   });
   fireEvent.change(editor, { target: { value: "Choose someone first" } });
   await waitFor(() =>
@@ -3240,6 +3335,46 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
   ).toBeInTheDocument();
   expect(h.published).toEqual([]);
   expect(editor).toHaveValue("Choose someone first");
+});
+
+it("Inbox keeps an open session timeline when a late reply regroups its mention", async () => {
+  const h = fixture({
+    withWriter: true,
+    sessionChannel: true,
+    memberAgents: 1,
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  const editor = await screen.findByRole("textbox", {
+    name: "Message #Design",
+  });
+  fireEvent.change(editor, { target: { value: "Draft in progress" } });
+  act(() =>
+    h.emit([
+      message(h.alice, "room", "Threaded follow-up", 30, [
+        ["e", h.mention.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ]),
+    ]),
+  );
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread
+        .inbox()
+        .items.find((item) => item.messageIds.includes(h.mention.id))?.thread,
+    ).toBe(true),
+  );
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: "Message #Design" })).toHaveValue(
+    "Draft in progress",
+  );
+  expect(
+    screen.queryByRole("textbox", { name: "Reply to thread" }),
+  ).not.toBeInTheDocument();
 });
 
 it.each(["preview", "name", "history"])(

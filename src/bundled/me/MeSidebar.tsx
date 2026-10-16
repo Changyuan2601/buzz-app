@@ -5,7 +5,11 @@ import { useWorkingAgents } from "../channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../channels/WorkingAgentsBadge";
 import channelStyles from "../channels/Channels.module.css";
 import { sessionLinkTarget } from "../sessions/SessionsPage";
-import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
+import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
+import {
+  SidebarBrand,
+  SidebarFrame,
+} from "../../features/channel-navigation/SidebarFrame";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -19,7 +23,7 @@ import { useMePlacement } from "../../features/sessions/personal";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SessionSections } from "../sessions/SessionSections";
-import { readChannelSidebarWidth } from "../channels/useSidebarView";
+import { resetNewChatProject } from "../../features/sessions/NewSessionComposer";
 import { UnreadBadge } from "../channels/UnreadBadge";
 import { meSelection, meTarget } from "./routes";
 import styles from "../sessions/SessionsWorkspace.module.css";
@@ -28,10 +32,9 @@ type Props = { relay: RelayData; navigator: Navigation; target: OpenTarget };
 export function MeSidebar({ relay, navigator, target }: Props) {
   const connection = useRelayConnection(relay);
   const scope = connection.scope ?? "disconnected";
-  const width = readChannelSidebarWidth(scope);
   return (
-    <div className="shell-sidebar-default" style={{ width }}>
-      <SidebarFrame label="Me sidebar">
+    <ResizableSidebar scope={scope}>
+      <SidebarFrame label="Solo sidebar">
         {connection.status === "ready" ? (
           <PersonalHistory
             key={`${scope}:${connection.generation}`}
@@ -41,10 +44,17 @@ export function MeSidebar({ relay, navigator, target }: Props) {
             target={target}
           />
         ) : (
-          <p role="status">Connect to a community to see your conversations.</p>
+          <>
+            <div className={channelStyles.sidebarTop}>
+              <SidebarBrand mark="berd" />
+            </div>
+            <p role="status">
+              Connect to a community to see your conversations.
+            </p>
+          </>
         )}
       </SidebarFrame>
-    </div>
+    </ResizableSidebar>
   );
 }
 
@@ -106,28 +116,23 @@ function PersonalHistory({
   return (
     <nav
       className={`${styles.sidebar} ${styles.history}`}
-      aria-label="Me conversations"
+      aria-label="Solo conversations"
     >
       <SessionSections
+        header={<SidebarBrand mark="berd" />}
         personal
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
+        onConverted={openMessage}
         sessions={conversations.map((item) => ({
           id: item.id,
           title: item.name,
         }))}
-        onShared={(id) => {
-          const destination = sessionLinkTarget(
-            `buzz://channel/${id}`,
-            scope,
-            session.viewer,
-          );
-          if (destination) void navigator.open(destination);
+        onNew={(sectionId) => {
+          if (sectionId) resetNewChatProject(scope, true, sectionId);
+          void navigator.open(meTarget(scope, "new", sectionId));
         }}
-        onNew={(sectionId) =>
-          void navigator.open(meTarget(scope, "new", sectionId))
-        }
         renderSession={(item) => (
           <MeConversationRow
             key={item.id}
@@ -160,12 +165,12 @@ function PersonalHistory({
         <p role="status">
           {placement.error}{" "}
           <Button onClick={() => void session.mePlacement.refresh()}>
-            Retry Me
+            Retry Solo
           </Button>
         </p>
       ) : (
         placement.status !== "ready" &&
-        !recoveryShown && <p role="status">Loading Me placement…</p>
+        !recoveryShown && <p role="status">Loading Solo chats…</p>
       )}
       {!conversations.length &&
         list.status === "ready" &&

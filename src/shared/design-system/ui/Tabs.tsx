@@ -1,8 +1,21 @@
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { NavigationItem } from "./NavigationItem";
 import { IconButton } from "./IconButton";
+import { Input } from "./Input";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuPopup,
+} from "./Menu";
 import { XIcon } from "../icons";
-import type { ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 export type TabItem<Value extends string> = {
   value: Value;
@@ -11,10 +24,14 @@ export type TabItem<Value extends string> = {
   trailing?: ReactNode;
   /** Link a retained, externally owned tab panel. */
   panelId?: string;
+  /** Increment to briefly identify an already-open navigation tab. */
+  attentionRequest?: number | undefined;
   onClose?: (() => void) | undefined;
   /** Option/Alt+Shift+Arrow moves this tab one position; the caller places it. */
   draggable?: boolean | undefined;
   onMove?: ((delta: -1 | 1) => void) | undefined;
+  /** Double-click, F2 or the tab's menu edits its name; blank restores the default. */
+  onRename?: ((name: string) => void) | undefined;
 };
 
 /**
@@ -44,7 +61,10 @@ export function Tabs<Value extends string>({
   previewValue,
   arrivalValue,
   renderPanel,
+  tabMenu,
 }: {
+  /** Scoped host action, composed with each tab's Rename action. */
+  tabMenu?: { key: string; closeAll(): boolean } | undefined;
   /** Omit only when composing an existing externally owned view. */
   renderPanel?: (value: Value) => ReactNode;
   value: Value | null;
@@ -62,6 +82,9 @@ export function Tabs<Value extends string>({
   /** Brief visual confirmation of a tab arriving after a completed move. */
   arrivalValue?: Value | undefined;
 }) {
+  const [renaming, setRenaming] = useState<Value>();
+  if (renaming !== undefined && !items.some((item) => item.value === renaming))
+    setRenaming(undefined);
   const strip = (
     <>
       <BaseTabs.List className="buzz-tabs-list" aria-label={label}>
@@ -69,10 +92,12 @@ export function Tabs<Value extends string>({
           <BaseTabs.Indicator className="buzz-tabs-indicator" />
         )}
         {items.map((item) => (
-          <span
-            key={item.value}
-            className="buzz-tabs-item"
-            data-closable={!!item.onClose || undefined}
+          <TabMenu
+            key={JSON.stringify([tabMenu?.key, item.value])}
+            label={item.label}
+            closeAll={tabMenu?.closeAll}
+            onClose={item.onClose}
+            onRename={item.onRename && (() => setRenaming(item.value))}
           >
             <BaseTabs.Tab
               value={item.value}
@@ -82,11 +107,14 @@ export function Tabs<Value extends string>({
                   <NavigationItem
                     label={item.label}
                     icon={
-                      item.icon && (
-                        <span className="buzz-tabs-icon" aria-hidden="true">
-                          {item.icon}
-                        </span>
-                      )
+                      <>
+                        <TabAttention request={item.attentionRequest} />
+                        {item.icon && (
+                          <span className="buzz-tabs-icon" aria-hidden="true">
+                            {item.icon}
+                          </span>
+                        )}
+                      </>
                     }
                     trailing={item.trailing}
                     selected={showSelection && item.value === value}
@@ -100,7 +128,12 @@ export function Tabs<Value extends string>({
               onClick={() => {
                 if (item.value === value) onReselect?.(item.value);
               }}
+              onDoubleClick={item.onRename && (() => setRenaming(item.value))}
               onKeyDown={(event) => {
+                if (item.onRename && event.key === "F2") {
+                  event.preventDefault();
+                  setRenaming(item.value);
+                }
                 if (item.onClose && event.key === "Delete") {
                   event.preventDefault();
                   item.onClose();
@@ -153,7 +186,16 @@ export function Tabs<Value extends string>({
                 icon={<XIcon size="1rem" aria-hidden="true" />}
               />
             )}
-          </span>
+            {item.onRename && renaming === item.value && (
+              <TabRename
+                label={item.label}
+                onDone={(name) => {
+                  setRenaming(undefined);
+                  if (name !== undefined) item.onRename?.(name);
+                }}
+              />
+            )}
+          </TabMenu>
         ))}
       </BaseTabs.List>
       {trailingAction}
@@ -190,5 +232,189 @@ export function Tabs<Value extends string>({
           </BaseTabs.Panel>
         ))}
     </BaseTabs.Root>
+  );
+}
+
+/** One shared menu composes tab naming with the host's close-all action. */
+function TabMenu({
+  label,
+  onClose,
+  onRename,
+  closeAll,
+  children,
+}: {
+  label: string;
+  onClose: (() => void) | undefined;
+  onRename: (() => void) | undefined;
+  closeAll: (() => boolean) | undefined;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLElement>(null);
+  const [anchor, setAnchor] = useState<HTMLElement>();
+  const closingAll = useRef(false);
+  // Middle-click closes a closable tab, without the browser's own default.
+  const item = {
+    className: "buzz-tabs-item",
+    "data-closable": !!onClose || undefined,
+    onMouseDown: (event: MouseEvent) => {
+      if (event.button === 1 && onClose) event.preventDefault();
+    },
+    onAuxClick: (event: MouseEvent) => {
+      if (event.button !== 1 || !onClose) return;
+      event.preventDefault();
+      onClose();
+    },
+  };
+  if (!onRename && !closeAll) return <span {...item}>{children}</span>;
+  return (
+    <ContextMenuRoot
+      open={open}
+      onOpenChange={(next) => {
+        if (next) closingAll.current = false;
+        setOpen(next);
+      }}
+    >
+      <ContextMenuTrigger
+        ref={(element) => {
+          trigger.current = element;
+        }}
+        render={<span {...item} />}
+        onContextMenu={() => setAnchor(undefined)}
+        onTouchStart={() => setAnchor(undefined)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            closingAll.current = false;
+            setAnchor(event.target as HTMLElement);
+            setOpen(true);
+          }
+        }}
+      >
+        {children}
+      </ContextMenuTrigger>
+      <MenuPopup
+        aria-label={`Actions for ${label} tab`}
+        size="compact"
+        anchor={anchor}
+        finalFocus={() =>
+          closingAll.current
+            ? false
+            : (trigger.current?.querySelector<HTMLElement>('[role="tab"]') ??
+              false)
+        }
+      >
+        {onRename && <MenuItem onClick={onRename}>Rename tab</MenuItem>}
+        {closeAll && (
+          <MenuItem
+            onClick={() => {
+              closingAll.current = closeAll();
+            }}
+          >
+            Close all tabs
+          </MenuItem>
+        )}
+      </MenuPopup>
+    </ContextMenuRoot>
+  );
+}
+
+/** Edits a tab's name over the tab; Enter or leaving saves, Escape cancels. */
+function TabRename({
+  label,
+  onDone,
+}: {
+  label: string;
+  onDone(name: string | undefined): void;
+}) {
+  const done = useRef(false);
+  const initial = useRef(label);
+  const finish = (input: HTMLInputElement, name: string | undefined) => {
+    if (done.current) return;
+    done.current = true;
+    const tab = input
+      .closest(".buzz-tabs-item")
+      ?.querySelector<HTMLElement>('[role="tab"]');
+    onDone(name?.trim() === initial.current ? undefined : name);
+    // Enter and Escape return to the tab; leaving keeps focus where it went.
+    if (input === document.activeElement) tab?.focus();
+  };
+  return (
+    <span className="buzz-tabs-rename">
+      <Input
+        controlSize="sm"
+        aria-label="Tab name"
+        defaultValue={label}
+        autoFocus
+        // The field keeps its own text menu and middle-click paste rather than
+        // the tab's.
+        onContextMenu={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onAuxClick={(event) => event.stopPropagation()}
+        onFocus={(event) => event.currentTarget.select()}
+        onBlur={(event) =>
+          finish(event.currentTarget, event.currentTarget.value)
+        }
+        onKeyDown={(event) => {
+          // The tab list would take arrows, Home and End at either end of the
+          // text; other keys still reach the app's shortcuts.
+          if (
+            event.key.startsWith("Arrow") ||
+            event.key === "Home" ||
+            event.key === "End"
+          )
+            event.stopPropagation();
+          // WebKit's IME commit Enter arrives after composition ends.
+          if (
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229
+          )
+            return;
+          if (event.key === "Enter" || event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            finish(
+              event.currentTarget,
+              event.key === "Enter" ? event.currentTarget.value : undefined,
+            );
+          }
+        }}
+      />
+    </span>
+  );
+}
+
+/** Restart only the paint layer, never the focused tab or retained panel. */
+function TabAttention({ request }: { request: number | undefined }) {
+  const previous = useRef(request);
+  const [active, setActive] = useState<number>();
+  const overlay = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    if (previous.current === request) return;
+    previous.current = request;
+    setActive(request);
+  }, [request]);
+  useLayoutEffect(() => {
+    if (active === undefined) return;
+    const element = overlay.current;
+    element?.parentElement?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "instant",
+    });
+    const finish = () => setActive(undefined);
+    element?.addEventListener("animationend", finish);
+    return () => element?.removeEventListener("animationend", finish);
+  }, [active]);
+  return active === undefined ? null : (
+    <span
+      key={active}
+      ref={overlay}
+      className="buzz-tabs-attention"
+      aria-hidden="true"
+    />
   );
 }

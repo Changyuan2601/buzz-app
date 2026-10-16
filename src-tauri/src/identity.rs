@@ -465,7 +465,7 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
         })
     }
     fn map(value: Option<&Value>, max: usize, valid: impl Fn(&Value) -> bool) -> bool {
-        value.map_or(true, |value| {
+        value.is_none_or(|value| {
             value.as_object().is_some_and(|entries| {
                 entries.iter().all(|(key, value)| {
                     key != "__proto__"

@@ -379,3 +379,166 @@ it("refuses processes outside the desktop app", async () => {
   );
   expect(invoke).not.toHaveBeenCalled();
 });
+
+it("serves MCP as the calling plugin and answers each message", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce({
+    handle: 4,
+    url: "http://127.0.0.1:5000/mcp",
+    token: "secret",
+  });
+  const handler = vi.fn(async (message: unknown) => {
+    const { id } = message as { id?: number };
+    return id === undefined ? undefined : { jsonrpc: "2.0", id, result: {} };
+  });
+  const server = await plugin.host.serveMcp?.(handler);
+  const [, serve] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_serve", {
+    id: "example.plugin",
+    revision: "abc",
+    onEvent: serve.onEvent,
+  });
+  expect(server?.url).toBe("http://127.0.0.1:5000/mcp");
+  expect(server?.headers).toEqual([
+    { name: "Authorization", value: "Bearer secret" },
+  ]);
+
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  serve.onEvent.onmessage({
+    type: "message",
+    request: 1,
+    body: '{"jsonrpc":"2.0","id":9,"method":"ping"}',
+  });
+  serve.onEvent.onmessage({
+    type: "message",
+    request: 2,
+    body: '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+  });
+  serve.onEvent.onmessage({ type: "message", request: 3, body: "{" });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke).mock.calls.length).toBeGreaterThanOrEqual(4),
+  );
+  expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_reply", {
+    id: "example.plugin",
+    handle: 4,
+    request: 1,
+    body: '{"jsonrpc":"2.0","id":9,"result":{}}',
+  });
+  // A notification is accepted without a body.
+  expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_reply", {
+    id: "example.plugin",
+    handle: 4,
+    request: 2,
+    body: null,
+  });
+  expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_reply", {
+    id: "example.plugin",
+    handle: 4,
+    request: 3,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    }),
+  });
+
+  await server?.close();
+  expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_close", {
+    id: "example.plugin",
+    handle: 4,
+  });
+  serve.onEvent.onmessage({ type: "closed" });
+  await expect(server?.closed).resolves.toBeUndefined();
+});
+
+it("answers a failed MCP request with a JSON-RPC error", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce({ handle: 4, url: "u", token: "t" });
+  await plugin.host.serveMcp?.(async () => {
+    throw new Error("relay down");
+  });
+  const [, serve] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  serve.onEvent.onmessage({
+    type: "message",
+    request: 1,
+    body: '{"jsonrpc":"2.0","id":"a","method":"tools/call"}',
+  });
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_reply", {
+      id: "example.plugin",
+      handle: 4,
+      request: 1,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "a",
+        error: { code: -32603, message: "relay down" },
+      }),
+    }),
+  );
+});
+
+it("answers with an error when a reply cannot be delivered", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce({ handle: 4, url: "u", token: "t" });
+  await plugin.host.serveMcp?.(async (message) => ({
+    jsonrpc: "2.0",
+    id: (message as { id: unknown }).id,
+    result: { count: 1n },
+  }));
+  const [, serve] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  // A reply the native side refuses as too large takes the same path.
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  serve.onEvent.onmessage({
+    type: "message",
+    request: 1,
+    body: '{"jsonrpc":"2.0","id":7,"method":"tools/call"}',
+  });
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_reply", {
+      id: "example.plugin",
+      handle: 4,
+      request: 1,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        error: {
+          code: -32603,
+          message: "Do not know how to serialize a BigInt",
+        },
+      }),
+    }),
+  );
+});
+
+it("closes a plugin's MCP servers when the plugin unloads", async () => {
+  const root = new Context();
+  new HostService(root);
+  let host!: Host;
+  const fiber = root
+    .extend({ pluginOwner: { id: "example.plugin", revision: "abc" } })
+    .plugin({
+      inject: ["host"],
+      apply: (ctx: Context) => {
+        host = ctx.host;
+      },
+    });
+  await fiber;
+  vi.mocked(invoke).mockResolvedValueOnce({ handle: 6, url: "u", token: "t" });
+  await host.serveMcp?.(async () => undefined);
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  await fiber.dispose();
+  expect(invoke).toHaveBeenCalledWith("plugin_host_mcp_close", {
+    id: "example.plugin",
+    handle: 6,
+  });
+});

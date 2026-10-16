@@ -1,1 +1,7 @@
-{ "id": "buzz.channels", "name": "Channels", "apiVersion": 1 }
+{
+  "id": "buzz.channels",
+  "name": "Channels",
+  "apiVersion": 1,
+  "description": "Navigate channels and hold conversations in Buzz.",
+  "discovery": { "category": "communication", "tags": ["Essentials"] }
+}

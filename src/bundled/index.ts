@@ -28,6 +28,8 @@ import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
+import gooseManifest from "./goose/manifest.json";
+import * as goose from "./goose";
 import piManifest from "./pi/manifest.json";
 import * as pi from "./pi";
 import channelsManifest from "./channels/manifest.json";
@@ -57,6 +59,8 @@ import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
+import relayStaffManifest from "./relay-staff/manifest.json";
+import * as relayStaff from "./relay-staff";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   {
@@ -180,6 +184,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...gooseManifest, apiVersion: 1 },
+    module: goose,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...piManifest, apiVersion: 1 },
     module: pi,
     enabledByDefault: false,
@@ -202,6 +211,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
     module: moderation,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...relayStaffManifest, apiVersion: 1 },
+    module: relayStaff,
     enabledByDefault: true,
   },
 ];

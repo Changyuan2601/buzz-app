@@ -99,6 +99,60 @@
   .buzz-button[data-variant="outline"] {
     box-shadow: inset 0 0 0 1px var(--interaction-border);
   }
+
+  /* Only the dashes travel around the overdue outline; its geometry stays still. */
+  .buzz-button[data-variant="attention"] {
+    color: var(--text-danger);
+  }
+  .buzz-button-attention {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    opacity: 0.45;
+  }
+  .buzz-button-attention rect {
+    width: calc(100% - 1px);
+    height: calc(100% - 1px);
+    /* rx adopts ry's resolved height, keeping round capsule ends at any width. */
+    ry: 50%;
+    fill: none;
+    stroke: var(--border-danger);
+    stroke-width: 1px;
+    stroke-dasharray: 4 4;
+    stroke-linecap: round;
+    animation: buzz-button-attention 3s linear infinite;
+  }
+  .buzz-button[data-button-shape="control"] .buzz-button-attention rect {
+    ry: var(--radius-control);
+  }
+  .buzz-button[data-icon-variant] .buzz-button-attention rect {
+    ry: var(--radius-icon-button);
+  }
+  .buzz-button[data-icon-shape="round"] .buzz-button-attention rect {
+    ry: 50%;
+  }
+  @keyframes buzz-button-attention {
+    to {
+      stroke-dashoffset: -8;
+    }
+  }
+  .buzz-button[data-disabled] .buzz-button-attention rect {
+    animation: none;
+  }
+  .buzz-button[data-variant="attention"][data-disabled]:not([data-loading])
+    .buzz-button-attention {
+    opacity: 1;
+  }
+  .buzz-button[data-disabled]:not([data-loading]) .buzz-button-attention rect {
+    stroke: var(--border-standard);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-button-attention rect {
+      animation: none;
+    }
+  }
   .buzz-button[data-variant="destructive"] {
     background: var(--affordance-danger);
     color: var(--text-danger);
@@ -127,7 +181,10 @@
       ) {
       background: var(--interaction-hover);
     }
-    .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
+    .buzz-button:is(
+        [data-variant="destructive"],
+        [data-variant="attention"]
+      ):hover:not([data-disabled]) {
       background: var(--affordance-danger-hover);
     }
     .buzz-button[data-variant="link"]:hover:not([data-disabled]) {
@@ -150,13 +207,14 @@
     [aria-expanded="true"]:not([data-highlight-expanded="false"])
   ):not(
     [data-disabled],
+    [data-icon-variant="chrome"],
     [data-icon-variant="avatar"],
     [data-icon-variant="media"],
     [data-icon-variant="bare"]
   ) {
     background: var(--interaction-pressed);
   }
-  .buzz-button[data-variant="destructive"]:is(
+  .buzz-button:is([data-variant="destructive"], [data-variant="attention"]):is(
     :active,
     [aria-expanded="true"]
   ):not([data-disabled]) {
@@ -223,6 +281,33 @@
     border-radius: var(--radius-pill);
   }
 
+  /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
+     interactive wrapper's keyboard focus indicator remains visible. */
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]:hover:not(
+    [data-disabled]
+  ) {
+    isolation: isolate;
+    background: transparent;
+  }
+  .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--affordance-prominent);
+    mask: url("./avatar-squircle.svg") center / 100% 100% no-repeat;
+    transition: background-color var(--duration-state) var(--easing-state);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-shape="squircle"][data-variant="prominent"]:hover:not(
+        [data-disabled]
+      )::before {
+      background: var(--affordance-prominent-hover);
+    }
+  }
+
   /* Trailing row actions keep their size-selected width and fill the row height. */
   .buzz-button[data-icon-variant][data-icon-shape="row-end"] {
     --interaction-hover: var(--interaction-row-hover);
@@ -285,7 +370,21 @@
     color: var(--text-accent);
   }
   .buzz-button[data-icon-variant="chrome"] {
-    @apply glass-primary-interactive;
+    background: transparent;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="chrome"]:hover:not(
+        [data-disabled],
+        [aria-current="page"]
+      ) {
+      background: var(--affordance-backdrop-hover);
+    }
+  }
+  .buzz-button[data-icon-variant="chrome"]:is(
+    :active,
+    [aria-expanded="true"]:not([data-highlight-expanded="false"])
+  ):not([data-disabled], [aria-current="page"]) {
+    background: var(--affordance-backdrop-pressed);
   }
   .buzz-button[data-icon-variant="media"] {
     @apply media-glass;
@@ -312,6 +411,7 @@
   .buzz-button:is(
     [data-variant="ghost"],
     [data-variant="outline"],
+    [data-variant="attention"],
     [data-variant="link"]
   )[data-disabled]:not(
     [data-loading],
@@ -496,9 +596,9 @@
     background: var(--status-offline);
   }
 
-  /* A panel is the default opaque reading surface over the atmospheric
+  /* A panel is the default opaque reading surface over the dotted
      backdrop. A transparent border reserves its geometry; shadow-panel supplies
-     the shared translucent contour and elevation above the gradient. */
+     the shared translucent contour and elevation above the shell. */
   /* One set of declarations, two selectors.
 
      A dockview group *is* a Panel — it is the movable, independently legible
@@ -535,7 +635,7 @@
   /* ============================================================
      Tabs — two surfaces, one control.
 
-     `data-variant="chrome"` is the glass pill for the app gradient.
+     `data-variant="chrome"` is a flat pill selection on the app shell.
      `data-variant="panel"` is an underline for a plain surface.
 
      The split exists because the chrome version failed on a white panel in a
@@ -562,10 +662,21 @@
     height: var(--space-4);
   }
   .buzz-tabs-item[data-closable] {
+    position: relative;
     display: inline-flex;
     gap: var(--space-1);
     align-items: center;
     flex-shrink: 0;
+  }
+  /* A tab's name is edited in place, over the tab and its close button. */
+  .buzz-tabs-rename {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+  }
+  .buzz-tabs-rename > .buzz-input {
+    width: 100%;
   }
   @media (hover: hover) {
     .buzz-tabs-item:not(:hover, :focus-within)
@@ -578,6 +689,9 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+    /* Tab labels are controls, not selectable document text. */
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   /* Geometry only. **Colour is not here, deliberately.**
@@ -621,15 +735,14 @@
       transform var(--duration-settle) var(--easing-settle);
   }
 
-  /* --- chrome: a glass pill on the gradient ------------------ */
+  /* --- chrome: grouped flat selection on the shell ---------- */
 
-  /* This was the one chrome surface carrying an outer `shadow-xs` on top of the
-     rim where the other three carried none. Nothing justified the difference —
-     same height, same backdrop, same depth — so it takes the same material and
-     the odd shadow is gone. */
+  .buzz-tabs[data-variant="chrome"],
+  .chrome-navigation {
+    background: var(--affordance-subtle);
+  }
+
   .buzz-tabs[data-variant="chrome"] {
-    @apply glass-primary;
-
     display: inline-flex;
     height: 2.5rem;
     align-items: center;
@@ -650,24 +763,9 @@
     color: var(--text-subtle);
   }
 
-  /* A hover *inside* a glass surface, which is not itself a material: no blur,
-     because the parent already blurs what is behind both of them, and a second
-     backdrop-filter here would blur an already-blurred layer.
-
-     So this is a fill only, taking the hover step of the material it sits on.
-     Note it composites: glass-3 over the parent's glass-2 lands near 0.82
-     rather than at 0.62. That is the intended direction — an item under the
-     cursor should read as more solid, per DESIGN.md § Surface and depth — but it
-     is why a hover inside glass cannot simply reuse a whole material. */
-  /* `:not([data-selected])` because hover and selected can both be true at once —
-     a cursor can sit on the selected tab — and DESIGN.md § State says a selected
-     item in a toggle group is not interactive, so it must not react. These two
-     selectors score identical specificity, so without the exclusion only source
-     order would keep it right, and reordering them would silently give the
-     selected tab a hover fill. This is the case `:not()` is *for*: stating that a
-     state is irrelevant, not defending a rule from another rule. */
+  /* Selection and hover occupy the same box; a selected tab does not hover. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
-    background: var(--bg-glass-primary-hover);
+    background: var(--affordance-subtle-hover);
     color: var(--text-standard);
   }
 
@@ -675,13 +773,6 @@
     color: var(--text-standard);
   }
 
-  /* The selection fills the tab box, so hover and selection are the same shape
-     in the same place. Inset top and bottom instead and a selected tab is drawn
-     8px shorter than the hover fill on the tab beside it: the two states stop
-     agreeing on where a tab is, and the pill reads as a smaller object floating
-     in padding rather than the tab itself turning solid. The container's own
-     `--space-1` is the only inset this control needs — that is how the glass
-     strip in the header read before it became a Tabs component. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
     top: 0;
     bottom: 0;
@@ -693,8 +784,8 @@
   /* --- panel: an underline on a plain surface ---------------- */
 
   /* No container fill and no border: on a panel the tabs are text, and the only
-     drawn element is the bar. That is what keeps this legible where the glass
-     pill was not — there is no second surface to collide with the first. */
+     drawn element is the bar. That is what keeps this legible where the chrome
+     selection is not — there is no second surface to collide with the first. */
   .buzz-tabs[data-variant="panel"] {
     display: flex;
     min-width: 0;
@@ -936,6 +1027,17 @@
     }
   }
 
+  .navigation-item[data-highlighted]:not(
+    [data-selected],
+    [data-disabled],
+    :disabled
+  ) {
+    --text-subtle: var(--interaction-row-text);
+    --text-metadata: var(--interaction-row-metadata);
+    background: var(--interaction-row-hover);
+    color: var(--text-standard);
+  }
+
   .navigation-item[data-selected] {
     --text-subtle: var(--interaction-selected-text);
     --text-metadata: var(--interaction-selected-metadata);
@@ -943,9 +1045,8 @@
     color: var(--text-standard);
   }
 
-  /* Route navigation shares chrome material, not Tabs' focus/tabpanel contract. */
+  /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
   .chrome-navigation {
-    @apply glass-primary;
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -964,7 +1065,7 @@
   }
   .chrome-navigation
     .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
-    background: var(--bg-glass-primary-hover);
+    background: var(--affordance-subtle-hover);
     color: var(--text-standard);
   }
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
@@ -1028,12 +1129,30 @@
     max-width: min(12rem, 100%);
   }
   .buzz-tabs[data-variant="navigation"] .navigation-item {
+    position: relative;
+    isolation: isolate;
     border-radius: var(--radius-icon-button);
     padding-inline-start: var(--space-2);
     padding-inline-end: var(--space-2);
   }
   .buzz-tabs[data-variant="navigation"] .navigation-item[data-selected] {
     background: var(--affordance-subtle);
+  }
+  /* Reopening an existing tab identifies it without changing selection or focus. */
+  .buzz-tabs-attention {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--affordance-subtle-pressed);
+    animation: workspace-tab-arrival calc(var(--duration-settle) * 3)
+      var(--easing-state) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-tabs-attention {
+      animation-timing-function: steps(1, end);
+    }
   }
   .buzz-tabs[data-variant="navigation"][data-selection-hidden]
     .navigation-item {
@@ -1162,6 +1281,15 @@
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
   }
+  .buzz-menu-item[data-tone="danger"]:is(
+    [data-highlighted],
+    [data-popup-open]
+  ):not([data-disabled]) {
+    background: var(--affordance-danger-hover);
+  }
+  .buzz-menu-item[data-tone="danger"]:active:not([data-disabled]) {
+    background: var(--affordance-danger-pressed);
+  }
   .buzz-menu-item[data-disabled] {
     color: var(--text-unavailable);
   }
@@ -1173,6 +1301,9 @@
     flex: 0 0 auto;
     place-items: center;
     color: var(--text-subtle);
+  }
+  .buzz-menu-item:is([data-tone="danger"], [data-disabled]) .buzz-menu-icon {
+    color: inherit;
   }
   .buzz-menu-choice-label {
     display: flex;
@@ -1490,9 +1621,59 @@
   .buzz-accordion-trigger[aria-expanded="true"] > svg {
     transform: rotate(180deg);
   }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-item {
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-container);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger {
+    border-radius: var(--radius-container);
+    padding: var(--space-3) var(--space-4);
+    gap: var(--space-4);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > span {
+    flex: 1;
+    min-width: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
+    flex-shrink: 0;
+  }
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-variant="settings"]
+    .buzz-accordion-trigger[aria-expanded="true"] {
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-content {
+    border-block-start: 1px solid var(--border-standard);
+    padding: var(--space-4);
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-panel {
+    padding: 0;
+    height: var(--accordion-panel-height);
+    overflow: clip;
+    transition: height var(--duration-settle) var(--easing-settle);
+  }
+  .buzz-accordion[data-variant="settings"]
+    .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
+    height: 0;
+  }
+  .buzz-accordion[data-variant="settings"] .buzz-accordion-trigger > svg {
+    transition: transform var(--duration-settle) var(--easing-settle);
+  }
+  html[data-keyboard-navigation]
+    .buzz-accordion[data-variant="settings"]
+    :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-accordion[data-variant="settings"]
+      :is(.buzz-accordion-panel, .buzz-accordion-trigger > svg) {
+      transition: none;
+    }
+  }
+  .buzz-accordion[data-variant="settings"],
   .buzz-accordion[data-variant="form"],
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;
@@ -1502,6 +1683,23 @@
   }
   .buzz-accordion[data-variant="navigation"] .buzz-accordion-panel {
     padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  }
+  /* Section disclosures align their text and content with InlineHeader groups.
+     The hit area extends around the heading without indenting its content. */
+  .buzz-accordion[data-variant="section"] {
+    margin: 0;
+  }
+  .buzz-accordion[data-variant="section"] .buzz-accordion-trigger {
+    width: calc(100% + var(--space-4));
+    margin: calc(-1 * var(--space-2));
+  }
+  .buzz-accordion[data-variant="section"] .buzz-accordion-trigger > svg {
+    /* Match the center of a trailing small IconButton. */
+    flex-shrink: 0;
+    margin-inline-end: calc((var(--size-control-sm) - 14px) / 2);
+  }
+  .buzz-accordion[data-variant="section"] .buzz-accordion-panel {
+    padding: var(--space-4) 0 0;
   }
 }
 
@@ -1600,7 +1798,7 @@
     min-width: 0;
   }
   .buzz-preference-row-label {
-    @apply text-label-sm;
+    @apply text-body-sm;
     color: var(--text-standard);
   }
   label.buzz-preference-row-label {

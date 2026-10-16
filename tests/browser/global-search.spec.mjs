@@ -49,7 +49,7 @@ test("search arrows traverse the conversation action and recent activity, Enter 
     await input.press(key);
     await expect(input).toBeFocused();
     await expect(result).toHaveAttribute("aria-selected", "true");
-    await expect(result).toHaveAttribute("data-selected", "true");
+    await expect(result).toHaveAttribute("data-highlighted", "true");
     await expect(input).toHaveAttribute(
       "aria-activedescendant",
       await result.getAttribute("id"),

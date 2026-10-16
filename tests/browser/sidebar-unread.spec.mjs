@@ -37,7 +37,7 @@ const removeDm = async (page, id) => {
   await dm.click({ button: "right" });
   const menu = page.getByRole("menu", { name: /Actions for / });
   const remove = menu.getByRole("menuitem", {
-    name: "Remove from Messages",
+    name: "Remove from Multiplayer",
     exact: true,
   });
   await expect(remove).toBeVisible();
@@ -121,6 +121,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   page,
   app,
 }) => {
+  await holdReadingFocus(page);
   const alphaHeads = () =>
     app.report.queries.filter(
       ({ community, filter }) =>
@@ -141,27 +142,29 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     );
   app.relay.holdEose("alpha");
   app.relay.holdUnread();
+  const opening = open(page, app);
   try {
-    await open(page, app);
     await expect.poll(() => app.report.unreadHolds.length).toBe(1);
     expect(evidence()[0].filter["#h"]).toContain("alpha");
     expect(evidence()[0].filter["#h"]).toContain("dm-090");
-    expect(alphaHeads()).toHaveLength(1);
-    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
+    await expect.poll(() => alphaHeads().length).toBe(1);
 
     // Establish only after unread is in flight; observe the real finite catch-up
     // before releasing evidence. No sleep or scheduler luck creates the overlap.
     app.relay.releaseEose("alpha");
     await expect.poll(() => alphaHeads().length).toBe(2);
     expect(app.report.unreadHolds).toEqual([{ pending: true, aborted: false }]);
+    await opening;
+    await expect(row(page, "dm-090")).toHaveCount(1);
+    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
     app.relay.releaseUnread();
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
     await expect(cue(page, "below")).toBeVisible();
-    await expect(cue(page, "below")).toHaveCSS("border-radius", "12px");
+    await expect(cue(page, "below")).toHaveCSS("border-radius", "26px");
     await expect(cue(page, "below").locator("..")).toHaveCSS(
       "border-radius",
-      "12px",
+      "26px",
     );
     await expect.poll(() => evidence().length).toBe(2); // 130 IDs, not retries.
     expect(evidence().map(({ filter }) => filter["#h"].length)).toEqual([
@@ -174,6 +177,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   } finally {
     app.relay.releaseEose("alpha");
     app.relay.releaseUnread();
+    await opening;
   }
 });
 
@@ -236,6 +240,7 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   });
   await expect(cue(page, "below")).toBeVisible();
   await expect(cue(page, "below")).toHaveText(/\d+ unread$/);
+  await expect(cue(page, "below").locator("..")).toHaveCSS("bottom", "12px");
   await expect(cue(page, "below")).toHaveAccessibleName(
     /^\d+ unread conversations? below$/,
   );
@@ -252,6 +257,7 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   await expect.poll(() => inView(page, "alpha")).toBe(false);
   await expect(cue(page, "above")).toBeVisible();
   await expect(cue(page, "above")).toHaveText(/\d+ unread$/);
+  await expect(cue(page, "above").locator("..")).toHaveCSS("top", "12px");
   await expect(cue(page, "above")).toHaveAccessibleName(
     /^\d+ unread conversations? above$/,
   );
@@ -620,6 +626,7 @@ test.describe("DM preview wiring", () => {
         });
       const pill = cue(page, edge);
       await expect(pill).toBeVisible();
+      await expect(pill).toHaveCSS("height", "24px");
       const expected = await list(page).evaluate((nav, edge) => {
         const viewport = nav.getBoundingClientRect();
         const ids = [...nav.querySelectorAll("button[data-channel-id]")]
@@ -648,8 +655,8 @@ test.describe("DM preview wiring", () => {
       for (const preview of await previews.all()) {
         const avatar = preview.locator("[data-avatar-shape]");
         await expect(avatar).toHaveCSS("padding", "0px");
-        await expect(avatar).toHaveCSS("width", "20px");
-        await expect(avatar).toHaveCSS("height", "20px");
+        await expect(avatar).toHaveCSS("width", "16px");
+        await expect(avatar).toHaveCSS("height", "16px");
       }
     }
     await scroll(page, 0);

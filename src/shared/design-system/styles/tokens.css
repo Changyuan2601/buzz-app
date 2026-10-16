@@ -288,6 +288,15 @@
      use is worse than no comment, because it reads as a decision
      someone made. `pnpm census` lists the real readers. */
   --neutral-standard-text: #0f0f0f; /* Designer-requested light primary text and inherited icons. */
+  /* Reference hues kept in OKLCH, with lightness lowered only to meet 4.5:1
+     for white ink. Chroma is preserved up to the sRGB gamut boundary. */
+  --bubble-ink: #ffffff;
+  --bubble-neutral: #e9e9ea; /* Received fill mixed with 5% black. */
+  --bubble-blue: #0077db;
+  --bubble-green: #008934;
+  --bubble-orange: #c95100;
+  --bubble-pink: #d33785;
+  --bubble-lilac: #a94ad8;
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
   --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
   --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
@@ -312,7 +321,7 @@
   --neutral-action-pressed: #525252;
   --neutral-12: #000000; /* prominent controls and focus boundary   */
 
-  /* Backdrop interaction fills let the shell gradient show through. */
+  /* Backdrop interaction fills let the shell and its dot texture show through. */
   --backdrop-hover-fill: rgb(0 0 0 / 6%);
   --backdrop-pressed-fill: rgb(0 0 0 / 10%);
 
@@ -350,9 +359,11 @@
     radial-gradient(at 85% 14%, #d9d4ff 0%, transparent 57%),
     linear-gradient(154deg, #fbf8ff 0%, #e9ddf8 50%, #dce8fb 100%);
 
-  /* --- Texture. Separate from colour and gradient. --------- */
-  --texture-dots-color: #0a0a0a0f;
-  --texture-dots-size: 28px;
+  /* Decorative dots are a shade of the shell, never an independent gray.
+     Mixing in sRGB preserves the background's hue while keeping the result
+     in gamut. This is a shared texture recipe, not a component shade override. */
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 94%, black);
+  --texture-dots-size: 24px;
 
   /* --- Blur. A separate axis from translucency. ------------ */
   --blur-sm: 8px;
@@ -411,6 +422,12 @@
   --image-rim: oklch(1 0 0 / 0.1);
   --neutral-raised: #282828;
   --neutral-quiet-hover: #2e2e2e;
+  --bubble-neutral: #2e2e2e; /* Received fill mixed with 5% white. */
+  --bubble-blue: #0077db;
+  --bubble-green: #008934;
+  --bubble-orange: #c95100;
+  --bubble-pink: #d33785;
+  --bubble-lilac: #a94ad8;
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;
@@ -490,14 +507,14 @@
     radial-gradient(at 48% 52%, rgba(109, 40, 217, 0.28) 0%, transparent 79%),
     linear-gradient(155deg, #100914 0%, #21113c 52%, #081622 100%);
 
-  --texture-dots-color: #ffffff14;
+  --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
 }
 
 /* ============================================================
-   LAYER 1 — SEMANTIC BACKDROP CHOICES
-   Numbered slots pair one named light treatment with one named
-   dark treatment. They are the appearance-preference seam: a
-   person selects `gradient-1`, not a light-only scene name.
+   LEGACY BACKDROP SPECIMENS
+   Numbered slots remain only for the glass study in the viewer.
+   They are not app themes; the product shell uses solid --bg-app
+   with the shared hue-derived dot texture.
    ============================================================ */
 
 :root {
@@ -527,6 +544,14 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --surface-message: var(--neutral-2);
+  --text-message-own: var(--text-standard);
+  --text-message-link-own: var(--text-link);
+  --surface-message-own: var(--bubble-neutral);
+  --surface-message-action: var(--neutral-12);
+  --surface-message-action-hover: var(--neutral-11);
+  --surface-message-action-pressed: var(--neutral-action-pressed);
+  --text-message-action: var(--neutral-1);
   --text-navigation: var(--neutral-navigation-text);
   --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-standard-text);
@@ -594,6 +619,14 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  --surface-message: var(--neutral-4);
+  --text-message-own: var(--text-standard);
+  --text-message-link-own: var(--text-link);
+  --surface-message-own: var(--bubble-neutral);
+  --surface-message-action: var(--neutral-12);
+  --surface-message-action-hover: var(--neutral-11);
+  --surface-message-action-pressed: var(--neutral-action-pressed);
+  --text-message-action: var(--neutral-1);
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
@@ -672,8 +705,12 @@
    exceptions at the bottom.
    ============================================================ */
 
+.light,
 :root {
-  --bg-app: var(--gradient-1);
+  --bg-app: var(--neutral-quiet-hover);
+}
+
+:root {
   --bg-panel: var(--surface-panel); /* dark: neutral-3 */
   --bg-float: var(--surface-popover); /* dark: neutral-5 */
   --bg-scrim: #00000060;
@@ -722,7 +759,7 @@
   --bg-glass-primary-hover: var(--glass-3);
   --bg-glass-secondary: var(--glass-4);
   --bg-glass-secondary-hover: var(--glass-5);
-  --bg-chrome-selected: var(--neutral-1);
+  --bg-chrome-selected: var(--surface-panel);
 
   /* --- Geometry. Repeated relationships from Messages. ----- */
   --space-workspace-inset: var(--space-4);
@@ -812,6 +849,7 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  --bg-app: var(--neutral-2);
   --bg-panel: var(--surface-panel);
   --border-image: var(--image-rim);
   --bg-float: var(--surface-popover);
@@ -848,6 +886,9 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --text-color-message-own: var(--text-message-own);
+  --text-color-message-link-own: var(--text-message-link-own);
+  --text-color-message-action: var(--text-message-action);
   --text-color-navigation: var(--text-navigation);
   --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
@@ -1075,4 +1116,106 @@
   --spacing-section-gap: var(--space-section-gap);
   --spacing-chip-inset: var(--space-chip-inset);
   --spacing-chip-gap: var(--space-chip-gap);
+}
+
+/* Device-local message colors; scopes also paint the settings swatches. */
+:root[data-bubble-color="neutral"],
+[data-bubble-color="neutral"] {
+  --surface-message-own: var(--bubble-neutral);
+  --text-message-own: var(--text-standard);
+  --text-message-link-own: var(--text-link);
+  --surface-message-action: var(--neutral-12);
+  --surface-message-action-hover: var(--neutral-11);
+  --surface-message-action-pressed: var(--neutral-action-pressed);
+  --text-message-action: var(--neutral-1);
+}
+:root[data-bubble-color="blue"],
+[data-bubble-color="blue"] {
+  --surface-message-own: var(--bubble-blue);
+  --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --surface-message-action-hover: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 10%
+  );
+  --surface-message-action-pressed: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 20%
+  );
+  --text-message-action: var(--bubble-ink);
+}
+:root[data-bubble-color="green"],
+[data-bubble-color="green"] {
+  --surface-message-own: var(--bubble-green);
+  --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --surface-message-action-hover: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 10%
+  );
+  --surface-message-action-pressed: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 20%
+  );
+  --text-message-action: var(--bubble-ink);
+}
+:root[data-bubble-color="orange"],
+[data-bubble-color="orange"] {
+  --surface-message-own: var(--bubble-orange);
+  --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --surface-message-action-hover: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 10%
+  );
+  --surface-message-action-pressed: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 20%
+  );
+  --text-message-action: var(--bubble-ink);
+}
+:root[data-bubble-color="pink"],
+[data-bubble-color="pink"] {
+  --surface-message-own: var(--bubble-pink);
+  --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --surface-message-action-hover: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 10%
+  );
+  --surface-message-action-pressed: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 20%
+  );
+  --text-message-action: var(--bubble-ink);
+}
+:root[data-bubble-color="lilac"],
+[data-bubble-color="lilac"] {
+  --surface-message-own: var(--bubble-lilac);
+  --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --surface-message-action-hover: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 10%
+  );
+  --surface-message-action-pressed: color-mix(
+    in oklch,
+    var(--surface-message-own),
+    black 20%
+  );
+  --text-message-action: var(--bubble-ink);
 }

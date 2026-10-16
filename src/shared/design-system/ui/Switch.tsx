@@ -34,7 +34,7 @@ export function Switch({
   // with an accessible name rather than reimplementing its track and thumb.
   if (label === undefined) return control;
   return (
-    <div data-buzz-ui="" className="buzz-switch text-body">
+    <div data-buzz-ui="" className="buzz-switch text-body-sm">
       <label htmlFor={controlId}>{label}</label>
       {control}
     </div>

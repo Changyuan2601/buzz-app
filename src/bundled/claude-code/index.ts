@@ -28,8 +28,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
     (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
+    (pubkey, signal) => agents.core(pubkey, signal),
     localStorage,
     (raw) => providerDefaults.resolve(raw),
+    () => agents.tools(),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -127,6 +129,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
       {

@@ -46,15 +46,28 @@ function Profile({ authorized }: { authorized: boolean }) {
 function Fixture({
   authorized = true,
   focusOnMount = true,
+  menuScope,
 }: {
   authorized?: boolean;
   focusOnMount?: boolean;
+  menuScope?: string;
 }) {
   const [ids, setIds] = useState(["Thread", "Profile"]);
   const [value, select] = useState("Thread");
   return ids.length ? (
     <PanelWorkspace
       focusOnMount={focusOnMount}
+      tabMenu={
+        menuScope
+          ? {
+              key: menuScope,
+              closeAll: () => {
+                setIds([]);
+                return true;
+              },
+            }
+          : undefined
+      }
       value={value}
       select={select}
       items={ids.map((id) => ({
@@ -102,6 +115,34 @@ test("switches retained panels, associates their tabs, and closes inactive or ac
   expect(tab("Thread")).toHaveFocus();
   await user.keyboard("{Delete}");
   expect(screen.getByText("No open panels")).toBeVisible();
+});
+
+test("middle-click closes inactive tabs without taking draft focus", async () => {
+  const user = userEvent.setup();
+  render(<Fixture />);
+  const draft = screen.getByRole("textbox", { name: "Thread draft" });
+  await user.type(draft, "Keep this draft");
+
+  await user.pointer({ target: tab("Ada"), keys: "[MouseRight]" });
+  expect(tab("Ada")).toBeInTheDocument();
+  draft.focus();
+  await user.pointer({ target: tab("Ada"), keys: "[MouseMiddle]" });
+  expect(within(tabs()).queryByRole("tab", { name: "Ada" })).toBeNull();
+  expect(draft).toHaveFocus();
+  expect(draft).toHaveValue("Keep this draft");
+
+  await user.pointer({ target: tab("Thread"), keys: "[MouseMiddle]" });
+  expect(screen.getByText("No open panels")).toBeVisible();
+});
+
+test("middle-clicking the active tab recovers focus to its selected neighbor", async () => {
+  const user = userEvent.setup();
+  render(<Fixture />);
+  await user.click(tab("Ada"));
+  await user.pointer({ target: tab("Ada"), keys: "[MouseMiddle]" });
+  expect(within(tabs()).queryByRole("tab", { name: "Ada" })).toBeNull();
+  expect(tab("Thread")).toHaveAttribute("aria-selected", "true");
+  expect(tab("Thread")).toHaveFocus();
 });
 
 test("local details are retained sibling tabs and close without dismissing the profile", async () => {
@@ -305,13 +346,15 @@ test("Escape cancelling IME composition does not close the tab", () => {
 
 // Exercise the exact script evaluated by the native menu, not a second shortcut
 // implementation. Geometry is the only browser-only boundary stubbed in jsdom.
-const requestClose = () =>
+const requestClose = (tabEvent = "buzz:close-active-tab") =>
   new Function(
     "window",
     "document",
     "Event",
-    `return eval(${JSON.stringify(closeRequest)})`,
-  )(window, document, Event) as "handled" | "unhandled";
+    "tabEvent",
+    "script",
+    "return eval(script)",
+  )(window, document, Event, tabEvent, closeRequest) as "handled" | "unhandled";
 const visibleWorkspace = () =>
   vi
     .spyOn(HTMLElement.prototype, "getClientRects")
@@ -420,8 +463,9 @@ const switchTab = (tabEvent: "buzz:next-tab" | "buzz:previous-tab") =>
     "document",
     "Event",
     "tabEvent",
-    `return eval(${JSON.stringify(switchTabRequest)})`,
-  )(window, document, Event, tabEvent);
+    "script",
+    "return eval(script)",
+  )(window, document, Event, tabEvent, switchTabRequest);
 const selectedTab = () =>
   within(tabs()).getByRole("tab", { selected: true }).textContent;
 
@@ -534,3 +578,228 @@ test("background tab selection does not take focus from a modal", () => {
   expect(search).toHaveFocus();
   expect(tab("two")).toHaveAttribute("aria-selected", "true");
 });
+
+test("a tab is renamed in place by double-click, F2 or its menu", async () => {
+  const user = userEvent.setup();
+  const renamed = vi.fn();
+  function Renamable() {
+    const [name, setName] = useState<string>();
+    return (
+      <PanelWorkspace
+        tabMenu={{ key: "channel", closeAll: () => false }}
+        value="thread"
+        select={() => {}}
+        items={[
+          {
+            id: "thread",
+            label: name ?? "Root text",
+            close() {},
+            rename(next) {
+              renamed(next);
+              setName(next.trim() || undefined);
+            },
+            content: <input aria-label="Thread draft" />,
+          },
+        ]}
+      />
+    );
+  }
+  render(<Renamable />);
+  const field = () => screen.getByRole("textbox", { name: "Tab name" });
+  await user.dblClick(tab("Root text"));
+  expect(field()).toHaveFocus();
+  expect(field()).toHaveValue("Root text");
+  await user.keyboard("Launch plan{Enter}");
+  expect(renamed).toHaveBeenLastCalledWith("Launch plan");
+  expect(tab("Launch plan")).toHaveFocus();
+  // Escape keeps the name and the tab; keeping the text changes nothing.
+  await user.keyboard("{F2}");
+  expect(field()).toHaveFocus();
+  expect(field()).toHaveValue("Launch plan");
+  await user.keyboard("Draft{Escape}");
+  expect(tab("Launch plan")).toHaveFocus();
+  await user.keyboard("{F2}{Enter}");
+  expect(renamed).toHaveBeenCalledTimes(1);
+  // The menu opens the same field; leaving it saves, and blank restores.
+  await user.pointer({ keys: "[MouseRight]", target: tab("Launch plan") });
+  expect(screen.getAllByRole("menu")).toHaveLength(1);
+  expect(
+    screen.getByRole("menuitem", { name: "Close all tabs" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("menuitem", { name: "Rename tab" }));
+  await user.clear(field());
+  await user.click(screen.getByRole("textbox", { name: "Thread draft" }));
+  expect(renamed).toHaveBeenLastCalledWith("");
+  expect(tab("Root text")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Thread draft" })).toHaveFocus();
+});
+
+test("the tab name field keeps its keys, ignores IME commits and newer titles, and ends with its tab", async () => {
+  const user = userEvent.setup();
+  const renamed = vi.fn();
+  const closed = vi.fn();
+  const workspace = (labels: Record<string, string>) => (
+    <PanelWorkspace
+      value="a"
+      select={() => {}}
+      items={Object.entries(labels).map(([id, label]) => ({
+        id,
+        label,
+        close: () => closed(id),
+        rename: (name: string) => renamed(id, name),
+        content: <input aria-label={`${id} draft`} />,
+      }))}
+    />
+  );
+  const field = () => screen.queryByRole("textbox", { name: "Tab name" });
+  const view = render(workspace({ a: "Alpha", b: "Beta" }));
+  // Arrows at either end of the text stay in the field.
+  await user.dblClick(tab("Alpha"));
+  await user.keyboard("{End}{ArrowRight}{Home}{ArrowLeft}");
+  expect(field()).toHaveFocus();
+  // App shortcuts still reach the window from the field.
+  const shortcut = vi.fn();
+  window.addEventListener("keydown", shortcut);
+  fireEvent.keyDown(field() as HTMLElement, { key: "k", metaKey: true });
+  window.removeEventListener("keydown", shortcut);
+  expect(shortcut).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "k", metaKey: true }),
+  );
+  // Middle-click in the field keeps its paste and does not close the tab.
+  expect(fireEvent.mouseDown(field() as HTMLElement, { button: 1 })).toBe(true);
+  await user.pointer({ target: field() as HTMLElement, keys: "[MouseMiddle]" });
+  expect(closed).not.toHaveBeenCalled();
+  expect(field()).toHaveFocus();
+  // The Enter that commits an IME composition does not save.
+  fireEvent.keyDown(field() as HTMLElement, { key: "Enter", keyCode: 229 });
+  expect(field()).toHaveFocus();
+  // A title that changed while editing is not overwritten by untouched text,
+  // and trailing space alone is no change.
+  view.rerender(workspace({ a: "Agent name", b: "Beta" }));
+  await user.keyboard("{End} {Enter}");
+  expect(renamed).not.toHaveBeenCalled();
+  // An editor whose tab closes does not return, or take focus, with the tab.
+  await user.pointer({ keys: "[MouseRight]", target: tab("Beta") });
+  await user.click(screen.getByRole("menuitem", { name: "Rename tab" }));
+  view.rerender(workspace({ a: "Agent name" }));
+  screen.getByRole("textbox", { name: "a draft" }).focus();
+  view.rerender(workspace({ a: "Agent name", b: "Beta" }));
+  expect(field()).toBeNull();
+  expect(renamed).not.toHaveBeenCalled();
+});
+
+test("a tab context menu dismisses without closing a tab and supports keyboard cleanup", async () => {
+  const user = userEvent.setup();
+  render(<Fixture menuScope="alpha" />);
+  const thread = tab("Thread");
+  await user.pointer({ target: tab("Ada"), keys: "[MouseRight]" });
+  await screen.findByRole("menuitem", { name: "Close all tabs" });
+  await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
+  expect(thread).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Escape}");
+  expect(await screen.findByRole("tab", { name: "Ada" })).toHaveFocus();
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  const action = await screen.findByRole("menuitem", {
+    name: "Close all tabs",
+  });
+  action.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByText("No open panels")).toBeVisible();
+});
+
+test("a menu opened in the previous channel cannot close the new channel's tabs", async () => {
+  const view = render(<Fixture menuScope="alpha" />);
+  fireEvent.contextMenu(tab("Thread"));
+  const oldAction = await screen.findByRole("menuitem", {
+    name: "Close all tabs",
+  });
+  view.rerender(<Fixture menuScope="beta" />);
+  expect(
+    screen.queryByRole("menuitem", { name: "Close all tabs" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(oldAction);
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+});
+
+// Close uses focus first, then the visible side pane when the main selection
+// is the permanent conversation. Listener registration order must not decide.
+test.each([false, true])(
+  "native Close falls back from the main conversation but prefers its closable selection (side first=%s)",
+  (sideFirst) => {
+    visibleWorkspace();
+    const closeMain = vi.fn();
+    const closeSide = vi.fn();
+    function Harness({
+      mainSelected = "conversation",
+      hideSide = false,
+    }: {
+      mainSelected?: string;
+      hideSide?: boolean;
+    }) {
+      const main = (
+        <PanelWorkspace
+          main
+          label="Main tabs"
+          value={mainSelected}
+          select={() => {}}
+          items={[
+            {
+              id: "conversation",
+              label: "Channel",
+              content: <input aria-label="Channel composer" />,
+            },
+            {
+              id: "main-thread",
+              label: "Main thread",
+              content: <input aria-label="Main reply" />,
+              close: closeMain,
+            },
+          ]}
+        />
+      );
+      const side = (
+        <div hidden={hideSide}>
+          <PanelWorkspace
+            label="Side tabs"
+            value="side-thread"
+            select={() => {}}
+            items={[
+              {
+                id: "side-thread",
+                label: "Side thread",
+                content: <input aria-label="Side reply" />,
+                close: closeSide,
+              },
+            ]}
+          />
+        </div>
+      );
+      return sideFirst ? (
+        <>
+          {side}
+          {main}
+        </>
+      ) : (
+        <>
+          {main}
+          {side}
+        </>
+      );
+    }
+    const view = render(<Harness />);
+    screen.getByRole("textbox", { name: "Channel composer" }).focus();
+    act(() => expect(requestClose()).toBe("handled"));
+    expect(closeSide).toHaveBeenCalledTimes(1);
+    expect(closeMain).not.toHaveBeenCalled();
+    view.rerender(<Harness mainSelected="main-thread" />);
+    screen.getByRole("textbox", { name: "Main reply" }).focus();
+    act(() => expect(requestClose()).toBe("handled"));
+    expect(closeMain).toHaveBeenCalledTimes(1);
+    expect(closeSide).toHaveBeenCalledTimes(1);
+    view.rerender(<Harness hideSide />);
+    screen.getByRole("textbox", { name: "Channel composer" }).focus();
+    act(() => expect(requestClose()).toBe("unhandled"));
+    expect(closeSide).toHaveBeenCalledTimes(1);
+  },
+);

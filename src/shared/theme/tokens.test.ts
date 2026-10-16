@@ -1,3 +1,4 @@
+import { BUBBLE_COLORS, type BubbleColor } from "./bubble-color";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
@@ -13,7 +14,10 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 
 // Resolve the real shared palette and host aliases in cascade order. The host
 // no longer owns literal colors; a missing or cyclic alias must fail the test.
-function resolvedPalette(mode: "light" | "dark") {
+function resolvedPalette(
+  mode: "light" | "dark",
+  bubbleColor: BubbleColor = "neutral",
+) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
     "\n" +
@@ -24,6 +28,11 @@ function resolvedPalette(mode: "light" | "dark") {
     /([^{}]+)\{([^{}]*)\}/g,
   )) {
     if (!selector.includes(":root") && !selector.includes(".dark")) continue;
+    if (
+      selector.includes("data-bubble-color") &&
+      !selector.includes(`data-bubble-color="${bubbleColor}"`)
+    )
+      continue;
     const dark =
       selector.includes('data-color-mode="dark"') || selector.includes(".dark");
     if (dark && mode !== "dark") continue;
@@ -82,6 +91,9 @@ it.each([0, 1])(
   (index) => {
     const t = resolvedPalette(index === 0 ? "light" : "dark");
     const textPairs: [string, string][] = [
+      ["--text-standard", "--bg-app"],
+      ["--text-subtle", "--bg-app"],
+      ["--text-metadata", "--bg-app"],
       ...[
         "--surface",
         "--surface-accent",
@@ -154,3 +166,74 @@ it("a scoped dark surface rebinds glass roles inherited from a light app", () =>
     expect(scoped[role], role).not.toBe(light[role]);
   }
 });
+
+it.each(["light", "dark"] as const)(
+  "message text and links contrast with both bubble fills in %s",
+  (mode) => {
+    const palette = resolvedPalette(mode);
+    // Default own bubbles retain normal text and link colors.
+    for (const surface of ["--surface-message", "--surface-message-own"]) {
+      for (const text of surface === "--surface-message-own"
+        ? ["--text-message-own", "--text-message-link-own"]
+        : ["--text-standard", "--text-subtle", "--text-link"]) {
+        expect(
+          contrast(palette[text], palette[surface]),
+          `${text} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    const received = palette["--surface-message"];
+    if (!received) throw new Error("Missing received message fill");
+    const target = mode === "light" ? 0 : 255;
+    const expected = `#${[1, 3, 5]
+      .map((i) =>
+        Math.round(
+          Number.parseInt(received.slice(i, i + 2), 16) * 0.95 + target * 0.05,
+        )
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+    expect(palette["--surface-message-own"]).toBe(expected);
+    expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
+  },
+);
+
+it.each(BUBBLE_COLORS)(
+  "%s message fill keeps text and send icons readable in both modes",
+  (color) => {
+    for (const mode of ["light", "dark"] as const) {
+      const palette = resolvedPalette(mode, color);
+      expect(palette["--text-message-own"]).toBe(
+        color === "neutral" ? palette["--text-standard"] : "#ffffff",
+      );
+      expect(palette["--text-message-link-own"]).toBe(
+        color === "neutral" ? palette["--text-link"] : "#ffffff",
+      );
+      expect(palette["--text-message-action"]).toBe(
+        color === "neutral" ? palette["--neutral-1"] : "#ffffff",
+      );
+      expect(
+        contrast(
+          palette["--text-message-link-own"],
+          palette["--surface-message-own"],
+        ),
+        `${color} links in ${mode}`,
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(
+          palette["--text-message-action"],
+          palette["--surface-message-action"],
+        ),
+        `${color} send icon in ${mode}`,
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(
+          palette["--text-message-own"],
+          palette["--surface-message-own"],
+        ),
+        `${color} in ${mode}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  },
+);

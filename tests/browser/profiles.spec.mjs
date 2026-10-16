@@ -58,7 +58,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   ).toBe(true);
   expect(
     await page.evaluate(() => window.profilesFixture.report.media),
-  ).toContainEqual(["https://images.test/avatar.png", undefined]);
+  ).toContainEqual(["https://images.test/avatar.png", "small"]);
   await expect(panel.getByText("Human profile", { exact: true })).toBeVisible();
   // Stub clipboard at the browser boundary: test the UI's exact key and
   // recovery, without relying on OS permission/pasteboard behavior in CI.
@@ -417,18 +417,14 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
           surfaceBounds.height -
           frameBounds.y -
           frameBounds.height,
-      ).toBeCloseTo(frameBounds.x - surfaceBounds.x, 0);
+      ).toBeCloseTo(1, 0);
       await expect(list).toHaveCSS("overflow-y", "auto");
       await expect(list).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      // The viewport owns the border, not a scrolling child: the native
-      // scrollbar and clipping area must lie inside its fixed perimeter.
+      // The unframed roster scrolls to the dialog edge with a thin scrollbar.
       for (const edge of ["top", "right", "bottom", "left"]) {
-        await expect(list).toHaveCSS(`border-${edge}-width`, "1px");
+        await expect(list).toHaveCSS(`border-${edge}-width`, "0px");
       }
-      await expect(list).toHaveCSS(
-        "border-top-color",
-        mode === "light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
-      );
+      await expect(list).toHaveCSS("scrollbar-width", "thin");
       await expect(group).toHaveCSS("border-top-width", "0px");
       await expect(group).toHaveCSS("overflow-y", "visible");
       const member = group.getByRole("listitem").first();
@@ -461,13 +457,13 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       const searchBounds = await search.boundingBox();
       const listBounds = await list.boundingBox();
       const groupBounds = await group.boundingBox();
-      expect(await list.evaluate((el) => el.clientTop)).toBe(1);
-      expect(await list.evaluate((el) => el.clientLeft)).toBe(1);
-      expect(await list.evaluate((el) => el.clientHeight)).toBeLessThan(
-        listBounds.height,
+      expect(await list.evaluate((el) => el.clientTop)).toBe(0);
+      expect(await list.evaluate((el) => el.clientLeft)).toBe(0);
+      expect(await list.evaluate((el) => el.clientHeight)).toBe(
+        Math.round(listBounds.height),
       );
-      expect(await list.evaluate((el) => el.clientWidth)).toBeLessThan(
-        listBounds.width,
+      expect(await list.evaluate((el) => el.clientWidth)).toBe(
+        Math.round(listBounds.width),
       );
       expect(await list.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
@@ -477,7 +473,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await expect(list).toHaveCSS("padding-top", "0px");
       const firstHeading = list.getByRole("heading").first();
       const headingBounds = await firstHeading.boundingBox();
-      const leadingContent = headingBounds.y - listBounds.y - 1;
+      const leadingContent = headingBounds.y - listBounds.y;
       for (const scrollTop of [0, 1, 8, 16]) {
         await list.evaluate((el, top) => {
           el.scrollTop = top;
@@ -487,7 +483,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
           .toBe(leadingContent + scrollTop);
         await expect
           .poll(async () => (await firstHeading.boundingBox()).y)
-          .toBe(listBounds.y + 1);
+          .toBe(listBounds.y);
       }
       await list.evaluate((el) => {
         el.scrollTop = el.scrollHeight;

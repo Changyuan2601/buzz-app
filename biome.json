@@ -91,6 +91,23 @@
       "plugins": ["./tests/browser/fixed-sleeps.grit"]
     },
     {
+      "includes": [
+        "src/**/*.tsx",
+        "!src/**/*.test.tsx",
+        "!src/features/profiles/AvatarEditor.tsx",
+        "!src/bundled/agents/AgentCreateHeader.tsx"
+      ],
+      "plugins": ["./src/shared/avatar-source.grit"]
+    },
+    {
+      "includes": [
+        "tests/browser/**",
+        "src/**",
+        "!tests/browser/playwright-test.mjs"
+      ],
+      "plugins": ["./tests/browser/playwright-test.grit"]
+    },
+    {
       "includes": ["src/shared/design-system/icons/**"],
       "linter": {
         "rules": {

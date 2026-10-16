@@ -21,6 +21,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import userEvent from "@testing-library/user-event";
 import { RemindersPage } from "./RemindersPage";
 import { apply } from "./index";
+import { mediaUrl } from "../../features/relay/transport";
 
 afterEach(cleanup);
 
@@ -50,7 +51,8 @@ const channelList = {
   status: "ready",
   channels: [{ id: "c", name: "general", channelType: "stream" }],
 };
-const authors = new Map([["a", { name: "Ada" }]]);
+const authorPicture = `https://community/media/${"a".repeat(64)}.png`;
+const authors = new Map([["a", { name: "Ada", picture: authorPicture }]]);
 const sessionParts = {
   channels: {
     ensureList: () => () => {},
@@ -62,7 +64,8 @@ const sessionParts = {
     subscribe: () => () => {},
     ensure: () => Promise.resolve(),
   },
-  media: (url: string) => url,
+  media: (url: string, size?: "small") =>
+    mediaUrl(url, (target) => target, "https://community", size),
 };
 
 it("lists finished reminders newest first in a collapsed Done group", () => {
@@ -99,9 +102,21 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
     />,
   );
   const overdue = screen.getByRole("region", { name: "Overdue" });
-  expect(within(overdue).getByText("Ada")).toBeVisible();
-  expect(within(overdue).getByText("#general")).toBeVisible();
-  expect(within(overdue).getByText("Overdue · 1 minute ago")).toBeVisible();
+  expect(within(overdue).queryByText("Ada")).toBeNull();
+  expect(within(overdue).queryByText("#general")).toBeNull();
+  expect(
+    within(overdue).getByRole("button", { name: "More actions: Ada" }),
+  ).toBeVisible();
+  expect(
+    within(overdue).getByText(
+      `Due at ${new Date((now - 60) * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+      { selector: "time" },
+    ),
+  ).toBeVisible();
+  expect(overdue.querySelector("img")).toHaveAttribute(
+    "src",
+    authorPicture.replace(/\.png$/, ".thumb.jpg"),
+  );
   // The row's open action still conveys what the reminder is and when.
   expect(
     within(overdue).getByRole("button", { name: "Open message from Ada" }),
@@ -111,7 +126,7 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
   expect(
     overdue.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  const toggle = within(done).getByRole("button", { name: "Done · 2" });
+  const toggle = within(done).getByRole("button", { name: "Done 2" });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("newer done")).toBeNull();
   fireEvent.click(toggle);
@@ -129,6 +144,7 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
   ).toEqual([
     "Open message from Ada",
     "Remind me again: Ada",
+    "Open conversation: #general",
     "More actions: Ada",
   ]);
   expect(screen.queryByText("cancelled item")).toBeNull();
@@ -140,6 +156,17 @@ it("lists finished reminders newest first in a collapsed Done group", () => {
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({ messageId: "newer done-message" }),
   );
+  fireEvent.click(
+    within(rows[0] as HTMLElement).getByRole("button", {
+      name: "Open conversation: #general",
+    }),
+  );
+  expect(open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope: { communityOrigin: "https://community", viewer },
+    channelId: "c",
+  });
 });
 
 it("marks done, snoozes and cancels a pending reminder from its row", async () => {
@@ -158,7 +185,9 @@ it("marks done, snoozes and cancels a pending reminder from its row", async () =
   page(reminders);
   const row = screen.getByRole("listitem");
   expect(within(row).getByText("due soon")).toBeVisible();
-  await user.click(within(row).getByRole("button", { name: "Mark done: Ada" }));
+  await user.click(
+    within(row).getByRole("checkbox", { name: "Mark done: Ada" }),
+  );
   expect(reminders.complete).toHaveBeenCalledWith("due soon");
   await user.click(within(row).getByRole("button", { name: "Snooze: Ada" }));
   await user.click(await screen.findByRole("menuitem", { name: /^In 1 hour/ }));
@@ -166,6 +195,7 @@ it("marks done, snoozes and cancels a pending reminder from its row", async () =
   await user.click(
     within(row).getByRole("button", { name: "More actions: Ada" }),
   );
+  expect(await screen.findByText("Ada · #general")).toBeVisible();
   await user.click(
     await screen.findByRole("menuitem", { name: "Cancel reminder" }),
   );
@@ -191,13 +221,15 @@ it("shows a note-only reminder without an open action", () => {
     },
   ]);
   const row = screen.getByRole("listitem");
-  expect(within(row).getByText("Reminder")).toBeVisible();
+  expect(
+    within(row).getByRole("button", { name: "More actions: Reminder" }),
+  ).toBeVisible();
   expect(within(row).getByText("stand-up")).toBeVisible();
   expect(
     within(row).queryByRole("button", { name: /^Open message/ }),
   ).toBeNull();
   // A finished note has nothing to open or cancel, so no empty overflow menu.
-  fireEvent.click(screen.getByRole("button", { name: "Done · 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Done 1" }));
   const done = within(screen.getByRole("region", { name: "Done" })).getByRole(
     "listitem",
   );
@@ -340,7 +372,7 @@ it("ages due labels while open, with no reminder or live events", async () => {
     const labels = () =>
       screen
         .getAllByRole("listitem")
-        .map((row) => row.querySelector("time")?.textContent);
+        .map((row) => row.querySelector("[data-reminder-due]")?.textContent);
     expect(labels()).toEqual([
       "Overdue · just now",
       expect.stringMatching(/^Tomorrow at /),
@@ -399,7 +431,7 @@ const hint =
 it("says the list is caught up when only Done reminders exist", () => {
   page([reminder("finished", "done", 1)]);
   expect(screen.getByText("You're all caught up")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Done · 1" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Done 1" })).toBeVisible();
 });
 
 it("explains how to add a reminder on an empty page", () => {
@@ -801,4 +833,74 @@ it("keeps focus on a control that claims it as a healthy session replaces a keyb
     screen.getByRole("button", { name: "Newly opened control" }),
   ).toHaveFocus();
   await act(async () => first.reads.shift()?.resolve([]));
+});
+
+it("blocks competing row updates while saving and recovers after failure", async () => {
+  const user = userEvent.setup();
+  let reject!: (reason: Error) => void;
+  const complete = vi.fn(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+  );
+  const state = {
+    status: "ready",
+    reminders: [reminder("follow up", "pending", 1, now + 600)],
+  };
+  page({
+    snapshot: () => state,
+    subscribe: () => () => {},
+    complete,
+  } as unknown as Reminders);
+  const checkbox = screen.getByRole("checkbox", { name: "Mark done: Ada" });
+  await user.click(checkbox);
+  expect(checkbox).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "Snooze: Ada" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "More actions: Ada" }),
+  ).toBeDisabled();
+  expect(complete).toHaveBeenCalledOnce();
+  await act(async () => reject(new Error("offline")));
+  expect(screen.getByRole("alert")).toHaveTextContent("could not be updated");
+  expect(checkbox).not.toHaveAttribute("aria-disabled", "true");
+  expect(checkbox).not.toBeChecked();
+  complete.mockImplementationOnce(async () => {});
+  await user.click(checkbox);
+  expect(complete).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("resets completion feedback when the settled write leaves the reminder pending", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const complete = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const state = {
+    status: "ready",
+    reminders: [reminder("follow up", "pending", 1, now + 600)],
+  };
+  page({
+    snapshot: () => state,
+    subscribe: () => () => {},
+    complete,
+  } as unknown as Reminders);
+  const checkbox = screen.getByRole("checkbox", { name: "Mark done: Ada" });
+  await user.click(checkbox);
+  expect(checkbox).toBeChecked();
+  expect(checkbox).toHaveAttribute("aria-disabled", "true");
+  // A newer relay event can win without the completion promise rejecting.
+  await act(async () => finish());
+  expect(checkbox).not.toHaveAttribute("aria-disabled", "true");
+  expect(checkbox).not.toBeChecked();
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.click(checkbox);
+  expect(complete).toHaveBeenCalledTimes(2);
+  expect(checkbox).toBeChecked();
+  await act(async () => finish());
+  expect(checkbox).not.toBeChecked();
 });

@@ -2,6 +2,8 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
 import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -129,6 +131,8 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Me's quieter centered transcript and viewer-message alignment. */
   chatPresentation?: boolean | undefined;
+  /** A following composer shows conversation activity; the jump button leaves it a lane. */
+  activityLane?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -183,6 +187,7 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
+  activityLane = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -745,6 +750,7 @@ function Timeline({
       className={styles.feed}
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
+      data-jump-visible={showJumpToLatest || undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
@@ -836,6 +842,9 @@ function Timeline({
         visible={showJumpToLatest}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
+        activityLane={
+          activityLane ? { session: queries, channelId } : undefined
+        }
       />
       {width > 0 && (
         <Virtualizer
@@ -853,6 +862,7 @@ function Timeline({
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
           {rows.map((row, index) => {
+            const nextRow = rows[index + 1];
             const day =
               index === 0
                 ? true
@@ -877,12 +887,9 @@ function Timeline({
                   />
                 ) : (
                   <MessageRow
+                    stackPrevious={continuesMessageGroup(rows[index - 1], row)}
+                    stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
                     alignViewer={chatPresentation}
-                    layout={
-                      continuesMessageGroup(rows[index - 1], row)
-                        ? "continuation"
-                        : "timeline"
-                    }
                     session={queries}
                     scope={scope}
                     row={row}
@@ -909,9 +916,19 @@ function Timeline({
           })}
         </Virtualizer>
       )}
-      {!rows.length && !window.hasMore && (
-        <p className={styles.empty}>No messages yet.</p>
-      )}
+      {!rows.length &&
+        !window.hasMore &&
+        window.status === "ready" &&
+        !window.error &&
+        !window.loadingOlder && (
+          <div className={styles.emptyConversation}>
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="No messages yet."
+              description="Start the conversation below."
+            />
+          </div>
+        )}
     </section>
   );
 }

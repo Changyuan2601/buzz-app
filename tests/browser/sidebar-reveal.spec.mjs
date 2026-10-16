@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { build, preview } from "vite";
+import { expect, test } from "./playwright-test.mjs";
+import { build, preview } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

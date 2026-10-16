@@ -192,10 +192,9 @@ export function SidebarUnread({
           aria-label={`${count} unread ${count === 1 ? "conversation" : "conversations"} ${edge}`}
           data-edge={edge}
           data-attention={edges[edge].some(({ attention }) => attention)}
-          size="sm"
-          shape="control"
+          size="xs"
+          shape="capsule"
           type="button"
-          title={`Reveal the nearest unread channel ${edge} without opening it`}
           onClick={() => reveal(edge)}
         >
           <Icon size={15} aria-hidden="true" />

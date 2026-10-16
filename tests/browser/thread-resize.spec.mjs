@@ -18,9 +18,7 @@ test("thread stays beside the channel whenever both panes fit", async ({
   app,
 }, testInfo) => {
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("Home");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
   const channel = page.getByRole("article", {
     name: "Conversation",
     exact: true,
@@ -291,10 +289,27 @@ test.describe("exact history resize ownership", () => {
     exactMessages: true,
     historyCounts: { alpha: 103, beta: 0 },
   });
-  test("held exact target resize followed by live reply", async ({
+  test("held exact target resize followed by live reply", ({ page, app }) =>
+    heldResizeThenReply({ page, app }, "before reply"));
+  // The shift lands in the live reply's own commit, before ResizeObserver
+  // delivery. Browser scroll anchoring must not correct it ahead of the
+  // thread's exact-target anchor, which would then apply it a second time.
+  test("exact target shift committed with a live reply", ({ page, app }) =>
+    heldResizeThenReply({ page, app }, "with reply"));
+  // A reader gesture retires the exact-target anchor. The thread's ordinary
+  // reading anchor must then own the same-commit shift, since native
+  // anchoring is off.
+  test("reading position shift committed with a live reply", ({ page, app }) =>
+    heldResizeThenReply({ page, app }, "with reply after reading"));
+  // Content above the reader shrinks in the reply's commit far enough that
+  // the browser clamps scrollTop to the new maximum. That clamp is layout, not
+  // reader intent, so the reading anchor must still own the shift.
+  test("reading position contraction clamped with a live reply", ({
     page,
     app,
-  }) => {
+  }) => heldResizeThenReply({ page, app }, "contraction after reading"));
+
+  async function heldResizeThenReply({ page, app }, shift) {
     const key = generateSecretKey();
     await page.route("**/agent-library", (route) =>
       route.fulfill({
@@ -406,8 +421,32 @@ test.describe("exact history resize ownership", () => {
       ).toHaveCount(1);
       await page.evaluate(() => window.releaseExactReveal());
       await settle(page, history);
+      let anchor = target;
+      const reading = shift.endsWith("after reading");
+      if (reading) {
+        await history.hover();
+        await page.mouse.wheel(0, 200);
+        await settle(page, history);
+        const id = await history.evaluate((scroller) => {
+          const top = scroller.getBoundingClientRect().top;
+          return [...scroller.querySelectorAll("[data-message-id]")].find(
+            (row) => row.getBoundingClientRect().bottom > top,
+          )?.dataset.messageId;
+        });
+        expect(id).toBeTruthy();
+        anchor = history.locator(`[data-message-id="${id}"]`);
+      }
+      if (shift === "contraction after reading") {
+        await anchor.evaluate((el) => {
+          const spacer = document.createElement("div");
+          spacer.dataset.contraction = "";
+          spacer.style.height = "700px";
+          el.before(spacer);
+        });
+        await settle(page, history);
+      }
       const y = () =>
-        target.evaluate(
+        anchor.evaluate(
           (el) =>
             el.getBoundingClientRect().top -
             el.closest('[aria-label="Thread messages"]').getBoundingClientRect()
@@ -415,18 +454,55 @@ test.describe("exact history resize ownership", () => {
         );
 
       // Controlled child-only geometry change above the exact row; no React parent commit.
-      await target.evaluate((el) => {
-        const spacer = document.createElement("div");
-        spacer.style.height = "37px";
-        el.before(spacer);
-      });
-      await settle(page, history);
-      const resized = await y();
+      let resized;
+      if (shift === "before reply") {
+        await target.evaluate((el) => {
+          const spacer = document.createElement("div");
+          spacer.style.height = "37px";
+          el.before(spacer);
+        });
+        await settle(page, history);
+        resized = await y();
+      } else {
+        resized = await y();
+        // Shift the layout when React inserts the next reply's row: inside
+        // that commit and before its layout effects run.
+        await anchor.evaluate((el, contract) => {
+          const originals = {
+            appendChild: Node.prototype.appendChild,
+            insertBefore: Node.prototype.insertBefore,
+          };
+          for (const [name, original] of Object.entries(originals))
+            Node.prototype[name] = function (node, ...rest) {
+              const result = original.call(this, node, ...rest);
+              if (node?.textContent?.includes("Review live reply 15")) {
+                Object.assign(Node.prototype, originals);
+                if (contract) {
+                  const scroller = el.closest('[aria-label="Thread messages"]');
+                  const before = scroller.scrollTop;
+                  scroller.querySelector("[data-contraction]").remove();
+                  window.contractionClamped = scroller.scrollTop < before;
+                } else {
+                  const spacer = document.createElement("div");
+                  spacer.style.height = "37px";
+                  el.before(spacer);
+                  el.getBoundingClientRect();
+                }
+              }
+              return result;
+            };
+        }, shift === "contraction after reading");
+      }
       reply();
       await expect(
         history.getByText("Review live reply 15", { exact: true }),
       ).toHaveCount(1);
       await settle(page, history);
+      if (shift === "contraction after reading")
+        expect(
+          await page.evaluate(() => window.contractionClamped),
+          "the contraction must clamp scrollTop",
+        ).toBe(true);
       const later = await y();
       expect(
         Math.abs(later - resized),
@@ -436,5 +512,5 @@ test.describe("exact history resize ownership", () => {
       await page.evaluate(() => window.releaseExactReveal());
       release();
     }
-  });
+  }
 });

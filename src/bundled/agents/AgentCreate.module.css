@@ -282,3 +282,7 @@
     border-color: var(--border-prominent);
   }
 }
+
+.identity:not([data-avatar-active]) {
+  background: var(--interaction-row-hover);
+}

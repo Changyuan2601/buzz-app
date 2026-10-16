@@ -916,11 +916,20 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const groups = new Map<string, Evidence[]>();
-        for (const entry of byChannel.get(channel.id) ?? []) {
+        const session = channel.channelType === "session";
+        const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
-          if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
-          const id = dm ? channel.id : (entry.rootId ?? entry.event.id);
+          return entry.event.pubkey !== viewer && !!category(entry, dm);
+        });
+        // A session's top-level timeline is one conversation; its threads,
+        // roots included, stay separate.
+        const roots = new Set(evidence.map((entry) => entry.rootId));
+        const groups = new Map<string, Evidence[]>();
+        for (const entry of evidence) {
+          const id =
+            dm || (session && !entry.parentId && !roots.has(entry.event.id))
+              ? channel.id
+              : (entry.rootId ?? entry.event.id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -1988,7 +1997,12 @@ export function createUnread({
             await dm;
             return;
           }
-          const event = requireMessage(target, id);
+          // A timeline that shows replies (Solo chats) can end at one. It
+          // anchors the live bottom; channel catch-up never reads replies.
+          const anchor = rootId
+            ? target
+            : { kind: "message" as const, channelId, messageId: id };
+          const event = requireMessage(anchor, id);
           const key = rootId
             ? `thread-activity:${rootId}`
             : `activity:${channelId}`;
@@ -2018,7 +2032,7 @@ export function createUnread({
           const frontiers = reads.state().frontiers;
           const current = (journal: ReadJournal) =>
             valid(journal) &&
-            requireMessage(target, id) === event &&
+            requireMessage(anchor, id) === event &&
             (!rootId || manual(`thread:${rootId}`, journal) <= manualRevision);
           // Reaching the live bottom of a channel ends a manual unread on the
           // channel. Unseen mentions, replies and marked messages stay unread.

@@ -75,12 +75,23 @@ const box = async (locator) => {
   return bounds;
 };
 const near = (a, b) => expect(Math.abs(a - b)).toBeLessThan(2);
+// Read the shared spacing decision independently of measured panel geometry.
+const panelGap = (page) =>
+  page
+    .locator(".shell-content")
+    .evaluate(
+      (element) =>
+        Number.parseFloat(
+          getComputedStyle(element).getPropertyValue("--space-panel-gap"),
+        ) *
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
 const panel = (page) =>
   page.getByRole("complementary", { name: "GitHub", exact: true });
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Multiplayer");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -279,13 +290,17 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   expect(
     await mainPanel.evaluate((element) => getComputedStyle(element).boxShadow),
   ).not.toBe("none");
-  near((await box(mainPanel)).x - sidebar.x - sidebar.width, 4);
+  const gap = await panelGap(page);
+  near((await box(mainPanel)).x - sidebar.x - sidebar.width, gap);
   const sidebarHandle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
   });
   const gripTarget = await box(sidebarHandle);
   near(gripTarget.width, 16);
-  near(gripTarget.x + gripTarget.width / 2, sidebar.x + sidebar.width + 2);
+  near(
+    gripTarget.x + gripTarget.width / 2,
+    sidebar.x + sidebar.width + gap / 2,
+  );
   await sidebarHandle.hover();
   await expect
     .poll(() =>
@@ -311,23 +326,27 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   );
   near(rail.width, 48);
   near(sidebar.x, rail.x + rail.width);
-  near(before.x - sidebar.x - sidebar.width, 5);
+  // The conversation starts inside the main panel's reserved 1px border.
+  near(before.x - sidebar.x - sidebar.width, gap + 1);
   near(before.y, 49);
   near(before.height, 766);
   const background = await page
     .locator(".shell-background")
     .evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(background).toContain("radial-gradient");
-  // The full-bleed backdrop is now the shared gradient rather than a bitmap.
-  const gradient = await page.locator(".shell-background").evaluate((el) => {
+  // The opaque shell color and the decorative dot texture are separate.
+  const shellColor = await page.locator(".shell-background").evaluate((el) => {
     const probe = document.createElement("span");
-    probe.style.backgroundImage = "var(--bg-app)";
+    probe.style.backgroundColor = "var(--bg-app)";
     el.append(probe);
-    const value = getComputedStyle(probe).backgroundImage;
+    const value = getComputedStyle(probe).backgroundColor;
     probe.remove();
     return value;
   });
-  expect(background).toBe(gradient);
+  await expect(page.locator(".shell-background")).toHaveCSS(
+    "background-color",
+    shellColor,
+  );
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -418,7 +437,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
       page.getByRole("region", { name: "Settings", exact: true }),
     ).toBeVisible();
     if (width <= 650) await button(page, "Show navigation").click();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
@@ -474,7 +493,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     const choices = await pageChoices(page);
     // Messages proves the Pages group rendered before counting Projects.
     await expect(
-      choices.getByRole("option", { name: "Messages", exact: true }),
+      choices.getByRole("option", { name: "Multiplayer", exact: true }),
     ).toBeVisible();
     await expect(
       choices.getByRole("option", { name: "Projects", exact: true }),
@@ -496,9 +515,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await open(page, app);
-  await page
-    .getByRole("separator", { name: "Resize channel sidebar" })
-    .press("End");
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
   await page.setViewportSize({ width: 800, height: 600 });
   await link(page, app, "https://github.com/block/buzz/pull/7");
 
@@ -509,7 +526,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
     page.getByRole("article", { name: "Conversation", exact: true }),
   );
   const dock = await box(page.locator("[data-panel-workspace]"));
-  near(conversation.x - sidebar.x - sidebar.width, 5);
+  near(conversation.x - sidebar.x - sidebar.width, (await panelGap(page)) + 1);
   near(dock.x, conversation.x);
   expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
   // Separate stacking contexts: assert actual hit testing, not unrelated z-index numbers.
@@ -816,7 +833,7 @@ companionTest(
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
     await launch.click();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     const composer = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
@@ -971,7 +988,7 @@ todosOverlapTest(
     await page
       .getByRole("switch", { name: "Enable Todos", exact: true })
       .click();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
@@ -1197,14 +1214,14 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
-    "Me",
-    "Messages",
+    "Solo",
+    "Multiplayer",
     "Inbox",
     "Reminders",
     "Bestie",
     "Projects",
     "Agents",
-    "Sessions (now in Me)",
+    "Sessions (now in Solo)",
     "Workflows",
   ];
   const expectPageOrder = async (expected) => {
@@ -1280,13 +1297,13 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expectPageOrder([
-    "Me",
-    "Messages",
+    "Solo",
+    "Multiplayer",
     "Inbox",
     "Reminders",
     "Bestie",
     "Agents",
-    "Sessions (now in Me)",
+    "Sessions (now in Solo)",
     "Workflows",
   ]);
   await closeSearch();

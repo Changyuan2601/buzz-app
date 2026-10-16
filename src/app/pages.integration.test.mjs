@@ -50,7 +50,19 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
+    const { pluginCategoryDefinitions } = await vite.ssrLoadModule(
+      "/src/app/plugin-categories.ts",
+    );
+    const categories = new Set(pluginCategoryDefinitions.map(({ id }) => id));
     for (const plugin of bundledPlugins) {
+      assert.ok(
+        plugin.manifest.description?.trim(),
+        `${plugin.manifest.id}: description`,
+      );
+      assert.ok(
+        categories.has(plugin.manifest.discovery?.category),
+        `${plugin.manifest.id}: category`,
+      );
       assert.equal(
         typeof plugin.enabledByDefault,
         "boolean",
@@ -129,6 +141,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "block.builderlab",
         "block.hosted-communities",
+        "buzz.agents",
         "buzz.channels",
         "buzz.channels",
         "buzz.emoji",
@@ -197,6 +210,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       [
         "block.builderlab",
         "block.hosted-communities",
+        "buzz.agents",
         "buzz.channels",
         "buzz.channels",
         "buzz.emoji",
@@ -373,11 +387,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const sessionsPage = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.sessions");
-    assert.equal(sessionsPage.title, "Sessions (now in Me)");
+    assert.equal(sessionsPage.title, "Sessions (now in Solo)");
     assert.equal(sessionsPage.primary, false);
     assert.match(
       renderToStaticMarkup(createElement(sessionsPage.component)),
-      /Opening Me/,
+      /Opening Solo/,
     );
     await services.plugins.change("disable", "buzz.sessions");
     assert.equal(

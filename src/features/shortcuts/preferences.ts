@@ -13,10 +13,17 @@ const RESTORE_ERROR =
 const SAVE_ERROR =
   "Your shortcuts are active, but could not be saved on this device. Try again.";
 
-const freezeBinding = ({ key, mod, shift, alt }: KeyBinding): KeyBinding =>
+const freezeBinding = ({
+  key,
+  mod,
+  ctrl,
+  shift,
+  alt,
+}: KeyBinding): KeyBinding =>
   Object.freeze({
     key,
     ...(mod !== undefined && { mod }),
+    ...(ctrl !== undefined && { ctrl }),
     ...(shift !== undefined && { shift }),
     ...(alt !== undefined && { alt }),
   });

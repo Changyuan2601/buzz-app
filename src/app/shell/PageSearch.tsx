@@ -168,6 +168,7 @@ export function PageSearch({
         open={open}
         onOpenChange={setSearchOpen}
         title={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+        footerGap="none"
         motion="default"
         dismissOnOutsideClick
         closeLabel="Close search"
@@ -295,7 +296,7 @@ function CommunitySearch({
                     label: "Recent activity",
                     destinations: [],
                     empty: !enabled
-                      ? "Enable Messages to see conversations."
+                      ? "Enable Multiplayer to see conversations."
                       : !client.selected
                         ? "Choose a community to see recent conversations."
                         : "Connecting to this community…",

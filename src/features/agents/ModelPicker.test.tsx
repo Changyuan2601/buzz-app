@@ -193,3 +193,81 @@ it("keeps compact choices finite and includes rich model descriptions", async ()
   await user.click(opus);
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
 });
+
+it("lists the inherited default once with its catalog copy", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      models={models}
+      value=""
+      defaultModel="opus"
+      defaultLabel="Opus"
+      onChange={onChange}
+    />,
+  );
+  expect(control()).toHaveTextContent("Opus");
+  expect(control()).not.toHaveTextContent("Default");
+  await user.click(control());
+  const options = await screen.findAllByRole("option");
+  expect(options).toHaveLength(2);
+  expect(options[0]).toHaveAccessibleName("Opus · Default");
+  expect(options[1]).toHaveAccessibleName("Sonnet");
+  expect(options[0]).toHaveAccessibleDescription("Most capable");
+  expect(options[0]).toHaveAttribute("aria-selected", "true");
+  expect(onChange).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("option", { name: "Sonnet" }));
+  expect(onChange).toHaveBeenCalledWith("sonnet");
+});
+
+it("keeps a matching explicit pin distinct from inheritance as defaults change", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  const props = {
+    models,
+    value: "opus",
+    defaultModel: "opus",
+    defaultLabel: "Opus",
+    onChange,
+  };
+  const view = render(<ModelPicker {...props} />);
+  await user.click(control());
+  const inherited = await screen.findByRole("option", {
+    name: "Opus · Default",
+  });
+  const pinned = screen.getByRole("option", { name: "Opus" });
+  expect(pinned).toHaveAttribute("aria-selected", "true");
+  expect(pinned).toHaveAccessibleDescription("Most capable");
+  expect(inherited).toHaveAttribute("aria-selected", "false");
+  expect(onChange).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  view.rerender(
+    <ModelPicker {...props} defaultModel="sonnet" defaultLabel="Sonnet" />,
+  );
+  expect(control()).toHaveTextContent("Opus");
+  await user.click(control());
+  expect(await screen.findByRole("option", { name: "Opus" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.keyboard("{Escape}");
+  view.rerender(<ModelPicker {...props} />);
+  await user.click(control());
+  await user.click(
+    await screen.findByRole("option", { name: "Opus · Default" }),
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("");
+  view.rerender(
+    <ModelPicker
+      {...props}
+      value=""
+      defaultModel="sonnet"
+      defaultLabel="Sonnet"
+    />,
+  );
+  expect(control()).toHaveTextContent("Sonnet");
+  await user.click(control());
+  expect(
+    await screen.findByRole("option", { name: "Sonnet · Default" }),
+  ).toHaveAttribute("aria-selected", "true");
+});

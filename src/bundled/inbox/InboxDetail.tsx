@@ -1,3 +1,8 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import {
+  ConversationChannel,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
 import { ConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import {
   type ReactNode,
@@ -13,11 +18,6 @@ import type { NavigationScope } from "../../features/navigation/targets";
 import type { Navigation } from "../../features/navigation/controller";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { InboxItem } from "../../features/relay/inbox";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
-import {
-  MessageManagement,
-  MessageManagementStatus,
-} from "../../features/messages/MessageManagement";
 import { ChannelPreview } from "./ChannelPreview";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -33,6 +33,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import type { ArchiveShortcut } from "./InboxPage";
 
 export function InboxDetail({
   item,
@@ -41,9 +42,11 @@ export function InboxDetail({
   scope,
   navigator,
   extensions,
+  host,
   channelName,
   previewIncomplete,
   archiveAction,
+  archiveShortcut,
   onBack,
   resizeHandle,
 }: {
@@ -54,11 +57,13 @@ export function InboxDetail({
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   channelName: string;
   previewIncomplete?: "loading" | "error" | undefined;
   archiveAction?:
     | { archived: boolean; disabled: boolean; run(): void }
     | undefined;
+  archiveShortcut?: ArchiveShortcut | undefined;
   onBack(): void;
 }) {
   const archiveLabel = archiveAction?.archived
@@ -90,6 +95,13 @@ export function InboxDetail({
   // Inbox keys this component by the captured visit. Revalidation withholds an
   // admitted reader, but must not recreate its reveal request or editor.
   const [admitted, setAdmitted] = useState(false);
+  // A late reply can regroup a session's opening message into its thread;
+  // keep the reader this visit opened with.
+  const flat =
+    item.target.kind === "channel" ||
+    (channel?.channelType === "session" && !item.thread);
+  const [timeline, setTimeline] = useState<boolean>();
+  if (available && timeline === undefined) setTimeline(flat);
   useEffect(() => {
     if (!available) setAdmitted(false);
     else if (!previewIncomplete) setAdmitted(true);
@@ -174,6 +186,21 @@ export function InboxDetail({
     if (result.status === "failed")
       setError("This conversation could not be opened. Try again.");
   };
+  const archiveEnabled =
+    !!archiveAction &&
+    !archiveAction.disabled &&
+    available &&
+    !previewIncomplete;
+  // The Archive shortcut is this visible header's button, under its enablement.
+  useLayoutEffect(() => {
+    if (!archiveShortcut || !archiveAction || !archiveEnabled) return;
+    const current = archiveAction.run;
+    archiveShortcut.current = current;
+    return () => {
+      if (archiveShortcut.current === current)
+        archiveShortcut.current = undefined;
+    };
+  });
   const openAction = (
     <IconButton
       size="sm"
@@ -234,9 +261,7 @@ export function InboxDetail({
               <IconButton
                 size="sm"
                 variant="ghost"
-                disabled={
-                  archiveAction.disabled || !available || !!previewIncomplete
-                }
+                disabled={!archiveEnabled}
                 onClick={archiveAction.run}
                 aria-label={archiveLabel}
                 title={archiveLabel}
@@ -306,38 +331,32 @@ export function InboxDetail({
               // The flex class must not override native hidden presentation.
               style={previewIncomplete ? { display: "none" } : undefined}
             >
-              <MessageManagement
+              <ConversationChannel
                 session={session}
-                channelId={item.channelId}
+                scope={session.scope}
+                extensions={extensions}
+                host={host}
+                threadId={(timeline ?? flat) ? undefined : target.messageId}
+                channel={channel}
+                channelName={channelName}
                 active={false}
               >
-                <MessageManagementStatus />
-                {item.target.kind === "channel" ? (
+                {(timeline ?? flat) ? (
                   <ChannelPreview
-                    session={session}
-                    extensions={extensions}
-                    channelId={item.channelId}
                     channelName={
-                      channel?.channelType === "dm"
+                      channel.channelType === "dm"
                         ? `DM with ${dmName}`
                         : channelName
                     }
                     anchor={target.messageId}
                   />
                 ) : (
-                  <ThreadPanel
-                    session={session}
-                    scope={session.scope}
-                    extensions={extensions}
-                    channelId={item.channelId}
-                    channelName={channelName}
+                  <ConversationThread
                     messageId={target.messageId}
-                    sessionConversation={channel?.channelType === "session"}
                     revealSelected
-                    onOpenLink={() => false}
                   />
                 )}
-              </MessageManagement>
+              </ConversationChannel>
             </div>
           </ConversationPresentation>
         )}

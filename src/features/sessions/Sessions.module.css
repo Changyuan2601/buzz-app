@@ -80,6 +80,10 @@
 .startContent {
   margin-top: auto;
 }
+/* A new Me chat keeps its composer where the started chat's composer sits. */
+.start[data-personal] {
+  padding-bottom: 0;
+}
 
 .column {
   flex: 1;

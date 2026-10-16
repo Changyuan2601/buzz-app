@@ -200,28 +200,28 @@ export const BACKDROP_CHOICES = [
     variable: "--gradient-1",
     lightTreatment: "sky-field",
     darkTreatment: "night-garden",
-    use: "The default app backdrop: Sky field in light mode, Night garden in dark.",
+    use: "Legacy glass specimen: Sky field in light mode, Night garden in dark.",
   },
   {
     token: "gradient-2",
     variable: "--gradient-2",
     lightTreatment: "peach-field",
     darkTreatment: "signal-flare",
-    use: "A warm paired app backdrop: Peach field in light mode, Signal flare in dark.",
+    use: "A legacy warm glass specimen: Peach field in light mode, Signal flare in dark.",
   },
   {
     token: "gradient-3",
     variable: "--gradient-3",
     lightTreatment: "blue-hour",
     darkTreatment: "electric-dusk",
-    use: "A cool paired app backdrop: Blue hour in light mode, Electric dusk in dark.",
+    use: "A legacy cool glass specimen: Blue hour in light mode, Electric dusk in dark.",
   },
   {
     token: "gradient-4",
     variable: "--gradient-4",
     lightTreatment: "orchid-field",
     darkTreatment: "ultraviolet",
-    use: "A violet paired app backdrop: Orchid field in light mode, Ultraviolet in dark.",
+    use: "A legacy violet glass specimen: Orchid field in light mode, Ultraviolet in dark.",
   },
 ] as const;
 
@@ -286,6 +286,44 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--surface-inverse",
         pointsAt: "neutral-11 light / neutral-11 dark",
         use: "Image and video stages; pair labels with text-inverse.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message",
+        variable: "--surface-message",
+        pointsAt: "neutral-2 light / neutral-4 dark",
+        use: "Received message bubbles; pair with standard text and links.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-own",
+        variable: "--surface-message-own",
+        pointsAt:
+          "received fill with 5% black light / 5% white dark; selected accent otherwise",
+        use: "Own message bubbles; pair with --text-message-own.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action",
+        variable: "--surface-message-action",
+        pointsAt: "neutral-12 by default; selected message accent otherwise",
+        use: "Send button and color swatches; pair with text-message-action.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action-hover",
+        variable: "--surface-message-action-hover",
+        pointsAt:
+          "neutral-11 by default; selected accent darkened 10% otherwise",
+        use: "Hover state for message-colored prominent actions.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action-pressed",
+        variable: "--surface-message-action-pressed",
+        pointsAt:
+          "neutral-action-pressed by default; selected accent darkened 20% otherwise",
+        use: "Pressed state for message-colored prominent actions.",
         status: "core",
       },
       {
@@ -377,6 +415,27 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-link",
         pointsAt: "blue-11 light / blue-11 dark",
         use: "Inline links and mentions in prose.",
+        status: "core",
+      },
+      {
+        token: "text-message-own",
+        variable: "--text-message-own",
+        pointsAt: "text-standard by default; bubble-ink for accents",
+        use: "Prose on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-message-link-own",
+        variable: "--text-message-link-own",
+        pointsAt: "text-link by default; bubble-ink for accents",
+        use: "Links and mentions on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-message-action",
+        variable: "--text-message-action",
+        pointsAt: "neutral-1 by default; bubble-ink for accents",
+        use: "Send icon and selected swatch check on surface-message-action.",
         status: "core",
       },
       {
@@ -567,14 +626,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "--affordance-backdrop-hover",
         variable: "--affordance-backdrop-hover",
         pointsAt: "black 6% light / white 10% dark",
-        use: "Translucent top-bar hover fills over the shell gradient.",
+        use: "Translucent top-bar hover fills over the shell and its dot texture.",
         status: "core",
       },
       {
         token: "--affordance-backdrop-pressed",
         variable: "--affordance-backdrop-pressed",
         pointsAt: "black 10% light / white 16% dark",
-        use: "Translucent top-bar pressed and selected fills over the shell gradient.",
+        use: "Translucent top-bar pressed and selected fills over the shell and its dot texture.",
         status: "core",
       },
       {
@@ -774,8 +833,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-app",
         variable: "--bg-app",
-        pointsAt: "gradient-1 (Sky field light / Night garden dark)",
-        use: "The app backdrop. Uses the first paired appearance choice by default.",
+        pointsAt: "neutral-quiet-hover light / neutral 2 dark",
+        use: "Solid app shell below opaque panes. Its dot texture derives from this color in both modes.",
         status: "core",
       },
       {
@@ -889,7 +948,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "glass-primary",
         variable: "--bg-glass-primary",
         pointsAt: "glass 2 + blur-md + rim",
-        use: "Primary glass for chrome and navigation directly on the app backdrop.",
+        use: "Primary glass for surfaces with content behind them. Shell navigation uses flat chrome instead.",
         status: "core",
       },
       {
@@ -902,8 +961,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-chrome-selected",
         variable: "--bg-chrome-selected",
-        pointsAt: "neutral 1 light / neutral 5 dark",
-        use: "An opaque selection inside glass chrome, where opacity distinguishes the selected item.",
+        pointsAt: "surface-panel light / neutral 5 dark",
+        use: "A flat shell selection: pane-colored in light mode, raised above hover in dark. Tab and route groups share a subtle capsule; standalone icons stay unfilled.",
         status: "core",
       },
       {
@@ -1460,7 +1519,11 @@ export const EXCEPTIONS = [
     why: "The glass rim models directional light independently of its fill. In dark mode, translucent white rim values remain distinct from the near-black glass fill.",
   },
   {
-    name: "backdrop treatments and gradient-1…4, texture-dots",
-    why: "Backdrop treatments define complete scenes. Each gradient-1…4 choice pairs one light scene with one dark scene.",
+    name: "legacy backdrop treatments and gradient-1…4",
+    why: "Kept for the viewer’s glass study only, not product themes. The app shell is solid.",
+  },
+  {
+    name: "texture-dots",
+    why: "The shared decorative texture derives its color from bg-app: a darker shade in light mode and a lighter tint in dark. Never give dots an independent gray or paint the pattern inside reading panes.",
   },
 ];

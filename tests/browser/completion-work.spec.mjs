@@ -47,8 +47,8 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   // General is untyped, so the community directory also searches each new
   // query after its debounce. Those reads belong to the query, not cold work,
   // so the baseline holds when the first search starts before or after it.
-  const session = ({ kinds, searches }) =>
-    kinds.filter((_, index) => searches[index] === null);
+  const session = ({ kinds, queries }) =>
+    kinds.filter((_, index) => !queries[index]);
   await expect
     .poll(
       async () =>

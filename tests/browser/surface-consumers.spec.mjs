@@ -130,11 +130,14 @@ for (const mode of ["light", "dark"]) {
       await page.goto(app.origin);
       await openPage(page, "Me");
       const sidebar = page.getByRole("navigation", {
-        name: "Me conversations",
+        name: "Solo conversations",
       });
-      const session = sidebar.getByRole("button", { name: /^Alpha(?: |$)/ });
+      const alpha = { name: /^Alpha(?: |$)/ };
+      const session = sidebar.getByRole("button", alpha);
       await session.click();
-      const row = session.locator("..");
+      const row = sidebar
+        .locator("[data-session-menu-id]")
+        .filter({ has: page.getByRole("button", alpha) });
       await page.mouse.move(1, 1);
       const selected =
         mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)";

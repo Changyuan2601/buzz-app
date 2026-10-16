@@ -1,5 +1,6 @@
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -102,6 +103,8 @@ import type {
   ComposerLinkEdit,
   ComposerFormat,
 } from "./composer-dom";
+import { TargetOpenerProvider } from "../conversation/opener";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -246,11 +249,13 @@ export function MessageComposer(props: MessageComposerProps) {
   )}`;
   return (
     <TypingPresentation active key={key}>
-      {props.personalConversation ? (
-        <PersonalComposer {...props} />
-      ) : (
-        <Composer {...props} />
-      )}
+      <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
+        {props.personalConversation ? (
+          <PersonalComposer {...props} />
+        ) : (
+          <Composer {...props} />
+        )}
+      </TargetOpenerProvider>
     </TypingPresentation>
   );
 }
@@ -395,16 +400,35 @@ function Composer({
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
+  const resolvedPicks = useRef<MentionPicks>({});
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
-    autoFocus && !disabled && typeof document !== "undefined"
+    autoFocus && typeof document !== "undefined"
       ? document.activeElement
       : undefined,
   );
   useEffect(() => {
     // A navigation/dialog owner may restore focus during this commit. Let that
-    // explicit handoff win over the conversation's default initial focus.
+    // explicit handoff win over the conversation's default initial focus. A
+    // loading conversation defers it until its composer is first enabled.
+    // Focus moved while the composer waits also ends it, even if that control
+    // later unmounts: restoring an archived channel must not pull focus back.
+    const endOnFocusMove = () => {
+      const moved = (event: FocusEvent) => {
+        if (event.target !== focusOnMount.current)
+          focusOnMount.current = undefined;
+      };
+      document.addEventListener("focusin", moved, true);
+      return () => document.removeEventListener("focusin", moved, true);
+    };
+    if (disabled) {
+      // Disabling after the handoff ends it; re-enabling must not refocus.
+      if (focusOnMount.current === input.current)
+        focusOnMount.current = undefined;
+      if (!focusOnMount.current) return;
+      return endOnFocusMove();
+    }
     if (!focusOnMount.current) return;
     const focus = () => {
       const previous = focusOnMount.current;
@@ -418,9 +442,10 @@ function Composer({
       if (!editor || editor.closest("[inert]")) return;
       // A conversation can finish loading behind an already-focused dialog,
       // menu, or open popup trigger. Its default focus must not interrupt that
-      // explicit owner: moving focus away also dismisses non-modal menus.
+      // explicit owner: moving focus away also dismisses non-modal menus. A
+      // hover preview is transient and owns no focus.
       const owner = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
@@ -432,9 +457,11 @@ function Composer({
     };
     const inertAncestor = input.current?.closest("[inert]");
     if (inertAncestor) {
+      const stopWatching = endOnFocusMove();
       const observer = new MutationObserver(() => {
         if (!inertAncestor.hasAttribute("inert")) {
           observer.disconnect();
+          stopWatching();
           focus();
         }
       });
@@ -442,10 +469,13 @@ function Composer({
         attributes: true,
         attributeFilter: ["inert"],
       });
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        stopWatching();
+      };
     }
     focus();
-  }, []);
+  }, [disabled]);
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -1025,7 +1055,9 @@ function Composer({
               .selectable.some((agent) => agent.pubkey === key),
         )
       )
-        throw new Error("Only your available agents can be mentioned in Me.");
+        throw new Error(
+          "Only your available agents can be mentioned in Solo chats.",
+        );
       await session.workSessions.addAgents(
         channelId,
         missing,
@@ -1039,7 +1071,7 @@ function Composer({
   function requireCompletedSessionStart() {
     if (pendingSessionDraft(scope, channelId))
       throw new Error(
-        "Finish setting up this conversation in Me before sending messages.",
+        "Finish setting up this conversation in Solo before sending messages.",
       );
   }
   async function send() {
@@ -1101,6 +1133,7 @@ function Composer({
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
+    const capturedRunPicks = { ...picks, ...resolvedPicks.current };
     try {
       if (submission?.receiptOnly) {
         submission.submit(captured);
@@ -1120,7 +1153,7 @@ function Composer({
         )
       )
         throw new Error(
-          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
+          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
         submission.submit(captured);
@@ -1207,7 +1240,7 @@ function Composer({
       );
       // Only agents still notified by this message are asked for a model or effort.
       const sentPicks: MentionPicks = Object.fromEntries(
-        Object.entries(capturedPicks).filter(([key]) =>
+        Object.entries(capturedRunPicks).filter(([key]) =>
           recipients.includes(key),
         ),
       );
@@ -1352,6 +1385,17 @@ function Composer({
     }
   }
   const readingOnly = !outbox?.supports(9) && !cached;
+  // The attachments section animates out over 180 ms; the form's gap and
+  // padding (data-attachments) collapse when it has, not when the list empties.
+  // An edit unmounts the section at once, so no exit completes during one.
+  const hasAttachments = attachments.items.length > 0;
+  const [attachmentsExiting, setAttachmentsExiting] = useState(false);
+  const [hadAttachments, setHadAttachments] = useState(hasAttachments);
+  if (hadAttachments !== hasAttachments) {
+    setHadAttachments(hasAttachments);
+    setAttachmentsExiting(!hasAttachments);
+  }
+  if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
   const context = (
     <div className={styles.composerContext}>
       {!cached && !submission && (
@@ -1379,7 +1423,10 @@ function Composer({
   );
   const renderLeadingTools = (tools: ReactNode) => (
     <>
-      <div className={styles.composerLeadingTools}>
+      <div
+        className={styles.composerLeadingTools}
+        data-recipients={!!value.recipients.length || undefined}
+      >
         {tools}
         {!!value.recipients.length && (
           <RecipientAvatars
@@ -1435,6 +1482,13 @@ function Composer({
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
+        data-conversation-controls={
+          (active && !editing.target && !!trailingTool) || undefined
+        }
+        data-attachments={
+          (!editing.target && (hasAttachments || attachmentsExiting)) ||
+          undefined
+        }
         onKeyDown={(event) => {
           if (
             editing.target &&
@@ -1518,6 +1572,7 @@ function Composer({
               renderers={extensions?.attachments}
               items={attachments.items}
               disabled={editingDisabled}
+              onExitComplete={() => setAttachmentsExiting(false)}
               remove={(id) => {
                 const item = attachments.items.find(
                   (candidate) => candidate.id === id,
@@ -1614,7 +1669,6 @@ function Composer({
                   !event.shiftKey &&
                   !event.altKey &&
                   !event.ctrlKey &&
-                  !event.metaKey &&
                   !event.repeat &&
                   !event.defaultPrevented &&
                   !editingDisabled &&
@@ -1722,6 +1776,9 @@ function Composer({
                   value={picks}
                   disabled={editingDisabled}
                   onChange={setPicks}
+                  onResolved={(next) => {
+                    resolvedPicks.current = next;
+                  }}
                 />
               )}
             <IconButton
@@ -1730,6 +1787,7 @@ function Composer({
               }
               size="toolbar"
               type="submit"
+              style={messageButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={editing.target ? "Save changes" : "Send message"}
               disabled={
@@ -1907,7 +1965,7 @@ function RecipientAvatars({
                 <Avatar
                   alt=""
                   fallback={recipient.name}
-                  src={session.media(profile?.picture ?? "", "small")}
+                  src={avatarMedia(profile?.picture, session.media)}
                   size="small"
                   shape={
                     agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"

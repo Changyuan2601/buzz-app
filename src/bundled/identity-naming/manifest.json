@@ -1,1 +1,7 @@
-{ "id": "buzz.identity-naming", "name": "Identity Naming", "apiVersion": 1 }
+{
+  "id": "buzz.identity-naming",
+  "name": "Identity Naming",
+  "apiVersion": 1,
+  "description": "Resolve human-first display names throughout Buzz.",
+  "discovery": { "category": "agents" }
+}

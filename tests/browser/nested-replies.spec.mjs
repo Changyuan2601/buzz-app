@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { settlePanelMotion } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -54,6 +55,9 @@ test("nested replies send, stay open, and reveal through links at readable panel
         .filter({ hasText: "Unread reply 0" }),
     }),
   ).toHaveCount(1);
+  // Compare settled positions; WebKit can sample the entering dock's transform
+  // at different points even within one geometry read.
+  await settlePanelMotion(page);
   const ordinaryGeometry = await parent.evaluate((node) => {
     const item = node.closest("li");
     const root = node
@@ -117,6 +121,21 @@ test("nested replies send, stay open, and reveal through links at readable panel
   ]);
   const nestedRow = panel.locator(`[data-message-id="${nested.id}"]`);
   await expect(nestedRow).toBeInViewport();
+  // The parent avatar is bottom aligned: its branch spine must begin below it.
+  const spine = await parent.evaluate((node) => {
+    const wrapper = node.parentElement;
+    const line = getComputedStyle(wrapper, "::after");
+    const avatar = node.querySelector(
+      'button[aria-label^="View "][aria-label$=" profile"]',
+    );
+    return {
+      content: line.content,
+      top: wrapper.getBoundingClientRect().top + parseFloat(line.top),
+      avatarBottom: avatar.getBoundingClientRect().bottom,
+    };
+  });
+  expect(spine.content).toBe('""');
+  expect(spine.top).toBeGreaterThanOrEqual(spine.avatarBottom);
   // Nested ancestry has a quiet elbow even when the author continues.
   const connector = await nestedRow.evaluate(
     (node) => getComputedStyle(node.closest("li"), "::before").content,
@@ -526,8 +545,8 @@ for (const width of [1492, 1280, 1024, 700, 390])
     };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
-    // Retain the existing continuation-clock contract on a real same-parent
-    // sibling now that crossing a branch deliberately repeats the author.
+    // A same-parent continuation keeps its full timestamp accessible and
+    // exposes it on a long bubble hover, without bringing back an inline clock.
     const continuationRow = panel.locator(
       `[data-message-id="${continuation.id}"]`,
     );
@@ -539,10 +558,10 @@ for (const width of [1492, 1280, 1024, 700, 390])
     await page
       .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
       .hover();
-    await expect(clock).toHaveCSS("opacity", "0");
-    await continuationRow.hover();
-    await expect(clock).toHaveCSS("opacity", "1");
-    await clock.hover();
+    await expect(clock).toHaveClass(/sr-only/);
+    await continuationRow
+      .getByText("Same-parent continuation", { exact: true })
+      .hover();
     await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
     await continuationRow
       .getByRole("button", { name: "More message actions", exact: true })
@@ -550,7 +569,7 @@ for (const width of [1492, 1280, 1024, 700, 390])
     await page
       .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
       .hover();
-    await expect(clock).toHaveCSS("opacity", "1");
+    await expect(clock).toHaveClass(/sr-only/);
     for (const id of [...ids.slice(0, -1), continuation.id]) {
       const branch = branchFor(id);
       const row = panel.locator(`[data-message-id="${id}"]`);
@@ -582,16 +601,20 @@ for (const width of [1492, 1280, 1024, 700, 390])
       await expect(actions).toHaveCount(1);
       await expect(actions).toHaveCSS("opacity", "1");
       if (width >= 640) {
-        // Both author headers and headerless continuations end the bar at the
-        // body edge, independent of row padding and toolbar height.
+        // Both headers and continuations use centered beside controls when
+        // they fit, and the same token-sized corner overlap otherwise.
         const placement = await row.evaluate((node) => {
           const bar = node.querySelector('[aria-label="Message actions"]');
-          const body = node.querySelector(
-            '[class*="_text_"], [class*="_plainText_"]',
-          );
+          const body = node.querySelector('[class*="_messageBubble_"]');
+          const rect = bar.getBoundingClientRect();
+          const anchor = body.getBoundingClientRect();
+          const beside = bar.dataset.placement === "beside";
           return {
-            actual: bar.getBoundingClientRect().bottom,
-            expected: body.getBoundingClientRect().top,
+            actual: beside ? rect.top + rect.height / 2 : rect.bottom,
+            expected: beside
+              ? anchor.top + anchor.height / 2
+              : anchor.top +
+                parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
           };
         });
         expect(placement.actual).toBeCloseTo(placement.expected, 1);

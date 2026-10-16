@@ -21,15 +21,19 @@ async function expectMode(page, mode, inSettings = false) {
   await expect(page.locator("html")).toHaveCSS("color-scheme", mode);
   await expect(page.locator("html")).toHaveCSS(
     "background-color",
-    mode === "dark" ? "rgb(0, 0, 0)" : "rgb(245, 245, 246)",
+    mode === "dark" ? "rgb(16, 16, 16)" : "rgb(241, 241, 242)",
   );
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
     "content",
-    mode === "dark" ? /^#(?:000|000000)$/ : /^#f5f5f6$/,
+    mode === "dark" ? /^#101010$/ : /^#f1f1f2$/,
+  );
+  await expect(page.locator(".shell-background")).toHaveCSS(
+    "background-color",
+    mode === "dark" ? "rgb(16, 16, 16)" : "rgb(241, 241, 242)",
   );
   await expect(page.locator(".shell-background")).toHaveCSS(
     "background-image",
-    /linear-gradient/,
+    /radial-gradient/,
   );
   await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
@@ -56,6 +60,35 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
+  for (const label of ["Default message color", "Blue message color"]) {
+    const swatch = button(page, label);
+    await page.mouse.move(0, 0);
+    const colors = await swatch.evaluate((node) => {
+      const probe = document.createElement("span");
+      node.append(probe);
+      const colors = {};
+      for (const state of ["hover", "pressed"]) {
+        probe.style.backgroundColor = `var(--surface-message-action-${state})`;
+        colors[state] = getComputedStyle(probe).backgroundColor;
+      }
+      probe.remove();
+      return colors;
+    });
+    await swatch.hover();
+    await expect(swatch).toHaveCSS("background-color", colors.hover);
+    await page.mouse.down();
+    try {
+      await expect(swatch).toHaveCSS("background-color", colors.pressed);
+    } finally {
+      await page.mouse.up();
+    }
+  }
+  await button(page, "Blue message color").focus();
+  await page.keyboard.press("Enter");
+  await expect(button(page, "Blue message color")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   const system = page.getByRole("radio", { name: "System", exact: true });
   await expect(system).toBeChecked();
   await page.emulateMedia({ colorScheme: "dark" });
@@ -97,20 +130,53 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   for (const mode of ["dark", "light"]) {
     await chooseColorMode(page, mode === "dark" ? "Dark" : "Light");
     await expectMode(page, mode, true);
+    // Dots must follow a tinted shell, not keep a separately authored gray.
+    // Use browser paint to measure resolved CSS colors (including color-mix).
+    const texture = await page.evaluate((mode) => {
+      const root = document.documentElement;
+      const previous = root.style.getPropertyValue("--bg-app");
+      const priority = root.style.getPropertyPriority("--bg-app");
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const context = document.createElement("canvas").getContext("2d");
+      if (!context) throw new Error("Canvas color measurement unavailable");
+      const rgb = (role) => {
+        probe.style.color = `var(${role})`;
+        context.fillStyle = getComputedStyle(probe).color;
+        context.fillRect(0, 0, 1, 1);
+        return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+      };
+      try {
+        root.style.setProperty(
+          "--bg-app",
+          mode === "light" ? "#eeddee" : "#221122",
+        );
+        return { shell: rgb("--bg-app"), dots: rgb("--texture-dots-color") };
+      } finally {
+        if (previous) root.style.setProperty("--bg-app", previous, priority);
+        else root.style.removeProperty("--bg-app");
+        probe.remove();
+      }
+    }, mode);
+    // Both samples are purple: equal red/blue, less green. The texture must
+    // retain that hue and move lighter/darker together, not turn neutral.
+    expect(texture.dots[0]).toBe(texture.dots[2]);
+    expect(texture.dots[0]).toBeGreaterThan(texture.dots[1]);
+    for (const [channel, value] of texture.dots.entries()) {
+      if (mode === "light") expect(value).toBeLessThan(texture.shell[channel]);
+      else expect(value).toBeGreaterThan(texture.shell[channel]);
+    }
     // Preview artwork uses the real mode's roles, even inside the other mode.
     palettes[mode] = await page.evaluate(() => {
       const probe = document.createElement("span");
       document.body.append(probe);
       const colors = Object.fromEntries(
-        [
-          "surface-base",
-          "surface-panel",
-          "text-metadata",
-          "affordance-accent-prominent",
-        ].map((role) => {
-          probe.style.color = `var(--${role})`;
-          return [role, getComputedStyle(probe).color];
-        }),
+        ["bg-app", "surface-panel", "text-metadata", "surface-message-own"].map(
+          (role) => {
+            probe.style.color = `var(--${role})`;
+            return [role, getComputedStyle(probe).color];
+          },
+        ),
       );
       probe.remove();
       return colors;
@@ -137,20 +203,48 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");
   }
-  for (const [mode, colors] of Object.entries(palettes)) {
-    const preview = page.locator(`.buzz-theme-thumbnail[data-mode="${mode}"]`);
-    for (const [part, property, role] of [
-      ["backdrop", "fill", "surface-base"],
-      ["panel", "fill", "surface-panel"],
-      ["lines", "stroke", "text-metadata"],
-      ["accent", "fill", "affordance-accent-prominent"],
-    ]) {
-      for (const element of await preview
-        .locator(`.buzz-theme-preview-${part}`)
-        .all())
-        await expect(element).toHaveCSS(property, colors[role]);
+  for (const hostMode of ["Dark", "Light"]) {
+    await chooseColorMode(page, hostMode);
+    for (const [mode, colors] of Object.entries(palettes)) {
+      const preview = page.locator(
+        `.buzz-theme-thumbnail[data-mode="${mode}"]`,
+      );
+      for (const [part, property, role] of [
+        ["backdrop", "fill", "bg-app"],
+        ["panel", "fill", "surface-panel"],
+        ["lines", "stroke", "text-metadata"],
+        ["message", "fill", "surface-message-own"],
+      ]) {
+        for (const element of await preview
+          .locator(`.buzz-theme-preview-${part}`)
+          .all())
+          await expect(element).toHaveCSS(property, colors[role]);
+      }
     }
   }
+  await button(page, "Pink message color").click();
+  const pink = await button(page, "Pink message color").evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.backgroundColor = "var(--surface-message-own)";
+    el.append(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  });
+  for (const preview of await page
+    .locator('.buzz-theme-preview[data-tone="light"]')
+    .all()) {
+    await expect(preview).toHaveAttribute("data-bubble-color", "pink");
+    for (const bubble of await preview
+      .locator(".buzz-theme-preview-message")
+      .all())
+      await expect(bubble).toHaveCSS("fill", pink);
+  }
+  await page
+    .getByRole("region", { name: "Appearance", exact: true })
+    .screenshot({
+      path: testInfo.outputPath("appearance-pink-preview.png"),
+    });
   await chooseColorMode(page, "Dark");
   await page.reload();
   await expectMode(page, "dark", true);
@@ -316,7 +410,7 @@ test("saved dark document paints before the application module is allowed to exe
     await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
     await expect(page.locator("html")).toHaveCSS(
       "background-color",
-      "rgb(0, 0, 0)",
+      "rgb(16, 16, 16)",
     );
     await expect(page.locator("#buzz-launch")).toBeVisible();
     await expect(page.locator("#buzz-launch img")).toBeVisible();
@@ -329,7 +423,7 @@ test("saved dark document paints before the application module is allowed to exe
     );
     await expect(page.locator("html")).toHaveCSS(
       "background-color",
-      "rgb(0, 0, 0)",
+      "rgb(16, 16, 16)",
     );
     // Pre-paint coverage must never start (then tear down) a relay session.
     expect(relayRequests).toEqual([]);

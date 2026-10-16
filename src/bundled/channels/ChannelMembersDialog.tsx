@@ -53,6 +53,7 @@ import {
 import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** How a name matches typed text: the shared person name rule, the same as
  * mentions and New message. */
@@ -95,7 +96,7 @@ function MemberAvatar({
       <Avatar
         alt=""
         fallback={name}
-        src={picture ? session.media(picture, "small") : undefined}
+        src={avatarMedia(picture, session.media)}
         size="default"
         shape={agent ? "squircle" : "circle"}
         statusBadge={presence === "unknown" ? undefined : presence}
@@ -1086,19 +1087,23 @@ export function ChannelMembersDialog({
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
-      headerGap={selection?.role === "remove" ? "compact" : "default"}
-      footerGap={selection?.role === "remove" ? "compact" : "default"}
+      headerGap={
+        !selection || selection.role === "remove" ? "compact" : "default"
+      }
+      footerGap={
+        !selection
+          ? "none"
+          : selection.role === "remove"
+            ? "compact"
+            : "default"
+      }
       description={
         selection ? (
           <span className="flex min-w-0 items-center gap-2">
             <Avatar
               alt=""
               fallback={label(selection.pubkey)}
-              src={
-                selectedPicture
-                  ? session.media(selectedPicture, "small")
-                  : undefined
-              }
+              src={avatarMedia(selectedPicture, session.media)}
               size="small"
               shape={selectedAgent ? "squircle" : "circle"}
             />
@@ -1232,6 +1237,7 @@ export function ChannelMembersDialog({
               >
                 <Select
                   variant="compact"
+                  size="md"
                   label="Filter members by role"
                   align="end"
                   value={roleFilter}
@@ -1263,7 +1269,7 @@ export function ChannelMembersDialog({
           )}
           <section
             ref={scrollport}
-            className={styles.memberList}
+            className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
           >
             {!canAdd && (

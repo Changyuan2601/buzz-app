@@ -110,11 +110,19 @@ export function useFloatingActionBar(
       (document.documentElement.hasAttribute("data-keyboard-navigation") &&
         row.contains(document.activeElement));
     const update = (focused = keyboardFocus()) => {
+      // Message accessories such as agent activity use ordinary portals. A
+      // native top-layer toolbar must step aside while their popup is open.
+      const accessoryOpen = [
+        ...row.querySelectorAll(
+          '[aria-haspopup="dialog"][aria-expanded="true"]',
+        ),
+      ].some((trigger) => !bar.contains(trigger));
       const next =
-        hovered ||
-        focused ||
-        open ||
-        !!bar.querySelector('[aria-haspopup][aria-expanded="true"]');
+        !accessoryOpen &&
+        (hovered ||
+          focused ||
+          open ||
+          !!bar.querySelector('[aria-haspopup][aria-expanded="true"]'));
       row.toggleAttribute("data-actions-revealed", next);
       setRevealed(next);
     };
@@ -142,7 +150,7 @@ export function useFloatingActionBar(
       // Recheck focus if a control is removed without dispatching focusout.
       update();
     });
-    observer.observe(bar, {
+    observer.observe(row, {
       subtree: true,
       childList: true,
       attributes: true,
@@ -165,6 +173,8 @@ export function useFloatingActionBar(
     const slot = slotRef.current;
     if (!floating || !revealed || !row || !bar || !slot) return;
     const scroller = row.closest<HTMLElement>("[data-message-scroller]");
+    const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
+    const workspace = row.closest(workspaceSelector);
     let frame = 0;
     const hide = () => {
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
@@ -173,32 +183,110 @@ export function useFloatingActionBar(
       bar.style.top = "";
       bar.style.left = "";
       bar.style.right = "";
+      bar.style.maxWidth = "";
+      delete bar.dataset.placement;
+    };
+    // A narrow side pane covers, but does not unmount, the channel. Only a
+    // second workspace can cover this one, so skip the hit test without it.
+    const covered = (anchor: DOMRect) => {
+      if (!workspace) return false;
+      const workspaces = document.querySelectorAll(workspaceSelector);
+      if (workspaces.length < 2) return false;
+      const front = document
+        .elementsFromPoint(
+          Math.max(
+            0,
+            Math.min(
+              anchor.x + anchor.width / 2,
+              document.documentElement.clientWidth - 1,
+            ),
+          ),
+          Math.max(0, Math.min(anchor.top + 1, window.innerHeight - 1)),
+        )
+        .find(
+          (element) =>
+            !bar.contains(element) && element.closest(workspaceSelector),
+        )
+        ?.closest(workspaceSelector);
+      return !!front && front !== workspace;
     };
     const position = () => {
-      const anchor = slot.getBoundingClientRect();
+      // A frame can outlive the document that held the bar (for example after
+      // the page content is replaced). showPopover throws on detached elements.
+      if (!bar.isConnected) return;
+      // Resolve the painted message again when edits replace text with media.
+      const visual =
+        row.querySelector<HTMLElement>("[data-message-action-anchor]") ??
+        row.querySelector("[data-message-attachments]")?.firstElementChild ??
+        slot;
+      // Read every rect before writing any style. A write between reads forces
+      // a synchronous layout of the whole timeline on each positioning frame.
+      const anchor = visual.getBoundingClientRect();
+      if (covered(anchor)) {
+        hide();
+        return;
+      }
       // A top-layer toolbar can retain hover above a portalled modal's backdrop.
       // Keep actions in the active viewer usable, but suppress background rows.
       if (behindActiveModal(row)) {
         hide();
         return;
       }
+      // Style reads are cheap here: the rect reads above already left layout clean.
+      const style = getComputedStyle(bar);
+      const overlap = Number.parseFloat(style.scrollMarginBlockStart) || 0;
+      const gap = Number.parseFloat(style.scrollMarginInlineEnd) || 0;
+      const rtl = getComputedStyle(row).direction === "rtl";
       const viewport = scroller?.getBoundingClientRect();
-      // The slot marks the toolbar bottom; CSS lifts it above the author line.
+      const rowBounds = row.getBoundingClientRect();
+      const start =
+        Math.max(0, viewport?.left ?? rowBounds.left) + (viewport ? gap : 0);
+      const end =
+        Math.min(
+          document.documentElement.clientWidth,
+          viewport?.right ?? rowBounds.right,
+        ) - (viewport ? gap : 0);
+      const maxWidth = `${Math.max(0, end - start)}px`;
+      let size = bar.getBoundingClientRect();
+      // Measure again only when this frame changes the bar's own layout.
+      if (bar.style.maxWidth !== maxWidth || !bar.matches(":popover-open")) {
+        bar.style.maxWidth = maxWidth;
+        bar.showPopover?.();
+        size = bar.getBoundingClientRect();
+      }
+      const { width } = size;
+      // Layout height: an opening scale transition must not move the bar.
+      const height = bar.offsetHeight;
+      const besideLeft = rtl
+        ? anchor.left - overlap - width
+        : anchor.right + overlap;
+      const center = anchor.top + anchor.height / 2;
+      const beside =
+        besideLeft >= start &&
+        besideLeft + width <= end &&
+        (!viewport ||
+          (center - height / 2 >= viewport.top &&
+            center + height / 2 <= viewport.bottom));
+      const placement = beside ? "beside" : "above";
+      if (bar.dataset.placement !== placement)
+        bar.dataset.placement = placement;
+      const top = beside ? center : anchor.top + overlap;
+      const paintedTop = top - height / (beside ? 2 : 1);
       if (
         viewport &&
-        (anchor.top <= viewport.top ||
-          anchor.top - bar.offsetHeight >= viewport.bottom)
+        (anchor.top <= viewport.top || paintedTop >= viewport.bottom)
       ) {
         hide();
         return;
       }
-      const rtl = getComputedStyle(row).direction === "rtl";
-      bar.style.top = `${anchor.top}px`;
-      bar.style.left = rtl ? `${anchor.left}px` : "auto";
-      bar.style.right = rtl
-        ? "auto"
-        : `${document.documentElement.clientWidth - anchor.right}px`;
-      bar.showPopover?.();
+      const left = beside
+        ? besideLeft
+        : rtl
+          ? anchor.left - overlap
+          : anchor.right - width + overlap;
+      bar.style.top = `${top}px`;
+      bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;
+      bar.style.right = "auto";
     };
     // A transition or animation on the slot or an ancestor (such as a sliding
     // drawer) moves it without resizing, mutating or scrolling anything.
@@ -242,6 +330,25 @@ export function useFloatingActionBar(
       "animationend",
       "animationcancel",
     ];
+    // Native top-layer boxes do not participate in their DOM ancestor's wheel
+    // scroll chain. Keep scrolling the owning history when actions are under
+    // the pointer; leave browser zoom gestures alone.
+    const wheel = (event: WheelEvent) => {
+      if (!scroller || event.ctrlKey || !bar.matches(":popover-open")) return;
+      const unit =
+        event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? scroller.clientHeight
+          : event.deltaMode === WheelEvent.DOM_DELTA_LINE
+            ? Number.parseFloat(getComputedStyle(scroller).lineHeight) || 16
+            : 1;
+      event.preventDefault();
+      scroller.scrollBy({
+        left: event.deltaX * unit,
+        top: event.deltaY * unit,
+        behavior: "instant",
+      });
+    };
+    bar.addEventListener("wheel", wheel, { passive: false });
     position();
     if (moving()) follow();
     for (const type of motionEvents)
@@ -251,6 +358,7 @@ export function useFloatingActionBar(
     const observer = new ResizeObserver(schedule);
     observer.observe(slot);
     observer.observe(row);
+    observer.observe(bar);
     // Sibling edits and media measurements move the slot without resizing any
     // observed node. The toolbar's own positioning writes must not retrigger it.
     const siblings = new MutationObserver((records) => {
@@ -269,6 +377,7 @@ export function useFloatingActionBar(
     // coalesced positioning update.
     const unobserveModals = observeModals(schedule);
     return () => {
+      bar.removeEventListener("wheel", wheel);
       cancelAnimationFrame(frame);
       for (const type of motionEvents)
         document.removeEventListener(type, motion, true);

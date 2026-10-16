@@ -2,7 +2,7 @@
 // profile panel): the type's own tabs, then the app's Attention and Memory tabs.
 // Hosted agents' tabs are their type's alone; an agent on another device has
 // none here.
-import { useState, type ReactNode } from "react";
+import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { ChannelChoice } from "./attention";
 import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
@@ -13,7 +13,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "./service";
-import { Button } from "../../shared/design-system/ui/Button";
+import { AgentSaveButton } from "./AgentSaveButton";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
@@ -31,6 +31,8 @@ export function agentSections({
   conversation,
   settingsHost,
   memories,
+  settingsSection,
+  settingsContent,
 }: {
   agents: Agents;
   agent: Agent;
@@ -38,6 +40,8 @@ export function agentSections({
   channels: readonly ChannelChoice[];
   conversation?: AgentConversation | undefined;
   settingsHost?: AgentSettingsHost;
+  settingsSection?: "identity" | "runtime";
+  settingsContent?: ReactNode;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
 }): readonly AgentSection[] {
@@ -55,6 +59,8 @@ export function agentSections({
     render: () => (
       <Component
         agent={agent}
+        {...(role === "settings" && settingsSection ? { settingsSection } : {})}
+        {...(role === "settings" && settingsContent ? { settingsContent } : {})}
         {...(conversation && { conversation })}
         save={(config) =>
           settingsHost?.pendingSave
@@ -78,11 +84,7 @@ export function agentSections({
       value: "agent:attention",
       label: "Attention",
       render: () => (
-        <AttentionPanel
-          agent={agent}
-          save={(change) => agents.save(agent.pubkey, change)}
-          channels={channels}
-        />
+        <AttentionSection agents={agents} agent={agent} channels={channels} />
       ),
     },
     {
@@ -94,6 +96,7 @@ export function agentSections({
 }
 
 function HostSettings({ host }: { host: AgentSettingsHost }) {
+  const form = useId();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const save = async () => {
@@ -110,6 +113,7 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
   };
   return (
     <form
+      id={form}
       className="grid gap-4"
       onSubmit={(event) => {
         event.preventDefault();
@@ -122,17 +126,37 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
           {error}
         </p>
       )}
-      <div>
-        <Button
-          type="submit"
-          variant="prominent"
-          loading={saving}
-          disabled={!host.pendingSave}
-          focusableWhenDisabled
-        >
-          Save
-        </Button>
-      </div>
+      <AgentSaveButton
+        form={form}
+        saving={saving}
+        disabled={!host.pendingSave}
+      />
     </form>
+  );
+}
+
+/** Follows classifier availability itself: a host that rerenders only when
+ * this agent changes would otherwise show a stale classifier warning. */
+function AttentionSection({
+  agents,
+  agent,
+  channels,
+}: {
+  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
+  agent: Agent;
+  channels: readonly ChannelChoice[];
+}) {
+  const classifier = useSyncExternalStore(
+    agents.subscribe,
+    () => agents.classifier(),
+    () => agents.classifier(),
+  );
+  return (
+    <AttentionPanel
+      agent={agent}
+      save={(change) => agents.save(agent.pubkey, change)}
+      channels={channels}
+      classifier={classifier}
+    />
   );
 }

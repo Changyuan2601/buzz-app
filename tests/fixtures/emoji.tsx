@@ -1,3 +1,4 @@
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // No broker, credentials or remote writes: real UI/session, ephemeral signed fixture events.
 import { Context } from "@deepseek-ai/cordis";
@@ -189,6 +190,16 @@ const sessions = ["a", "b"].map((community) => {
       tags: [["e", root.id]],
     }),
   );
+  const repeatedReactions = new URLSearchParams(location.search).has("repeated")
+    ? [member, keypair()].map((key, index) =>
+        signed(key, {
+          kind: 7,
+          content: "😂",
+          created_at: 30 + index,
+          tags: [["e", root.id]],
+        }),
+      )
+    : [];
   const ownReaction = signed(viewer, {
     kind: 7,
     content: "✅",
@@ -243,6 +254,7 @@ const sessions = ["a", "b"].map((community) => {
     reaction,
     ...(wrap ? [...wrapReactions, ownReaction] : []),
     ...longReactions,
+    ...repeatedReactions,
   ]);
   return {
     ...owner,
@@ -253,6 +265,7 @@ const sessions = ["a", "b"].map((community) => {
       reaction,
       ...(wrap ? [...wrapReactions, ownReaction] : []),
       ...longReactions,
+      ...repeatedReactions,
       broken,
       unloaded,
       single,
@@ -335,6 +348,7 @@ Object.assign(window, {
   },
 });
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [thread, setThread] = useState(false),
     [messageRevision, setMessageRevision] = useState(0);

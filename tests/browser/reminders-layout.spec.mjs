@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { build, preview } from "vite";
+import { expect, test } from "./playwright-test.mjs";
+import { build, preview } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -55,8 +55,8 @@ for (const width of [480, 390]) {
       const box = await row.boundingBox();
       const geometry = await row.evaluate((el) => ({
         overflow: el.scrollWidth - el.clientWidth,
-        // The row surface's first child holds the avatar and reminder text.
-        text: el.firstElementChild.firstElementChild.getBoundingClientRect()
+        // The message navigation target keeps the text width independent of completion.
+        text: el.querySelector("button.navigation-item").getBoundingClientRect()
           .width,
       }));
       expect(geometry.overflow, "row content stays inside the row").toBe(0);
@@ -84,6 +84,205 @@ for (const width of [480, 390]) {
       "the whole note is visible",
     ).toBe(0);
     expect((await note.boundingBox()).height).toBeGreaterThan(lineHeight * 3);
+    // Compact time and ellipsis triggers retain pointer menus in the real browser.
+    await rows
+      .first()
+      .getByRole("button", { name: "Snooze: Ada Lovelace" })
+      .click();
+    await expect(
+      page.getByRole("menuitem", { name: /^In 1 hour/ }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await rows
+      .first()
+      .getByRole("button", { name: "More actions: Ada Lovelace" })
+      .click();
+    await expect(
+      page.getByText("Ada Lovelace · #release-planning", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("menuitem", { name: "Open message", exact: true }),
+    ).toBeVisible();
+    const cancel = page.getByRole("menuitem", {
+      name: "Cancel reminder",
+      exact: true,
+    });
+    // Keyboard highlight uses the same danger fill as pointer highlight.
+    // Base UI ignores WebKit's zero-delta synthetic hover events.
+    await page
+      .getByRole("menuitem", { name: "Open message", exact: true })
+      .focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(cancel).toHaveAttribute("data-highlighted", "");
+    const danger = await cancel.evaluate((el) => ({
+      color: getComputedStyle(el).color,
+      icon: getComputedStyle(el.querySelector("svg")).color,
+      background: getComputedStyle(el).backgroundColor,
+    }));
+    expect(danger.icon).toBe(danger.color);
+    expect(danger.background).not.toBe("rgba(0, 0, 0, 0)");
+    await page.keyboard.press("Escape");
+    // Reduced motion keeps a visible static boundary, and keyboard activation
+    // still opens the same snooze choices after the border treatment changes.
+    const snooze = rows
+      .first()
+      .getByRole("button", { name: "Snooze: Ada Lovelace" });
+    const dashOffset = () =>
+      snooze
+        .locator("rect")
+        .evaluate((el) => getComputedStyle(el).strokeDashoffset);
+    const initialOffset = await dashOffset();
+    await expect.poll(dashOffset).not.toBe(initialOffset);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const border = await snooze.evaluate((el) => {
+      const outline = el.querySelector(".buzz-button-attention");
+      const stroke = getComputedStyle(outline.querySelector("rect"));
+      return {
+        animation: stroke.animationName,
+        stroke: stroke.stroke,
+        dashes: stroke.strokeDasharray,
+        opacity: Number(getComputedStyle(outline).opacity),
+      };
+    });
+    expect(border.animation).toBe("none");
+    expect(border.stroke).not.toBe("none");
+    expect(border.dashes).not.toBe("none");
+    expect(border.opacity).toBeGreaterThan(0);
+    await snooze.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("menuitem", { name: /^In 1 hour/ }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
     expect(errors).toEqual([]);
   });
 }
+
+test("completion preserves section alignment and avatar opens its conversation", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  // Keep the three scheduled demo rows in Today regardless of the runner's clock.
+  await page.clock.setFixedTime(new Date("2026-10-14T12:00:00Z"));
+  await page.goto(`${url}?width=900&demo`);
+  const today = page.getByRole("region", { name: "Today", exact: true });
+  // Pointer completion removes a whole section, then a row in a surviving one.
+  await page
+    .getByRole("region", { name: "Overdue" })
+    .getByRole("checkbox")
+    .click();
+  await expect(page.getByRole("region", { name: "Overdue" })).toHaveCount(0);
+  await today.getByRole("checkbox").first().click();
+  const done = page.getByRole("region", { name: "Done", exact: true });
+  await done.getByRole("button", { name: "Done 2" }).click();
+  await expect(done.getByRole("listitem")).toHaveCount(2);
+  const heading = (locator) =>
+    locator.evaluate((el) => {
+      const text = el.querySelector("span");
+      const style = getComputedStyle(text);
+      return {
+        x: text.getBoundingClientRect().x,
+        size: style.fontSize,
+        weight: style.fontWeight,
+        lineHeight: style.lineHeight,
+      };
+    });
+  expect(await heading(done.getByRole("heading"))).toEqual(
+    await heading(today.getByRole("heading")),
+  );
+  const centerX = (locator) =>
+    locator.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.x + rect.width / 2;
+    });
+  expect(await centerX(done.getByRole("heading").locator("svg"))).toBe(
+    await centerX(
+      today.getByRole("button", { name: "More actions: Ada Lovelace" }).first(),
+    ),
+  );
+  const textX = (region) =>
+    region
+      .getByRole("button", { name: "Open message from Ada Lovelace" })
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().x);
+  expect(await textX(done)).toBe(await textX(today));
+  await today
+    .getByRole("button", { name: "Open conversation: #release-planning" })
+    .first()
+    .click();
+  await expect(
+    page.getByText("Demo conversation", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByText("Share the final designs", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  // Keyboard completion is immediate and focus stays on another actionable row.
+  await today.getByRole("checkbox").first().focus();
+  await page.keyboard.press("Space");
+  await expect(today.getByRole("checkbox")).toHaveCount(1);
+  await expect(today.getByRole("checkbox")).toBeFocused();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await today.getByRole("checkbox").click();
+  await expect(
+    page.getByRole("region", { name: "Today", exact: true }),
+  ).toHaveCount(0);
+  await expect(done.getByRole("button", { name: "Done 4" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("pointer completion animates surviving rows in a scrolled list", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-10-14T12:00:00Z"));
+  await page.setViewportSize({ width: 1000, height: 260 });
+  await page.goto(`${url}?width=900&demo`);
+  const today = page.getByRole("region", { name: "Today", exact: true });
+  const checkbox = today.getByRole("checkbox").nth(1);
+  await checkbox.scrollIntoViewIfNeeded();
+  await checkbox.evaluate((el) => {
+    const section = el.closest("section");
+    const survivor = section.querySelectorAll("li")[2];
+    el.addEventListener(
+      "pointerdown",
+      () => {
+        const samples = [survivor.getBoundingClientRect().y];
+        const exitChecks = [];
+        window.completionFrames = { samples, exitChecks, finished: false };
+        const sample = () => {
+          samples.push(survivor.getBoundingClientRect().y);
+          if (el.isConnected && el.closest("[inert]")) {
+            exitChecks.push(el.getAttribute("aria-checked"));
+          }
+          if (
+            section.querySelectorAll("li").length === 2 &&
+            getComputedStyle(survivor).transform === "none"
+          ) {
+            window.completionFrames.finished = true;
+          } else requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      },
+      { once: true },
+    );
+  });
+  await checkbox.click();
+  await expect
+    .poll(() => page.evaluate(() => window.completionFrames?.finished))
+    .toBe(true);
+  const samples = await page.evaluate(() => window.completionFrames.samples);
+  const exitChecks = await page.evaluate(
+    () => window.completionFrames.exitChecks,
+  );
+  expect(exitChecks.length).toBeGreaterThan(0);
+  expect(exitChecks.every((checked) => checked === "true")).toBe(true);
+  const start = samples[0];
+  const end = samples.at(-1);
+  expect(start - end).toBeGreaterThan(20);
+  expect(
+    samples.some((y) => y < start - 1 && y > end + 1),
+    "the next row moves through intermediate positions instead of jumping into the fading row",
+  ).toBe(true);
+});

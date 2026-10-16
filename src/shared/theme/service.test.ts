@@ -1,3 +1,4 @@
+import { BUBBLE_COLOR_KEY, BUBBLE_COLORS } from "./bubble-color";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
@@ -43,8 +44,12 @@ function browser(stored: string | null = null, systemDark = false) {
     },
     requestAnimationFrame: (callback: () => void) => callback(),
     getComputedStyle: () => ({
-      getPropertyValue: () =>
-        root.dataset.colorMode === "dark" ? " #11181d " : " #e7f0ef ",
+      getPropertyValue: (name: string) =>
+        name === "--bg-app"
+          ? root.dataset.colorMode === "dark"
+            ? " #11181d "
+            : " #e7f0ef "
+          : "",
     }),
     addEventListener: (_: string, fn: (event: StorageEvent) => void) =>
       listeners.add(fn),
@@ -101,6 +106,8 @@ it.each([
       error: null,
       fontScale: 1,
       fontError: null,
+      bubbleColor: "neutral",
+      bubbleError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
@@ -274,4 +281,53 @@ it("font writes clamp, round, recover from failure, sync and preserve color stor
   app.dispose();
   app.setFontScale(2);
   expect(app.snapshot().fontScale).toBe(1);
+});
+
+it.each<[string, string]>([
+  ...BUBBLE_COLORS.map((color): [string, string] => [color, color]),
+  ["cyan", "blue"],
+  ["indigo", "blue"],
+  ["red", "pink"],
+  ["purple", "lilac"],
+  ["invalid", "neutral"],
+  ["#ffffff", "neutral"],
+])(
+  "restores bubble color %s as %s before and after startup",
+  (value, expected) => {
+    const b = browser();
+    b.values.set(BUBBLE_COLOR_KEY, value);
+    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+      localStorage: b.storage,
+      document: b.host.document,
+      matchMedia: b.host.matchMedia,
+    });
+    const initial = b.root.dataset.bubbleColor;
+    const app = createAppearance(b.host);
+    expect(initial).toBe(expected);
+    expect(app.snapshot().bubbleColor).toBe(expected);
+    expect(b.root.dataset.bubbleColor).toBe(initial);
+    app.dispose();
+  },
+);
+it("saves bubble color, recovers from denied storage, synchronizes reset, and disposes", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  b.storage.setItem.mockImplementationOnce(() => {
+    throw new Error("denied");
+  });
+  app.setBubbleColor("blue");
+  expect(b.root.dataset.bubbleColor).toBe("blue");
+  expect(app.snapshot().bubbleError).not.toBeNull();
+  app.setBubbleColor("blue");
+  expect(b.values.get(BUBBLE_COLOR_KEY)).toBe("blue");
+  expect(app.snapshot().bubbleError).toBeNull();
+  b.values.set(BUBBLE_COLOR_KEY, "purple");
+  b.change(BUBBLE_COLOR_KEY);
+  expect(app.snapshot().bubbleColor).toBe("lilac");
+  b.values.delete(BUBBLE_COLOR_KEY);
+  b.change(null);
+  expect(app.snapshot().bubbleColor).toBe("neutral");
+  app.dispose();
+  app.setBubbleColor("pink");
+  expect(b.root.dataset.bubbleColor).toBe("neutral");
 });

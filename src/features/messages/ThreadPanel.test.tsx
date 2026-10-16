@@ -11,6 +11,7 @@ import {
 import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import { useActivityLanePublisher } from "./activity-lane";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -582,6 +583,93 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
+it("separates the original from replies with the relay's reply total", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, replyCount: 0 };
+  h.snapshot.status = "loading";
+  h.render();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+  h.snapshot.status = "ready";
+  // An unavailable exact target stops the read before any replies are read.
+  for (const targetStatus of ["unavailable", "loading", "error"] as const) {
+    h.snapshot.targetStatus = targetStatus;
+    h.render();
+    expect(
+      screen.queryByText("Replies", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  }
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+  h.snapshot.targetStatus = undefined;
+  h.render();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+
+  // Empty presentation never proves empty history, including after a repair
+  // or selection reset leaves ready with no continuation or error evidence.
+  for (const { canLoadMore, limited } of [
+    { canLoadMore: true, limited: false },
+    { canLoadMore: false, limited: true },
+    { canLoadMore: false, limited: false },
+  ]) {
+    h.snapshot.canLoadMore = canLoadMore;
+    h.snapshot.limited = limited;
+    h.render();
+    expect(
+      screen.queryByText("Replies", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  }
+
+  // A server total alone is not something to separate from the original.
+  h.snapshot.root = { ...row, replyCount: 11 };
+  h.render();
+  expect(screen.queryByText("11 replies")).not.toBeInTheDocument();
+  h.snapshot.root = { ...row, replyCount: 0 };
+
+  // A just-sent reply can arrive before the relay's summary counts it.
+  h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
+  h.render();
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+
+  // The total comes from the summary, not from the replies loaded so far.
+  h.snapshot.root = { ...row, replyCount: 11 };
+  h.render();
+  const divider = screen.getByText("11 replies");
+  const root = screen.getByText("root");
+  const reply = screen.getByText("first reply");
+  expect(
+    root.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    divider.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  h.snapshot.root = { ...row, replyCount: 1 };
+  h.render();
+  expect(screen.getByText("1 reply")).toBeVisible();
+
+  h.snapshot.replies = [];
+  h.render();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
+  h.render();
+  expect(screen.getByText("1 reply")).toBeVisible();
+
+  h.snapshot.root = undefined;
+  h.render();
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+});
+
 it("keeps older-page loading quiet and retry between root and replies", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";
@@ -746,15 +834,66 @@ it("counts replies recovered after a completed traversal, not initial history pa
   expect(screen.getByRole("button", { name: "2 new messages" })).toBeVisible();
 });
 
+it("reserves the jump button's activity lane only for this thread's composer in a live channel", () => {
+  const h = messagesHarness();
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  let list: ChannelList = {
+    status: "ready",
+    channels: [{ id: "channel", name: "General" }],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: subscribe },
+  });
+  // The composer is mocked here; publish what its TypingIndicator would.
+  function Shown({ threadRootId }: { threadRootId: string | undefined }) {
+    useActivityLanePublisher(h.session, "channel", threadRootId, true);
+    return null;
+  }
+  h.render();
+  h.scroll(500);
+  const lane = () =>
+    screen
+      .getByRole("button", { name: "Jump to latest" })
+      .closest("[data-visible]");
+  const live = lane();
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  // Channel-level activity shows in the channel composer, not this thread's.
+  const channelLevel = render(<Shown threadRootId={undefined} />);
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  channelLevel.unmount();
+  const thread = render(<Shown threadRootId={row.id} />);
+  expect(live).toHaveAttribute("data-activity-lane");
+  // A cached channel's composer mounts no TypingIndicator, so no lane; the
+  // gate flip keeps the same button mounted.
+  list = {
+    status: "ready",
+    channels: [{ id: "channel", name: "General", cached: true }],
+  };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  expect(lane()).toBe(live);
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  thread.unmount();
+});
+
 it("transfers keyboard focus to the thread history before removing the jump button", () => {
   const h = messagesHarness();
   h.render();
   h.scroll(500);
   const jump = screen.getByRole("button", { name: "Jump to latest" });
+  expect(h.element).toHaveAttribute("data-jump-visible");
   jump.focus();
   fireEvent.click(jump);
   expect(h.element).toHaveFocus();
   expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  expect(h.element).not.toHaveAttribute("data-jump-visible");
 });
 
 it("routes media in replies through the resolved root review workspace", () => {

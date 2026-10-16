@@ -5,6 +5,8 @@ import react from "@vitejs/plugin-react";
 // viewer's core-only import guard remains unchanged.
 export default defineConfig({
   plugins: [react()],
+  // Keep simultaneous specimen and desktop servers from invalidating each other.
+  cacheDir: "node_modules/.vite-message-gallery",
   publicDir: false,
   base: "./",
   build: {

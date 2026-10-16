@@ -16,7 +16,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
+import { createRelaySession } from "../relay/session";
+import { matchesEvent } from "../relay/projection";
+import { keypair, signed } from "../relay/testing";
+import { sessionDescription } from "../sessions/metadata";
 import { ConversationPresentation } from "./ConversationPresentation";
+import { LinkThreadTabContext } from "./LinkLabelContext";
 
 afterEach(() => {
   cleanup();
@@ -184,7 +189,9 @@ it("reports a clipboard failure and allows an explicit retry", async () => {
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 
-it.each(["buzz://channel/alpha"])(
+const messageId = "a".repeat(64);
+const threadLink = `buzz://message?channel=alpha&id=${messageId}`;
+it.each(["buzz://channel/alpha", threadLink])(
   "leaves non-HTTP(S) link context menus alone: %s",
   (target) => {
     const { anchor } = mount(target);
@@ -197,6 +204,48 @@ it.each(["buzz://channel/alpha"])(
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   },
 );
+
+it("opens a message link's thread in a tab from its context menu, else as a click would", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const openThreadTab = vi.fn(() => true);
+  const onOpenLink = vi.fn(() => true);
+  const rootId = "b".repeat(64);
+  const tree = (target: string) => (
+    <ToastProvider>
+      <LinkThreadTabContext value={openThreadTab}>
+        <MessageLink
+          url={target}
+          registry={undefined}
+          onOpenLink={onOpenLink}
+        />
+      </LinkThreadTabContext>
+    </ToastProvider>
+  );
+  const view = render(tree(threadLink));
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await screen.findByRole("menu");
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Open link", "Copy link"]);
+  await user.click(screen.getByRole("menuitem", { name: "Open link" }));
+  expect(openThreadTab).toHaveBeenCalledWith("alpha", messageId, messageId);
+  expect(onOpenLink).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
+  await waitFor(() => expect(write).toHaveBeenCalledWith(threadLink));
+  // A reply's link names its root; a workspace that can't show it falls back.
+  openThreadTab.mockReturnValue(false);
+  const reply = `${threadLink}&thread=${rootId}`;
+  view.rerender(tree(reply));
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await user.click(await screen.findByRole("menuitem", { name: "Open link" }));
+  expect(openThreadTab).toHaveBeenLastCalledWith("alpha", messageId, rootId);
+  expect(onOpenLink).toHaveBeenCalledWith(reply);
+});
 
 it("leaves noninteractive message content without a menu or anchor", () => {
   mount(url, false);
@@ -287,4 +336,85 @@ it("does not present or replay copy feedback completed in an inactive conversati
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
   view.rerender(tree(true));
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+});
+
+it("a signed details rename keeps generated link bytes, numeric label and navigation unchanged", async () => {
+  const id = "11111111-1111-4111-8111-111111111111",
+    viewer = keypair(),
+    relay = keypair();
+  let clock = 100,
+    name = "First prompt",
+    about = sessionDescription();
+  const record = (kind: number, tags: string[][]) =>
+    signed(relay, {
+      kind,
+      created_at: clock,
+      content: "",
+      tags: [["d", id], ...tags],
+    });
+  const events = () => [
+    record(39000, [
+      ["name", name],
+      ["t", "stream"],
+      ["private"],
+      ["about", about],
+    ]),
+    record(39001, [["p", viewer.pubkey, "owner"]]),
+    record(39002, [["p", viewer.pubkey, "", "owner"]]),
+  ];
+  const publish = vi.fn(async () => {});
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async (filters) =>
+      events().filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      ),
+    channelDetails: {
+      sign: async (template) => signed(viewer, template),
+      publish: async (event) => {
+        name = event.tags.find(([key]) => key === "name")?.[1] ?? name;
+        about = event.tags.find(([key]) => key === "about")?.[1] ?? about;
+        clock++;
+      },
+    },
+    writer: {
+      kinds: [9, 9007],
+      sign: async (template) => signed(viewer, template),
+      publish,
+    },
+  });
+  try {
+    owner.session.channels.ensureList();
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    const label = `Session · ${id.slice(0, 8)}`;
+    render(
+      <MessageLink
+        session={owner.session}
+        url={`buzz://channel/${id}`}
+        registry={undefined}
+        onOpenLink={() => true}
+        label={label}
+      >
+        {label}
+      </MessageLink>,
+    );
+    const anchor = screen.getByRole("link", { name: label });
+    const base = await owner.session.channelDetails.load(id);
+    await act(async () =>
+      owner.session.channelDetails.save(base, {
+        ...base,
+        name: "Accessible contrast",
+      }),
+    );
+    expect(await screen.findByRole("link", { name: label })).toBe(anchor);
+    expect(anchor).toHaveAttribute("data-link-label", label);
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
 });

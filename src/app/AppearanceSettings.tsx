@@ -1,5 +1,12 @@
+import {
+  BUBBLE_COLORS,
+  messageButtonStyle,
+} from "../shared/theme/bubble-color";
 import { IconButton } from "../shared/design-system/ui/IconButton";
-import { ArrowCounterClockwiseIcon } from "../shared/design-system/icons";
+import {
+  ArrowCounterClockwiseIcon,
+  CheckIcon,
+} from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -36,10 +43,8 @@ export function AppearanceSettings({
     pendingFocus.current = null;
     if (target?.isConnected) target.focus();
   });
-  const { preference, error, fontScale, fontError } = useSyncExternalStore(
-    appearance.subscribe,
-    appearance.snapshot,
-  );
+  const { preference, error, fontScale, fontError, bubbleColor, bubbleError } =
+    useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
@@ -50,6 +55,7 @@ export function AppearanceSettings({
             trailing={
               <ThemePicker
                 value={preference}
+                messageColor={bubbleColor}
                 onValueChange={appearance.setMode}
               />
             }
@@ -100,7 +106,71 @@ export function AppearanceSettings({
               </fieldset>
             }
           />
+          <PreferenceRow
+            title="Message bubbles"
+            trailing={(label) => (
+              <fieldset
+                {...label}
+                className="m-0 min-w-0 max-w-full border-0 p-0"
+              >
+                <div
+                  data-message-colors
+                  className="grid auto-cols-max grid-flow-col gap-2 overflow-x-auto p-1 scroll-p-1 [&>button]:scroll-m-1"
+                >
+                  {BUBBLE_COLORS.map((color) => {
+                    const colorLabel =
+                      color === "neutral"
+                        ? "Default"
+                        : `${color.charAt(0).toUpperCase()}${color.slice(1)}`;
+                    return (
+                      <IconButton
+                        key={color}
+                        data-bubble-color={color}
+                        style={messageButtonStyle}
+                        variant="primary"
+                        size="sm"
+                        shape="round"
+                        aria-label={`${colorLabel} message color`}
+                        title={colorLabel}
+                        aria-pressed={bubbleColor === color}
+                        onFocus={(event) =>
+                          event.currentTarget.scrollIntoView({
+                            block: "nearest",
+                            inline: "nearest",
+                          })
+                        }
+                        onClick={() => appearance.setBubbleColor(color)}
+                        icon={
+                          <CheckIcon
+                            aria-hidden="true"
+                            className={
+                              bubbleColor === color
+                                ? "opacity-100"
+                                : "opacity-0"
+                            }
+                          />
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </fieldset>
+            )}
+          />
         </SettingsGroup>
+        {active && bubbleError && (
+          <ToastNotice
+            title="Message color wasn’t saved"
+            description={bubbleError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setBubbleColor(bubbleColor)}
+            >
+              Retry saving message color
+            </Button>
+          </ToastNotice>
+        )}
         {active && fontError && (
           <ToastNotice
             title="Interface size wasn’t saved"

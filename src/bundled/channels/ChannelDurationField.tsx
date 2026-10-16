@@ -7,18 +7,35 @@ import styles from "./ChannelDurationField.module.css";
 
 const durations = [86400, 604800, 1209600];
 
+/** Exact temporary lifetime in its largest whole unit, such as "7 days". */
+export function channelDurationLabel(ttlSeconds: number) {
+  const [duration, unit] =
+    ttlSeconds === 1209600
+      ? [2, "week"]
+      : ttlSeconds % 86400 === 0
+        ? [ttlSeconds / 86400, "day"]
+        : ttlSeconds % 3600 === 0
+          ? [ttlSeconds / 3600, "hour"]
+          : ttlSeconds % 60 === 0
+            ? [ttlSeconds / 60, "minute"]
+            : [ttlSeconds, "second"];
+  return `${duration} ${unit}${duration === 1 ? "" : "s"}`;
+}
+
 /** Draft-only lifetime controls shared by Create and Edit. */
 export function ChannelDurationField({
   temporary,
   ttlSeconds,
   disabled = false,
   error,
+  label: fieldLabel,
   onChange,
 }: {
   temporary: boolean;
   ttlSeconds: number;
   disabled?: boolean;
   error?: string | undefined;
+  label?: string;
   onChange(ttlSeconds: number | undefined): void;
 }) {
   const reduceMotion = useReducedMotion();
@@ -32,19 +49,13 @@ export function ChannelDurationField({
   };
   const shorter = [...durations].reverse().find((value) => value < ttlSeconds);
   const longer = durations.find((value) => value > ttlSeconds);
-  const [duration, unit] =
-    ttlSeconds === 1209600
-      ? [2, "week"]
-      : ttlSeconds % 86400 === 0
-        ? [ttlSeconds / 86400, "day"]
-        : ttlSeconds % 3600 === 0
-          ? [ttlSeconds / 3600, "hour"]
-          : ttlSeconds % 60 === 0
-            ? [ttlSeconds / 60, "minute"]
-            : [ttlSeconds, "second"];
-  const label = `${duration} ${unit}${duration === 1 ? "" : "s"}`;
+  const label = channelDurationLabel(ttlSeconds);
   return (
-    <Field label={<span className="sr-only">Duration</span>} error={error}>
+    <Field
+      label={fieldLabel ?? "Duration"}
+      labelVisibility={fieldLabel ? "visible" : "hidden"}
+      error={error}
+    >
       <RadioGroup
         value={temporary ? "temporary" : "ongoing"}
         disabled={disabled}
@@ -57,30 +68,34 @@ export function ChannelDurationField({
           value="ongoing"
           variant="card"
           label="Ongoing"
-          description="Keeps its history until you archive it."
+          description="No automatic archive."
         />
         <div className={styles.temporary}>
           <Radio
             value="temporary"
             variant="card"
-            label="Temporary"
+            label={<span className={styles.temporaryLabel}>Temporary</span>}
             description={
               <>
                 <span className="sr-only">
                   {temporary
-                    ? `Cleans up after ${label} without activity.`
-                    : "Cleans up without activity."}
+                    ? `Archives after ${label} without activity.`
+                    : "Archives without activity."}
                 </span>
                 <span aria-hidden="true">
-                  Cleans up{" "}
+                  Archives{" "}
                   <motion.span
                     className={styles.durationReveal}
                     initial={false}
                     animate={{
                       width: temporary ? "auto" : 0,
                       opacity: temporary ? 1 : 0,
+                      whiteSpace: "nowrap",
+                      transitionEnd: {
+                        whiteSpace: temporary ? "normal" : "nowrap",
+                      },
                     }}
-                    transition={transition}
+                    transition={{ ...transition, whiteSpace: { duration: 0 } }}
                   >
                     <strong className={styles.duration}>after {label}</strong>
                     {"\u00a0"}

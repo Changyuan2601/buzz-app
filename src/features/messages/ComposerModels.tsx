@@ -1,6 +1,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { Slider } from "@base-ui/react/slider";
 import {
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -33,16 +34,40 @@ export function ComposerModels({
   value,
   disabled,
   onChange,
+  onResolved,
 }: {
   pubkeys: readonly string[];
   value: MentionPicks;
   disabled: boolean;
   onChange(value: MentionPicks): void;
+  onResolved(value: MentionPicks): void;
 }) {
   const [open, setOpen] = useState(false);
   const choices = useMentionModels(pubkeys);
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  // Publish the displayed defaults separately from the user's draft picks.
+  // A settings refresh or model-only pick must still follow the new default.
+  useLayoutEffect(() => {
+    const resolved: Record<string, RunPick> = { ...value };
+    for (const choice of choices) {
+      if (choice.loading || !choice.sendDefaults) continue;
+      const saved = value[choice.pubkey] ?? {};
+      const runs = runModel(choice, saved.model);
+      if (!runs.id) continue;
+      const effort = runs.efforts.some((item) => item.id === saved.effort)
+        ? saved.effort
+        : runs.efforts.some((item) => item.id === runs.effort)
+          ? runs.effort
+          : undefined;
+      resolved[choice.pubkey] = {
+        model: runs.id,
+        ...(effort ? { effort } : {}),
+      };
+    }
+    onResolved(resolved);
+    return () => onResolved({});
+  }, [choices, value, onResolved]);
   if (!choices.length) return null;
   const picked = choices.flatMap((choice) => {
     const { model, effort } = value[choice.pubkey] ?? {};
@@ -202,7 +227,8 @@ function AgentChoice({
           {...(thumb ? { thumb } : {})}
         />
       ) : (
-        model
+        // Without a slider the model sits on its own tab, not on the thread.
+        <div className={styles.solo}>{model}</div>
       )}
     </div>
   );

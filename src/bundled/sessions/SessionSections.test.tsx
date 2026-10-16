@@ -6,23 +6,31 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
-import type { RelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SessionSections } from "./SessionSections";
 
+const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
   cleanup();
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(sectionName = "Work") {
+  const owner = createRelaySession(null);
+  owners.push(owner);
   let saved: SidebarPreferences = {
-    sections: [{ id: "work", name: "Work", order: 0 }],
+    sections: [{ id: "work", name: sectionName, order: 0 }],
     assignments: {},
     starred: [],
     muted: [],
@@ -76,12 +84,16 @@ function fixture() {
   const view = (
     preferences: ReturnType<typeof store>["queries"],
     scope = "viewer:community",
+    personal = false,
   ) => (
     <SessionSections
+      personal={personal}
       onNew={onNew}
       session={
         {
+          ...owner.session,
           sidebarPreferences: preferences,
+          mePreferences: preferences,
           canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
         } as unknown as RelaySession
@@ -115,8 +127,8 @@ it("creates and moves through the relay service, then restores in a fresh store"
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
   expect(
-    screen.queryByRole("menuitem", { name: "Session settings…" }),
-  ).toBeNull();
+    await screen.findByRole("menuitem", { name: "Session settings…" }),
+  ).toHaveAttribute("aria-disabled", "true");
   (await screen.findByRole("menuitem", { name: "Section" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
@@ -220,9 +232,11 @@ it("starts an unfiled session from the Sessions heading plus without collapsing 
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "New session" }));
   expect(h.onNew).toHaveBeenCalledWith(undefined);
-  expect(
-    screen.queryByRole("button", { name: "New session in Sessions" }),
-  ).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "New session in Sessions" }),
+  );
+  expect(h.onNew).toHaveBeenCalledTimes(2);
+  expect(h.onNew).toHaveBeenLastCalledWith(undefined);
   expect(screen.getByRole("button", { name: "Sessions" })).toHaveAttribute(
     "aria-expanded",
     "true",
@@ -289,4 +303,53 @@ it("only offers Sessions as a destination from a custom section", async () => {
   await user.click(screen.getByRole("menuitem", { name: "Sessions" }));
   await waitFor(() => expect(h.saved().assignments.session).toBeUndefined());
   store.dispose();
+});
+
+it("tabs through a section's overflow before its trailing new-session action", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  render(h.view(store.queries));
+  try {
+    const heading = await screen.findByRole("button", { name: "Work" });
+    heading.focus();
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Actions for Work" }),
+    ).toHaveFocus();
+    const header = heading.parentElement;
+    if (!header) throw new Error("Missing section header");
+    const newSession = within(header).getByRole("button", {
+      name: "New session in Work",
+    });
+    await user.tab();
+    expect(newSession).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("keeps an empty project's New chat label short while naming and opening the exact project", async () => {
+  const projectName =
+    "A very long project name that should not become the new chat label";
+  const h = fixture(projectName);
+  const store = h.store();
+  const user = userEvent.setup();
+  render(h.view(store.queries, "empty-project", true));
+  try {
+    const choices = await screen.findAllByRole("button", {
+      name: `New chat in ${projectName}`,
+    });
+    const row = choices.find((choice) => choice.textContent === "New chat");
+    expect(row).toBeDefined();
+    if (!row) throw new Error("Missing empty project action");
+    expect(row).toHaveAttribute("title", `New chat in ${projectName}`);
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
 });

@@ -33,6 +33,7 @@ import {
   normalizeInChannel,
   parseSearchOperators,
 } from "./parseSearchOperators";
+import { avatarMedia } from "../../shared/avatar-source";
 
 function conversationName(
   channel: ChannelSummary,
@@ -265,21 +266,10 @@ export function SearchResults({
         let lookupFailed = false;
         if (authorNeedle) {
           try {
-            remote = await session.read(
-              [
-                {
-                  kinds: [0],
-                  search: authorNeedle,
-                  search_mode: "prefix",
-                  limit: 40,
-                },
-              ],
-              {
-                signal: controller.signal,
-                priority: "foreground",
-                fresh: true,
-              },
-            );
+            remote = await session.searchProfiles(authorNeedle, {
+              limit: 40,
+              signal: controller.signal,
+            });
           } catch (error) {
             if (controller.signal.aborted) throw error;
             lookupFailed = true;
@@ -365,9 +355,9 @@ export function SearchResults({
               detail: pubkey.slice(0, 12),
               icon: ChatCircleIcon,
               avatar: {
-                src: session.media(
-                  profile.picture ?? agent?.avatar ?? "",
-                  "small",
+                src: avatarMedia(
+                  profile.picture ?? agent?.avatar,
+                  session.media,
                 ),
                 shape: isAgent ? ("squircle" as const) : ("circle" as const),
               },
@@ -754,9 +744,7 @@ export function SearchResults({
         {query.trim() &&
           !scopedChannelId &&
           (publicChannels.partial || operatorPublicChannels.partial) && (
-            <p>
-              Public channel results include only the first page of channels.
-            </p>
+            <p>Only the newest open channels were searched.</p>
           )}
         {!scopedChannelId && publicChannels.error && (
           <div>

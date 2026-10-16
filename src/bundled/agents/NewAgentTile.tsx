@@ -1,5 +1,7 @@
 import type { ComponentProps, Ref } from "react";
+import { CaretDownIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
+import { Button } from "../../shared/design-system/ui/Button";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import styles from "./AgentCard.module.css";
 
@@ -17,21 +19,25 @@ export function NewAgentTile({
   fullWidth = false,
   variant = "tile",
   labelRef,
+  label = "New agent",
   ...props
 }: Omit<ComponentProps<typeof SurfaceButton>, "className" | "children"> & {
+  /** What the tile makes, such as New team. */
+  label?: string;
   fullWidth?: boolean;
   variant?: "tile" | "button";
   labelRef?: Ref<HTMLSpanElement>;
 }) {
   if (variant === "button")
     return (
-      <SurfaceButton
-        {...props}
-        type="button"
-        className={`${styles.newLabel} text-label-sm`}
-      >
-        New agent
-      </SurfaceButton>
+      <Button {...props} type="button" variant="prominent" size="sm">
+        {label}
+        <CaretDownIcon
+          size={14}
+          className="buzz-dropdown-chevron"
+          aria-hidden="true"
+        />
+      </Button>
     );
   return (
     <SurfaceButton
@@ -59,7 +65,7 @@ export function NewAgentTile({
         })}
       </span>
       <span ref={labelRef} className={`${styles.newLabel} text-label-sm`}>
-        New agent
+        {label}
       </span>
     </SurfaceButton>
   );

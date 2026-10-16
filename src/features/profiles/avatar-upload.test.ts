@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { pngChunks, snapshotChunk } from "../messages/image-metadata";
-import { uploadAvatar } from "./avatar-upload";
+import { avatarPreview, uploadAvatar } from "./avatar-upload";
 
 const uploadAttachment = vi.fn(async (file: File) => ({
   type: file.type,
@@ -138,3 +138,16 @@ function snapshotPng(manifest: string): Uint8Array<ArrayBuffer> {
     ...pngChunk("IEND", new Uint8Array()),
   ]);
 }
+
+it("forwards the requested size so previews share the message-row thumbnail URL", () => {
+  const sha = "c".repeat(64);
+  const community = "https://relay.example.test";
+  const proxied = (target: string) =>
+    `/api/relay/${encodeURIComponent(community)}/media?url=${encodeURIComponent(target)}`;
+  const picture = `${community}/media/${sha}.png`;
+  expect(avatarPreview(picture, community, "small")).toBe(
+    proxied(`${community}/media/${sha}.thumb.jpg`),
+  );
+  // The editor keeps the original for its large frame.
+  expect(avatarPreview(picture, community)).toBe(proxied(picture));
+});

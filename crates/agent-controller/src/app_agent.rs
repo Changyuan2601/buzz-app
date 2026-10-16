@@ -48,6 +48,10 @@ pub struct AppAgent {
     /// channels and was archived, which the owner signs, not the agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    /// Its Delete started and has not finished. It keeps its key, so it cannot
+    /// be imported again, and no copy of the app runs it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleting: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -63,13 +67,16 @@ impl AppAgent {
     fn credential_id(&self) -> String {
         agent_id(&self.pubkey, &self.relay)
     }
-    /// The community's HTTP endpoints for writes, reads, uploads and media;
-    /// nothing else is ever sent to.
+    /// The community's HTTP endpoints for writes, reads, profile name search,
+    /// uploads and media; nothing else is ever sent to.
     pub fn events_url(&self) -> String {
         self.endpoint("/events")
     }
     pub fn query_url(&self) -> String {
         self.endpoint("/query")
+    }
+    pub fn profile_search_url(&self) -> String {
+        self.endpoint("/profiles/search")
     }
     pub fn upload_url(&self) -> String {
         self.endpoint("/upload")
@@ -187,12 +194,13 @@ impl AppAgent {
         Ok(tags)
     }
     /// NIP-98 authorization for posting `body` to this agent's community, as
-    /// a write (`/events`) or a read (`/query`).
+    /// a write (`/events`), a read (`/query`) or a profile name search
+    /// (`/profiles/search`).
     pub fn http_auth(&self, key: &Secret, url: &str, body: &[u8]) -> Result<serde_json::Value> {
         if key.pubkey() != self.pubkey {
             return Err("Agent identity changed".into());
         }
-        if url != self.events_url() && url != self.query_url() {
+        if url != self.events_url() && url != self.query_url() && url != self.profile_search_url() {
             return Err("Agents post only to their community".into());
         }
         key.profile_auth(url, body)
@@ -430,20 +438,20 @@ impl AppAgents {
             about: prepared.about,
             profile: None,
             deleted: false,
+            deleting: false,
         };
         let id = agent.credential_id();
         // A harness agent saved for the same community keeps this key under the
         // same ID. It is shared, never added again or deleted on failure here.
         let shared = prepared.adopted && credentials.read(&id, &agent.pubkey)?.is_some();
         self.update(|agents| {
-            if prepared.adopted {
-                if let Some(saved) = agents.iter().find(|saved| saved.pubkey == agent.pubkey) {
-                    return Err(if saved.deleted {
-                        "That agent is still being removed here; try again shortly".into()
-                    } else {
-                        "That agent is already here".into()
-                    });
-                }
+            // A deleted row awaiting its community cleanup is taken back.
+            if prepared.adopted
+                && agents
+                    .iter()
+                    .any(|saved| saved.pubkey == agent.pubkey && !saved.deleted)
+            {
+                return Err("That agent is already here".into());
             }
             agents.retain(|saved| saved.pubkey != agent.pubkey);
             agents.push(agent.clone());
@@ -505,6 +513,10 @@ impl AppAgents {
                 agent.profile = Some(profile);
             }
         })
+    }
+    /// Marks its Delete as started, which only finishing it clears.
+    pub fn begin_delete(&self, pubkey: &str) -> Result<()> {
+        self.edit(pubkey, |agent| agent.deleting = true)
     }
     /// Deletes the key, then marks the row deleted, so a failed deletion can be
     /// retried. Absence is success.

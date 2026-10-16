@@ -1,8 +1,11 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
   memo,
+  useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
@@ -14,16 +17,21 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import {
+  ChatCircleIcon,
+  ClockIcon,
+} from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
+import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
-import { UnreadBadge } from "./UnreadBadge";
+import { UnreadBadge, ordinaryUnread } from "./UnreadBadge";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noSessions: readonly ChannelSummary[] = [];
 
@@ -82,15 +90,42 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
     channel.id,
     working,
   );
+  const ordinary = useOrdinaryUnread(
+    session,
+    channel.id,
+    channel.channelType === "dm",
+  );
   return (
     <ChannelSidebarItemCore
       {...props}
       agents={agents}
       agentProfiles={agentProfiles}
       waiting={waiting}
+      ordinary={ordinary}
     />
   );
 });
+
+/** Only the boolean the row styles on; counts and thread activity stay in the badge. */
+function useOrdinaryUnread(
+  session: RelaySession,
+  channelId: string,
+  dm: boolean,
+) {
+  const target = useMemo(
+    () => ({ kind: "channel" as const, channelId }),
+    [channelId],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => session.unread.subscribe(target, listener),
+    [session, target],
+  );
+  const get = useCallback(
+    () => ordinaryUnread(session.unread.snapshot(target), dm),
+    [session, target, dm],
+  );
+  return useSyncExternalStore(subscribe, get, get);
+}
 
 function ChannelSidebarItemCore({
   channel,
@@ -121,10 +156,12 @@ function ChannelSidebarItemCore({
   agents,
   agentProfiles,
   waiting,
+  ordinary,
 }: ItemProps & {
   waiting: boolean;
   agents: readonly string[];
   agentProfiles: ReadonlyMap<string, Profile>;
+  ordinary: boolean;
 }) {
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
@@ -141,6 +178,8 @@ function ChannelSidebarItemCore({
   const row = (
     <ChannelSidebarRow
       channel={channel}
+      working={agents.length > 0}
+      ordinary={ordinary}
       dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" ? (
@@ -152,11 +191,7 @@ function ChannelSidebarItemCore({
             {channel.participants?.length === 1 ? (
               <span className={styles.dmAvatar} data-dm-identity="">
                 <Avatar
-                  src={
-                    profile?.picture
-                      ? session.media(profile.picture, "small")
-                      : undefined
-                  }
+                  src={avatarMedia(profile?.picture, session.media)}
                   alt=""
                   fallback={channel.name}
                   size="fill"
@@ -194,21 +229,26 @@ function ChannelSidebarItemCore({
         )
       }
       badge={
-        <span className={styles.indicatorStack} data-channel-indicators="">
-          <span className={styles.indicatorLayer}>
-            <UnreadBadge
-              session={session}
-              channelId={channel.id}
-              dm={channel.channelType === "dm"}
+        <>
+          <span className={styles.indicatorStack} data-channel-indicators="">
+            <span className={styles.indicatorLayer}>
+              <UnreadBadge
+                session={session}
+                channelId={channel.id}
+                dm={channel.channelType === "dm"}
+              />
+            </span>
+            <WorkingAgentsBadge
+              agents={agents}
+              profiles={agentProfiles}
+              channelName={channel.name}
+              waiting={waiting}
             />
           </span>
-          <WorkingAgentsBadge
-            agents={agents}
-            profiles={agentProfiles}
-            channelName={channel.name}
-            waiting={waiting}
-          />
-        </span>
+          {channel.ttlSeconds !== undefined && agents.length === 0 && (
+            <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
+          )}
+        </>
       }
       wrapSelect={(trigger) => {
         const activity = (
@@ -300,5 +340,21 @@ function ChannelSidebarItemCore({
         {menuContent ?? lastMenuContent.current}
       </MenuPopup>
     </ContextMenuRoot>
+  );
+}
+
+/** Quiet lifetime metadata; the working badge takes the trailing slot while agents work. */
+function TemporaryMarker({ ttlSeconds }: { ttlSeconds: number }) {
+  const label = `Temporary channel. Cleans up after ${channelDurationLabel(ttlSeconds)} without activity.`;
+  return (
+    <span
+      className={styles.temporaryMarker}
+      data-channel-temporary=""
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      <ClockIcon size={16} />
+    </span>
   );
 }

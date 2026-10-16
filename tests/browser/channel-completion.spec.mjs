@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,6 @@ test("channel completion preserves native editing, focus, popup geometry and sig
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     plugins: [react()],
     logLevel: "error",
     server: {
@@ -37,9 +36,16 @@ test("channel completion preserves native editing, focus, popup geometry and sig
     await expect
       .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
       .toBe(0);
-    const reads = await page.evaluate(
-      () => window.mentionFixture.reads().kinds.length,
-    );
+    // A `#` query reads the public channel directory after its typing pause.
+    // That read belongs to the query, so the baseline holds whichever side of
+    // the pause a keystroke lands.
+    const sessionReads = () =>
+      page.evaluate(() => {
+        const { kinds, queries } = window.mentionFixture.reads();
+        return kinds.filter((_, index) => !queries[index]);
+      });
+    const reads = await sessionReads();
+    expect(reads.length).toBeGreaterThan(0);
     const list = page.getByRole("listbox", { name: "Channel suggestions" });
     await input.pressSequentially("#");
     await expect(list.getByRole("option")).toHaveCount(2);
@@ -89,9 +95,7 @@ test("channel completion preserves native editing, focus, popup geometry and sig
     expect(
       await page.evaluate(() => window.mentionFixture.publications),
     ).toEqual([]);
-    expect(
-      await page.evaluate(() => window.mentionFixture.reads().kinds.length),
-    ).toBe(reads);
+    expect(await sessionReads()).toEqual(reads);
     // Stable IDs and source survive draft persistence, not just the mounted input.
     await page.reload();
     await expect(input).toHaveJSProperty(
@@ -185,7 +189,6 @@ test("channel completion finds an open channel the viewer has not joined", async
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     plugins: [react()],
     logLevel: "error",
     server: {

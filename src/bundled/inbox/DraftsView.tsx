@@ -1,3 +1,8 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import {
+  ConversationChannel,
+  ConversationThread,
+} from "../../features/conversation/Conversation";
 import {
   type ReactNode,
   useEffect,
@@ -8,7 +13,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { ChannelPreview } from "./ChannelPreview";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -25,6 +29,7 @@ import {
   subscribeView,
 } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   PanelHeader,
@@ -42,12 +47,14 @@ import {
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function DraftsView({
   session,
   scope,
   navigator,
   extensions,
+  host,
   onEmptyRetire,
   toolbar,
   resizeHandle,
@@ -56,6 +63,7 @@ export function DraftsView({
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  host: ConversationHostServices;
   onEmptyRetire(): void;
   toolbar: ReactNode;
   resizeHandle?: ReactNode;
@@ -236,9 +244,13 @@ export function DraftsView({
       {toolbar}
       <div className={styles.draftList}>
         {!entries.length && !saved.unavailable && !active && (
-          <p role="status" className={styles.notice}>
-            No drafts
-          </p>
+          <div role="status" className={styles.empty}>
+            <EmptyState
+              icon={<ChatCircleIcon />}
+              title="No drafts"
+              description="Messages you start writing appear here."
+            />
+          </div>
         )}
         <ul className={styles.list} aria-label="Drafts">
           {visible.map((entry) => {
@@ -263,7 +275,7 @@ export function DraftsView({
                         size="default"
                         alt=""
                         fallback={label}
-                        src={artwork ? session.media(artwork) : undefined}
+                        src={avatarMedia(artwork, session.media)}
                         shape={
                           profiles.get(first)?.isAgent ? "squircle" : "circle"
                         }
@@ -393,37 +405,34 @@ export function DraftsView({
             )}
             <div className={styles.draftEditor}>
               {activeChannel ? (
-                active.coordinates.threadRootId ? (
-                  <ThreadPanel
-                    key={active.key}
-                    session={session}
-                    scope={session.scope}
-                    extensions={extensions}
-                    channelId={activeChannel.id}
-                    channelName={activeChannel.name}
-                    messageId={active.coordinates.threadRootId}
-                    requireReadyRoot
-                    onDraftSaved={retire}
-                    sessionConversation={
-                      activeChannel.channelType === "session"
-                    }
-                    onOpenLink={() => false}
-                  />
-                ) : (
-                  <ChannelPreview
-                    key={active.key}
-                    session={session}
-                    extensions={extensions}
-                    channelId={activeChannel.id}
-                    channelName={
-                      activeChannel.channelType === "dm"
-                        ? `DM with ${destination(activeChannel)}`
-                        : activeChannel.name
-                    }
-                    draft
-                    onDraftSaved={retire}
-                  />
-                )
+                <ConversationChannel
+                  key={active.key}
+                  session={session}
+                  scope={session.scope}
+                  extensions={extensions}
+                  host={host}
+                  threadId={active.coordinates.threadRootId}
+                  channel={activeChannel}
+                  active={false}
+                >
+                  {active.coordinates.threadRootId ? (
+                    <ConversationThread
+                      messageId={active.coordinates.threadRootId}
+                      requireReadyRoot
+                      onDraftSaved={retire}
+                    />
+                  ) : (
+                    <ChannelPreview
+                      channelName={
+                        activeChannel.channelType === "dm"
+                          ? `DM with ${destination(activeChannel)}`
+                          : activeChannel.name
+                      }
+                      draft
+                      onDraftSaved={retire}
+                    />
+                  )}
+                </ConversationChannel>
               ) : (
                 <p role="status" className="text-body text-subtle">
                   This conversation is unavailable. Your draft is unchanged.

@@ -21,7 +21,7 @@ import {
 export class ChannelLifecycleUnconfirmed extends Error {
   constructor(reason: unknown) {
     super(
-      `The request may have taken effect. Close this dialog and refresh channels before trying again. ${reason instanceof Error ? reason.message : String(reason)}`,
+      `The request may have taken effect. Refresh channels before trying again. ${reason instanceof Error ? reason.message : String(reason)}`,
     );
     this.name = "ChannelLifecycleUnconfirmed";
   }

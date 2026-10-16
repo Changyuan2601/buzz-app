@@ -53,6 +53,7 @@ import {
   type Status,
 } from "./model";
 import styles from "./Todos.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export type TodoPeople = {
   channels: Pick<
@@ -337,9 +338,7 @@ export function TodosPanel({
         alt=""
         fallback={name}
         shape={profile?.isAgent ? "squircle" : "circle"}
-        src={
-          profile?.picture ? people.media(profile.picture, "small") : undefined
-        }
+        src={avatarMedia(profile?.picture, people.media)}
       />
     );
   };

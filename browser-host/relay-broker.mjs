@@ -81,7 +81,9 @@ import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
+  assertSidebarSectionOrderIntent,
   assertSidebarSectionRemovalIntent,
+  mutateSidebarSectionOrder,
   mutateSidebarSectionRemoval,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
@@ -1143,6 +1145,7 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-assignment",
               "/api/relay/sidebar-section-removal",
+              "/api/relay/sidebar-section-order",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
               "/api/relay/sidebar-mute",
@@ -1154,6 +1157,11 @@ export function relayBrokerPlugin({
                 "channel-sections",
                 assertSidebarSectionRemovalIntent,
                 mutateSidebarSectionRemoval,
+              ],
+              "/api/relay/sidebar-section-order": [
+                "channel-sections",
+                assertSidebarSectionOrderIntent,
+                mutateSidebarSectionOrder,
               ],
               "/api/relay/sidebar-assignment": [
                 "channel-sections",
@@ -1178,11 +1186,14 @@ export function relayBrokerPlugin({
             }[route];
             const sorting = coordinate === "channel-sort";
             const muting = coordinate === "channel-mutes";
+            // Sort and order intents carry up to 100 section IDs.
+            const listing =
+              sorting || route === "/api/relay/sidebar-section-order";
             const chunks = [];
             let bytes = 0;
             for await (const part of req) {
               bytes += part.length;
-              if (bytes > (sorting ? 32 * 1024 : 2048))
+              if (bytes > (listing ? 32 * 1024 : 2048))
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
@@ -1423,6 +1434,7 @@ export function relayBrokerPlugin({
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,
+              sidebarSectionOrder: true,
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,
@@ -1976,6 +1988,7 @@ export function relayBrokerPlugin({
               "/api/relay/member",
               "/api/relay/leave",
               "/api/relay/gifs",
+              "/api/relay/profile-search",
               "/api/relay/workflow-runs",
               "/api/relay/project-git",
             ].includes(route) ||
@@ -2275,6 +2288,7 @@ export function relayBrokerPlugin({
           const member = route === "/api/relay/member";
           const leave = route === "/api/relay/leave";
           const gifs = route === "/api/relay/gifs";
+          const profileSearch = route === "/api/relay/profile-search";
           // Only these routes may surface an exact, allowed relay refusal.
           const refusal =
             invite || member
@@ -2310,6 +2324,33 @@ export function relayBrokerPlugin({
               !/^[a-zA-Z0-9-]{2,35}$/.test(filters.locale)
             )
               return json(res, 400, { error: "Invalid GIF search" });
+          }
+          if (profileSearch) {
+            // Forward only the relay's name-search shape.
+            if (
+              !filters ||
+              typeof filters !== "object" ||
+              Object.keys(filters).some(
+                (key) => !["query", "limit", "page"].includes(key),
+              ) ||
+              typeof filters.query !== "string" ||
+              !filters.query.trim() ||
+              // The relay counts code points in the trimmed query.
+              [...filters.query.trim()].length > 100 ||
+              !Number.isSafeInteger(filters.limit) ||
+              filters.limit < 1 ||
+              filters.limit > 100 ||
+              (filters.page !== undefined &&
+                (!Number.isSafeInteger(filters.page) ||
+                  filters.page < 1 ||
+                  filters.page > 1000))
+            )
+              return json(res, 400, { error: "Invalid profile search" });
+            filters = {
+              query: filters.query,
+              limit: filters.limit,
+              ...(filters.page === undefined ? {} : { page: filters.page }),
+            };
           }
           if (profile) {
             if (
@@ -2590,6 +2631,7 @@ export function relayBrokerPlugin({
             !member &&
             !leave &&
             !gifs &&
+            !profileSearch &&
             !workflowPath &&
             !readPublishing &&
             !snapshot &&
@@ -2659,15 +2701,17 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || directMessage || member || leave
-                ? "/events"
-                : claim
-                  ? "/api/invites/claim"
-                  : policy
-                    ? "/api/invites/accept-policy"
-                    : invite
-                      ? "/api/invites"
-                      : "/query");
+              : profileSearch
+                ? "/profiles/search"
+                : profile || directMessage || member || leave
+                  ? "/events"
+                  : claim
+                    ? "/api/invites/claim"
+                    : policy
+                      ? "/api/invites/accept-policy"
+                      : invite
+                        ? "/api/invites"
+                        : "/query");
           const method = workflowPath ? "GET" : "POST";
           const lane = admissions(relay, viewer).api;
           let releasePresence;
@@ -2754,7 +2798,7 @@ export function relayBrokerPlugin({
                   request,
                   requestSignal,
                   channelActivity ||
-                    (route === "/api/relay/query" &&
+                    ((route === "/api/relay/query" || profileSearch) &&
                       req.headers["x-buzz-read-priority"] === "background")
                     ? "background"
                     : "foreground",

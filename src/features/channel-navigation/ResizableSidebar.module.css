@@ -1,0 +1,18 @@
+/* The shell's shared panel gutter follows the sidebar. Center the existing hit
+   target in that gutter without changing its width or the sidebar's geometry. */
+.handle[aria-orientation="vertical"] {
+  --resize-grip-opacity: 0.5;
+  translate: calc(-1 * var(--space-panel-gap) / 2) 0;
+}
+.handle[aria-orientation="vertical"]::after {
+  left: 50%;
+}
+/* AppShell uses the same physical breakpoint for navigation and resizing. */
+@media (max-width: 650px) {
+  .handle[aria-orientation="vertical"] {
+    width: 0.25rem;
+    margin: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}

@@ -46,9 +46,9 @@ export type AgentReads = Readonly<{
   channelName(id: string): string | undefined;
   /** The key the community signs workflow messages with, if known. */
   workflowAuthority(): string | undefined;
-  /** The agent's memory; `partial` when the entries may be incomplete.
-   * `signal` stops the read. */
-  memoryListing(signal: AbortSignal): Promise<MemoryListing>;
+  /** The agent's memory, or only entry `slug` when given; `partial` when the
+   * entries may be incomplete. `signal` stops the read. */
+  memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
   /** Whether a mention in this channel continues `owner`'s Me chat. Only the
    * owner's own connection can tell; other readers answer false. */
   meChat(
@@ -98,7 +98,7 @@ export function ownerReads(
     workflowAuthority: () => session.workflowAuthority,
     meChat: (owner: string, channelId: string, signal: AbortSignal) =>
       meChat(() => relay, owner, channelId, signal),
-    memoryListing: (signal: AbortSignal) =>
-      session.agentMemories.read(pubkey, signal),
+    memoryListing: (signal: AbortSignal, slug?: string) =>
+      session.agentMemories.read(pubkey, signal, slug),
   });
 }

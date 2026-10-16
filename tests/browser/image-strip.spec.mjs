@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright-test.mjs";
 import react from "@vitejs/plugin-react";
 import { createServer } from "./vite-server.mjs";
 
@@ -82,7 +82,7 @@ test("posted image previews keep every image reachable beside documents", async 
         ),
       )
       .toBe(true);
-    await expect(history.getByText("8 images", { exact: true })).toBeVisible();
+    await expect(history.getByText("8 images", { exact: true })).toHaveCount(0);
     const viewer = page.getByRole("dialog", {
       name: "Image viewer",
       exact: true,
@@ -144,12 +144,9 @@ test("posted image previews keep every image reachable beside documents", async 
       await links
         .last()
         .evaluate((el) => el.removeAttribute("data-focus-probe"));
-      await history
-        .getByText("8 images", { exact: true })
-        .scrollIntoViewIfNeeded();
-      await expect(
-        history.getByText("8 images", { exact: true }),
-      ).toBeVisible();
+      await expect(history.getByText("8 images", { exact: true })).toHaveCount(
+        0,
+      );
       for (let i = 6; i >= 0; i--) {
         await page.keyboard.press(backward);
         await expect(links.nth(i)).toBeFocused();

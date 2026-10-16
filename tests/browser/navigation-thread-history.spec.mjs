@@ -1,7 +1,13 @@
+import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
+import { activate, open, virtuaIdle } from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
+
+const closeRequest = `{ const tabEvent = "buzz:close-active-tab";\n${readFileSync(
+  new URL("../../src-tauri/src/close-request.js", import.meta.url),
+  "utf8",
+)}\n}`;
 
 test.use({
   productionBroker: true,
@@ -67,20 +73,53 @@ test("Back restores each thread visit before the previous channel", async ({
     exact: true,
   });
 
-  await threadButton(roots[0]).click();
+  await activate(threadButton(roots[0]));
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
   const openThread = await panel
     .getByRole("region", { name: "Thread messages", exact: true })
     .elementHandle();
-  await threadButton(roots[1]).click();
-  await page.evaluate(
-    () =>
-      new Promise((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve)),
-      ),
+  // A real browser proves the host loads and paints repeat-open feedback,
+  // then delivers animationend. The lower-layer tests own the state matrix.
+  const selectedTab = page.locator(
+    `[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`,
   );
+  const feedback = await selectedTab.evaluateHandle((tab) => {
+    const state = { cue: null };
+    tab.addEventListener(
+      "animationstart",
+      (event) => {
+        if (!event.target.classList.contains("buzz-tabs-attention")) return;
+        state.cue = event.target;
+        for (const animation of state.cue.getAnimations()) {
+          animation.pause();
+          animation.currentTime = 0;
+        }
+      },
+      { once: true },
+    );
+    return state;
+  });
+  await activate(threadButton(roots[1]));
+  try {
+    await expect
+      .poll(() => feedback.evaluate((state) => !!state.cue))
+      .toBe(true);
+    const paint = await feedback.evaluate(({ cue }) => ({
+      tint: getComputedStyle(cue).backgroundColor,
+      resting: getComputedStyle(cue.parentElement).backgroundColor,
+      opacity: Number(getComputedStyle(cue).opacity),
+    }));
+    expect(paint.tint).not.toBe(paint.resting);
+    expect(paint.opacity).toBeGreaterThan(0);
+  } finally {
+    await feedback.evaluate(({ cue }) => {
+      for (const animation of cue?.getAnimations() ?? []) animation.finish();
+    });
+    await feedback.dispose();
+  }
+  await expect(selectedTab.locator(".buzz-tabs-attention")).toHaveCount(0);
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
   expect(await openThread.evaluate((node) => node.isConnected)).toBe(true);
   await beta.click();
@@ -316,10 +355,26 @@ test("choosing a thread tab resumes typing where its reply was left", async ({
   const tabValue = await selected.getAttribute("data-tab-value");
   await reply.click();
   await page.keyboard.type("here is a message");
-  for (let step = 0; step < 15; step++) await page.keyboard.press("ArrowLeft");
+  for (let step = 0; step < 14; step++) await page.keyboard.press("ArrowLeft");
+  // On a slow runner the last caret move's selectionchange can arrive after
+  // the tab click has taken focus. Hold it back so every run covers that order.
+  await page.evaluate(() => {
+    window.holdSelectionChange = true;
+    document.addEventListener(
+      "selectionchange",
+      (event) => {
+        if (window.holdSelectionChange) event.stopImmediatePropagation();
+      },
+      { capture: true },
+    );
+  });
+  await page.keyboard.press("ArrowLeft");
   await workspace
     .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="false"]')
     .click();
+  await page.evaluate(() => {
+    window.holdSelectionChange = false;
+  });
   await expect(reply).toBeFocused();
   await expect(reply).toHaveText("");
   await workspace.locator(`[role="tab"][data-tab-value="${tabValue}"]`).click();
@@ -655,6 +710,138 @@ test("closing a main-pane thread with Escape returns keyboard focus to its opene
   await expect(trigger).toBeFocused();
 });
 
+// Native Close follows real focus across both workspaces, and the page's
+// opener return runs after the tab host's own focus recovery.
+test("consecutive native Close requests close each side thread, then return focus to its opener", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const triggers = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"))
+    .map((root) =>
+      page
+        .locator(
+          `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
+        )
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+  for (const trigger of triggers) await trigger.click();
+  const side = page.locator("[data-panel-workspace]");
+  const threads = side.locator('[role="tab"][data-tab-value^="thread:"]');
+  await expect(threads).toHaveCount(2);
+  await side
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .focus();
+  const close = () => page.evaluate(closeRequest);
+  expect(await close()).toBe("handled");
+  await expect(threads).toHaveCount(1);
+  await expect(
+    side.locator('[role="tab"][aria-selected="true"]'),
+  ).toBeFocused();
+  expect(await close()).toBe("handled");
+  await expect(threads).toHaveCount(0);
+  await expect(triggers.at(-1)).toBeFocused();
+  // With no tab left, Close does nothing and keeps the window.
+  expect(await close()).toBe("unhandled");
+});
+
+// Closing the addressed thread also starts a channel history visit; only the
+// real navigation and visit wiring shows whether it keeps the remaining tab.
+test("consecutive native Close requests close each main-pane thread, then return focus to its opener", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const triggers = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"))
+    .map((root) =>
+      page
+        .locator(
+          `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
+        )
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+  for (const trigger of triggers) await trigger.click();
+  const side = page.locator("[data-panel-workspace]");
+  const main = page.locator("[data-main-workspace]");
+  const threads = (host) =>
+    host.locator('[role="tab"][data-tab-value^="thread:"]');
+  for (const count of [1, 2]) {
+    await threads(side).first().focus();
+    await page.keyboard.press("Alt+Shift+ArrowLeft");
+    await expect(threads(main)).toHaveCount(count);
+  }
+  await main
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .focus();
+  const close = () => page.evaluate(closeRequest);
+  expect(await close()).toBe("handled");
+  await expect(threads(main)).toHaveCount(1);
+  const selected = main.locator('[role="tab"][aria-selected="true"]');
+  await expect(selected).toHaveAttribute("data-tab-value", /^thread:/);
+  await expect(selected).toBeFocused();
+  expect(await close()).toBe("handled");
+  await expect(threads(main)).toHaveCount(0);
+  await expect(triggers.at(-1)).toBeFocused();
+  expect(await close()).toBe("unhandled");
+});
+
+// A linked thread's opener lives in another tab of the same pane; real
+// inert panes and focus order decide whether closing returns to the link.
+for (const how of ["native Close", "the close button"]) {
+  test(`closing a linked thread with ${how} returns focus to its link in the side pane`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content.startsWith("Thread root"));
+    const [target] = app.histories.get("primary/beta");
+    const reply = app.append(
+      "primary",
+      "alpha",
+      `Side link <buzz://message?channel=beta&id=${target.id}>.`,
+      true,
+      true,
+      root.id,
+    );
+    await page
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    const side = page.locator("[data-panel-workspace]");
+    const threads = side.locator('[role="tab"][data-tab-value^="thread:"]');
+    await expect(threads).toHaveCount(1);
+    const link = side
+      .locator(`[data-message-id="${reply.id}"]`)
+      .getByRole("link", { name: "Beta", exact: true });
+    await expect(link).toBeVisible();
+    await virtuaIdle(page);
+    await link.click({ button: "right" });
+    await page
+      .getByRole("menu")
+      .getByRole("menuitem", { name: "Open link", exact: true })
+      .click();
+    await expect(threads).toHaveCount(2);
+    const linked = side.locator('[role="tab"][data-tab-value^="thread:beta:"]');
+    await expect(linked).toHaveAttribute("aria-selected", "true");
+    if (how === "native Close")
+      expect(await page.evaluate(closeRequest)).toBe("handled");
+    else
+      await side
+        .locator(
+          '.buzz-tabs-item:has([data-tab-value^="thread:beta:"]) > button:not([role="tab"])',
+        )
+        .click();
+    await expect(threads).toHaveCount(1);
+    await expect(link).toBeFocused();
+  });
+}
+
 // Header openings reset a retained main-pane thread selection after mount;
 // only real layout-effect order shows whether that steals the tab's focus.
 test("header openings keep focus while a main-pane thread is retained", async ({
@@ -670,8 +857,11 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     .find((row) => row.content.startsWith("Thread root"));
   const main = page.locator("[data-main-workspace]");
   const topbar = page.getByRole("navigation", { name: "Topbar pages" });
-  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
-  const me = topbar.getByRole("tab", { name: "Me", exact: true });
+  const messages = topbar.getByRole("tab", {
+    name: "Multiplayer",
+    exact: true,
+  });
+  const me = topbar.getByRole("tab", { name: "Solo", exact: true });
   const inbox = page
     .getByRole("navigation", { name: "Pages" })
     .getByRole("button", { name: "Inbox", exact: true });
@@ -717,10 +907,10 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   const main = page.locator("[data-main-workspace]");
   const reply = (host) =>
     host.getByRole("textbox", { name: "Reply to thread", exact: true });
-  await threadButton(roots[0]).click();
+  await activate(threadButton(roots[0]));
   await reply(side).fill("Destination draft");
   const destinationEditor = await reply(side).elementHandle();
-  await threadButton(roots[1]).click();
+  await activate(threadButton(roots[1]));
   await reply(side).fill("Keep original draft");
   const originalEditor = await reply(side).elementHandle();
   await side.locator('[role="tab"][aria-selected="true"]').focus();

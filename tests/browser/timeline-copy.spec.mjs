@@ -27,7 +27,9 @@ test("copying a timeline selection keeps mentions, channel refs and links in bot
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
   await expect(
-    row.getByRole("button", { name: "View Fixture Reader profile" }),
+    row
+      .locator("p")
+      .getByRole("button", { name: "View Fixture Reader profile" }),
   ).toBeVisible();
   await expect(row.getByRole("link", { name: "#Beta" })).toBeVisible();
   const paragraph = row.locator("p").first();

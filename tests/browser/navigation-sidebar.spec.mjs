@@ -1,3 +1,4 @@
+import { checkDurationConsumer } from "./duration-layout.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -23,7 +24,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   });
   const sidebar = page.locator(".shell-sidebar").filter({ has: sidebarPanel });
   const handle = page.getByRole("separator", {
-    name: "Resize channel sidebar",
+    name: "Resize sidebar",
   });
   const channelList = page.getByRole("navigation", {
     name: "Subscribed channels",
@@ -39,9 +40,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     const row = panel.querySelector('[data-channel-id="alpha"]');
     if (!(content instanceof HTMLElement) || !(row instanceof HTMLElement))
       throw new Error("Channel sidebar geometry is unavailable");
-    const handle = document.querySelector(
-      '[aria-label="Resize channel sidebar"]',
-    );
+    const handle = document.querySelector('[aria-label="Resize sidebar"]');
     if (!(handle instanceof HTMLElement))
       throw new Error("Missing sidebar gutter");
     const contentStyle = getComputedStyle(content);
@@ -53,6 +52,9 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       panelGap: Number.parseFloat(
         getComputedStyle(panel.closest(".shell-sidebar")).marginInlineEnd,
       ),
+      panelGapToken:
+        Number.parseFloat(contentStyle.getPropertyValue("--space-panel-gap")) *
+        rootSize,
       // The redesigned sidebar keeps a symmetric inline gutter; rows use the
       // sidebar's fixed row radius rather than a concentric panel radius.
       padding: [contentStyle.paddingRight, contentStyle.paddingLeft].map(
@@ -71,10 +73,14 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   const conversation = await page
     .locator("#main-content > .panel")
     .boundingBox();
-  expect(geometry.panelGap).toBe(4);
+  expect(geometry.panelGap).toBe(geometry.panelGapToken);
   expect(conversation).not.toBeNull();
   expect(conversation.x - (before.x + before.width)).toBeCloseTo(
     geometry.panelGap,
+    0,
+  );
+  expect(grip.x + grip.width / 2).toBeCloseTo(
+    before.x + before.width + geometry.panelGap / 2,
     0,
   );
   expect(grip.width).toBeGreaterThanOrEqual(16);
@@ -136,7 +142,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .toBeGreaterThan(keyboardWidth + 100);
   const resized = await sidebar.boundingBox();
   await openPage(page, "Projects");
-  await openPage(page, "Messages");
+  await openPage(page, "Multiplayer");
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeCloseTo(resized.width, 0);
@@ -201,7 +207,7 @@ sessionSidebar(
   "legacy child sessions do not add disclosure rows to channels",
   async ({ page, app }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     const parent = page.locator(`[data-channel-id="${sessionParent}"]`);
     await expect(parent).toBeVisible();
     await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
@@ -217,9 +223,9 @@ sessionSidebar(
 
 sessionSidebar(
   "Channels opens the shared creation dialog without nested session rows",
-  async ({ page, app }) => {
+  async ({ page, app }, testInfo) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
 
     await openPage(page, "Projects");
@@ -292,6 +298,7 @@ sessionSidebar(
       dialog.getByRole("textbox", { name: "Description" }),
     ).toBeFocused();
     await dialog.getByRole("radio", { name: /Temporary/ }).click();
+    await checkDurationConsumer(page, dialog, "create-duration", testInfo);
     await expect(
       dialog.getByRole("radio", { name: /Temporary/ }),
     ).toBeChecked();
@@ -323,7 +330,7 @@ sessionSidebar(
     await expect(
       page.getByRole("heading", { name: "Projects", exact: true }),
     ).toBeVisible();
-    await openPage(page, "Messages");
+    await openPage(page, "Multiplayer");
     const conversation = page.getByRole("article", { name: "Conversation" });
     await conversation.click({ position: { x: 20, y: 20 } });
     await expect(create).not.toBeFocused();
@@ -356,7 +363,7 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 
-  await openPage(page, "Messages");
+  await openPage(page, "Multiplayer");
   // Lifecycle is independent of Sessions and retains its unavailable-host explanation.
   for (const keyboard of [false, true]) {
     if (keyboard) {
@@ -588,7 +595,7 @@ for (const destination of [
           .getByRole("complementary", { name: "Settings sidebar" })
           .getByRole("button", { name: "Back", exact: true })
           .click();
-      else await openPage(page, "Messages");
+      else await openPage(page, "Multiplayer");
     };
     await group.locator("summary").click();
     await expect(group).not.toHaveAttribute("open");
@@ -769,9 +776,9 @@ test("Messages reselects the latest sidebar channel and keyboard page search foc
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await expect(search).toBeFocused();
-  await search.pressSequentially("Messages");
+  await search.pressSequentially("Multiplayer");
   await expect(
-    dialog.getByRole("option", { name: "Messages", exact: true }),
+    dialog.getByRole("option", { name: "Multiplayer", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await search.press("Enter");
   await expect(composer).toBeVisible();

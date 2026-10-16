@@ -3,26 +3,16 @@
   flex-direction: column;
   gap: var(--space-4);
 }
-.worktree {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-}
-@media (max-width: 40rem) {
-  .worktree {
-    grid-template-columns: 1fr;
-  }
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
 }
 
-.projectFolders {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.workspaceLabel {
-  font-weight: var(--type-weight-medium);
+.worktree {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-4);
 }
 
 .repositoryInput {
@@ -33,4 +23,11 @@
 .repositoryInput > input {
   flex: 1;
   min-width: 0;
+}
+
+/* About three folder cards (one 4rem card each), then the list scrolls
+   instead of the dialog growing; the half card hints that more follow. */
+.folderList {
+  max-block-size: calc(3.5 * 4rem + 3 * var(--space-2));
+  overflow-y: auto;
 }

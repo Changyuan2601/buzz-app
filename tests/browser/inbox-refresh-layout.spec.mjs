@@ -120,7 +120,7 @@ for (const width of [1280, 390, 320]) {
 
 // Only a browser can prove that the sibling Archive control leaves readable
 // label space when the host's interface size doubles at a narrow width.
-test("narrow enlarged-text rows reflow Archive without erasing their labels", async ({
+test("narrow enlarged-text rows overlay Archive without erasing their labels", async ({
   page,
   app,
 }) => {
@@ -163,11 +163,13 @@ test("narrow enlarged-text rows reflow Archive without erasing their labels", as
   expect(measured.open.x + measured.open.width).toBe(
     measured.row.x + measured.row.width,
   );
-  expect(measured.action.y).toBeGreaterThanOrEqual(
+  expect(measured.action.y).toBeGreaterThanOrEqual(measured.open.y);
+  expect(measured.action.y + measured.action.height).toBeLessThanOrEqual(
     measured.open.y + measured.open.height,
   );
   await open.focus();
   await expect(archive.locator("xpath=..")).toHaveCSS("opacity", "1");
+  await expect(row.locator("time")).toHaveCSS("opacity", "0");
   await archive.click();
   await expect(rows).toHaveCount(2);
   await inbox

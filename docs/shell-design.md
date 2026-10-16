@@ -188,24 +188,35 @@ Their hover fills remain translucent over the colored backdrop.
 Pressed fills are slightly stronger; icons keep full opacity. Plugin launchers
 use the shared glass style.
 Bestie is available from its sidebar page, without a top-bar shortcut.
-`ProfileButton.tsx` subscribes to the community
-service's local default profile and opens an anchored account dropdown containing
-local presence controls and Settings; there is no separate top-bar Settings button.
-The avatar dot shows local intent (Online/Away/Offline). The shared account menu
-provides Online, Away and Offline choices: arrow keys move focus, and
-Enter/Space selects without closing the menu. See
-[presence ownership and limitations](presence.md). Escape, outside click and Tab
-leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
-focuses the main region after the menu finishes closing, unless focus has already
-moved into the page. With a community selected, the avatar inside the menu is a
-menu item that opens the viewer's own profile in the shell companion slot, using
-the same `profile` panel as other profile links; the panel takes focus, and
-closing it returns focus to the header avatar. Personal space has no community
-profile, so its menu avatar stays presentational.
-The avatar does not display the selected community's profile. It uses a configured
-HTTPS picture directly, with the name's first letter on a missing/failed picture
-or a person icon when unnamed. No sample person's photo is used as the user's
-identity. See [community/profile ownership](communities.md).
+`ProfileButton.tsx` uses the selected community's profile when connected and
+local defaults in Personal space. Its anchored account menu groups profile and
+status controls above Appearance, Plugins and Settings. The avatar inside the
+menu opens Profile Settings in either scope; Plugins opens its Settings section.
+Selecting a Settings destination focuses the main region after the menu closes,
+unless focus has already moved into the page. Contributed actions, including
+Send feedback, follow Settings behind a separator that appears only when actions
+are present. There is no separate top-bar Settings button.
+
+The avatar dot and availability label show the same observed community presence,
+not unconfirmed local intent. Online, Away and Offline use the shared compact
+choice menu. Arrow keys move focus; Enter/Space selects without closing it.
+Appearance uses the same compact recipe for Light, Dark and System, with a checked
+choice and device-local persistence. Save failures remain visible in that submenu;
+choosing a mode again retries. See [presence ownership and limitations](presence.md).
+Escape, outside click and Tab leaving dismiss the account menu; Escape returns
+focus to the header avatar.
+
+Set a status has a soft inset fill without a border and keeps shared menu hover
+and focus behavior. Its editor opens immediately from the session's cached status,
+then checks the latest status in the background. Refresh cannot overwrite an edited
+or submitted draft. While the draft is untouched, a check lasting about one second
+shows progress and failures offer Retry; editing dismisses that feedback. Closing
+or changing account/community discards the editor and fences
+late results. Status signing and save admission remain with the existing session.
+
+Avatar artwork uses the shared source/media owner, with initials on missing/failed
+pictures or a person icon when unnamed. No sample person's photo is used as the
+user's identity. See [community/profile ownership](communities.md).
 `PageSearch.tsx` uses a native modal dialog for focus containment, Escape dismissal,
 and searching available page destinations. Projects is a bundled, enabled-by-default
 page scaffold with only a centered title; Apps waits for a functional destination.
@@ -316,24 +327,33 @@ replacement semantics. A shared 2.5rem header uses 12rem tabs composed from the 
 with 10px corners matching adjacent icon actions, profile avatars or detail icons,
 and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
-close control; Delete on a tab and Escape in its content close that tab. Closing
+close control; middle-click or Delete on a tab and Escape in its content close
+that tab. Middle-clicking an inactive tab preserves the editor's focus. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
-On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the visible selected
-tab, including a selected detail tab, even while typing in the main conversation.
+On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
+closable tab in the focused pane. If focus is in the permanent main conversation,
+it closes the selected tab in the visible side pane instead. A selected closable
+main-pane tab takes priority over that fallback. Hidden tabs remain untouched;
+with nothing to close the shortcut does nothing and never closes the window.
 The macOS native Close menu uses the same action, including when an embedded
-browser owns focus (embedded browsing is currently macOS-only). A terminal tab
-closes its presentation, not its shell; Ctrl+W while typing in a terminal remains
-shell word deletion on Windows/Linux. With no visible tab pane, Close retains
-the normal window-close behavior: hide until reopened on macOS, close the
-application on Windows/Linux. Hidden tabs remain intact until that window close.
-Closing the last tab leaves the window open until the next press. While a modal
-is open, the shortcut does nothing rather than closing content behind it.
+browser owns focus (embedded browsing is currently macOS-only). On macOS,
+Cmd+Shift+W and the native **Close All Tabs** menu item close all tabs in the current channel,
+including hidden side-pane tabs, just like the tab's right-click action.
+A terminal tab closes its presentation, not its shell; Ctrl+W while typing in a
+terminal remains shell word deletion on Windows/Linux. While a modal is open,
+close shortcuts do nothing rather than closing content behind it.
 Windows/Linux consume held-key repeats without closing further tabs or the window.
 Window buttons and Alt+F4 always retain their window-only behavior. The bottom
 terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
 shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
+Right-click any channel tab and choose **Close all tabs** to close this channel's
+thread, plugin and settings tabs across both panes, including hidden side-pane
+tabs. The permanent channel conversation stays; focus returns there if its previous
+target closed, while typing in surviving content remains uninterrupted. Other
+channels and saved message drafts are untouched. Shift+F10 on a focused tab opens the same
+menu. Hiding the pane remains separate from closing its tabs.
 The main-header split control toggles existing pane content without closing its
 tabs or resetting their contents. With no content it is disabled but remains
 focusable, so closing the last tab has a stable focus-return target. There is no

@@ -223,18 +223,26 @@ test("profile menu highlights stay distinct in both themes", async ({
     ).not.toHaveCSS("background-color", background);
   };
   for (const mode of ["light", "dark"]) {
+    // The previous pass leaves the pointer where it last clicked; a message
+    // hovered there lifts its top-layer action bar over this menu.
+    await page.mouse.move(0, 0);
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
     await profile.press("Enter");
     const menu = page.locator("[data-profile-menu]");
+    await expect(
+      menu.getByRole("menuitem", { name: /, edit profile$/ }),
+    ).toBeFocused();
     await highlighted(
       menu,
-      menu.getByRole("menuitem", { name: "Send feedback", exact: true }),
+      menu.getByRole("menuitem", { name: "Settings", exact: true }),
     );
     await page
       .getByRole("button", { name: "Availability: Online", exact: true })
       .press("Enter");
-    const availability = page.locator("[data-profile-submenu]");
+    const availability = page.getByRole("menu").filter({
+      has: page.getByRole("group", { name: "Availability", exact: true }),
+    });
     await highlighted(
       availability,
       availability.getByRole("menuitemradio", { name: "Online", exact: true }),

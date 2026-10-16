@@ -100,7 +100,7 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
     active.throwIfAborted();
     const state = kit.snapshot();
     if (state.status !== "ready")
-      throw new Error(state.error ?? "Me groups are unavailable");
+      throw new Error(state.error ?? "Solo groups are unavailable");
     const entry = meGroups(state.entries);
     return {
       entry,
@@ -126,7 +126,7 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
       confirmed.record.value.type !== "groups" ||
       comparable(confirmed.record.value) !== comparable(value)
     )
-      throw new Error("Me group changes could not be confirmed");
+      throw new Error("Solo group changes could not be confirmed");
     return project(value);
   }
   const store = createSidebarPreferencesStore(
@@ -146,7 +146,7 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
           const existing = groups.find((group) => group.id === target);
           if (existing && existing.name !== name)
             throw new Error(
-              "The new Me group changed; refresh before retrying",
+              "The new Solo group changed; refresh before retrying",
             );
           if (!existing)
             groups = [
@@ -155,7 +155,7 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
             ];
         }
         if (target && !groups.some((group) => group.id === target))
-          throw new Error("The Me group is unavailable");
+          throw new Error("The Solo group is unavailable");
         const assignments = { ...value.assignments };
         if (target) assignments[intent.channelId] = target;
         else delete assignments[intent.channelId];
@@ -191,6 +191,31 @@ export function createMePreferences(kit: ChannelKit, lifetime: AbortSignal) {
         );
       }),
     true,
+    undefined,
+    (section, signal) =>
+      serialize(async () => {
+        const { value, entry, active } = await current(signal);
+        const name = section.name.trim();
+        const existing = value.groups.find((group) => group.id === section.id);
+        if (existing) {
+          if (existing.name !== name)
+            throw new Error(
+              "The new Me group changed; refresh before retrying",
+            );
+          return project(value);
+        }
+        return save(
+          {
+            ...value,
+            groups: [
+              ...value.groups,
+              { id: section.id, name, defaultTemplateId: "" },
+            ],
+          },
+          entry,
+          active,
+        );
+      }),
   );
   return {
     ...store,

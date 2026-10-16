@@ -26,6 +26,15 @@ export const AGENT_BYTES = 256 * 1024;
  * turn, so a faster timer only queues turns it cannot run. */
 export const MIN_INTERVAL_SECS = 60;
 export type ClassifierAvailability = "available" | "unavailable";
+/** What the app knows about the saved classifier key: still being read, saved,
+ * not saved, unreadable (the store refused or failed the read), or saved but
+ * refused by the service. */
+export type ClassifierKey =
+  | "checking"
+  | "saved"
+  | "missing"
+  | "unreadable"
+  | "refused";
 /** enabled/disabled for event watches; armed/inactive/spent for timers. */
 export type WatchStatus =
   | "enabled"
@@ -284,7 +293,7 @@ export async function checkedWrite(
   if (record.skipped?.[slug])
     throw new AttentionError(
       "invalid-operation",
-      `${slug} is stored in a form this app cannot read; your owner can fix or remove it`,
+      `${slug} is stored in a form this app cannot read; your owner can remove it on your Attention tab`,
     );
   const prior = record.attention[slug]?.value;
   checkScope(record, slug, value, interest);

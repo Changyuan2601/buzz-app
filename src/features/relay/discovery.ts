@@ -1,4 +1,4 @@
-import { channelVisibility } from "./channel-details-protocol";
+import { channelTtl, channelVisibility } from "./channel-details-protocol";
 import { sessionMetadata } from "../sessions/metadata";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
@@ -212,6 +212,7 @@ export class DiscoveryState {
     const roster = this.rosters.get(id);
     const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
     const identity = event && channelIdentity(event);
+    const ttlSeconds = event && channelTtl(event);
     return {
       id,
       ...(!this.authorized(id) || this.cached.has(id)
@@ -252,6 +253,7 @@ export class DiscoveryState {
           }
         : {}),
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
+      ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
       ...(identity?.labels.length ? { labels: identity.labels } : {}),
       ...(identity?.creator ? { creator: identity.creator } : {}),
       ...(identity?.createdAt !== undefined

@@ -9,7 +9,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { useMePlacement } from "../sessions/personal";
@@ -19,7 +18,7 @@ import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
-import { SidebarFrame } from "./SidebarFrame";
+import { SidebarBrand, SidebarFrame } from "./SidebarFrame";
 import { SidebarList } from "./SidebarList";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -84,8 +83,9 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { splitPartition } from "../relay/partition";
-import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
+import { ResizableSidebar } from "./ResizableSidebar";
 import styles from "../../bundled/channels/Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type Props = {
   relay: RelayData;
@@ -146,13 +146,7 @@ export function ChannelSidebar(props: Props) {
 function SidebarNavigation({ children }: { children: ReactNode }) {
   return (
     <>
-      <div className={styles.sidebarBrand}>
-        <span
-          className={styles.sidebarBrandMark}
-          role="img"
-          aria-label="Buzz"
-        />
-      </div>
+      <SidebarBrand />
       {/* The shell passes null when no primary page is active; the wrapper's margin must not remain around nothing. */}
       {children != null && children !== false && (
         <div className={styles.destinations}>{children}</div>
@@ -266,9 +260,7 @@ function ReadySidebar({
       const profile = dmProfiles.get(channel.participants[0] ?? "");
       previews.set(channel.id, {
         name: channel.name,
-        src: profile?.picture
-          ? queries.media(profile.picture, "small")
-          : undefined,
+        src: avatarMedia(profile?.picture, queries.media),
         isAgent: profile?.isAgent,
       });
     }
@@ -292,7 +284,9 @@ function ReadySidebar({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      (!meEnabled || !placement.ids.includes(channel.id)) &&
+      (!meEnabled ||
+        !placement.ids.includes(channel.id) ||
+        (!channel.cached && channel.channelType === "stream")) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||
@@ -328,6 +322,7 @@ function ReadySidebar({
   }, [createOrigin]);
 
   const [initialGroup, setInitialGroup] = useState("");
+  const [initialStarred, setInitialStarred] = useState(false);
   const pendingChannelCreation = useSyncExternalStore(
     queries.channelCreation.subscribe,
     queries.channelCreation.snapshot,
@@ -366,6 +361,9 @@ function ReadySidebar({
     lifecycleFocus.current = undefined;
     const trigger = lifecycleTrigger.current;
     lifecycleTrigger.current = undefined;
+    // The pending operation is nonmodal; keep focus where the user moved it.
+    if (document.activeElement && document.activeElement !== document.body)
+      return;
     if (trigger?.isConnected) {
       trigger.focus({ preventScroll: true });
       return;
@@ -505,7 +503,11 @@ function ReadySidebar({
     if (!mounted.current || relay.snapshot().session !== queries) return;
     select(id);
     sidebar.toggle(
-      input.setup?.groupId ? `group:${input.setup.groupId}` : "channels",
+      input.setup?.starred
+        ? "starred"
+        : input.setup?.groupId
+          ? `group:${input.setup.groupId}`
+          : "channels",
       true,
     );
   };
@@ -576,6 +578,14 @@ function ReadySidebar({
     );
   const placementWritable =
     preferences.writable && preferences.starWritable && !!preferences.data;
+  // Group drags land on the placement drop targets, so they need both writers.
+  const orderWritable = placementWritable && preferences.sectionOrderWritable;
+  const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  const moveGroup = (sectionId: string, to: number) => {
+    const ids = groupIds.filter((id) => id !== sectionId);
+    ids.splice(to, 0, sectionId);
+    void preferences.reorderSections(sectionId, ids).catch(() => {});
+  };
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {
     void preferences
       .setSort(
@@ -798,7 +808,7 @@ function ReadySidebar({
           <MenuIcon>
             <MinusIcon size={14} />
           </MenuIcon>
-          Remove from Messages
+          Remove from Multiplayer
         </MenuItem>,
       );
     }
@@ -855,6 +865,20 @@ function ReadySidebar({
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, sidebar.list]);
+  const [groupFocus, setGroupFocus] = useState<string>();
+  // Group recovery removes its focused notice; return focus to the group header.
+  useLayoutEffect(() => {
+    if (!groupFocus) return;
+    (
+      sidebar.list.current?.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(groupFocus)}"] details > summary`,
+      ) ??
+      sidebar.list.current?.querySelector<HTMLElement>(
+        "[data-sidebar-section] details > summary",
+      )
+    )?.focus({ preventScroll: true });
+    setGroupFocus(undefined);
+  }, [groupFocus, sidebar.list]);
   const runReadAction = (channelId: string, action: () => Promise<unknown>) =>
     readAction.run(action, () => {
       setRowFocus(channelId);
@@ -889,25 +913,20 @@ function ReadySidebar({
     });
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
-  return (
-    <>
-      {lifecycleDialog && !lifecycleDialog.origin?.aborted && (
-        <ChannelLifecycleDialog
-          channelId={lifecycleDialog.channel.id}
-          channelName={lifecycleDialog.channel.name}
-          action={lifecycleDialog.action}
-          lifecycle={lifecycle}
-          close={() => {
+  const lifecycleCallbacks = handoff?.lifecycleCallbacks;
+  useLayoutEffect(() => {
+    if (!lifecycleCallbacks) return;
+    lifecycleCallbacks.current = lifecycleDialog
+      ? {
+          close: () => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
             lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
               ? lifecycleDialog.trigger
               : lifecycleDialog.focusFallback;
-            handoff?.closeLifecycle();
-          }}
-          completed={() => {
+          },
+          completed: () => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
-            handoff?.closeLifecycle();
             // Archive changes visibility, not access or the current destination.
             if (
               lifecycleDialog.action === "archive" ||
@@ -939,9 +958,18 @@ function ReadySidebar({
                 });
               }
             }
-          }}
-        />
-      )}
+          },
+        }
+      : undefined;
+  });
+  useLayoutEffect(
+    () => () => {
+      if (lifecycleCallbacks) lifecycleCallbacks.current = undefined;
+    },
+    [lifecycleCallbacks],
+  );
+  return (
+    <>
       {creatingFor && !creatingFor.surface?.signal?.aborted && (
         <CreateSidebarSection
           channelName={creatingFor.channel.name}
@@ -972,7 +1000,7 @@ function ReadySidebar({
           }}
         />
       )}
-      <div className="shell-sidebar" style={{ width: sidebar.width }}>
+      <ResizableSidebar scope={scope} className="shell-sidebar">
         <SidebarFrame
           label="Channel sidebar"
           launchPending={
@@ -1042,9 +1070,29 @@ function ReadySidebar({
                         : undefined,
                     )
               }
-              overlay={(channelId) => {
+              onReorder={(sectionKey, overKey) =>
+                moveGroup(
+                  sectionKey.slice("group:".length),
+                  groupIds.indexOf(overKey.slice("group:".length)),
+                )
+              }
+              overlay={(id, group) => {
+                if (group) {
+                  const section = sections.find(({ key }) => key === id);
+                  return section ? (
+                    <div className={styles.channelDragOverlay}>
+                      {section.icon && (
+                        <SidebarGroupIcon
+                          icon={section.icon}
+                          session={queries}
+                        />
+                      )}
+                      <span>{section.title}</span>
+                    </div>
+                  ) : null;
+                }
                 const channel = sidebarChannels.find(
-                  ({ id }) => id === channelId,
+                  (channel) => channel.id === id,
                 );
                 if (!channel) return null;
                 const Icon = channelIcon(channel);
@@ -1059,8 +1107,32 @@ function ReadySidebar({
               {sections.map((section) => (
                 <DroppableSidebarSection
                   key={section.key}
+                  groupIndex={groupIds.indexOf(
+                    section.key.slice("group:".length),
+                  )}
                   disabled={
                     !placementWritable || !isChannelDropSectionKey(section.key)
+                  }
+                  reorderable={
+                    orderWritable && section.key.startsWith("group:")
+                  }
+                  move={
+                    orderWritable && section.key.startsWith("group:")
+                      ? (() => {
+                          const id = section.key.slice("group:".length);
+                          const index = groupIds.indexOf(id);
+                          return {
+                            up:
+                              index > 0
+                                ? () => moveGroup(id, index - 1)
+                                : undefined,
+                            down:
+                              index < groupIds.length - 1
+                                ? () => moveGroup(id, index + 1)
+                                : undefined,
+                          };
+                        })()
+                      : undefined
                   }
                   sectionKey={section.key}
                   title={section.title}
@@ -1084,11 +1156,13 @@ function ReadySidebar({
                     )
                   }
                   createChannel={
+                    section.key === "starred" ||
                     isChannelSectionKey(section.key)
                       ? {
                           available: queries.channelCreation.available,
                           open: (trigger) => {
                             createChannelTrigger.current = trigger;
+                            setInitialStarred(section.key === "starred");
                             setInitialGroup(
                               section.key.startsWith("group:")
                                 ? section.key.slice(6)
@@ -1275,6 +1349,51 @@ function ReadySidebar({
                 </Button>
               </ToastNotice>
             ))}
+          {preferences.orderError && (
+            <div className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the move for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key === `group:${preferences.orderError?.sectionId}`,
+                )?.title ?? "this section"}
+                . {preferences.orderError.error}
+              </p>
+              <p>
+                The previous placement is shown. A partial save may already
+                exist on the relay.
+              </p>
+              {!preferences.sectionOrderWritable && (
+                <p>
+                  Refresh saved sidebar preferences before retrying this move.
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={!preferences.sectionOrderWritable}
+                onClick={() => {
+                  const failed = preferences.orderError;
+                  if (!failed) return;
+                  void preferences
+                    .reorderSections(failed.sectionId, failed.sectionIds)
+                    .catch(() => {});
+                  setGroupFocus(`group:${failed.sectionId}`);
+                }}
+              >
+                Retry move
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const failed = preferences.orderError;
+                  preferences.dismissOrderError();
+                  if (failed) setGroupFocus(`group:${failed.sectionId}`);
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {preferences.moves
             ?.filter((move) => !move.pending)
             .map((move) => (
@@ -1367,13 +1486,10 @@ function ReadySidebar({
           agents={agents}
           destinations={preferences.data?.sections ?? []}
           initialGroup={initialGroup}
+          initialStarred={initialStarred}
           groupsReady={preferences.writable}
         />
-      </div>
-      <ChannelSidebarResizeHandle
-        width={sidebar.width}
-        setWidth={sidebar.setWidth}
-      />
+      </ResizableSidebar>
     </>
   );
 }

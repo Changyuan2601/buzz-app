@@ -1,7 +1,7 @@
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { usePresenceStatus } from "../../features/presence/react";
 import { useRelayConnection } from "../../features/relay/react";
-import { avatarSource } from "../../shared/avatar-source";
+import { avatarMedia, avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
@@ -22,19 +22,31 @@ import {
   GearIcon,
   UserIcon,
   PlugIcon,
+  SquaresFourIcon,
+  SunIcon,
+  MoonIcon,
+  MonitorIcon,
 } from "../../shared/design-system/icons/index";
+import type {
+  Appearance,
+  ColorModePreference,
+} from "../../shared/theme/service";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
+  MenuSubmenu,
+  MenuSubmenuTrigger,
+  MenuSubmenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuItem,
   MenuIcon,
   MenuSeparator,
   MenuTrailing,
+  MenuNote,
 } from "../../shared/design-system/ui/Menu";
 import type {
   AccountActionsService,
@@ -44,21 +56,30 @@ import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
 
 const noSubscription = () => () => {};
+// The parent row retains the icon for the saved appearance preference.
+const colorModes = {
+  light: { label: "Light", Icon: SunIcon },
+  dark: { label: "Dark", Icon: MoonIcon },
+  system: { label: "System", Icon: MonitorIcon },
+} as const satisfies Record<
+  ColorModePreference,
+  { label: string; Icon: typeof SunIcon }
+>;
 const noLiveSnapshot = () => undefined;
 
 export function ProfileButton({
   communities,
   accountActions,
+  appearance,
   settingsSelected,
   onSettings,
-  onProfile,
 }: {
   communities: Communities;
   accountActions: AccountActionsService;
+  appearance: Appearance;
   settingsSelected: boolean;
-  onSettings(): void;
-  /** Present only while a panel can show the viewer's own profile. */
-  onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
+  /** Opens Settings, optionally at one of its own sections. */
+  onSettings(section?: "profile" | "plugins"): void;
 }) {
   const {
     profile: localProfile,
@@ -69,6 +90,12 @@ export function ProfileButton({
     communities.presence.subscribe,
     communities.presence.snapshot,
   );
+  const { preference, error: appearanceError } = useSyncExternalStore(
+    appearance.subscribe,
+    appearance.snapshot,
+  );
+  const colorMode = colorModes[preference];
+  const ColorModeIcon = colorMode.Icon;
   const connection = useRelayConnection(communities.relay);
   const session = connection.session;
   const observed = usePresenceStatus(
@@ -159,13 +186,14 @@ export function ProfileButton({
     (viewer ? formatPublicKey(viewer) : undefined) ||
     "Your profile";
   const source = avatarSource(profile?.picture);
-  const picture = selected ? source && session?.media(source, "small") : source;
+  const picture = selected ? avatarMedia(source, session?.media) : source;
   const status = useUserStatus(session?.statuses, viewer ?? "");
   const statusEditor = useStatusEditor(session, viewer ?? undefined);
   const profileTrigger = useRef<HTMLButtonElement>(null);
+  const appearanceTrigger = useRef<HTMLDivElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Settings or the profile panel takes focus once the menu has closed.
+  // Settings takes focus once the menu has closed.
   const handoff = useRef(false);
   const actions = useSyncExternalStore(
     accountActions.subscribe,
@@ -199,7 +227,6 @@ export function ProfileButton({
             handoff.current = false;
             openingStatus.current = false;
           } else {
-            statusEditor.cancelOpening();
             openingStatus.current = false;
           }
         }}
@@ -208,8 +235,7 @@ export function ProfileButton({
           // the page. Other dismissals retain the shared menu's focus behavior.
           if (!open && handoff.current) {
             const main = document.getElementById("main-content");
-            // A user may already be editing Settings, or the profile panel may
-            // have focused itself, while the menu animates out.
+            // A user may already be editing Settings while the menu animates out.
             if (!main?.contains(document.activeElement)) main?.focus();
           }
         }}
@@ -253,28 +279,22 @@ export function ProfileButton({
           </span>
           <div className={styles.profileHeader}>
             <span className={styles.profileAvatar}>
-              {onProfile ? (
-                <MenuItem
-                  nativeButton
-                  onClick={() => {
-                    const trigger = profileTrigger.current;
-                    if (!trigger) return;
-                    handoff.current = true;
-                    onProfile(trigger);
-                  }}
-                  render={
-                    <IconButton
-                      type="button"
-                      aria-label="View your profile"
-                      variant="avatar"
-                      shape="round"
-                      icon={avatar}
-                    />
-                  }
-                />
-              ) : (
-                avatar
-              )}
+              <MenuItem
+                nativeButton
+                onClick={() => {
+                  handoff.current = true;
+                  onSettings("profile");
+                }}
+                render={
+                  <IconButton
+                    type="button"
+                    aria-label={`${name}, edit profile`}
+                    variant="avatar"
+                    shape="round"
+                    icon={avatar}
+                  />
+                }
+              />
             </span>
             <div className={styles.profileDetails}>
               <p className="m-0 truncate text-body">{name}</p>
@@ -302,7 +322,7 @@ export function ProfileButton({
                       }
                     />
                   </span>
-                  <MenuPopup align="start" data-profile-submenu>
+                  <MenuPopup align="start" size="compact">
                     <MenuRadioGroup
                       value={observed === "unknown" ? "" : observed}
                       onValueChange={(value) => {
@@ -360,73 +380,107 @@ export function ProfileButton({
             </p>
           )}
           {viewer && session?.statuses && (
-            <>
-              <div className={styles.statusCard}>
-                <MenuItem
-                  aria-label={
-                    status
-                      ? `Set a status: ${[status.emoji, status.text].filter(Boolean).join(" ")}`
-                      : "Set a status"
+            <div className={styles.statusAction}>
+              <MenuItem
+                aria-label={
+                  status
+                    ? `Set a status: ${[status.emoji, status.text].filter(Boolean).join(" ")}`
+                    : "Set a status"
+                }
+                aria-describedby={
+                  !session.statuses.writable ? statusUnavailable : undefined
+                }
+                closeOnClick={false}
+                disabled={!session.statuses.writable}
+                onClick={() => {
+                  if (statusEditor.open()) {
+                    openingStatus.current = true;
+                    setMenuOpen(false);
                   }
-                  aria-describedby={
-                    !session.statuses.writable ? statusUnavailable : undefined
-                  }
-                  closeOnClick={false}
-                  disabled={statusEditor.loading || !session.statuses.writable}
-                  onClick={async () => {
-                    if (await statusEditor.open()) {
-                      openingStatus.current = true;
-                      setMenuOpen(false);
-                    }
-                  }}
-                >
-                  {status ? (
-                    <>
-                      <StatusEmoji session={session} value={status.emoji} />
-                      <span className="min-w-0 truncate text-body-sm">
-                        {status.text}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <MenuIcon>
-                        <SmileyIcon size={16} aria-hidden="true" />
-                      </MenuIcon>
-                      {statusEditor.loading
-                        ? "Loading status…"
-                        : "Set a status"}
-                    </>
-                  )}
-                </MenuItem>
-              </div>
-              {!session.statuses.writable && (
-                <p
-                  id={statusUnavailable}
-                  className="mx-3 my-2 max-w-56 text-body-sm text-muted"
-                >
-                  Status updates are unavailable in this community.
-                </p>
-              )}
-              {statusEditor.error && (
-                <p
-                  role="alert"
-                  className="mx-3 my-2 max-w-56 text-body-sm text-danger"
-                >
-                  {statusEditor.error}
-                </p>
-              )}
-            </>
+                }}
+              >
+                {status ? (
+                  <>
+                    <StatusEmoji session={session} value={status.emoji} />
+                    <span className="min-w-0 truncate text-body-sm">
+                      {status.text}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <MenuIcon>
+                      <SmileyIcon size={16} aria-hidden="true" />
+                    </MenuIcon>
+                    Set a status
+                  </>
+                )}
+              </MenuItem>
+            </div>
+          )}
+          {session?.statuses && !session.statuses.writable && (
+            <p
+              id={statusUnavailable}
+              className="mx-3 my-2 max-w-56 text-body-sm text-muted"
+            >
+              Status updates are unavailable in this community.
+            </p>
           )}
           <MenuSeparator />
-          {actions.map((action) => (
-            <MenuItem
-              key={action.key}
-              onClick={() => setSelectedAction(action)}
+          <MenuSubmenu>
+            <MenuSubmenuTrigger ref={appearanceTrigger}>
+              <MenuIcon>
+                <ColorModeIcon size={16} aria-hidden="true" />
+              </MenuIcon>
+              Appearance
+            </MenuSubmenuTrigger>
+            <MenuSubmenuPopup
+              size="compact"
+              aria-label="Appearance"
+              finalFocus={appearanceTrigger}
             >
-              <MenuIcon>{action.icon ?? <PlugIcon size={17} />}</MenuIcon>
-              {action.title}
-            </MenuItem>
-          ))}
+              <MenuRadioGroup
+                value={preference}
+                onValueChange={(value) => {
+                  if (
+                    value === "light" ||
+                    value === "dark" ||
+                    value === "system"
+                  )
+                    appearance.setMode(value);
+                }}
+              >
+                {(["light", "dark", "system"] as const).map((value) => {
+                  const { label, Icon } = colorModes[value];
+                  return (
+                    <MenuRadioItem
+                      key={value}
+                      value={value}
+                      closeOnClick={false}
+                    >
+                      <MenuIcon>
+                        <Icon size={16} aria-hidden="true" />
+                      </MenuIcon>
+                      {label}
+                    </MenuRadioItem>
+                  );
+                })}
+              </MenuRadioGroup>
+              {appearanceError && (
+                <MenuNote role="alert">{appearanceError}</MenuNote>
+              )}
+            </MenuSubmenuPopup>
+          </MenuSubmenu>
+          <MenuItem
+            onClick={() => {
+              handoff.current = true;
+              onSettings("plugins");
+            }}
+          >
+            <MenuIcon>
+              <SquaresFourIcon aria-hidden="true" size={16} />
+            </MenuIcon>
+            Plugins
+          </MenuItem>
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}
             onClick={() => {
@@ -444,6 +498,16 @@ export function ProfileButton({
               </MenuTrailing>
             )}
           </MenuItem>
+          {actions.length > 0 && <MenuSeparator />}
+          {actions.map((action) => (
+            <MenuItem
+              key={action.key}
+              onClick={() => setSelectedAction(action)}
+            >
+              <MenuIcon>{action.icon ?? <PlugIcon size={17} />}</MenuIcon>
+              {action.title}
+            </MenuItem>
+          ))}
         </MenuPopup>
       </MenuRoot>
       {ActionDialog && (
@@ -459,6 +523,7 @@ export function ProfileButton({
           session={session}
           scope={connection.scope}
           current={statusEditor.editor.current}
+          viewer={statusEditor.editor.viewer}
           close={statusEditor.close}
           finalFocus={profileTrigger}
         />

@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vitest";
-import type { BuzzClient, BuzzEvent, Filter, Template } from "./client";
+import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
-import { callTool } from "./tools";
+import { ATTENTION_TOOLS } from "./attention";
+import { callTool, TOOLS } from "./tools";
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -20,12 +21,20 @@ const event = (fields: Partial<BuzzEvent>): BuzzEvent => ({
 });
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 
-/** A community with `events` in it, answering filters by kind and a few tags. */
+/** A community with `events` in it, answering filters by kind and a few tags,
+ * newest first and a page at a time, as the relay does. */
 function fake(events: readonly BuzzEvent[] = []) {
   const published: Template[] = [];
   const matches = (filter: Filter, item: BuzzEvent) => {
     const tag = (name: string) =>
       item.tags.filter((t) => t[0] === name).map((t) => t[1]);
+    const { until, before_id } = filter as {
+      until?: number;
+      before_id?: string;
+    };
+    if (until !== undefined && item.created_at > until) return false;
+    if (item.created_at === until && before_id && item.id <= before_id)
+      return false;
     return Object.entries(filter).every(([key, value]) => {
       if (key === "kinds") return (value as number[]).includes(item.kind);
       if (key === "ids") return (value as string[]).includes(item.id);
@@ -37,9 +46,17 @@ function fake(events: readonly BuzzEvent[] = []) {
   };
   const client: BuzzClient = {
     pubkey: me,
-    query: vi.fn(async (filters: readonly Filter[]) =>
-      events.filter((item) => filters.some((filter) => matches(filter, item))),
-    ),
+    query: vi.fn(async (filters: readonly Filter[]) => {
+      const newest = [...events].sort(
+        (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+      );
+      const found = filters.map((filter) =>
+        newest
+          .filter((item) => matches(filter, item))
+          .slice(0, (filter.limit as number | undefined) ?? Infinity),
+      );
+      return newest.filter((item) => found.some((page) => page.includes(item)));
+    }),
     publish: vi.fn(async (template: Template) => {
       published.push(template);
       return event({ ...template, pubkey: me, id: "e".repeat(64) });
@@ -54,9 +71,10 @@ function fake(events: readonly BuzzEvent[] = []) {
     read: vi.fn(async (path: string) =>
       path.endsWith(".png") ? PNG : new TextEncoder().encode(`# ${path}`),
     ),
-    memories: vi.fn(async () => [
-      { slug: "mem/notes", body: "old", createdAt: 50 },
-    ]),
+    memories: vi.fn(async () => ({
+      entries: [{ slug: "mem/notes", body: "old", createdAt: 50 }],
+      partial: false,
+    })),
     remember: vi.fn(async () => undefined),
     media: vi.fn(async (url: string) =>
       btoa(String.fromCharCode(...(url.endsWith(".png") ? PNG : [1, 2, 3]))),
@@ -268,6 +286,49 @@ it("writes memory under mem/, newer than the entry it replaces", async () => {
   await expect(
     callTool(client, {}, "mem_get", { slug: "notes" }),
   ).resolves.toBe("old");
+  // Both read the one entry by its slug, not the whole listing.
+  expect(vi.mocked(client.memories).mock.calls).toEqual([
+    ["mem/notes"],
+    ["mem/notes"],
+  ]);
+});
+
+it("never reports memory cut short by a limit as missing", async () => {
+  const { client } = fake();
+  const partial = (entries: Memory[]) =>
+    vi.mocked(client.memories).mockResolvedValue({ entries, partial: true });
+  partial([]);
+  await expect(callTool(client, {}, "mem_get", {})).rejects.toThrow(
+    "Memory could not be read; try again.",
+  );
+  await expect(
+    callTool(client, {}, "mem_get", { slug: "notes" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  // A write needs the entry it replaces: a partial read that missed it, or a
+  // failed read, writes nothing.
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  // A failed lookup reaches the caller as it is, so denial or a lost
+  // connection is not reported as a retryable read.
+  const denied = new Error("Buzz is not connected");
+  vi.mocked(client.memories).mockRejectedValueOnce(denied);
+  await expect(
+    callTool(client, {}, "mem_set", { slug: "notes", text: "new" }),
+  ).rejects.toBe(denied);
+  expect(client.remember).not.toHaveBeenCalled();
+  partial([{ slug: "mem/a", body: "a", createdAt: 0 }]);
+  await expect(callTool(client, {}, "mem_get", {})).resolves.toMatch(
+    /^mem\/a .*\nThis list is incomplete: some memory could not be read\.$/,
+  );
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(callTool(client, {}, "mem_get", {})).resolves.toBe("No memory.");
+  await expect(
+    callTool(client, {}, "mem_get", { slug: "notes" }),
+  ).resolves.toBe("No memory mem/notes.");
+  // Only a complete read that confirms the entry is missing writes it fresh.
+  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 0);
 });
 
 it("answers MCP requests, reporting a failed call as a tool error", async () => {
@@ -345,7 +406,8 @@ it("lists its tools before it can call them", async () => {
       method: "tools/list",
     },
   )) as { result: { tools: unknown[] } };
-  expect(list.result.tools).toHaveLength(13);
+  // Every app session lists the same tools: the Buzz and attention tools.
+  expect(list.result.tools).toHaveLength(TOOLS.length + ATTENTION_TOOLS.length);
   await expect(
     respond(
       undefined,
@@ -482,6 +544,340 @@ it("lists channels it can join as well as its own", async () => {
   await expect(callTool(client, {}, "channels", {})).resolves.toBe(
     `${room} plans`,
   );
+});
+
+it("finds a channel past the relay's first page, by name and then by ID", async () => {
+  const { client, state, published } = relay();
+  const channel = (n: number, name: string, created_at: number) => {
+    const d = `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const id = (k: number) => (k * 1000 + n).toString(16).padStart(64, "0");
+    state.push(
+      event({
+        id: id(1),
+        kind: 39000,
+        created_at,
+        tags: [["d", d], ["name", name], ["private"]],
+      }),
+      event({
+        id: id(2),
+        kind: 39002,
+        created_at,
+        tags: [
+          ["d", d],
+          ["p", me, "", "bot"],
+        ],
+      }),
+    );
+    return d;
+  };
+  for (let n = 1; n <= 500; n++) channel(n, `busy-${n}`, 1000 + n);
+  const fixers = channel(501, "fixers", 10);
+  const row = `${fixers} fixers (private)`;
+  await expect(callTool(client, {}, "channels", { q: "fixers" })).resolves.toBe(
+    row,
+  );
+  await expect(
+    callTool(client, {}, "channels", { all: true, q: "FIXERS" }),
+  ).resolves.toBe(row);
+  await expect(
+    callTool(client, {}, "channel", { channel: fixers }),
+  ).resolves.toBe(`${fixers} fixers (private)\nyou: bot`);
+  await expect(
+    callTool(client, {}, "canvas", { channel: fixers }),
+  ).resolves.toBe("No canvas.");
+  const unseen =
+    "No channel fixers that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.";
+  await expect(
+    callTool(client, {}, "channel", { channel: "fixers" }),
+  ).rejects.toThrow(unseen);
+  await expect(
+    callTool(client, {}, "canvas", { channel: "fixers" }),
+  ).rejects.toThrow(unseen);
+  await expect(
+    callTool(client, {}, "canvas", { channel: "fixers", text: "# Plan" }),
+  ).rejects.toThrow(unseen);
+  expect(published).toEqual([]);
+});
+
+/** Large tied-timestamp datasets without the general fake's quadratic matching. */
+function channelListing(count: number, joined: boolean) {
+  const metadata = Array.from({ length: count }, (_, n) =>
+    event({
+      id: n.toString(16).padStart(64, "0"),
+      kind: 39000,
+      tags: [
+        ["d", `room-${n}`],
+        ["name", n === 0 || n === count - 1 ? "needle" : "busy"],
+      ],
+    }),
+  );
+  const memberships = joined
+    ? metadata.map((item) =>
+        event({
+          id: item.id,
+          kind: 39002,
+          tags: [
+            ["d", item.tags[0]?.[1] ?? ""],
+            ["p", me],
+          ],
+        }),
+      )
+    : [];
+  const { client } = fake();
+  const cursors = new Map<number, string | undefined>();
+  client.query = vi.fn(async ([filter]: readonly Filter[]) => {
+    if (!filter) throw new Error("Expected one filter");
+    expect(filter.limit).toBeLessThanOrEqual(500);
+    const kind = (filter.kinds as number[])[0] as number;
+    expect(filter.before_id).toBe(cursors.get(kind));
+    const membership = (filter.kinds as number[])[0] === 39002;
+    if (membership) expect(filter["#p"]).toEqual([me]);
+    const ids = filter["#d"] as string[] | undefined;
+    const scope = ids && new Set(ids);
+    const source = membership ? memberships : metadata;
+    const before = filter.before_id as string | undefined;
+    if (before) expect(filter.until).toBe(100);
+    const page = source
+      .filter(
+        (item) =>
+          (!before || item.id > before) &&
+          (!scope || scope.has(item.tags[0]?.[1] ?? "")),
+      )
+      .slice(0, filter.limit as number);
+    cursors.set(kind, page.at(-1)?.id);
+    return page;
+  });
+  return { client, metadata, memberships };
+}
+
+it.each([9_999, 10_000, 10_001])(
+  "searches %i metadata events without an oversized reply or hard failure",
+  async (count) => {
+    const { client } = channelListing(count, false);
+    const answer = (await callTool(client, {}, "channels", {
+      all: true,
+      q: "NEEDLE",
+    })) as string;
+    expect(answer).toContain("room-0 needle (not joined)");
+    expect(answer.includes(`room-${count - 1} needle`)).toBe(count <= 10_000);
+    expect(answer.includes("Partial channel list")).toBe(count > 10_000);
+    expect(answer).not.toContain("busy");
+    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
+    expect(client.query).toHaveBeenCalledTimes(21 + (count >= 10_000 ? 1 : 0));
+  },
+);
+
+it.each([9_999, 10_000, 10_001])(
+  "searches %i memberships within joined scope and reports incomplete scans",
+  async (count) => {
+    const { client, metadata } = channelListing(count, true);
+    metadata.push(
+      event({
+        kind: 39000,
+        tags: [
+          ["d", "outside"],
+          ["name", "needle"],
+        ],
+      }),
+    );
+    const answer = (await callTool(client, {}, "channels", {
+      q: "needle",
+    })) as string;
+    expect(answer).toContain("room-0 needle");
+    expect(answer.includes(`room-${count - 1} needle`)).toBe(count <= 10_000);
+    expect(answer.includes("Partial channel list")).toBe(count > 10_000);
+    expect(answer).not.toContain("outside");
+    expect(answer).not.toContain("not joined");
+  },
+);
+
+it("does not claim non-membership when the membership scan is partial", async () => {
+  const { client, metadata } = channelListing(10_001, true);
+  metadata.splice(0, 10_000);
+  await expect(
+    callTool(client, {}, "channels", { all: true }),
+  ).resolves.toContain(
+    "room-10000 needle (membership unknown)\nPartial channel list",
+  );
+});
+
+it("reports a partial search even when no channel matched before the scan limit", async () => {
+  const { client } = channelListing(10_001, false);
+  await expect(
+    callTool(client, {}, "channels", { all: true, q: "missing" }),
+  ).resolves.toBe(
+    "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.",
+  );
+});
+
+it("keeps transport failures as errors instead of treating them as partial scans", async () => {
+  const { client } = channelListing(501, false);
+  const query = client.query;
+  client.query = vi.fn(async (filters) => {
+    if (filters[0]?.before_id) throw new Error("relay unavailable");
+    return query(filters);
+  });
+  await expect(
+    callTool(client, {}, "channels", { all: true, q: "needle" }),
+  ).rejects.toThrow("relay unavailable");
+});
+
+it.each([500, 501])(
+  "bounds a %i-row listing and labels partial output",
+  async (count) => {
+    const { client } = channelListing(count, false);
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 1,
+        method: "tools/call",
+        params: { name: "channels", arguments: { all: true } },
+      },
+    );
+    if (!("result" in reply)) throw new Error("Expected an MCP result");
+    const answer =
+      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
+    expect(
+      answer.split("\n").filter((row) => row.startsWith("room-")),
+    ).toHaveLength(500);
+    expect(answer.includes("Partial channel list")).toBe(count > 500);
+    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
+  },
+);
+
+it.each(["x", "界", "😀", '"\\\n'])(
+  "bounds MCP text bytes with long %j names, retaining a usable ID",
+  async (unit) => {
+    const { client, metadata } = channelListing(2, false);
+    metadata[0] = event({
+      kind: 39000,
+      tags: [
+        ["d", "oversized"],
+        ["name", unit.repeat(20_000)],
+      ],
+    });
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 1,
+        method: "tools/call",
+        params: { name: "channels", arguments: { all: true, q: unit } },
+      },
+    );
+    if (!("result" in reply)) throw new Error("Expected an MCP result");
+    expect(reply.result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining("oversized (details omitted;"),
+        },
+      ],
+    });
+    const text =
+      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
+    expect(text).toContain("Partial channel list");
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(16_384);
+  },
+);
+
+it.each([-1, 0, 1])(
+  "handles the UTF-8 output boundary at offset %i",
+  async (offset) => {
+    const { client, metadata } = channelListing(2, false);
+    const notice =
+      "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.";
+    const suffix = " (not joined)";
+    const budget = 16_384 - new TextEncoder().encode(notice).length - 1;
+    const prefix = "room-0 ";
+    const name = "界".repeat(
+      Math.floor((budget - prefix.length - suffix.length) / 3),
+    );
+    const padding =
+      budget -
+      prefix.length -
+      suffix.length -
+      new TextEncoder().encode(name).length;
+    metadata[0] = event({
+      id: "0".repeat(64),
+      kind: 39000,
+      tags: [
+        ["d", "room-0"],
+        ["name", name + "x".repeat(padding + offset)],
+      ],
+    });
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 1,
+        method: "tools/call",
+        params: { name: "channels", arguments: { all: true } },
+      },
+    );
+    if (!("result" in reply)) throw new Error("Expected an MCP result");
+    const answer =
+      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
+    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
+    expect(answer.includes(name)).toBe(offset <= 0);
+    expect(answer).toContain(notice);
+    if (offset === 0)
+      expect(new TextEncoder().encode(answer).length).toBe(16_384);
+  },
+);
+
+it("reads an existing canvas without querying channel metadata", async () => {
+  const { client } = fake([event({ kind: 40100, content: "# Existing" })]);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas", {}),
+  ).resolves.toBe("# Existing");
+  expect(client.query).toHaveBeenCalledExactlyOnceWith([
+    { kinds: [40100], "#h": ["chan"], limit: 1 },
+  ]);
+});
+
+it("waits past the existing canvas timestamp before publishing", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    const { client, published } = fake([
+      event({ kind: 40100, content: "old" }),
+    ]);
+    const publish = client.publish;
+    client.publish = vi.fn(async (template) => {
+      expect(Date.now()).toBe(101_000);
+      return publish(template);
+    });
+    const write = callTool(client, { channel: "chan" }, "canvas", {
+      text: "new",
+    });
+    await vi.advanceTimersByTimeAsync(499);
+    expect(published).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(write).resolves.toBe("saved");
+    expect(published).toEqual([
+      { kind: 40100, content: "new", tags: [["h", "chan"]] },
+    ]);
+    expect(client.query).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("publishes the first canvas only after finding visible channel metadata", async () => {
+  const { client, published } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas", { text: "first" }),
+  ).resolves.toBe("saved");
+  expect(client.query).toHaveBeenNthCalledWith(2, [
+    { kinds: [39000], "#d": ["chan"], limit: 1 },
+  ]);
+  expect(published).toEqual([
+    { kind: 40100, content: "first", tags: [["h", "chan"]] },
+  ]);
 });
 
 it("creates a channel from its owner's template, reporting each agent it could not add", async () => {
@@ -642,7 +1038,9 @@ it("shows a channel's details and changes them as the channel shows", async () =
   );
   await expect(
     callTool(client, { channel: "gone" }, "channel", {}),
-  ).rejects.toThrow("No channel gone that you can see.");
+  ).rejects.toThrow(
+    "No channel gone that you can see (it may not be visible yet).",
+  );
 });
 
 it("changes only the name of a session", async () => {
@@ -870,4 +1268,180 @@ it("keeps what it changed when a read after the change fails", async () => {
       topic: "x",
     }),
   ).rejects.toThrow("kind 39000 unavailable");
+});
+
+it("lists, opens and closes tabs for the working channel's threads", async () => {
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const elsewhere = event({ id: bob, tags: [["h", "other"]] });
+  // The reader takes the last marked root and ignores case.
+  const remarked = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice, "", "root"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const uppercase = event({
+    id: "4".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice.toUpperCase(), "", "reply"],
+    ],
+  });
+  const { client } = fake([
+    event({ id: root }),
+    reply,
+    elsewhere,
+    remarked,
+    uppercase,
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {}),
+  ).rejects.toThrow("Tabs are kept in Buzz Desktop and are unavailable here.");
+  const tabs = {
+    list: vi.fn(() => [
+      { root, pane: "side", shown: true },
+      { root: alice, pane: "main", name: "Launch plan", shown: false },
+    ]),
+    open: vi.fn(() => true),
+    close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
+    rename: vi.fn(() => true),
+  };
+  client.tabs = tabs;
+  await expect(callTool(client, {}, "tabs", {})).rejects.toThrow(
+    "Tabs need a channel to work in.",
+  );
+  expect(await callTool(client, { channel: "chan" }, "tabs", {})).toBe(
+    `${root} side (shown)\n${alice} main "Launch plan"`,
+  );
+  expect(tabs.list).toHaveBeenCalledWith("chan");
+  // A reply opens its thread's root.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: nested,
+    }),
+  ).toBe(`opened ${root}`);
+  expect(tabs.open).toHaveBeenCalledWith("chan", root);
+  // Another channel's thread never gets a tab here.
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: bob,
+    }),
+  ).rejects.toThrow(`${bob} is not in this channel.`);
+  expect(tabs.open).toHaveBeenCalledTimes(1);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
+  ).rejects.toThrow("Your owner is looking at that tab, so it stays open.");
+  expect(tabs.close).toHaveBeenLastCalledWith("chan", root);
+  tabs.close.mockReturnValue("missing");
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
+  ).toBe("not open");
+  // A reply renames its thread's tab; no name restores the automatic title.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: nested,
+      name: " Launch plan ",
+    }),
+  ).toBe("renamed");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "Launch plan");
+  for (const [message, expected] of [
+    [remarked, root],
+    [uppercase, alice],
+  ] as const) {
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: message.id,
+      name: "Plan",
+    });
+    expect(tabs.rename).toHaveBeenLastCalledWith("chan", expected, "Plan");
+  }
+  tabs.rename.mockReturnValue(false);
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+    }),
+  ).toBe("not open");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+      name: 1,
+    }),
+  ).rejects.toThrow("name must be text.");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "move",
+      thread: root,
+    }),
+  ).rejects.toThrow("action must be open, close or rename.");
+});
+
+it("finds users through the community's name search, in its order", async () => {
+  const { client } = fake(community);
+  // Name search ranks Bob's exact match above a later Alice match.
+  client.searchProfiles = vi.fn(async () => [
+    profile(bob, "Wes"),
+    profile(alice, "Wesley"),
+  ]);
+  const found = await callTool(client, {}, "users", { q: "Wes" });
+  expect(found).toBe(`${bob} Wes\n${alice} Wesley`);
+  expect(client.searchProfiles).toHaveBeenCalledWith("wes", 100);
+  expect(client.query).not.toHaveBeenCalled();
+});
+
+it("finds users with NIP-50 search where the community has no name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => undefined);
+  // The fake ignores `search`; the name filter keeps only matching names.
+  expect(await callTool(client, {}, "users", { q: "alice" })).toBe(
+    `${alice} Alice Smith`,
+  );
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: "alice", limit: 100 },
+  ]);
+});
+
+it("finds a name longer than the name search's limit with NIP-50 search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  // 100 code points (200 UTF-16 units) is the longest name search accepts.
+  const longest = "😀".repeat(100);
+  await callTool(client, {}, "users", { q: longest });
+  expect(client.searchProfiles).toHaveBeenCalledWith(longest, 100);
+  expect(client.query).not.toHaveBeenCalled();
+  const over = `${longest}w`;
+  expect(await callTool(client, {}, "users", { q: over })).toBe("No users.");
+  expect(client.searchProfiles).toHaveBeenCalledTimes(1);
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: over, limit: 100 },
+  ]);
+});
+
+it("reads users by id without the name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  expect(await callTool(client, {}, "users", { ids: [bob] })).toBe(
+    `${bob} Bob`,
+  );
+  expect(client.searchProfiles).not.toHaveBeenCalled();
 });

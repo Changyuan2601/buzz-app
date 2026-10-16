@@ -4,6 +4,7 @@ import type { ChannelQueries } from "./contracts";
 import type { ReadTransport } from "./transport";
 import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
+import type { ProfileSearch } from "./profile-search";
 
 /** Opening is idempotent by participant set; first messages use the durable outbox. */
 export function createDirectMessages(
@@ -14,6 +15,7 @@ export function createDirectMessages(
   journal: Pick<Outbox, "snapshot" | "subscribe"> | undefined,
   lifetime: AbortSignal,
   directoryReader: RelayReader,
+  searchProfiles: ProfileSearch,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
   const opened = new Set<(id: string) => void>();
@@ -35,21 +37,25 @@ export function createDirectMessages(
       const exactKey = /^[0-9a-f]{64}$/.test(value);
       const limit = browsing && page === 1 ? 15 : 30;
       const relayPage = browsing && page > 1 ? page - 1 : page;
-      const events = await directoryReader.read(
-        [
-          {
-            kinds: [0],
-            limit,
-            page: relayPage,
-            ...(exactKey
-              ? { authors: [value] }
-              : value
-                ? { search: value, search_mode: "prefix" as const }
-                : {}),
-          },
-        ],
-        { signal: active, priority: page === 1 ? "foreground" : "background" },
-      );
+      const priority = page === 1 ? "foreground" : "background";
+      const events =
+        value && !exactKey
+          ? await searchProfiles(
+              value,
+              { limit, page, signal: active, priority },
+              directoryReader,
+            )
+          : await directoryReader.read(
+              [
+                {
+                  kinds: [0],
+                  limit,
+                  page: relayPage,
+                  ...(exactKey ? { authors: [value] } : {}),
+                },
+              ],
+              { signal: active, priority },
+            );
       active.throwIfAborted();
       return {
         people: [...foldProfiles(events)]

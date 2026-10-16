@@ -18,6 +18,7 @@ import type { InviteLink } from "../../features/communities/invite-link";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
+import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
@@ -47,7 +48,7 @@ export function AppShell({
   onInviteClose,
   settingsCards,
   accountActions,
-  onProfile,
+  appearance,
   searchServices,
   navigationControls,
   onCommunitySelect,
@@ -61,7 +62,7 @@ export function AppShell({
   navigationAttempt: string;
   onSelect: (
     key: string,
-    options?: Pick<NavigationOpenOptions, "focus">,
+    options?: Pick<NavigationOpenOptions, "focus"> & { section?: string },
   ) => void;
   tone: string;
   workspace?: boolean;
@@ -71,7 +72,7 @@ export function AppShell({
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   accountActions: AccountActionsService;
-  onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
+  appearance: Appearance;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
@@ -101,7 +102,7 @@ export function AppShell({
     selected === "settings" ||
     pages.some((page) => page.key === selected && page.primary);
   const sidebarLabel = meNavigation
-    ? "Me sidebar"
+    ? "Solo sidebar"
     : channelsNavigation
       ? "Channel sidebar"
       : "sidebar";
@@ -245,7 +246,7 @@ export function AppShell({
   return (
     <div
       data-shell-tone={tone}
-      className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden bg-shell text-ink"
+      className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden text-ink"
     >
       {/* biome-ignore lint/a11y/useValidAnchor: A skip link navigates to a real fragment; enhance focus without replacing the app route hash. */}
       <a
@@ -390,8 +391,10 @@ export function AppShell({
               communities={communities}
               accountActions={accountActions}
               settingsSelected={selected === "settings"}
-              onSettings={() => onSelect("settings")}
-              onProfile={onProfile}
+              appearance={appearance}
+              onSettings={(section) =>
+                onSelect("settings", section ? { section } : undefined)
+              }
             />
             <WindowControls />
           </div>
