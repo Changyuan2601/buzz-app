@@ -193,8 +193,11 @@ export type Team = Readonly<{
   instructions: string;
   /** Agent pubkeys, in the order shown. */
   members: readonly string[];
-  /** Shown with the team, never stored: why its agents wait to start. */
+  /** Shown with the team, never stored: why it stays on this device. */
   note?: string;
+  /** A synced team's head when shown, never stored: the editor's Save
+   * revises it. */
+  base?: string;
 }>;
 export const TEAMS_KEY = "buzz.agents.teams.v1";
 

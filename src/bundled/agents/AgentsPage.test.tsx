@@ -138,6 +138,7 @@ function setup(
     status = "ready" as AgentsSnapshot["status"],
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
+    archivedTeams = [] as AgentsSnapshot["teams"],
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -151,6 +152,7 @@ function setup(
     agents: saved,
     running: saved,
     teams: [],
+    archivedTeams,
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", ({ onClose }) => (
@@ -338,6 +340,7 @@ function setup(
       return team;
     }),
     core: vi.fn(async () => undefined),
+    recoverTeam: vi.fn(async (_id: string) => {}),
     configHistory: () => undefined,
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -1212,6 +1215,52 @@ it("keeps a team whose members are all here importable with no agents to list", 
   ).toBeInTheDocument();
 });
 
+it("offers Recover or Cancel when an imported team was deleted in this community", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  const met = {
+    imported: [],
+    failed: [],
+    elsewhere: [],
+    foreign: [],
+    archived: { id: "team-1" },
+  };
+  agents.portTeam.mockResolvedValueOnce(met).mockResolvedValueOnce(met);
+  await openImport(user);
+  const importTeam = await screen.findByRole("button", {
+    name: "Import team Night Shift",
+  });
+  await user.click(importTeam);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByText(/was deleted in this community/)).toBeNull();
+  expect(agents.recoverTeam).not.toHaveBeenCalled();
+  await user.click(importTeam);
+  await user.click(screen.getByRole("button", { name: "Recover and import" }));
+  expect(agents.recoverTeam).toHaveBeenCalledWith("team-1");
+  expect(agents.portTeam).toHaveBeenCalledTimes(3);
+});
+
+it("lists deleted synced teams, each with Recover", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    archivedTeams: [
+      { id: "team-1", name: "Core", instructions: "", members: [] },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const deleted = screen.getByRole("region", { name: "Deleted teams" });
+  await user.click(
+    within(deleted).getByRole("button", { name: "Recover team Core" }),
+  );
+  expect(agents.recoverTeam).toHaveBeenCalledWith("team-1");
+});
+
 it("keeps Import open and names each part of a team import that did not come", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1317,6 +1366,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Create team" }));
 
   expect(agents.saveTeam).toHaveBeenCalledWith({
+    creation: expect.any(String),
     name: "Crew",
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
@@ -1332,30 +1382,6 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
-});
-
-it("shows a synced team's refusal and keeps its editor open", async () => {
-  const user = userEvent.setup();
-  const { agents } = setup([agent("Ada", 1)]);
-  await act(() =>
-    agents.saveTeam({ name: "Crew", instructions: "", members: [] }),
-  );
-  const refused = new Error(
-    "Synced teams can't be changed in this version yet",
-  );
-  agents.saveTeam.mockRejectedValueOnce(refused);
-  agents.removeTeam.mockRejectedValueOnce(refused);
-  await user.click(screen.getByRole("tab", { name: "Your teams" }));
-  await user.click(screen.getByRole("button", { name: "Crew" }));
-  const form = screen.getByRole("form", { name: "Edit Crew" });
-  for (const name of ["Save", "Delete team"]) {
-    await user.click(within(form).getByRole("button", { name }));
-    expect(await within(form).findByRole("alert")).toHaveTextContent(
-      refused.message,
-    );
-    expect(screen.getByRole("form", { name: "Edit Crew" })).toBe(form);
-  }
-  expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
 });
 
 it("closes the team editor when leaving Your teams", async () => {

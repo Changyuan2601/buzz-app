@@ -370,6 +370,7 @@ export function AgentsPage({
               agents={agents}
               saved={snapshot.agents.filter((agent) => agent.place === "here")}
               teams={snapshot.teams}
+              archived={snapshot.archivedTeams ?? []}
               editing={editing}
               onEdit={setEditingTeam}
               newTeam={!toolbarAction && newTeamMenu}
@@ -1015,6 +1016,9 @@ function ImportAgents({
   const [found, setFound] = useState<FoundAgents>();
   const [type, setType] = useState(types[0]?.key ?? "");
   const [pending, setPending] = useState<string>();
+  /** An import that met its team deleted here: Recover it, or cancel. */
+  const [collision, setCollision] =
+    useState<Readonly<{ team: OldTeam; id: string }>>();
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
@@ -1059,12 +1063,14 @@ function ImportAgents({
       onPendingChange(false);
     }
   };
-  const portTeam = async (team: OldTeam) => {
+  const portTeam = async (team: OldTeam, recover?: string) => {
     if (!chosen || pending) return;
     setPending(team.id);
     onPendingChange(true);
     setError("");
+    setCollision(undefined);
     try {
+      if (recover) await agents.recoverTeam(recover);
       const result = await agents.portTeam({ id: team.id, type: chosen.key });
       const came = new Set(result.imported.map((agent) => agent.pubkey));
       setFound(
@@ -1075,6 +1081,10 @@ function ImportAgents({
             here: [...last.here, ...came],
           },
       );
+      if (result.archived) {
+        setCollision({ team, id: result.archived.id });
+        return;
+      }
       // Leaving would hide the one place that names what still needs a hand.
       const note = teamPortNote(result);
       if (note) setError(note);
@@ -1125,6 +1135,28 @@ function ImportAgents({
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}
         </p>
+      )}
+      {collision && (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          <p className="m-0 flex-1 text-body-sm">
+            {collision.team.name} was deleted in this community. Recover it to
+            import into it, or cancel.
+          </p>
+          <Button
+            size="compact"
+            variant="primary"
+            onClick={() => void portTeam(collision.team, collision.id)}
+          >
+            Recover and import
+          </Button>
+          <Button
+            size="compact"
+            variant="ghost"
+            onClick={() => setCollision(undefined)}
+          >
+            Cancel
+          </Button>
+        </div>
       )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
@@ -1243,6 +1275,7 @@ function Teams({
   agents,
   saved,
   teams,
+  archived,
   editing,
   onEdit,
   newTeam,
@@ -1250,6 +1283,8 @@ function Teams({
   agents: Agents;
   saved: readonly Agent[];
   teams: readonly Team[];
+  /** Deleted synced teams, each with Recover. */
+  archived: readonly Team[];
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
   onEdit(id: string | undefined): void;
@@ -1296,7 +1331,52 @@ function Teams({
           </ul>
         )}
       </div>
+      {archived.length > 0 && (
+        <section aria-label="Deleted teams" className="grid gap-2">
+          <InlineHeader title="Deleted teams" />
+          <ul className={styles.portList}>
+            {archived.map((item) => (
+              <DeletedTeam key={item.id} agents={agents} team={item} />
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
+  );
+}
+
+/** A deleted synced team, which Recover brings back as it was. */
+function DeletedTeam({ agents, team }: { agents: Agents; team: Team }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const name = team.name || "Unnamed team";
+  return (
+    <li className={styles.portRow}>
+      <span className="grid min-w-0 flex-1">
+        <span className="truncate text-body">{name}</span>
+        {error && (
+          <span role="alert" className="text-caption text-danger">
+            {error}
+          </span>
+        )}
+      </span>
+      <Button
+        size="compact"
+        variant="outline"
+        aria-label={`Recover team ${name}`}
+        loading={pending}
+        onClick={() => {
+          setPending(true);
+          setError("");
+          agents
+            .recoverTeam(team.id)
+            .catch((reason) => setError(message(reason)))
+            .finally(() => setPending(false));
+        }}
+      >
+        Recover
+      </Button>
+    </li>
   );
 }
 
@@ -1316,6 +1396,10 @@ function TeamEditor({
   const [members, setMembers] = useState<readonly string[]>(
     team?.members ?? [],
   );
+  // The head this form opened; a later remote edit makes Save a conflict.
+  const [base] = useState(team?.base);
+  // A new team's id for this form: Save again finishes that same team.
+  const [creation] = useState(() => crypto.randomUUID());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const act = async (work: () => Promise<unknown>) => {
@@ -1333,7 +1417,8 @@ function TeamEditor({
   const save = () =>
     act(() =>
       agents.saveTeam({
-        ...(team ? { id: team.id } : {}),
+        ...(team ? { id: team.id } : { creation }),
+        ...(base ? { base } : {}),
         name: name.trim(),
         instructions,
         members,

@@ -212,8 +212,10 @@ function setup(archived = false, storage = memoryStorage()) {
   const configs = agentConfigs({
     channels: {
       ensure,
+      find: vi.fn(async () => undefined),
       teams,
       addMember,
+      removeMember: vi.fn(async () => ({ status: "confirmed" as const })),
       owns: vi.fn(async () => true),
       archive,
       unarchive,
@@ -351,23 +353,16 @@ describe("agent config wiring", () => {
     const storage = memoryStorage();
     const channel = "6f1c2a3b-4d5e-4f60-8a71-b2c3d4e5f607";
     const teamId = "0b7d4e2a-9c31-5f84-a6d2-3e1f0c9b8a75";
-    // Known from an earlier discovery, so its unprovable label keeps its id.
-    new TeamJournal(storage).remember(owner.pubkey, "c", [
-      {
-        id: teamId,
-        channel,
-        archived: false,
-        unreadable: true,
-        members: [],
-        subject: {
-          owner: owner.pubkey,
-          community: "c",
-          subject: teamId,
-          channel,
-          type: "buzz.team",
-        },
-      },
-    ]);
+    new TeamJournal(storage).put({
+      localTeamId: "local",
+      community: "c",
+      status: "confirmed",
+      teamId,
+      channelId: channel,
+      intendedMembers: [],
+      addedMembers: [],
+      pendingMembers: [],
+    });
     const f = setup(false, storage);
     const team = {
       id: channel,

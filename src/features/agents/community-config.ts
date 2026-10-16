@@ -3,6 +3,7 @@
 // sync to it, and migrate each type. Off until every ship gate holds (§1.2);
 // tests turn it on through `enabled`.
 import type { RelaySession } from "../relay/session";
+import { readSnapshotCommunity } from "../relay/read-state-snapshot";
 import {
   type AgentConfigStore,
   pickSettings,
@@ -19,7 +20,6 @@ type ArtifactTemplate = ReturnType<typeof artifactTemplate>;
 import type { Mode, TeamSource } from "./agent-start";
 import {
   agentSubject,
-  type ConfigChannels,
   configSupport,
   createConfigChannels,
 } from "./config-channels";
@@ -52,11 +52,18 @@ import {
   type WriteDeps,
 } from "./config-writes";
 import { sessionConfigFeed } from "./session-config-feed";
+import type { Team } from "./store";
 import {
   discoverTeams,
+  editTeam,
+  publishTeam,
+  type Source,
+  retired,
   type SyncedTeam,
+  teamComplete,
   type TeamDeps,
   type TeamJournal,
+  teamCommunity,
 } from "./team-config";
 
 /** Config sync ships off. Turning it on is a one-line change. */
@@ -244,6 +251,9 @@ export async function communityConfig(
     lifecycle: input.journals.lifecycle,
     owner,
     community,
+    communityId: readSnapshotCommunity(
+      (info as { read_state_snapshot?: unknown } | null)?.read_state_snapshot,
+    ),
     strip: input.strip,
     changed: input.changed,
     dispose: feed.dispose,
@@ -254,15 +264,14 @@ export async function communityConfig(
 /** Per-agent config channels over one community's sync and writers. */
 export function agentConfigs(
   input: Readonly<{
-    channels: Pick<ConfigChannels, "ensure" | "addMember"> &
-      TeamDeps["channels"] &
-      LifecycleDeps["channels"];
+    channels: TeamDeps["channels"] & LifecycleDeps["channels"];
     sync: Pick<ConfigSync, "bind" | "unbind" | "dispose">;
     deps: WriteDeps;
     teamJournal: TeamJournal;
     lifecycle: LifecycleJournal;
     owner: string;
     community: string;
+    communityId?: string | undefined;
     strip(pubkey: string, side: Side, accepted?: RelayEvent): void;
     changed(): void;
     dispose?(): void;
@@ -297,6 +306,7 @@ export function agentConfigs(
     journal: input.teamJournal,
     owner,
     community,
+    communityId: input.communityId,
   };
   /** Until a discovery completes, the teams the last one found here;
    * undefined while none ever did, so teams stay local. */
@@ -405,12 +415,54 @@ export function agentConfigs(
       .finally(() => {
         attached.add(pubkey);
         if (running.get(pubkey) === work) running.delete(pubkey);
+        // Its config channel may exist now, so a pending team member can join.
+        void resumeTeams();
       });
     running.set(pubkey, work);
     return work;
   }
   const rebind = (pubkey: string, recovered = false) =>
     configs.has(pubkey) ? start(pubkey, recovered) : Promise.resolve();
+
+  async function teamLifecycle(id: string, action: "archive" | "unarchive") {
+    const team = teams?.find((t) => t.id === id);
+    if (!team || team.archived !== (action === "unarchive"))
+      throw new Error("No such team");
+    await channels[action](team.channel, signal);
+    await refreshTeams();
+  }
+
+  /** One team move at a time, so two never race a journal entry. */
+  let teamWork = Promise.resolve();
+  /** Resumes every team move this community's journal holds unfinished,
+   * whether or not its local row is left (§6.2): when agent channels appear
+   * and on each connection. */
+  function resumeTeams() {
+    teamWork = teamWork.then(async () => {
+      let moved = false;
+      for (const entry of input.teamJournal.all()) {
+        if (disposed) return;
+        if (entry.community !== community || !entry.teamId) continue;
+        const done =
+          entry.status === "confirmed" &&
+          entry.intendedMembers.every((p) => entry.addedMembers.includes(p));
+        // Unpublished, it needs the name and instructions it was made with.
+        if (done || (entry.status !== "confirmed" && !entry.team)) continue;
+        moved = true;
+        await publishTeam(
+          teamDeps,
+          { kind: entry.source ?? "local-team", id: entry.localTeamId },
+          {
+            name: entry.team?.name ?? "",
+            instructions: entry.team?.instructions ?? "",
+            members: entry.intendedMembers,
+          },
+        ).catch(() => {});
+      }
+      if (moved && !disposed) await refreshTeams();
+    });
+    return teamWork.catch(() => {});
+  }
 
   async function resumeLifecycle() {
     const pending = input.lifecycle.pending(community);
@@ -481,7 +533,9 @@ export function agentConfigs(
     async reconnected() {
       await Promise.all([...configs.keys()].map((pubkey) => rebind(pubkey)));
       await resumeLifecycle();
+      await resumeTeams();
     },
+    resumeTeams,
     /** A team channel's members changed: its cached members are re-read. */
     rosterChanged(channel: string) {
       if (teams?.some((team) => team.channel === channel)) void refreshTeams();
@@ -532,6 +586,99 @@ export function agentConfigs(
     /** The synced teams, archived ones included; undefined until known. */
     teams: () => teams,
     refreshTeams,
+    /** Moves each local team whose members are all in this community into a
+     * config channel, removing its local row once that is safe (§6.2). */
+    async migrateTeams(
+      local: readonly Team[],
+      communityOf: (pubkey: string) => string | undefined,
+      remove: (id: string) => void,
+      source: (team: Team) => Source = (team) => ({
+        kind: "local-team",
+        id: team.id,
+      }),
+    ) {
+      for (const team of local) {
+        if (teamCommunity(team, communityOf) !== community) continue;
+        const entry = await publishTeam(teamDeps, source(team), team);
+        if (entry.status !== "archived" && retired(entry)) remove(team.id);
+      }
+      await refreshTeams();
+    },
+    /** Whether old Buzz teams import into config channels here; when not,
+     * Import keeps its local team. */
+    importsTeams: input.communityId !== undefined,
+    /** Imports old Buzz team `id` with `team`'s members into its config
+     * channel (§6.3): every device's import of it converges on one team. */
+    async importTeam(
+      id: string,
+      team: Pick<Team, "name" | "instructions" | "members">,
+    ) {
+      const entry = await publishTeam(
+        teamDeps,
+        { kind: "old-buzz-team", id },
+        team,
+      );
+      await refreshTeams();
+      return entry;
+    },
+    /** Creates the team the open form `creation` stands for. Saving the
+     * same `creation` again finishes that one team, whatever the form now
+     * says, never a second. Throws until every member is confirmed added. */
+    async createTeam(
+      team: Pick<Team, "name" | "instructions" | "members">,
+      creation: string,
+    ) {
+      const entry = await publishTeam(
+        teamDeps,
+        { kind: "new", id: creation },
+        team,
+      );
+      if (entry.status !== "confirmed")
+        throw new Error(
+          "error" in entry && entry.error
+            ? entry.error
+            : "The team couldn't be created",
+        );
+      await refreshTeams();
+      // Its members wait in the journal; Save again or the next connection
+      // retries them, on this same team.
+      if (!teamComplete(entry))
+        throw new Error(
+          "The team was created, but some members weren't confirmed; try again.",
+        );
+      // An earlier attempt published what the form said then.
+      const made = teams?.find((t) => t.id === entry.teamId && !t.archived);
+      const changed =
+        entry.team?.name !== team.name ||
+        entry.team.instructions !== team.instructions ||
+        entry.intendedMembers.some((p) => !team.members.includes(p));
+      if (made && changed) {
+        const { saved, failed } = await editTeam(teamDeps, made, team);
+        await refreshTeams();
+        if ((saved && saved.status !== "saved") || failed.length)
+          throw new Error(
+            "The team was created, but its latest changes weren't confirmed; try again.",
+          );
+      }
+      return entry.teamId;
+    },
+    /** Deletes synced team `id` by archiving its config channel. */
+    archiveTeam: (id: string) => teamLifecycle(id, "archive"),
+    /** Brings an archived team back by unarchiving its config channel. */
+    recoverTeam: (id: string) => teamLifecycle(id, "unarchive"),
+    async editTeam(
+      id: string,
+      change: Pick<Team, "name" | "instructions" | "members">,
+      base?: string,
+    ) {
+      const team = teams?.find((t) => t.id === id && !t.archived);
+      if (!team) throw new Error("No such team");
+      if (team.unreadable)
+        throw new Error("This team can't be read right now; try again");
+      const result = await editTeam(teamDeps, team, change, base ?? team.head);
+      await refreshTeams();
+      return result;
+    },
     /** Saves each synced side the edit changed as its next revision of
      * `base`, the head its editor opened (the stored head where absent). The
      * local row keeps the edit, so on a conflict it stays as a draft. */
