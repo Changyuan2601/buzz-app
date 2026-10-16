@@ -199,7 +199,8 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...acpManifest, apiVersion: 1 },
     module: acp,
-    // Off until its runtime lands: its agents can be set up but not run.
+    // Off by default: its agents run a command the owner types in, so turning
+    // it on is a deliberate choice.
     enabledByDefault: false,
   },
   {
