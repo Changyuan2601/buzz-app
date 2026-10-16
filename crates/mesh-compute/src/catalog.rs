@@ -76,6 +76,15 @@ fn hosting_survey() -> hardware::HardwareSurvey {
     survey
 }
 
+/// Whether a catalog size label is a positive, finite GB/MB byte size.
+fn byte_size(label: &str) -> bool {
+    let upper = label.trim().to_ascii_uppercase();
+    (upper.ends_with("GB") || upper.ends_with("MB")) && {
+        let size = models::catalog::parse_size_gb(label);
+        size.is_finite() && size > 0.0
+    }
+}
+
 fn hosting(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> Hosting {
     // Metal's usable working set is not physical memory. Unified-memory machines
     // use reported system RAM; discrete GPUs use device VRAM, never RAM offload.
@@ -91,9 +100,7 @@ fn hosting(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> Hosting {
         .filter_map(|entry| {
             let label = entry.size.as_deref()?;
             // Catalog descriptions such as "30 layers" are not byte sizes.
-            if !label.to_ascii_uppercase().ends_with("GB")
-                && !label.to_ascii_uppercase().ends_with("MB")
-            {
+            if !byte_size(label) {
                 return None;
             }
             let size = models::catalog::parse_size_gb(label);
@@ -310,7 +317,8 @@ fn build(
         (CURATED_SMALL, "Gemma 4 E4B", "4.98GB"),
     ] {
         if let Some(entry) = entries.iter_mut().find(|entry| entry.model == reference) {
-            if entry.size.is_none() {
+            // Catalog metadata may describe layers ("42 layers") instead of bytes.
+            if !entry.size.as_deref().is_some_and(byte_size) {
                 entry.size = Some(size.into());
                 entry.name = name.into();
                 entry.fit = fit(Some(size), bytes as f64 / 1e9);
@@ -447,6 +455,48 @@ mod tests {
                 model: CURATED_SMALL.into(),
                 max_vram_gb: None,
             }
+        );
+    }
+    #[test]
+    fn seeded_gemma_sizes_replace_layer_counts_but_keep_valid_sizes() {
+        for (label, expected) in [
+            (Some("42 layers"), "4.98GB"),
+            (Some("0GB"), "4.98GB"),
+            (Some("unknown"), "4.98GB"),
+            (None, "4.98GB"),
+            (Some("5.10GB"), "5.10GB"),
+        ] {
+            let mut entry = model("unsloth/gemma-4-E4B-it-GGUF", "Gemma 4 E4B", "");
+            entry.size = label.map(Into::into);
+            let catalog = build(None, 0, vec![entry], |_| false);
+            let found: Vec<_> = catalog
+                .entries
+                .iter()
+                .filter(|e| e.model == CURATED_SMALL)
+                .collect();
+            assert_eq!(found.len(), 1, "{label:?}");
+            let found = found[0];
+            assert_eq!(found.size.as_deref(), Some(expected), "{label:?}");
+        }
+        // A 32 GB unified machine picks E4B even when metadata said "42 layers".
+        let catalog = build(
+            None,
+            0,
+            vec![model(
+                "unsloth/gemma-4-E4B-it-GGUF",
+                "Gemma 4 E4B",
+                "42 layers",
+            )],
+            |_| false,
+        );
+        let survey = hardware::HardwareSurvey {
+            is_soc: true,
+            system_ram_bytes: Some(32 * 1024 * 1024 * 1024),
+            ..Default::default()
+        };
+        assert_eq!(
+            auto_choice(&survey, &catalog.entries).model,
+            CURATED_SMALL.to_string()
         );
     }
     #[test]
