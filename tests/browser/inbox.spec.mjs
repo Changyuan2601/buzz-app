@@ -631,7 +631,8 @@ test.describe("signed newest-first Inbox windows", () => {
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")
       .filter({ hasText: "Inbox strict reply 0" });
-    await row.getByRole("button", { name: /^Open / }).click();
+    // Enter enters the detail, so the exact reveal takes focus.
+    await row.getByRole("button", { name: /^Open / }).press("Enter");
     const detail = inbox.getByRole("region", { name: "Inbox detail" });
     const target = detail.locator(`[data-message-id="${oldest.id}"]`);
     await expect(target).toBeInViewport();
@@ -679,7 +680,7 @@ test.describe("signed newest-first Inbox windows", () => {
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")
       .filter({ hasText: "Window room" });
-    await again.getByRole("button", { name: /^Open / }).click();
+    await again.getByRole("button", { name: /^Open / }).press("Enter");
     const current = detail
       .locator("[data-message-id]")
       .filter({ hasText: "New peer reply" });
@@ -712,7 +713,8 @@ test.describe("DM exact opening outside the head", () => {
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")
       .filter({ hasText: "Inbox old DM anchor" });
-    await row.getByRole("button", { name: /^Open / }).click();
+    // Enter enters the detail, so the exact reveal takes focus.
+    await row.getByRole("button", { name: /^Open / }).press("Enter");
     const detail = inbox.getByRole("region", { name: "Inbox detail" });
     const target = detail.locator(
       `[data-message-id="${app.inboxDmAnchor.id}"]`,

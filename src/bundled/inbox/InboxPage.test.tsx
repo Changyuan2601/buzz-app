@@ -2697,9 +2697,9 @@ it.each(["retry", "other", "blur"] as const)(
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
     h.failSave();
-    await user.click(
-      screen.getByRole("button", { name: "Open Alice in #Design" }),
-    );
+    // Enter enters the detail, so its exact reveal takes focus.
+    screen.getByRole("button", { name: "Open Alice in #Design" }).focus();
+    await user.keyboard("{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
     const detail = screen.getByRole("region", { name: "Inbox detail" });
     // The exact reader has already consumed its opening reveal, not a future focus handoff.
@@ -2746,9 +2746,9 @@ it("a second rejected Retry retains its focused control until a successful recov
   await screen.findByText("Please review this");
   await chooseFilter("Mentions");
   h.failSave();
-  await user.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  // Enter enters the detail, so its exact reveal takes focus.
+  screen.getByRole("button", { name: "Open Alice in #Design" }).focus();
+  await user.keyboard("{Enter}");
   expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
   const detail = screen.getByRole("region", { name: "Inbox detail" });
   await waitFor(() =>

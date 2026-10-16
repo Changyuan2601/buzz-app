@@ -54,7 +54,8 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   app.relay.publish("primary", seed);
   await page.clock.setFixedTime(base);
   await releaseReadingFocus(page);
-  await dm.getByRole("button", { name: /^Open / }).click();
+  // Enter enters the detail, so the exact reveal takes focus.
+  await dm.getByRole("button", { name: /^Open / }).press("Enter");
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
   const history = detail.getByRole("region", {
     name: "Channel message history",

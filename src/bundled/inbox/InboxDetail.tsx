@@ -71,7 +71,7 @@ export function InboxDetail({
     | undefined;
   archiveShortcut?: ArchiveShortcut | undefined;
   onBack(): void;
-  /** Off when list keyboard navigation opened the visit and keeps focus there. */
+  /** Off when the list opened the visit and keeps focus there. */
   entryFocus?: boolean | undefined;
 }) {
   const archiveLabel = archiveAction?.archived
@@ -358,11 +358,13 @@ export function InboxDetail({
                         : channelName
                     }
                     anchor={target.messageId}
+                    revealFocus={entryFocus}
                   />
                 ) : (
                   <ConversationThread
                     messageId={target.messageId}
                     revealSelected
+                    revealFocus={entryFocus}
                   />
                 )}
               </ConversationChannel>

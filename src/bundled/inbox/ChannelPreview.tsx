@@ -17,12 +17,15 @@ import styles from "./Inbox.module.css";
 export function ChannelPreview({
   channelName,
   anchor,
+  revealFocus,
   draft = false,
   onDraftSaved,
 }: {
   /** The conversation's preview label, such as a DM's participants. */
   channelName: string;
   anchor?: string | undefined;
+  /** Off when revealing the anchor must leave focus where it is. */
+  revealFocus?: boolean | undefined;
   draft?: boolean;
   onDraftSaved?: () => void;
 }) {
@@ -73,6 +76,7 @@ export function ChannelPreview({
         channelName={channelName}
         messageId={anchor}
         revealSelected
+        revealFocus={revealFocus}
       />
     );
   return (
@@ -90,7 +94,11 @@ export function ChannelPreview({
               revealMessageId={sentId}
               inlineTarget={
                 anchor && inlineSignal && !inlineSignal.aborted
-                  ? { messageId: anchor, signal: inlineSignal }
+                  ? {
+                      messageId: anchor,
+                      signal: inlineSignal,
+                      focus: revealFocus !== false,
+                    }
                   : undefined
               }
             />

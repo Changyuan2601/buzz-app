@@ -68,6 +68,8 @@ export type ThreadPanelProps = {
   replyRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
+  /** Off when the reveal must leave focus where it is. */
+  revealFocus?: boolean | undefined;
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
@@ -336,6 +338,7 @@ function OwnedThreadPanel({
   replyRequest,
   active = true,
   revealSelected,
+  revealFocus,
   requireReadyRoot,
   onDraftSaved,
 }: ThreadPanelProps) {
@@ -404,6 +407,7 @@ function OwnedThreadPanel({
       replyRequest={replyRequest}
       active={active}
       revealSelected={revealSelected}
+      revealFocus={revealFocus}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onOpenLink={onOpenLink}
@@ -433,6 +437,7 @@ function ThreadMessages({
   replyRequest,
   active,
   revealSelected,
+  revealFocus,
   requireReadyRoot,
   onDraftSaved,
   selectionFailure,
@@ -455,6 +460,7 @@ function ThreadMessages({
   replyRequest?: number | undefined;
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
+  revealFocus?: boolean | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
   navigation?: PageNavigation | undefined;
@@ -742,10 +748,12 @@ function ThreadMessages({
     inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
-    focus: !(
-      navigation?.target.kind === "conversation" &&
-      navigation.target.panel === "members"
-    ),
+    focus:
+      revealFocus !== false &&
+      !(
+        navigation?.target.kind === "conversation" &&
+        navigation.target.panel === "members"
+      ),
     settled: positioned,
     messageId,
     signal: active ? revealSignal : undefined,

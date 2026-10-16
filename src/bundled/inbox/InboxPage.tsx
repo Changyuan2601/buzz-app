@@ -280,7 +280,7 @@ export function InboxView({
     messageId: string;
     rootId?: string;
   }>();
-  // Keyboard list navigation keeps focus on the row instead of the opened detail.
+  // List navigation keeps focus on the row instead of the opened detail.
   const [detailFocus, setDetailFocus] = useState(true);
   const invokingRow = useRef<HTMLButtonElement | null>(null);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
@@ -297,6 +297,8 @@ export function InboxView({
   }, [drafts]);
   // Row to focus after its predecessor leaves the list ("" means the toolbar).
   const focusRow = useRef<string | undefined>(undefined);
+  // Row a list open keeps once saving its read re-enables the rows, unless focus moved on.
+  const heldRow = useRef<string | undefined>(undefined);
   const workspace = useRef<HTMLDivElement | null>(null);
   const retryFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
@@ -527,6 +529,22 @@ export function InboxView({
     focusRow.current = undefined;
     (rowButton(id) ?? fallbackControl.current)?.focus({ preventScroll: true });
   });
+  useLayoutEffect(() => {
+    // A narrow selection hides the list, so its detail takes focus after all.
+    if (
+      !detailFocus &&
+      selectedId &&
+      rowButton(selectedId)?.checkVisibility?.() === false
+    )
+      setDetailFocus(true);
+  });
+  useLayoutEffect(() => {
+    const id = heldRow.current;
+    if (id === undefined || pending) return;
+    heldRow.current = undefined;
+    if (document.activeElement === document.body)
+      rowButton(id)?.focus({ preventScroll: true });
+  });
   async function run(
     work: () => Promise<unknown>,
     valid?: () => boolean,
@@ -657,13 +675,16 @@ export function InboxView({
       },
     );
   }
-  function open(item: InboxItem, row: HTMLButtonElement, focus = true) {
+  // `detail` moves focus into the opened detail; otherwise the row keeps it, like Mail.
+  function open(item: InboxItem, row: HTMLButtonElement, detail = true) {
+    if (!detail) row.focus({ preventScroll: true });
     // The selected row is the same visit, even when its
     // current representative changed after reading.
     if (busy.current || selectedId === item.id) return;
     cancelRetry();
     invokingRow.current = row;
-    setDetailFocus(focus);
+    if (!detail) heldRow.current = item.id;
+    setDetailFocus(detail);
     setSelectedTarget(targetOf(item));
     if (hasUnread(item) && canRead) mutate(item, false);
   }
@@ -996,7 +1017,6 @@ export function InboxView({
                               neighbor && !pending && rowButton(neighbor.id);
                             if (!neighbor || !button) return;
                             event.preventDefault();
-                            button.focus();
                             open(neighbor, button, false);
                           }}
                         >
@@ -1090,7 +1110,10 @@ export function InboxView({
                                 />
                               )
                             }
-                            onClick={(event) => open(item, event.currentTarget)}
+                            // Enter enters the detail; a pointer click stays in the list.
+                            onClick={(event) =>
+                              open(item, event.currentTarget, !event.detail)
+                            }
                           />
                           <span className={styles.rowArchive}>
                             <IconButton

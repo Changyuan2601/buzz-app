@@ -31,10 +31,11 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   );
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   // The thread's preview follows whichever reply loaded last.
+  // Enter enters the detail, so the exact reveal takes focus.
   await inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("button", { name: "Open Alice Fixture in #Alpha", exact: true })
-    .click();
+    .press("Enter");
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
   // A pending exact reveal would take focus from the profile dialog below.
   await expect(detail.locator("[data-message-id]:focus")).toHaveCount(1);

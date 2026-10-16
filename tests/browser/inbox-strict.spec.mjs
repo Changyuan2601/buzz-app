@@ -26,12 +26,13 @@ test("focuses an in-head DM after effect cleanup and setup replay", async ({
     .getByRole("button", { name: "Inbox filters", exact: true })
     .click();
   await page.getByRole("menuitemradio", { name: "DMs", exact: true }).click();
+  // Enter enters the detail, so the exact reveal takes focus.
   await inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem")
     .first()
     .getByRole("button", { name: /^Open / })
-    .click();
+    .press("Enter");
   const target = inbox
     .getByRole("region", { name: "Inbox detail" })
     .locator("[data-message-id]")

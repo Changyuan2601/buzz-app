@@ -80,7 +80,8 @@ for (const scenario of [
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")
       .filter({ hasText: "Unread reply 1" });
-    await choice.getByRole("button", { name: /^Open / }).click();
+    // Enter enters the detail, so the exact reveal takes focus.
+    await choice.getByRole("button", { name: /^Open / }).press("Enter");
     const detail = inbox.getByRole("region", { name: "Inbox detail" });
     const thread = detail.getByRole("complementary", {
       name: "Thread",

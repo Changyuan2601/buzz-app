@@ -488,6 +488,49 @@ test("detail archive advances to next conversation then closes", async ({
   await expect(rows).toHaveCount(0);
   await expect(detail).toHaveCount(0);
 });
+// Browser-only: the exact reveal would otherwise take focus from the list.
+test("clicked and arrowed conversations keep focus in the list, like Mail", async ({
+  page,
+  app,
+}) => {
+  app.append(
+    "primary",
+    channel,
+    "Second explicit request",
+    false,
+    false,
+    undefined,
+    undefined,
+    [["p", app.viewer]],
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const rows = inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  const detail = inbox.getByRole("region", { name: "Inbox detail" });
+  const revealed = async (row) => {
+    await expect(row).toHaveAttribute("data-selected", "true");
+    await expect(detail.locator("[data-message-id]").first()).toBeVisible();
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    await expect(row.getByRole("button", { name: /^Open / })).toBeFocused();
+  };
+  const first = rows.first().getByRole("button", { name: /^Open / });
+  await first.focus();
+  await page.keyboard.press("ArrowDown");
+  await revealed(rows.nth(1));
+  await first.click();
+  await revealed(rows.first());
+  await page.keyboard.press("ArrowDown");
+  await revealed(rows.nth(1));
+});
 // Browser-only: row hit targets and the keyboard menu must retarget the real
 // reader/editor, then restore its durable rich draft when the archive is reopened.
 // Successor/fallback/empty-list matrices live in InboxPage.test.tsx.
@@ -577,7 +620,8 @@ test("unselected row Archive preserves the open editor and unread neighbor", asy
   const thread = rows.filter({ hasText: "Inbox strict reply" });
   const next = rows.filter({ hasText: "Unread neighbor" });
   await expect(rows).toHaveCount(2);
-  await thread.getByRole("button", { name: /^Open / }).click();
+  // Enter enters the detail, so the exact reveal takes focus.
+  await thread.getByRole("button", { name: /^Open / }).press("Enter");
   const target = inbox
     .getByRole("region", { name: "Inbox detail" })
     .locator(`[data-message-id="${app.inboxWindow.replies[0].id}"]`);
