@@ -1,5 +1,5 @@
 diff --git a/lib/index.js b/lib/index.js
-index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f4955fdebb69 100644
+index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..152908f5d3f930cb0e5174a3dc92aaaa69dd2a96 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
@@ -29,7 +29,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 +    const shiftPending = () => {
 +        for (let e = h(x[0], 0), t = d(x[1], shiftEnd - 1, l() - 1); e <= t; e++) if (unmeasured(e)) return !0;
 +        return !1;
-+    };
++    }, estimating = c;
      const R = /* @__PURE__ */ new Set, k = () => m - p, T = () => k() + S + w, O = (e, t) => {
          const r = o(e), s = n(e);
          return 1 !== v && 0 === z ? r + s <= t : r < t && r + s < t + $;
@@ -60,7 +60,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  y && (o = d(o, y[0]), n = h(n, y[1]));
              }
              return [ h(o, 0), d(n, l() - 1) ];
-@@ -79,13 +100,19 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -79,13 +100,21 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                  }
 -
 +
@@ -74,9 +74,13 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
 -
 +
                case 3:
-                 if (n.length) {
+-                if (n.length) {
++                // Cached sizes can finish estimation even when this batch is unchanged.
++                if (n.length || estimating()) {
                      const e = C(), t = o(e);
-                     r(n, $), M(o(e) - t), h = 3, d = !0;
+-                    r(n, $), M(o(e) - t), h = 3, d = !0;
++                    if (r(n, $), !n.length && estimating()) break;
++                    M(o(e) - t), h = 3, d = !0;
 +                    // A scroll-end deferred above lands once the shift's
 +                    // measurements are in.
 +                    shiftIdle && 2 === z && !shiftPending() && (z = 0, shiftEnd = 0, shiftIdle = !1);
@@ -84,7 +88,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  break;
 -
 +
-@@ -96,6 +123,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -96,6 +125,17 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
                case 5:
                  if (n !== l()) {
                      if (c) {
@@ -102,7 +106,16 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                          const e = s();
                          i(n, !0), M(s() - e), z = 2;
                      } else i(n);
-@@ -308,23 +346,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -137,6 +177,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+ }, M = (e, t, o) => {
+     let n = o && o[1] || t || 40, r = -1, s = 0, l = !t, i = 0;
+     const c = o ? o[0].slice(0, e) : [];
++    // Restored rows already contribute to the estimation sample.
++    for (const size of c) -1 !== size && (s += size);
+     T(c, e - c.length);
+     const f = T([], e + 1), a = e => {
+         const t = c[e];
+@@ -308,23 +350,55 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      };
      return null != o && (s.position = "sticky", s[n] = o + "px", s.zIndex = r), s;
  }, J = e => {
@@ -162,7 +175,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
              behavior: t ? "smooth" : "instant"
          });
      }, x = () => {
-@@ -353,6 +423,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -353,6 +427,10 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          passive: !0
      }), {
          j: R,
@@ -173,7 +186,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          J: () => {
              o.removeEventListener("scroll", R), o.removeEventListener("wheel", k), o.removeEventListener("touchstart", T), 
              o.removeEventListener("touchend", O), o.removeEventListener("touchcancel", O), S(f);
-@@ -360,9 +434,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -360,9 +438,11 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          D: () => {
              const [t, o] = e.C();
              if (!t) return;
@@ -187,7 +200,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  [m]: v(t),
                  behavior: "instant"
              }), o && (c && c(), e.o() > e.t() && e.h(1, z()));
-@@ -393,10 +469,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -393,10 +473,32 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          }
      };
  }, D = (e, t, o) => {
@@ -222,7 +235,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          l = !0, e.h(4, o ? a : u)) : l = !1; else if (f.offsetParent) {
              const e = i.get(f);
              if (null != e) {
-@@ -408,7 +506,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -408,7 +510,13 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
      });
      return {
          F(l, i = l.parentElement) {
@@ -237,7 +250,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = i.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -416,7 +520,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -416,7 +524,9 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
              }), s[1](!0);
          },
          R() {
@@ -248,7 +261,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
          },
          K: (e, t) => (i.set(e, t), c.V(e), () => {
              i.delete(e), c.X(e);
-@@ -485,7 +591,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -485,7 +595,8 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
          },
          F(c, f = c.parentElement) {
              u.V(r = f);
@@ -258,7 +271,7 @@ index c598cb245e1e5ae3ac4672ebef7319bb8b3e6341..64af7da4b88243615c156912b459f495
                  const e = o ? "overflowX" : "overflowY", t = f.style, n = t[e];
                  t[e] = "hidden", w(() => {
                      t[e] = n;
-@@ -1194,4 +1301,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
+@@ -1194,4 +1305,3 @@ a), b = e => h(e.t(), e.o()), R = (e, t, o, n) => {
  });
 -
 +

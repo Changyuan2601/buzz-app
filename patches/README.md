@@ -2,11 +2,12 @@
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
 `src/features/messages/ChannelTimeline.tsx`. Only that entry is patched;
-CommonJS and other-framework exports are untouched. Its store and element driver
-carry the changes below. The resize and scroll observers that entry shares with
-its window and grid drivers carry the frame-deferred item sizes, whole-edge
-rounding, the 1px absolute end path and the momentum flag passed to the
-overflow callback; the grid driver keeps its momentum-only overflow policy.
+CommonJS and other-framework exports are untouched. Its store, list layout and
+element driver carry the changes below. The resize and scroll observers that
+entry shares with its window and grid drivers carry the frame-deferred item
+sizes, whole-edge rounding, the 1px absolute end path and the momentum flag
+passed to the overflow callback; the grid driver keeps its momentum-only
+overflow policy.
 Keep the dependency pinned to 0.53.5 and review the patch plus version-coupled
 installed-bundle tests before upgrading or adding a different import.
 
@@ -217,6 +218,31 @@ earlier (median three frames to two). On one Mac, the
 per run, interleaved runs). Installed-driver regressions cover immediate
 viewport delivery with deferred rows, removal and remount, and the offset read
 in LTR and RTL.
+
+## Warm snapshots finish automatic estimation
+
+Automatic estimation suppresses overscan until measured heights exceed the
+viewport. On a warm channel remount, the size cache already contains those
+measurements, but the list layout started its sample at zero and the store
+ignored unchanged resize batches. It could therefore stay in estimation
+indefinitely, mounting only viewport rows even after scrolling stopped.
+
+The layout now includes restored measured heights in that sample, and the store
+passes an unchanged batch to it while estimating, so the batch completes
+estimation once the existing viewport threshold is met.
+Short measured lists keep their cached geometry, and all-unmeasured snapshots
+retain normal automatic estimation. No application cache-retention policy or
+`itemSize` override is needed. If the current measured median differs from the
+saved estimate, completion still uses Virtua's existing anchor compensation, so
+unmeasured rows above the viewport do not move the reading row.
+
+Installed-store cases cover warm unchanged batches, short lists, unmeasured
+snapshots and compensated estimate drift. Copied-bundle controls remove the
+restored sample or the unchanged-batch path and recover the missing-buffer
+failure. React
+tests verify snapshot reuse; browser tests check warm buffering and short-list
+first-frame paint. These checks do not establish the cause of the separately
+reported sustained image flashing or remove image fallback/decode size changes.
 
 ## Automated checks
 

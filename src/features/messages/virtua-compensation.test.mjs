@@ -27,6 +27,8 @@ function setup({
   horizontal = false,
   direction = "ltr",
   offset = 1300,
+  cache,
+  bundle = core,
 } = {}) {
   const {
     store: createStore,
@@ -35,11 +37,13 @@ function setup({
   } = new Function(
     "navigator",
     "getComputedStyle",
-    `${helper}${core};return {store:k,layout:M,driver:D};`,
+    `${helper}${bundle};return {store:k,layout:M,driver:D};`,
   )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
     direction,
   }));
-  const sizes = layout(20, 100);
+  const sizes = cache
+    ? layout(cache[0].length, undefined, cache)
+    : layout(20, 100);
   const store = createStore(sizes);
   const declarations = new Map();
   const style = {
@@ -106,6 +110,12 @@ function setup({
     axis,
     calls,
     resize: (entries) => resize(entries),
+    // The element driver drops sizes equal to the cache before the store sees them.
+    measure: (batch) =>
+      store.h(
+        3,
+        batch.filter(([index, size]) => !sizes.A(index, size)),
+      ),
     // Render computes the mounted range between the length change and the
     // layout effect that flushes the jump; ChannelTimeline's buffer is 1600.
     prepend(length = 40, buffer = 1600) {
@@ -115,6 +125,110 @@ function setup({
     },
   };
 }
+
+it("restores idle overscan after an unchanged warm measurement batch", () => {
+  const c = setup({ cache: [Array(60).fill(200), 200], offset: 11400 });
+  c.store.h(4, 600);
+  c.store.h(2);
+  expect(c.store.$(200)).toEqual([57, 59]);
+  c.measure([
+    [57, 200],
+    [58, 200],
+    [59, 200],
+  ]);
+  c.driver.U();
+  expect(c.store.$(200)).toEqual([56, 59]);
+  expect(c.calls).toEqual([]);
+  c.driver.R();
+});
+
+it("preserves measured short-list geometry without prematurely estimating", () => {
+  const c = setup({ cache: [[100, 100, 100], 40], offset: 0 });
+  c.store.h(4, 600);
+  const version = c.store.k();
+  c.measure([
+    [0, 100],
+    [1, 100],
+    [2, 100],
+  ]);
+  c.driver.U();
+  expect(c.store.k()).toBe(version);
+  expect([0, 1, 2].map((index) => c.sizes.i(index))).toEqual([0, 100, 200]);
+  expect([0, 1, 2].map((index) => c.sizes.A(index))).toEqual([
+    false,
+    false,
+    false,
+  ]);
+  c.store.h(5, 4, false);
+  expect(c.sizes.m(3)).toBe(40);
+  expect(c.calls).toEqual([]);
+  c.driver.R();
+});
+
+it("keeps automatic estimation for an all-unmeasured snapshot", () => {
+  const c = setup({ cache: [Array(60).fill(-1), 40], offset: 2000 });
+  c.store.h(4, 600);
+  c.store.h(2);
+  c.measure([
+    [50, 200],
+    [51, 200],
+    [52, 200],
+    [53, 200],
+  ]);
+  c.driver.U();
+  expect(c.sizes.m(0)).toBe(200);
+  expect(c.store.t()).toBe(12000);
+  expect(c.viewport.scrollTop).toBe(10000);
+  expect(c.calls.map((call) => call.options.top)).toEqual([8000]);
+  c.driver.R();
+});
+
+it("compensates a restored estimate change once without moving the reading row", () => {
+  const cache = [[...Array(20).fill(-1), ...Array(40).fill(200)], 120];
+  const saved = structuredClone(cache);
+  const c = setup({ cache, offset: 9800 });
+  c.store.h(4, 600);
+  c.store.h(2);
+  const readingY = c.store.i(57) - c.viewport.scrollTop;
+  expect(c.store.t()).toBe(10400);
+  const batch = [
+    [57, 200],
+    [58, 200],
+    [59, 200],
+  ];
+  c.measure(batch);
+  c.driver.U();
+  expect(c.calls.map((call) => call.options.top)).toEqual([11400]);
+  expect(c.viewport.scrollTop - 9800).toBe(1600);
+  expect(c.store.t()).toBe(12000);
+  expect(c.store.i(57) - c.viewport.scrollTop).toBe(readingY);
+  c.store.h(1, c.viewport.scrollTop);
+  c.store.h(2);
+  expect(c.store.$(200)).toEqual([56, 59]);
+  c.measure(batch);
+  c.driver.U();
+  expect(c.calls).toHaveLength(1);
+  expect(cache).toEqual(saved);
+  c.driver.R();
+});
+
+it.each([
+  ["restored sample", "for (const size of c) -1 !== size && (s += size);", ""],
+  ["unchanged batch", "if (n.length || estimating()) {", "if (n.length) {"],
+])("detects removal of the %s estimator fix", (_, from, to) => {
+  const bundle = core.replace(from, to);
+  expect(bundle).not.toBe(core);
+  const c = setup({ cache: [Array(60).fill(200), 200], offset: 11400, bundle });
+  c.store.h(4, 600);
+  c.store.h(2);
+  c.measure([
+    [57, 200],
+    [58, 200],
+    [59, 200],
+  ]);
+  expect(c.store.$(200)).toEqual([57, 59]);
+  c.driver.R();
+});
 
 it("interrupts the actual correction before its relative DOM write, even after inferred idle", () => {
   const c = setup();

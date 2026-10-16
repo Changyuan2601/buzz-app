@@ -8,7 +8,10 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 
-const viewport = vi.hoisted(() => ({ size: 0 }));
+const viewport = vi.hoisted(() => ({
+  size: 0,
+  cache: [[], 40] as [number[], number],
+}));
 // Control the independent virtualizer's public measurement/shift contract.
 // React itself owns the real timeline's refs, render and effect ordering.
 vi.mock("virtua", async () => {
@@ -18,7 +21,14 @@ vi.mock("virtua", async () => {
       {
         children,
         shift,
-      }: { children: import("react").ReactNode; shift: boolean },
+        cache,
+        itemSize,
+      }: {
+        children: import("react").ReactNode;
+        shift: boolean;
+        cache?: import("virtua").VirtualizerHandle["cache"];
+        itemSize?: number;
+      },
       ref,
     ) {
       useImperativeHandle(
@@ -27,14 +37,19 @@ vi.mock("virtua", async () => {
           get viewportSize() {
             return viewport.size;
           },
-          cache: [[], 40],
+          cache: viewport.cache,
           scrollTo: vi.fn(),
           scrollToIndex: vi.fn(),
         }),
         [],
       );
       return (
-        <ol aria-label="Virtualized messages" data-shift={shift}>
+        <ol
+          aria-label="Virtualized messages"
+          data-shift={shift}
+          data-restored-cache={cache && JSON.stringify(cache)}
+          data-item-size={itemSize}
+        >
           {children}
         </ol>
       );
@@ -50,6 +65,78 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
+  viewport.size = 0;
+  viewport.cache = [[], 40];
+});
+
+it.each([
+  { cache: [[300, 400], 350] as [number[], number] },
+  { cache: [[-1, -1], 40] as [number[], number] },
+])("reuses row snapshots without disabling estimation (%j)", ({ cache }) => {
+  viewport.size = 600;
+  viewport.cache = cache;
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn(() => 1),
+  );
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const viewer = keypair(),
+    relay = keypair();
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async () => [],
+    subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+  });
+  const snapshot: ChannelWindow = {
+    channelId: "alpha",
+    rows: foldMessages("alpha", relay.pubkey, [
+      message(viewer, "alpha", "First", 1),
+      message(viewer, "alpha", "Second", 2),
+    ]),
+    status: "ready",
+    hasMore: false,
+    loadingOlder: false,
+    error: undefined,
+  };
+  const content = (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="geometry-reuse"
+      queries={owner.session}
+      window={snapshot}
+      onOpenLink={() => false}
+    />
+  );
+  try {
+    const cold = render(content);
+    expect(
+      screen.getByRole("list", { name: "Virtualized messages" }),
+    ).not.toHaveAttribute("data-restored-cache");
+    cold.unmount();
+    const warm = render(content);
+    const boundary = screen.getByRole("list", {
+      name: "Virtualized messages",
+    });
+    expect(boundary).toHaveAttribute(
+      "data-restored-cache",
+      JSON.stringify(viewport.cache),
+    );
+    expect(boundary).not.toHaveAttribute("data-item-size");
+    warm.unmount();
+  } finally {
+    owner.dispose();
+  }
 });
 
 it("keeps membership notices visible in personal chats", () => {
