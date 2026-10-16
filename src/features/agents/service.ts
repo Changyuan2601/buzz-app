@@ -1,3 +1,4 @@
+import { WELCOME_PROMPT, type ConversationStarter } from "./conversation-start";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -111,6 +112,7 @@ import { soloChat } from "./solo-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
+import { ownSolo } from "../solo/labels";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -558,6 +560,15 @@ export type AgentType<Config = unknown> = {
     ): Config;
   }>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** App-authored first turn in an owned Solo conversation; no synthetic event.
+   * Optional: unsupported types must not be offered for this onboarding action. */
+  startConversation?: ConversationStarter<Config>;
+  /** Private, tools-free onboarding name ideas; never a chat turn or identity save. */
+  suggestNames?(
+    config: Config,
+    exclude: readonly string[],
+    signal: AbortSignal,
+  ): Promise<readonly string[]>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
@@ -738,6 +749,13 @@ export type Agents = {
    * hosted type at its provider. A hosted one whose setup then fails is kept
    * as `unfinished`. */
   create(input: NewAgent): Promise<Agent>;
+  /** Start Welcome in a real Solo chat. Resolves with the first signed reply;
+   * never publishes a viewer message or infers a reply from process readiness. */
+  welcome(
+    pubkey: string,
+    channelId: string,
+    signal: AbortSignal,
+  ): Promise<RelayEvent>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1450,6 +1468,55 @@ export class AgentsService extends Service implements Agents {
     return (
       this.bindingOf(agent)?.session.profiles?.snapshot().get(pubkey)?.name ??
       null
+    );
+  }
+  async welcome(pubkey: string, channelId: string, signal: AbortSignal) {
+    const binding = this.selectedBinding();
+    const agent = this.ready(pubkey);
+    const type =
+      agent && this.types().find((entry) => entry.key === agent.type);
+    if (
+      !agent ||
+      agent.owner !== binding.viewer ||
+      this.bindingOf(agent) !== binding ||
+      !type?.startConversation ||
+      type.provider?.snapshot().readiness !== "ready"
+    )
+      throw new Error("This agent cannot start Welcome in this community.");
+    const check = () => {
+      signal.throwIfAborted();
+      binding.controller.signal.throwIfAborted();
+      if (
+        this.selectedBinding() !== binding ||
+        this.ready(pubkey)?.type !== agent.type
+      )
+        throw new Error("The agent or community changed. Reopen Welcome.");
+      const channel = binding.session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      if (
+        !ownSolo(channel, binding.viewer) ||
+        channel?.private !== true ||
+        channel.parentChannelId ||
+        channel.archived ||
+        channel.readOnly ||
+        channel.cached ||
+        channel.members?.length !== 2 ||
+        !channel.members.includes(pubkey) ||
+        !channel.members.includes(binding.viewer)
+      )
+        throw new Error(
+          "Welcome needs a private Solo chat with only you and this agent.",
+        );
+    };
+    await binding.session.channelWrites.refresh(channelId, { member: pubkey });
+    check();
+    return this.runners.startConversation(
+      pubkey,
+      channelId,
+      WELCOME_PROMPT,
+      AbortSignal.any([signal, binding.controller.signal]),
+      check,
     );
   }
 

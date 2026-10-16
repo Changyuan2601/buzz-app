@@ -19,7 +19,8 @@ import {
 import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
-import { createRelaySession } from "./session";
+import { createRelaySession, type RelaySession } from "./session";
+import { observedWelcome } from "../sessions/welcome";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -191,6 +192,49 @@ it("sends combined search operators through packaged native signed HTTP without 
     method: "POST",
     body: JSON.stringify(filters),
   });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("reconciles Welcome through native signed HTTP without an invalid half-cursor timeline request", async () => {
+  const transport = await connectNativeTransport(community);
+  const assistant = keypair();
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const intro = message(assistant, channelId, "Hello", 1700000001);
+  const threaded = message(assistant, channelId, "Thread reply", 1700000002, [
+    ["e", "a".repeat(64)],
+  ]);
+  respond = (request) => {
+    const [filter] = JSON.parse(request.body ?? "[]");
+    // NIP-CW requires a composite cursor; an ordinary query uses NIP-01
+    // authors/since/until filters instead of the timeline-only extension.
+    if (
+      filter?.top_level &&
+      (filter.until !== undefined) !== (filter.before_id !== undefined)
+    )
+      return {
+        status: 400,
+        body: {
+          error:
+            "top_level cursor requires both until and before_id, or neither",
+        },
+      };
+    return { body: [threaded, intro] };
+  };
+  const read: RelaySession["read"] = (filters, options) =>
+    transport.query(filters, options?.signal);
+  const session = { read } as unknown as RelaySession;
+  await expect(
+    observedWelcome(
+      session,
+      {
+        type: "claude/claude",
+        channelId,
+        agent: assistant.pubkey,
+        kickoffAt: 1700000000,
+      },
+      new AbortController().signal,
+    ),
+  ).resolves.toEqual(intro);
   expect(fetch).not.toHaveBeenCalled();
 });
 

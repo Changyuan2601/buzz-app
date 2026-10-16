@@ -35,10 +35,16 @@ export function soloDraft(
   };
 }
 
+/** A channels page that belongs to Solo rather than Team. */
+export function isSoloRoute(params: JsonValue | undefined) {
+  return params === "welcome" || soloDraft(params) !== undefined;
+}
+
 export function isChannelRoute(params: JsonValue) {
   return (
     params === "new-message" ||
     params === "empty" ||
+    params === "welcome" ||
     soloDraft(params) !== undefined
   );
 }
@@ -58,6 +64,20 @@ export function soloDraftTarget(
     pageId: "channels",
     scope: parts,
     route: { version: 1, params },
+  };
+}
+
+/** First-run setup: connect a provider and meet a default agent in Solo. */
+export function welcomeTarget(scope: string): OpenTarget {
+  const parts = splitPartition(scope);
+  if (!parts) throw new Error("Invalid Welcome destination");
+  return {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    scope: parts,
+    route: { version: 1, params: "welcome" },
   };
 }
 

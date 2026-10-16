@@ -21,6 +21,7 @@ import {
   useRef,
   useState,
   Fragment,
+  type ReactNode,
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
@@ -139,6 +140,9 @@ export type ChannelTimelineProps = {
   chatPresentation?: boolean | undefined;
   /** A following composer shows conversation activity; the jump button leaves it a lane. */
   activityLane?: boolean | undefined;
+  /** Host-owned setup content around the messages, in the same scrollport. */
+  beforeMessages?: ReactNode;
+  afterMessages?: ReactNode;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -197,6 +201,8 @@ function Timeline({
   onOpenMediaReview,
   chatPresentation = false,
   activityLane = false,
+  beforeMessages,
+  afterMessages,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -922,9 +928,10 @@ function Timeline({
     >
       <div
         ref={edge}
-        className={styles.edge}
+        className={beforeMessages ? styles.introEdge : styles.edge}
         data-history-space={reserveHistorySpace || undefined}
       >
+        {beforeMessages}
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
@@ -1073,7 +1080,7 @@ function Timeline({
                     />
                   )}
                 </ActivityExpansion>
-                {index === rows.length - 1 && (
+                {index === rows.length - 1 && !afterMessages && (
                   <div className={styles.timelineEnd} aria-hidden="true" />
                 )}
               </Fragment>
@@ -1085,7 +1092,8 @@ function Timeline({
         !window.hasMore &&
         window.status === "ready" &&
         !window.error &&
-        !window.loadingOlder && (
+        !window.loadingOlder &&
+        !afterMessages && (
           <div className={styles.emptyConversation}>
             <EmptyState
               icon={<ChatCircleIcon />}
@@ -1094,6 +1102,7 @@ function Timeline({
             />
           </div>
         )}
+      {afterMessages}
     </section>
   );
 }

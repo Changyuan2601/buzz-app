@@ -1,6 +1,14 @@
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
+import { readDefaultAgent } from "../../features/solo/default-agent";
+import { useWelcomeReceipt } from "../../features/sessions/welcome";
+import { SoloWelcome, WelcomeControls } from "./SoloWelcome";
+import {
+  WelcomeComposer,
+  WelcomeConnected,
+  WelcomeIntro,
+} from "./WelcomeIntro";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
@@ -190,6 +198,9 @@ function ChannelWorkspace({
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
+  const welcomeRoute =
+    navigation?.target.kind === "page" &&
+    navigation.target.route?.params === "welcome";
   const draftTarget = navigation?.target;
   const draft = useMemo(
     () =>
@@ -200,6 +211,18 @@ function ChannelWorkspace({
   );
   const list = useChannelList(queries.channels);
   const initialList = useRef(list);
+  const { receipt: welcomeReceipt } = useWelcomeReceipt(scope);
+  // First run: a plain new chat with no Solo history or default agent yet,
+  // or an unfinished setup, opens Welcome instead.
+  const welcoming =
+    welcomeRoute ||
+    (!!draft &&
+      !draft.agent &&
+      !draft.project &&
+      list.status === "ready" &&
+      ((!readDefaultAgent(scope) &&
+        !list.channels.some((item) => ownSolo(item, queries.viewer))) ||
+        (!!welcomeReceipt && !welcomeReceipt.complete)));
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
@@ -353,6 +376,7 @@ function ChannelWorkspace({
   // through the mounted workspace's saved selection or first-channel fallback.
   const emptyDestination =
     !!draft ||
+    welcomeRoute ||
     (navigation?.target.kind === "page" &&
       navigation.target.route?.params === "empty");
   const requestedDestination = emptyDestination
@@ -401,7 +425,7 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (composingMessage || draft) {
+    if (composingMessage || draft || welcomeRoute) {
       navigation?.complete({ status: "opened" });
       return;
     }
@@ -443,6 +467,7 @@ function ChannelWorkspace({
     metadataPending,
     emptyDestination,
     draft,
+    welcomeRoute,
     requestedChannel,
     resolving,
     current,
@@ -534,14 +559,14 @@ function ChannelWorkspace({
   const tabState = useChannelTabState(queries, currentId);
   const { settings, setSettings, retireMenuEntries } = tabState;
   useEffect(() => {
-    if (!currentId || composingMessage || draft) return;
+    if (!currentId || composingMessage || draft || welcomeRoute) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
     return () => {
       setSent((previous) =>
         previous?.channelId === currentId ? undefined : previous,
       );
     };
-  }, [currentId, composingMessage, draft]);
+  }, [currentId, composingMessage, draft, welcomeRoute]);
 
   const conversions = useChatConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
@@ -573,6 +598,26 @@ function ChannelWorkspace({
   // also files into a project; the conversation scope owns composer policy.
   const solo = current?.channelType === "solo";
   const personal = ownSolo(current, queries.viewer);
+  // The Welcome chat keeps its setup steps around the agent's first messages,
+  // and holds the composer until the agent is named.
+  const welcomeChat =
+    personal && welcomeReceipt?.channelId === current?.id
+      ? welcomeReceipt
+      : undefined;
+  const welcomeType =
+    welcomeChat &&
+    agents?.types().find((type) => type.key === welcomeChat.type);
+  const welcomeControls =
+    welcomeChat && agents ? (
+      <WelcomeControls
+        agents={agents}
+        session={queries}
+        scope={scope}
+        signal={navigation?.signal ?? new AbortController().signal}
+        receipt={welcomeChat}
+        onSaved={() => setComposerFocus((value) => value + 1)}
+      />
+    ) : undefined;
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view returns them to a new draft rather than an empty page.
   const chooseLifecycle = (
@@ -935,7 +980,7 @@ function ChannelWorkspace({
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
     if (!navigation || navigation.signal.aborted) return;
-    if (draft || composingMessage) open(undefined);
+    if (draft || welcomeRoute || composingMessage) open(undefined);
     // Each visit is applied once: Back/Forward switch tabs, never close them,
     // and a closed tab is not reopened by a re-render of the same visit. A
     // message still resolving its placement waits rather than recording.
@@ -970,6 +1015,7 @@ function ChannelWorkspace({
     }
   }, [
     draft,
+    welcomeRoute,
     composingMessage,
     requestedMessage,
     navigation,
@@ -1237,6 +1283,7 @@ function ChannelWorkspace({
   const hasChannelPanel =
     !composingMessage &&
     !draft &&
+    !welcomeRoute &&
     (settings || secondary.items.length > 0 || drawer.side);
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
@@ -1369,8 +1416,16 @@ function ChannelWorkspace({
             }
             onOpenThread={solo ? undefined : openThread}
             revealMessageId={
-              sent?.channelId === current.id ? sent.id : undefined
+              sent?.channelId === current.id ? sent.id : welcomeChat?.replyId
             }
+            beforeMessages={
+              welcomeControls ? (
+                <WelcomeIntro>
+                  {welcomeType && <WelcomeConnected type={welcomeType} />}
+                </WelcomeIntro>
+              ) : undefined
+            }
+            afterMessages={welcomeControls}
           />
         ) : (
           <div
@@ -1426,37 +1481,42 @@ function ChannelWorkspace({
           }
         />
       )}
-      {current && (!current.readOnly || current.cached) && (
-        <ConversationComposer
-          key={`composer:${current.id}`}
-          autoFocus={
-            // Conversion remounts the body, but isn't a new conversation opening.
-            // Its dialog hands off focus after closing and releasing modality.
-            !(
-              continuingVisit &&
-              committedVisit.current?.channelType === "solo" &&
-              current.channelType !== "solo"
-            ) &&
-            // The bound request arrives after the composer's first render.
-            (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
-              "preserve" &&
-            !current.readOnly &&
-            !requestedMessage &&
-            !requestedThread &&
-            !routedThread
-          }
-          trailingTool={
-            personal ? (
-              <WorkspaceControl
-                session={queries}
-                channelId={current.id}
-                disabled={!!current.archived}
-              />
-            ) : undefined
-          }
-          onSend={onComposerSend}
-          focusRequest={composerFocus}
-        />
+      {current && welcomeChat && !welcomeChat.complete ? (
+        <WelcomeComposer phase="customize" />
+      ) : (
+        current &&
+        (!current.readOnly || current.cached) && (
+          <ConversationComposer
+            key={`composer:${current.id}`}
+            autoFocus={
+              // Conversion remounts the body, but isn't a new conversation opening.
+              // Its dialog hands off focus after closing and releasing modality.
+              !(
+                continuingVisit &&
+                committedVisit.current?.channelType === "solo" &&
+                current.channelType !== "solo"
+              ) &&
+              // The bound request arrives after the composer's first render.
+              (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
+                "preserve" &&
+              !current.readOnly &&
+              !requestedMessage &&
+              !requestedThread &&
+              !routedThread
+            }
+            trailingTool={
+              personal ? (
+                <WorkspaceControl
+                  session={queries}
+                  channelId={current.id}
+                  disabled={!!current.archived}
+                />
+              ) : undefined
+            }
+            onSend={onComposerSend}
+            focusRequest={composerFocus}
+          />
+        )
       )}
     </>
   );
@@ -1530,6 +1590,13 @@ function ChannelWorkspace({
                 setSent({ channelId, id });
                 select(channelId);
               }}
+            />
+          ) : welcoming ? (
+            <SoloWelcome
+              session={queries}
+              scope={scope}
+              signal={navigation?.signal ?? new AbortController().signal}
+              onCreated={select}
             />
           ) : draft ? (
             <SoloDraft

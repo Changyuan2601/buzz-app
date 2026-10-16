@@ -1,3 +1,4 @@
+import type { ConversationStart } from "../../features/agents/conversation-start";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
 // own sessions; a delivery becomes a prompt in the harness format, sent to the
 // session for its conversation; a standalone turn, such as a watch's or a
@@ -36,6 +37,7 @@ import {
 import { readProject } from "../../features/agent-harness/project";
 import {
   CONTEXT_LIMIT,
+  conversationStartPrompt,
   type Scope,
   steerPrompt,
   systemPrompt,
@@ -488,6 +490,50 @@ export class ClaudeRuntime {
         console.warn("Claude could not read its session title", error);
         return;
       }
+    }
+  }
+
+  /** Welcome's app-authored input goes to the same continuing Solo session as
+   * later owner messages; only the agent's actual send is published. */
+  async startConversation(input: ConversationStart) {
+    input.check();
+    const { agent, channelId, signal } = input;
+    const reads = this.reads(agent.pubkey);
+    const channel = await reads?.channel(channelId);
+    const personal = await reads?.soloChat(agent.owner, channelId, signal);
+    input.check();
+    if (
+      !personal ||
+      channel?.dm ||
+      channel?.members.length !== 2 ||
+      !channel.members.includes(agent.owner) ||
+      !channel.members.includes(agent.pubkey)
+    )
+      throw new Error(
+        "Welcome is no longer a conversation with just you and your agent.",
+      );
+    const entry = this.entry(agent.pubkey, this.resolveConfig(input.config));
+    if (entry.sessions.snapshot().some((session) => session.busy))
+      throw new Error(
+        "The agent is already answering. Retry Welcome when it finishes.",
+      );
+    entry.handle = agent;
+    entry.name = agent.name;
+    entry.contexts.set(channelId, { channel: channelId, topLevel: true });
+    const abort = () => entry.sessions.stop(channelId);
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      input.check();
+      const text = this.review(
+        entry,
+        conversationStartPrompt(agent.pubkey, channelId, input.prompt),
+      );
+      const result = await entry.sessions.deliver(channelId, text, 0);
+      this.notify();
+      return result;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      this.notify();
     }
   }
 

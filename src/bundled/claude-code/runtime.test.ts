@@ -1,3 +1,4 @@
+import { memoryStorage } from "../../features/agents/test-fakes";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -6,6 +7,7 @@ import type { BuzzClient } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { ownerReads } from "../../features/agents/reads";
+import { WELCOME_PROMPT } from "../../features/agents/conversation-start";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -1707,4 +1709,68 @@ it("hands no Canvas to a shared channel's turns", async () => {
   expect(claude?.options.args).not.toContain("--add-dir");
   expect(claude?.prompts[0]).not.toContain("workspace-canvas");
   runtime.dispose();
+});
+
+it("seeds a real continuing Solo session with app input and reuses it for the owner's first message", async () => {
+  const f = setup([], { solo: new Set([channel]) });
+  // Use the real runtime and session machinery; only the subprocess protocol is fake.
+  const readChannel = { name: "Welcome", dm: false, members: [alice, self] };
+  const runtime = new ClaudeRuntime(
+    { spawn: f.fake.spawn },
+    () => ({
+      connection: f,
+      scope: "community",
+      channel: async () => readChannel,
+      read: async () => [],
+      profiles: async () => {},
+      name: () => undefined,
+      profile: () => undefined,
+      channelName: () => "Welcome",
+      workflowAuthority: () => undefined,
+      memoryListing: async () => ({ entries: [], partial: false }),
+      soloChat: async () => true,
+    }),
+    async () => null,
+    memoryStorage(),
+  );
+  try {
+    const agent = f.agent as unknown as Delivery["agent"];
+    const result = await runtime.startConversation({
+      agent,
+      config: DEFAULT_CONFIG,
+      channelId: channel,
+      prompt: WELCOME_PROMPT,
+      signal: new AbortController().signal,
+      check() {},
+    });
+    expect(result).toEqual({ ok: true });
+    const process = f.fake.processes.find((entry) => entry.prompts.length);
+    expect(process?.prompts[0]).toContain("<app-conversation-start>");
+    expect(process?.prompts[0]).toContain(
+      "Great, we’re connected! Before we get started, take a sec to give me a name and choose an avatar, and then I can show you around.",
+    );
+    expect(process?.prompts[0]).not.toContain("<buzz-event");
+    const done: PromiseLike<unknown>[] = [];
+    await runtime.run({
+      agent,
+      config: DEFAULT_CONFIG,
+      channelId: channel,
+      trigger: { type: "mention", event: message("1", "Hello") },
+      signal: new AbortController().signal,
+      current: () => true,
+      workingUntil: (pending) => done.push(pending),
+    });
+    await Promise.all(done);
+    expect(
+      f.fake.processes.filter((entry) => entry.prompts.length),
+    ).toHaveLength(1);
+    expect(process?.prompts).toHaveLength(2);
+    expect(process?.prompts[1]).toContain("Hello");
+    expect(
+      runtime.conversations(self).some((entry) => entry.key === channel),
+    ).toBe(true);
+  } finally {
+    runtime.dispose();
+    f.runtime.dispose();
+  }
 });

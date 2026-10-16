@@ -12,6 +12,14 @@ export function setDefaultAgent(scope: string, pubkey: string) {
   return writeView(scope, KEY, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
 }
 
+/** The agent chosen as default here, if one was saved. */
+export function readDefaultAgent(scope: string) {
+  const value = readView<unknown>(scope, KEY, null);
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value)
+    ? value
+    : undefined;
+}
+
 function useChosenAgent(scope: string) {
   return useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),

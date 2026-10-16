@@ -647,3 +647,30 @@ it("does not start metadata discovery after its agent is disposed during launch"
   await stopped;
   expect(claudes()).toHaveLength(0);
 });
+
+it("cancels a conversation while its process is opening without ever submitting the startup input", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes, store } = sessions({ launched });
+  const result = pool.deliver("welcome", "private app instruction", 0);
+  try {
+    pool.stop("welcome");
+    release();
+    expect(await result).toEqual({
+      ok: false,
+      error: "Conversation start was cancelled",
+    });
+    expect(claudes().flatMap((process) => process.prompts)).toEqual([]);
+    expect(claudes().every((process) => process.killed)).toBe(true);
+    expect(store.get("welcome")).toBeUndefined();
+    await pool.deliver("welcome", "later explicitly requested start", 0);
+    expect(claudes().flatMap((process) => process.prompts)).toEqual([
+      "later explicitly requested start",
+    ]);
+  } finally {
+    release();
+    pool.dispose();
+  }
+});

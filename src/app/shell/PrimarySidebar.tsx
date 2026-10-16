@@ -5,7 +5,7 @@ import {
   type ReactNode,
 } from "react";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
-import { soloDraft } from "../../features/channel-navigation/routes";
+import { isSoloRoute } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
@@ -121,7 +121,7 @@ function ScopedSidebar({
           connection.session?.viewer,
         )
       : target.kind === "page" && target.pluginId === "buzz.channels"
-        ? soloDraft(target.route?.params)
+        ? isSoloRoute(target.route?.params)
           ? "solo"
           : "team"
         : undefined

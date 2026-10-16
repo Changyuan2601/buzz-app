@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useLayoutEffect } from "react";
+import { memo, useEffect, useId, useLayoutEffect, type ReactNode } from "react";
 import {
   ConversationTimeline,
   useConversation,
@@ -21,7 +21,12 @@ export const ChannelBody = memo(function ChannelBody({
   navigation,
   onContentReady,
   activityLane,
+  beforeMessages,
+  afterMessages,
 }: {
+  /** Host-owned setup content around the messages, in the same scrollport. */
+  beforeMessages?: ReactNode;
+  afterMessages?: ReactNode;
   onContentReady?(channelId: string): void;
   /** The channel composer follows this body and shows conversation activity. */
   activityLane?: boolean | undefined;
@@ -131,6 +136,8 @@ export const ChannelBody = memo(function ChannelBody({
       marksRead={marksRead}
       navigation={navigation}
       activityLane={activityLane}
+      beforeMessages={beforeMessages}
+      afterMessages={afterMessages}
       chatPresentation={solo}
       historyControl={solo ? "scroll" : "button"}
     />

@@ -11,6 +11,7 @@ import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
+import { WelcomeSidebar } from "../../bundled/channels/WelcomeSidebar";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
@@ -151,6 +152,16 @@ export function SoloInventory({
           }
         />
       </div>
+      <WelcomeSidebar
+        scope={scope}
+        navigator={navigator}
+        selected={
+          target.kind === "page" &&
+          target.pluginId === "buzz.channels" &&
+          target.route?.params === "welcome"
+        }
+        chats={conversations.map((item) => item.id)}
+      />
       {empty && (
         <NavigationItem
           variant="row"
