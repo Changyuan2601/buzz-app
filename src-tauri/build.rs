@@ -158,7 +158,6 @@ fn main() {
             "jev_classifier_status",
             "jev_classifier_set_key",
             "jev_classifier_clear_key",
-            "jev_classify",
             "app_agent_state_load",
             "app_agent_state_set",
             "decide",

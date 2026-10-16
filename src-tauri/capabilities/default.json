@@ -120,7 +120,6 @@
     "allow-jev-classifier-status",
     "allow-jev-classifier-set-key",
     "allow-jev-classifier-clear-key",
-    "allow-jev-classify",
     "allow-app-agent-state-load",
     "allow-app-agent-state-set",
     "allow-decide",

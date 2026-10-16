@@ -9,10 +9,18 @@ use zeroize::Zeroizing;
 struct FakeStore {
     key: StdMutex<Option<String>>,
     reads: StdMutex<usize>,
+    /// Reads fail, as a locked or refused Keychain does.
+    unreadable: StdMutex<bool>,
+    /// Reads block this long, as a stalled `security` process does.
+    stall: StdMutex<Duration>,
 }
 impl KeyStore for Arc<FakeStore> {
     fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
         *self.reads.lock().unwrap() += 1;
+        std::thread::sleep(*self.stall.lock().unwrap());
+        if *self.unreadable.lock().unwrap() {
+            return Err("locked".into());
+        }
         Ok(self.key.lock().unwrap().clone().map(Zeroizing::new))
     }
     fn replace(&self, key: &str) -> Result<(), String> {
@@ -27,11 +35,7 @@ impl KeyStore for Arc<FakeStore> {
 fn keys(key: Option<&str>) -> (Arc<FakeStore>, JevHost) {
     let store = Arc::new(FakeStore::default());
     *store.key.lock().unwrap() = key.map(Into::into);
-    let host = JevHost::with(
-        Box::new(store.clone()),
-        "http://127.0.0.1:9/".into(),
-        TIMEOUT,
-    );
+    let host = JevHost::with(Box::new(store.clone()));
     (store, host)
 }
 
@@ -343,6 +347,51 @@ async fn a_refused_key_is_read_again_on_the_next_call() {
         }
     ));
     assert_eq!(*store.reads.lock().unwrap(), 2);
+}
+
+#[tokio::test]
+async fn an_unreadable_keychain_is_a_service_error_and_is_read_again() {
+    let reply =
+        json!({ "model": "jev-1.13.0", "answers": { "a": { "type": "noul", "noul": 0.5 } } });
+    let (url, seen) = server(vec![Some((200, "", reply.to_string()))]).await;
+    let (store, keys) = keys(Some("k"));
+    *store.unreadable.lock().unwrap() = true;
+    let host = decisions(&url);
+    let yes_no = || request(json!({ "a": { "type": "yes_no", "instructions": "x" } }));
+    // Not "missing": the key may still be saved.
+    assert!(matches!(
+        host.decide(&keys, Backend::Typesafe, yes_no()).await,
+        Decided::Failed {
+            reason: Failure::ServiceError,
+            ..
+        }
+    ));
+    *store.unreadable.lock().unwrap() = false;
+    assert!(matches!(
+        host.decide(&keys, Backend::Typesafe, yes_no()).await,
+        Decided::Answered { .. }
+    ));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_stalled_keychain_read_is_inside_the_deadline() {
+    let (store, keys) = keys(Some("k"));
+    *store.stall.lock().unwrap() = Duration::from_secs(3);
+    let mut slow = request(json!({ "a": { "type": "yes_no", "instructions": "x" } }));
+    slow.timeout_ms = Some(1_000);
+    let started = Instant::now();
+    let result = decisions("http://127.0.0.1:9/")
+        .decide(&keys, Backend::Typesafe, slow)
+        .await;
+    assert_eq!(
+        result,
+        Decided::Failed {
+            backend: Backend::Typesafe,
+            reason: Failure::Timeout
+        }
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
 }
 
 #[tokio::test]
