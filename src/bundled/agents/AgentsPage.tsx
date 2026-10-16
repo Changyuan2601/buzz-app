@@ -33,6 +33,8 @@ import type {
   FoundAgents,
   RegisteredAgentType,
   Team,
+  TeamChangeAction,
+  TeamChangeView,
   TeamPort,
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
@@ -371,6 +373,7 @@ export function AgentsPage({
               saved={snapshot.agents.filter((agent) => agent.place === "here")}
               teams={snapshot.teams}
               archived={snapshot.archivedTeams ?? []}
+              changes={snapshot.teamChanges ?? []}
               editing={editing}
               onEdit={setEditingTeam}
               newTeam={!toolbarAction && newTeamMenu}
@@ -1276,6 +1279,7 @@ function Teams({
   saved,
   teams,
   archived,
+  changes,
   editing,
   onEdit,
   newTeam,
@@ -1285,6 +1289,8 @@ function Teams({
   teams: readonly Team[];
   /** Deleted synced teams, each with Recover. */
   archived: readonly Team[];
+  /** Team changes not finished on the relay. */
+  changes: readonly TeamChangeView[];
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
   onEdit(id: string | undefined): void;
@@ -1298,6 +1304,7 @@ function Teams({
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
+        changes={changes.filter((change) => change.teamId === team?.id)}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -1316,7 +1323,10 @@ function Teams({
               <li key={item.id} className="contents">
                 <TeamCard
                   name={item.name}
-                  note={item.note}
+                  note={
+                    item.note ??
+                    (item.unfinished ? "Unfinished change" : undefined)
+                  }
                   aria-label={item.name}
                   members={item.members.flatMap((pubkey) => {
                     const member = byKey.get(pubkey);
@@ -1331,6 +1341,16 @@ function Teams({
           </ul>
         )}
       </div>
+      {changes.length > 0 && (
+        <section aria-label="Unfinished changes" className="grid gap-2">
+          <InlineHeader title="Unfinished changes" />
+          <ul className={styles.portList}>
+            {changes.map((change) => (
+              <TeamChangeRow key={change.id} agents={agents} change={change} />
+            ))}
+          </ul>
+        </section>
+      )}
       {archived.length > 0 && (
         <section aria-label="Deleted teams" className="grid gap-2">
           <InlineHeader title="Deleted teams" />
@@ -1380,15 +1400,93 @@ function DeletedTeam({ agents, team }: { agents: Agents; team: Team }) {
   );
 }
 
+const CHANGE_KIND: Record<TeamChangeView["kind"], string> = {
+  create: "Create",
+  edit: "Edit",
+  import: "Import",
+  move: "Move to the relay",
+  delete: "Delete",
+  recover: "Recover",
+};
+
+/** A team change that hasn't finished: what stops it, and what the owner
+ * can do. Dismiss waits until nothing in it is unconfirmed. */
+function TeamChangeRow({
+  agents,
+  change,
+}: {
+  agents: Agents;
+  change: TeamChangeView;
+}) {
+  const [pending, setPending] = useState<TeamChangeAction>();
+  const [error, setError] = useState("");
+  const name = change.name || "Unnamed team";
+  const act = (action: TeamChangeAction) => {
+    setPending(action);
+    setError("");
+    agents
+      .teamChange(change.id, action)
+      .catch((reason) => setError(message(reason)))
+      .finally(() => setPending(undefined));
+  };
+  const lifecycle = change.kind === "delete" || change.kind === "recover";
+  const actions: [TeamChangeAction, string, boolean][] = [
+    ["check", "Check again", true],
+    [
+      "resubmit",
+      "Resubmit",
+      change.stopped && !change.unresolved && !lifecycle,
+    ],
+    ["dismiss", "Dismiss", change.stopped && !change.unresolved],
+    ["discard", "Discard", !change.stopped],
+  ];
+  return (
+    <li
+      className={styles.portRow}
+      aria-label={`${CHANGE_KIND[change.kind]}: ${name}`}
+    >
+      <span className="grid min-w-0 flex-1">
+        <span className="truncate text-body">
+          {CHANGE_KIND[change.kind]}: {name}
+        </span>
+        <span className="text-caption text-secondary">{change.problem}</span>
+        {error && (
+          <span role="alert" className="text-caption text-danger">
+            {error}
+          </span>
+        )}
+      </span>
+      {actions.map(
+        ([action, label, shown]) =>
+          shown && (
+            <Button
+              key={action}
+              size="compact"
+              variant="outline"
+              loading={pending === action}
+              disabled={!!pending}
+              onClick={() => act(action)}
+            >
+              {label}
+            </Button>
+          ),
+      )}
+    </li>
+  );
+}
+
 function TeamEditor({
   agents,
   saved,
   team,
+  changes,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
+  /** This team's unfinished changes, with their status and actions. */
+  changes: readonly TeamChangeView[];
   onDone(): void;
 }) {
   const [name, setName] = useState(team?.name ?? "");
@@ -1398,7 +1496,7 @@ function TeamEditor({
   );
   // The head this form opened; a later remote edit makes Save a conflict.
   const [base] = useState(team?.base);
-  // A new team's id for this form: Save again finishes that same team.
+  // This form's id: Save again revises the same change (a new team's id).
   const [creation] = useState(() => crypto.randomUUID());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -1417,7 +1515,8 @@ function TeamEditor({
   const save = () =>
     act(() =>
       agents.saveTeam({
-        ...(team ? { id: team.id } : { creation }),
+        ...(team ? { id: team.id } : {}),
+        creation,
         ...(base ? { base } : {}),
         name: name.trim(),
         instructions,
@@ -1486,6 +1585,15 @@ function TeamEditor({
           <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
         )}
       </Section>
+      {changes.length > 0 && (
+        <Section title="Unfinished changes">
+          <ul className={styles.portList}>
+            {changes.map((change) => (
+              <TeamChangeRow key={change.id} agents={agents} change={change} />
+            ))}
+          </ul>
+        </Section>
+      )}
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}

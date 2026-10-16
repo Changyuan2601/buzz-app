@@ -30,6 +30,13 @@ import {
   TeamJournal,
   UNREADABLE_TEAM,
 } from "./team-config";
+import { type TeamOp, TeamOps } from "./team-ops";
+
+/** The members a team change hasn't confirmed added yet. */
+const pending = (op: TeamOp | undefined) =>
+  op?.commands.flatMap((c) =>
+    c.action === "add" && c.state !== "confirmed" && c.pubkey ? [c.pubkey] : [],
+  );
 import {
   type Agent,
   AgentsService,
@@ -6016,6 +6023,8 @@ describe("Delete as a recoverable archive", () => {
     /** While set, the relay takes each revision only once it settles. */
     const held: { value?: Promise<void> | undefined } = {};
     const publishing = vi.fn();
+    /** While set, no team channel can be made. */
+    const noTeams = { value: false };
     const addMember = vi.fn(async (id: string, pubkey: string) => {
       const found = [...channels.values()].find((c) => c.id === id);
       if (found && !found.members.includes(pubkey)) found.members.push(pubkey);
@@ -6027,7 +6036,8 @@ describe("Delete as a recoverable archive", () => {
       agentConfigs({
         channels: {
           ensure: vi.fn(async (family: string, subject: string) => {
-            if (offline.value) throw new Error("Offline");
+            if (offline.value || (family === "team-config" && noTeams.value))
+              throw new Error("Offline");
             if (family === "agent-config")
               return {
                 id: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
@@ -6056,16 +6066,58 @@ describe("Delete as a recoverable archive", () => {
           owns: vi.fn(async () => true),
           archive: vi.fn(async (id: string) => archiveChannel(id, true)),
           unarchive: vi.fn(async (id: string) => archiveChannel(id, false)),
-          archived: vi.fn(async () => false),
+          archived: vi.fn(
+            async (id: string) =>
+              [...channels.values()].find((c) => c.id === id)?.archived ??
+              false,
+          ),
         },
         teamJournal: input.journals.teams,
+        ops: input.journals.ops,
         lifecycle: input.journals.lifecycle,
-        sync: { bind: vi.fn(async () => {}), unbind: vi.fn(), dispose() {} },
+        sync: {
+          // A team channel's first read installs its head, as sync's does.
+          bind: vi.fn(
+            async (
+              bindings: readonly {
+                family: string;
+                subject: string;
+                channel: string;
+              }[],
+            ) => {
+              for (const { family, subject, channel } of bindings) {
+                if (family !== "team-config") continue;
+                const head = [...heads.values()].find((event) =>
+                  event.tags.some(
+                    ([name, value]) => name === "h" && value === channel,
+                  ),
+                );
+                const artifact = {
+                  owner: input.owner,
+                  community: input.community,
+                  subject,
+                  channel,
+                  type: "buzz.team" as const,
+                };
+                if (head)
+                  input.store.applyRead(
+                    artifact,
+                    input.store.capture(artifact),
+                    { kind: "head", event: head },
+                  );
+              }
+            },
+          ),
+          unbind: vi.fn(),
+          dispose() {},
+        },
         deps: {
           read: async (filters) =>
             [...heads.values()].filter((event) =>
-              filters.some((filter) =>
-                (filter["#d"] ?? []).includes(key(event)),
+              filters.some(
+                (filter) =>
+                  (filter["#d"] ?? []).includes(key(event)) ||
+                  (filter.ids ?? []).includes(event.id),
               ),
             ),
           writer: {
@@ -6088,6 +6140,7 @@ describe("Delete as a recoverable archive", () => {
         communityId: COMMUNITY_UUID,
         strip: input.strip,
         changed: input.changed,
+        retire: input.retire,
       }),
     );
     /** Team `id`, made on another device: its config channel and head. */
@@ -6126,6 +6179,7 @@ describe("Delete as a recoverable archive", () => {
       addMember,
       channels,
       offline,
+      noTeams,
       held,
       remoteTeam,
       publishing,
@@ -6188,24 +6242,21 @@ describe("Delete as a recoverable archive", () => {
 
   it("with config sync on, blocks a member's start while its team can't be read, and shows the team safely", async () => {
     const storage = memoryStorage();
-    storage.setItem(
-      TEAMS_MIGRATION_KEY,
-      JSON.stringify({
-        version: 1,
-        entries: {
-          ["wss://relay.example.test\nt-local"]: {
-            localTeamId: "t-local",
-            community: "https://relay.example.test",
-            status: "confirmed",
-            teamId: "5d2f6c1e-0d7b-4c51-9a63-2a9a1a0c7e11",
-            channelId: "0c9e7a52-3b1d-4f6e-8a20-6d4b2f9e1c33",
-            intendedMembers: [alder],
-            addedMembers: [alder],
-            pendingMembers: [],
-          },
-        },
-      }),
-    );
+    // Only an unfinished change of this device's names the channel's team.
+    new TeamOps(storage).write({
+      edit: {
+        id: "edit",
+        owner: viewer,
+        community: "https://relay.example.test",
+        teamId: "5d2f6c1e-0d7b-4c51-9a63-2a9a1a0c7e11",
+        channel: "0c9e7a52-3b1d-4f6e-8a20-6d4b2f9e1c33",
+        kind: "edit",
+        intent: { name: "Core", instructions: "", members: [alder] },
+        commands: [],
+        mode: "reconcile-only",
+        seq: 1,
+      },
+    });
     const relay = configRelay(async () => [
       {
         id: "0c9e7a52-3b1d-4f6e-8a20-6d4b2f9e1c33",
@@ -6299,7 +6350,7 @@ describe("Delete as a recoverable archive", () => {
     await f.ctx.fiber.dispose();
   });
 
-  it("with config sync on, resumes a team's pending members and a stopped Create from the journal alone", async () => {
+  it("with config sync on, resumes a team's pending members and a stopped Create from its saved records alone", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;
     const [joined, created] = [crypto.randomUUID(), crypto.randomUUID()];
@@ -6310,34 +6361,28 @@ describe("Delete as a recoverable archive", () => {
       members: [viewer, alder],
     });
     const storage = memoryStorage();
-    const entry = (teamId: string) => ({
-      localTeamId: teamId,
+    const record = (id: string, seq: number): TeamOp => ({
+      id,
+      owner: viewer,
       community: "https://relay.example.test",
-      teamId,
-      intendedMembers: [alder, birch],
-      addedMembers: [] as string[],
-      pendingMembers: [] as string[],
-      source: "new",
-      team: { name: "Core", instructions: "" },
+      teamId: id,
+      kind: "create",
+      intent: { name: "Core", instructions: "", members: [alder, birch] },
+      base: null,
+      commands: [],
+      mode: "may-send",
+      seq,
     });
-    storage.setItem(
-      TEAMS_MIGRATION_KEY,
-      JSON.stringify({
-        version: 1,
-        entries: {
-          // Its local row is gone; one member was never added.
-          joined: {
-            ...entry(joined),
-            status: "confirmed",
-            channelId: "c0a8012e-7d3b-4a5f-9c61-2e4b8d9f0a17",
-            addedMembers: [alder],
-            pendingMembers: [birch],
-          },
-          // Create stopped before the team's channel was made.
-          created: { ...entry(created), status: "pending" },
-        },
-      }),
-    );
+    new TeamOps(storage).write({
+      // Its channel was made and one member added; the other never was.
+      [joined]: {
+        ...record(joined, 1),
+        channel: "c0a8012e-7d3b-4a5f-9c61-2e4b8d9f0a17",
+        commands: [{ action: "add", pubkey: alder, state: "confirmed" }],
+      },
+      // Create stopped before the team's channel was made.
+      [created]: record(created, 2),
+    });
     const f = await setup({
       storage,
       identities: [here(alder), here(birch)],
@@ -6376,8 +6421,8 @@ describe("Delete as a recoverable archive", () => {
     await expect(create()).rejects.toThrow();
     relay.offline.value = false;
     const team = await create();
-    const [journaled] = new TeamJournal(f.storage).all();
-    expect(team.id).toBe(journaled?.teamId);
+    expect(team.id).toBe("6f1c2b9e-4a3d-4c1e-9b2a-1d2e3f4a5b6c");
+    expect(new TeamOps(f.storage).every()).toEqual([]);
     expect(relay.channels.size).toBe(1);
     await f.ctx.fiber.dispose();
   });
@@ -6462,11 +6507,13 @@ describe("Delete as a recoverable archive", () => {
       );
       const add = relay.addMember.getMockImplementation();
       if (!add) throw new Error("The relay fake adds members");
-      relay.addMember.mockImplementation(async (id, pubkey) =>
-        [...relay.channels.values()].some((c) => c.id === id)
+      // The add lands, but its reply is lost: only a roster read settles it.
+      relay.addMember.mockImplementation(async (id, pubkey) => {
+        const result = await add(id, pubkey);
+        return [...relay.channels.values()].some((c) => c.id === id)
           ? ({ status: "uncertain" } as never)
-          : add(id, pubkey),
-      );
+          : result;
+      });
       const form = {
         creation: "6f1c2b9e-4a3d-4c1e-9b2a-1d2e3f4a5b6c",
         name: "Partial",
@@ -6474,13 +6521,13 @@ describe("Delete as a recoverable archive", () => {
         members: [alder],
       };
       await expect(f.service.saveTeam(form)).rejects.toThrow();
-      const [started] = new TeamJournal(f.storage).all();
-      expect(started?.pendingMembers).toEqual([alder]);
+      const [started] = new TeamOps(f.storage).every();
+      expect(pending(started)).toEqual([alder]);
       relay.addMember.mockImplementation(add);
       const completed = await f.service.saveTeam(form);
       expect(completed.id).toBe(started?.teamId);
       expect(relay.channels.size).toBe(1);
-      expect(new TeamJournal(f.storage).all()[0]?.pendingMembers).toEqual([]);
+      expect(new TeamOps(f.storage).every()).toEqual([]);
     } finally {
       await f.ctx.fiber.dispose();
     }
@@ -6498,11 +6545,13 @@ describe("Delete as a recoverable archive", () => {
         );
         const add = relay.addMember.getMockImplementation();
         if (!add) throw new Error("The relay fake adds members");
-        relay.addMember.mockImplementation(async (id, pubkey) =>
-          [...relay.channels.values()].some((c) => c.id === id)
+        // The add lands, but its reply is lost: only a roster read settles it.
+        relay.addMember.mockImplementation(async (id, pubkey) => {
+          const result = await add(id, pubkey);
+          return [...relay.channels.values()].some((c) => c.id === id)
             ? ({ status: "uncertain" } as never)
-            : add(id, pubkey),
-        );
+            : result;
+        });
         const form = {
           creation: "6f1c2b9e-4a3d-4c1e-9b2a-1d2e3f4a5b6c",
           name: "Partial",
@@ -6510,7 +6559,7 @@ describe("Delete as a recoverable archive", () => {
           members: [alder],
         };
         await expect(f.service.saveTeam(form)).rejects.toThrow();
-        const [started] = new TeamJournal(f.storage).all();
+        const [started] = new TeamOps(f.storage).every();
         relay.addMember.mockImplementation(add);
         const completed = await f.service.saveTeam({
           ...form,
@@ -6518,7 +6567,7 @@ describe("Delete as a recoverable archive", () => {
         });
         expect.soft(completed.id).toBe(started?.teamId);
         expect.soft(relay.channels.size).toBe(1);
-        expect.soft(new TeamJournal(f.storage).all()).toHaveLength(1);
+        expect.soft(new TeamOps(f.storage).every()).toEqual([]);
       } finally {
         await f.ctx.fiber.dispose();
       }
@@ -6579,7 +6628,7 @@ describe("Delete as a recoverable archive", () => {
           expect.objectContaining({ id: team.id }),
         ),
       );
-      expect(new TeamJournal(other.storage).all()).toHaveLength(0);
+      expect(new TeamOps(other.storage).every()).toHaveLength(0);
       expect(
         new TeamJournal(other.storage).known(
           viewer,
@@ -6616,9 +6665,9 @@ describe("Delete as a recoverable archive", () => {
     const f = await setup({ identities: [here(alder)], storage });
     try {
       await vi.waitFor(() =>
-        expect(new TeamJournal(storage).all()).toHaveLength(1),
+        expect(new TeamOps(storage).every()).toHaveLength(1),
       );
-      const [migration] = new TeamJournal(storage).all();
+      const [migration] = new TeamOps(storage).every();
       expect(migration?.teamId).not.toBe(local.id);
       communityFake.value = null;
       f.reconnecting();
@@ -6644,11 +6693,13 @@ describe("Delete as a recoverable archive", () => {
       );
       const add = relay.addMember.getMockImplementation();
       if (!add) throw new Error("The relay fake adds members");
-      relay.addMember.mockImplementation(async (id, pubkey) =>
-        [...relay.channels.values()].some((c) => c.id === id)
+      // The add lands, but its reply is lost: only a roster read settles it.
+      relay.addMember.mockImplementation(async (id, pubkey) => {
+        const result = await add(id, pubkey);
+        return [...relay.channels.values()].some((c) => c.id === id)
           ? ({ status: "uncertain" } as never)
-          : add(id, pubkey),
-      );
+          : result;
+      });
       const form = {
         creation: "6f1c2b9e-4a3d-4c1e-9b2a-1d2e3f4a5b6c",
         name: "Partial",
@@ -6656,12 +6707,10 @@ describe("Delete as a recoverable archive", () => {
         members: [alder],
       };
       await expect(f.service.saveTeam(form)).rejects.toThrow();
-      const [started] = new TeamJournal(f.storage).all();
+      const [started] = new TeamOps(f.storage).every();
       relay.addMember.mockImplementation(add);
       await relay.opens.mock.results[0]?.value.resumeTeams();
-      expect(new TeamJournal(f.storage).all()[0]?.addedMembers).toEqual([
-        alder,
-      ]);
+      expect(new TeamOps(f.storage).every()).toEqual([]);
       const completed = await f.service.saveTeam(form);
       expect.soft(completed.id).toBe(started?.teamId);
       expect.soft(relay.channels.size).toBe(1);
@@ -6680,11 +6729,13 @@ describe("Delete as a recoverable archive", () => {
       );
       const add = relay.addMember.getMockImplementation();
       if (!add) throw new Error("The relay fake adds members");
-      relay.addMember.mockImplementation(async (id, pubkey) =>
-        [...relay.channels.values()].some((c) => c.id === id)
+      // The add lands, but its reply is lost: only a roster read settles it.
+      relay.addMember.mockImplementation(async (id, pubkey) => {
+        const result = await add(id, pubkey);
+        return [...relay.channels.values()].some((c) => c.id === id)
           ? ({ status: "uncertain" } as never)
-          : add(id, pubkey),
-      );
+          : result;
+      });
       listsTeam(f.native, nightShift([alder]));
       const imported = await importTeam(f.service);
       expect.soft(imported.team).toBeUndefined();
@@ -6789,10 +6840,9 @@ describe("Delete as a recoverable archive", () => {
       });
       const config = relay.opens.mock.results[0]?.value;
       if (!config) throw new Error("no config");
-      vi.spyOn(config, "editTeam").mockResolvedValue({
-        saved: { status: "uncertain", message: "lost OK", retired: false },
-        failed: [],
-      });
+      vi.spyOn(config, "editTeam").mockRejectedValue(
+        new Error("Some steps may have been saved; Check again confirms them."),
+      );
       await expect(
         f.service.saveTeam({ ...team, instructions: "edit" }),
       ).rejects.toThrow();
@@ -6869,6 +6919,191 @@ describe("Delete as a recoverable archive", () => {
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
       expect(f.run.mock.calls[0]?.[0].team).toContain("LOCAL RULE MUST REMAIN");
     } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  /** Re-reads teams in every community the fake opened. */
+  const refreshAll = (relay: ReturnType<typeof configRelay>) =>
+    Promise.all(
+      relay.opens.mock.results.map((result) => result.value?.refreshTeams()),
+    );
+  const count = (text: string | undefined, part: string) =>
+    (text ?? "").split(part).length - 1;
+  /** A local team whose members span two communities: it never moves. */
+  const spanning = (id: string) => ({
+    id,
+    name: "Spanning",
+    instructions: "SPANNING LOCAL RULE",
+    members: [alder, birch],
+  });
+  const spanSetup = async (id: string) => {
+    const storage = memoryStorage();
+    writeTeams(storage, [spanning(id)]);
+    const f = await setup({
+      storage,
+      identities: [here(alder), here(birch, "wss://other.example.test")],
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    return f;
+  };
+
+  it("with config sync on, runs a team spanning communities with its local rules beside a distinct relay team", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await spanSetup("local-spanning");
+    try {
+      await relay.remoteTeam("7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f", [alder]);
+      await refreshAll(relay);
+      mentionAlder(f, "both");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const team = f.run.mock.calls[0]?.[0].team;
+      expect(count(team, "SPANNING LOCAL RULE")).toBe(1);
+      expect(count(team, "TEAM RULE")).toBe(1);
+      expect(readTeams(f.storage)).toEqual([spanning("local-spanning")]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, uses the relay team over a local team with the same id in its scope", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const id = "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+    const f = await spanSetup(id);
+    try {
+      await relay.remoteTeam(id, [alder]);
+      await refreshAll(relay);
+      mentionAlder(f, "same-id");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const team = f.run.mock.calls[0]?.[0].team;
+      expect(count(team, "TEAM RULE")).toBe(1);
+      expect(team).not.toContain("SPANNING LOCAL RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  /** A local team whose move onto the relay is held: its relay team exists
+   * with other text, made elsewhere, and the move hasn't adopted it yet. */
+  async function heldMove(options: { models?: () => Promise<void> } = {}) {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const local = {
+      id: "local-moving",
+      name: "Moving",
+      instructions: "LOCAL MOVING RULE",
+      members: [alder],
+    };
+    writeTeams(storage, [local]);
+    const target = await importedTeamId({
+      owner: viewer,
+      community: COMMUNITY_UUID,
+      source: "local-team",
+      sourceId: local.id,
+    });
+    // Teams can't be made yet: the move waits with no channel.
+    relay.noTeams.value = true;
+    const f = await setup({ storage, identities: [here(alder)], ...options });
+    await vi.waitFor(() =>
+      expect(f.service.find(alder)?.configBase).toBeDefined(),
+    );
+    await vi.waitFor(() =>
+      expect(new TeamOps(storage).every()).toHaveLength(1),
+    );
+    const config = relay.opens.mock.results[0]?.value;
+    if (!config) throw new Error("No community config");
+    // The same team appears on the relay, roster and all, with other text.
+    await relay.remoteTeam(target, [alder]);
+    await config.refreshTeams();
+    /** The move adopts the relay team, establishing it; a member command
+     * left unconfirmed keeps the move unfinished. */
+    const establish = async () => {
+      relay.addMember.mockResolvedValue({ status: "uncertain" } as never);
+      const [channel] = [...relay.channels.values()];
+      if (channel) channel.members = [viewer];
+      await config.resumeTeams();
+      if (channel) channel.members = [viewer, alder];
+      await config.refreshTeams();
+      const [op] = new TeamOps(storage).every();
+      expect(op?.confirmedHead).toBeDefined();
+      expect(readTeams(storage)).toEqual([local]);
+    };
+    return { f, relay, establish };
+  }
+
+  it("with config sync on, gives a run exactly one copy of a team during a held move", async () => {
+    const { f, establish } = await heldMove();
+    try {
+      // Not established yet: the local row is the one copy.
+      mentionAlder(f, "pending");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const before = f.run.mock.calls[0]?.[0].team;
+      expect(count(before, "LOCAL MOVING RULE")).toBe(1);
+      expect(before).not.toContain("TEAM RULE");
+      // Established, still unfinished: the relay copy is.
+      await establish();
+      mentionAlder(f, "established");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+      const after = f.run.mock.calls[1]?.[0].team;
+      expect(count(after, "TEAM RULE")).toBe(1);
+      expect(after).not.toContain("LOCAL MOVING RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, gives a run neither copy of a held move whose relay team is deleted", async () => {
+    const { f, relay } = await heldMove();
+    try {
+      const config = relay.opens.mock.results[0]?.value;
+      for (const channel of relay.channels.values()) channel.archived = true;
+      await config?.refreshTeams();
+      mentionAlder(f, "archived");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const team = f.run.mock.calls[0]?.[0].team ?? "";
+      expect(team).not.toContain("LOCAL MOVING RULE");
+      expect(team).not.toContain("TEAM RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("with config sync on, keeps a held move's relay copy when the community disconnects during model selection", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const selecting = vi.fn(() => gate);
+    const { f, establish } = await heldMove({ models: selecting });
+    try {
+      await establish();
+      f.emit({
+        events: [
+          event("disconnect-during-pick", {
+            pubkey: viewer,
+            tags: [
+              ["h", channel],
+              ["p", alder],
+              ["model", alder, "fast"],
+            ],
+          }),
+        ],
+        channelId: channel,
+      });
+      await vi.waitFor(() => expect(selecting).toHaveBeenCalledTimes(1));
+      f.connect(false);
+      expect(f.service.snapshot().running).toEqual([]);
+      release();
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const team = f.run.mock.calls[0]?.[0].team;
+      expect(count(team, "TEAM RULE")).toBe(1);
+      expect(team).not.toContain("LOCAL MOVING RULE");
+    } finally {
+      release();
       await f.ctx.fiber.dispose();
     }
   });

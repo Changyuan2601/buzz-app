@@ -28,6 +28,7 @@ import type {
   AgentsSnapshot,
   RegisteredAgentType,
   TeamChange,
+  TeamChangeAction,
   FoundAgents,
   TeamPort,
 } from "../../features/agents/service";
@@ -139,6 +140,8 @@ function setup(
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
     archivedTeams = [] as AgentsSnapshot["teams"],
+    teams = [] as AgentsSnapshot["teams"],
+    teamChanges = [] as NonNullable<AgentsSnapshot["teamChanges"]>,
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -151,8 +154,9 @@ function setup(
     classifierKey: "missing",
     agents: saved,
     running: saved,
-    teams: [],
+    teams,
     archivedTeams,
+    teamChanges,
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", ({ onClose }) => (
@@ -341,6 +345,7 @@ function setup(
     }),
     core: vi.fn(async () => undefined),
     recoverTeam: vi.fn(async (_id: string) => {}),
+    teamChange: vi.fn(async (_id: string, _action: TeamChangeAction) => {}),
     configHistory: () => undefined,
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -1244,6 +1249,62 @@ it("offers Recover or Cancel when an imported team was deleted in this community
   await user.click(screen.getByRole("button", { name: "Recover and import" }));
   expect(agents.recoverTeam).toHaveBeenCalledWith("team-1");
   expect(agents.portTeam).toHaveBeenCalledTimes(3);
+});
+
+it("shows an unfinished team change on its card, in the Teams tab and in its editor, with its actions", async () => {
+  const user = userEvent.setup();
+  const core = { id: "team-1", name: "Core", instructions: "", members: [] };
+  const { agents } = setup([], {
+    teams: [{ ...core, unfinished: true }],
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-1",
+        kind: "edit",
+        name: "Core",
+        problem: "This team changed on another device.",
+        stopped: true,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(screen.getByText("Unfinished change")).toBeInTheDocument();
+  const row = within(
+    screen.getByRole("region", { name: "Unfinished changes" }),
+  ).getByRole("listitem", { name: "Edit: Core" });
+  expect(row).toHaveTextContent("This team changed on another device.");
+  // Stopped with nothing unconfirmed: Resubmit and Dismiss, never Discard.
+  expect(within(row).queryByRole("button", { name: "Discard" })).toBeNull();
+  await user.click(within(row).getByRole("button", { name: "Resubmit" }));
+  expect(agents.teamChange).toHaveBeenCalledWith("op-1", "resubmit");
+  await user.click(screen.getByRole("button", { name: "Core" }));
+  const editor = screen.getByRole("listitem", { name: "Edit: Core" });
+  await user.click(within(editor).getByRole("button", { name: "Dismiss" }));
+  expect(agents.teamChange).toHaveBeenLastCalledWith("op-1", "dismiss");
+});
+
+it("waits to offer Dismiss until nothing in a stopped change is unconfirmed", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-1",
+        kind: "delete",
+        name: "",
+        problem: "Some steps may have been saved; Check again confirms them.",
+        stopped: true,
+        unresolved: true,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const row = screen.getByRole("listitem", { name: "Delete: Unnamed team" });
+  expect(within(row).queryByRole("button", { name: "Dismiss" })).toBeNull();
+  expect(within(row).queryByRole("button", { name: "Resubmit" })).toBeNull();
+  await user.click(within(row).getByRole("button", { name: "Check again" }));
+  expect(agents.teamChange).toHaveBeenCalledWith("op-1", "check");
 });
 
 it("lists deleted synced teams, each with Recover", async () => {

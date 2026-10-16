@@ -198,6 +198,8 @@ export type Team = Readonly<{
   /** A synced team's head when shown, never stored: the editor's Save
    * revises it. */
   base?: string;
+  /** Shown, never stored: a change to it that hasn't finished. */
+  unfinished?: true;
 }>;
 export const TEAMS_KEY = "buzz.agents.teams.v1";
 

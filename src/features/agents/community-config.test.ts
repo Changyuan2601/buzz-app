@@ -20,6 +20,7 @@ import {
 import { PublishRejected } from "../relay/outbox";
 import { LifecycleJournal } from "./config-lifecycle";
 import { MigrationJournal } from "./config-writes";
+import { TeamOps } from "./team-ops";
 import { TeamJournal } from "./team-config";
 import { memoryStorage } from "./test-fakes";
 
@@ -48,6 +49,7 @@ const journals = (storage: Storage) => ({
   migration: new MigrationJournal(storage),
   teams: new TeamJournal(storage),
   lifecycle: new LifecycleJournal(storage),
+  ops: new TeamOps(storage),
 });
 
 const gate = (enabled: boolean | undefined, info: () => Promise<unknown>) =>
@@ -60,6 +62,7 @@ const gate = (enabled: boolean | undefined, info: () => Promise<unknown>) =>
       journals: journals(memoryStorage()),
       info,
       strip() {},
+      retire() {},
       changed() {},
       ...(enabled === undefined ? {} : { enabled }),
     },
@@ -90,6 +93,7 @@ describe("community config gate", () => {
         journals: journals(memoryStorage()),
         info: async () => supported,
         strip() {},
+        retire() {},
         changed() {},
         enabled: true,
       },
@@ -134,6 +138,7 @@ describe("community config gate", () => {
         journals: journals(memoryStorage()),
         info: async () => supported,
         strip() {},
+        retire() {},
         changed() {},
         enabled: true,
       },
@@ -223,6 +228,7 @@ function setup(archived = false, storage = memoryStorage()) {
     },
     teamJournal: new TeamJournal(storage),
     lifecycle: new LifecycleJournal(storage),
+    ops: new TeamOps(storage),
     sync: { bind, unbind: vi.fn(), dispose() {} },
     deps: {
       read,
@@ -235,6 +241,7 @@ function setup(archived = false, storage = memoryStorage()) {
     owner: owner.pubkey,
     community: "c",
     strip: (_, side) => void local.stripped.push(side),
+    retire() {},
     changed() {},
   });
   const start = () => {
@@ -349,19 +356,44 @@ describe("agent config wiring", () => {
     expect(f.configs.binding(agent.pubkey)?.teams).toEqual([]);
   });
 
+  it("moves no imported or local team while the community's UUID is unknown", async () => {
+    const f = setup();
+    expect(f.configs.importsTeams).toBe(false);
+    await f.configs.migrateTeams(
+      [
+        {
+          id: "local-1",
+          name: "Core",
+          instructions: "Ship it.",
+          members: [agent.pubkey],
+        },
+      ],
+      () => "c",
+    );
+    expect(f.ensure).not.toHaveBeenCalled();
+    expect(f.sent).toEqual([]);
+    expect(f.configs.teamOps()).toEqual([]);
+  });
+
   it("re-reads a team's members when its channel roster changes", async () => {
     const storage = memoryStorage();
     const channel = "6f1c2a3b-4d5e-4f60-8a71-b2c3d4e5f607";
     const teamId = "0b7d4e2a-9c31-5f84-a6d2-3e1f0c9b8a75";
-    new TeamJournal(storage).put({
-      localTeamId: "local",
-      community: "c",
-      status: "confirmed",
-      teamId,
-      channelId: channel,
-      intendedMembers: [],
-      addedMembers: [],
-      pendingMembers: [],
+    // A move in progress names the channel before its head is readable.
+    new TeamOps(storage).write({
+      move: {
+        id: "move",
+        owner: owner.pubkey,
+        community: "c",
+        teamId,
+        channel,
+        kind: "move",
+        local: "local",
+        intent: { name: "Core", instructions: "", members: [] },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
     });
     const f = setup(false, storage);
     const team = {

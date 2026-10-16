@@ -439,7 +439,7 @@ export const edited = (
 /** The tags a revision carries forward from the head it edits: everything
  * but the ones `artifactTemplate` writes itself (NIP-AP "Editing"). */
 const OWN_TAGS = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
-function carried(
+export function carried(
   head: RelayEvent | undefined,
   extra: readonly (readonly string[])[] = [],
 ) {
