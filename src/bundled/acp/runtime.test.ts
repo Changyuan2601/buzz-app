@@ -313,4 +313,21 @@ describe("AcpRuntime", () => {
     expect(fake.harnesses[0]?.sent("session/new")).toEqual([]);
     expect(fake.servers.every((server) => server.closed)).toBe(true);
   });
+
+  it("adds the preset's sign-in hint only when the first turn needs a login", async () => {
+    for (const code of [-32000, -32603]) {
+      const config = await confirmed();
+      const { deliver, sync, published } = setup({
+        promptError: { code, message: "No luck" },
+      });
+      sync(config);
+      await deliver(message("1", "@Opal hello"), config).run;
+      await vi.waitFor(() => expect(published).toHaveLength(1));
+      const [report] = published;
+      expect(report?.content).toContain("No luck");
+      if (code === -32000)
+        expect(report?.content).toContain("Run `opencode auth login`.");
+      else expect(report?.content).not.toContain("opencode auth login");
+    }
+  });
 });

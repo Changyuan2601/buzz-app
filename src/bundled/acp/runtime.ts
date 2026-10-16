@@ -44,6 +44,7 @@ import {
 import { sessionTitle, standalonePrompt } from "../goose/runtime";
 import { type Config, config } from "./config";
 import { HarnessProcess } from "./harness";
+import { preset } from "./presets";
 
 /** How long a read of the agent's core memory is reused. */
 const MEMORY_TTL_MS = 5 * 60_000;
@@ -56,6 +57,8 @@ const SCOPE: Scope = "thread";
 /** No extension picks a model: the launch's args or env do. */
 const HARNESS_CHOICE = Object.freeze({ provider: "", model: "" });
 const LABEL = "ACP agent";
+/** ACP's error code for a harness that needs its user to sign in. */
+const AUTH_REQUIRED = -32000;
 
 /** The settings a running harness was started with; a change restarts it. */
 const launchOf = ({ command, args, env, workspace, approval }: Config) =>
@@ -259,6 +262,8 @@ export class AcpRuntime {
           ? { channel }
           : { channel, root: threadReference(event)?.rootId ?? event.id },
     );
+    // A new session's first turn is where a harness asks to sign in.
+    const first = !entry.sessions.seen(key);
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
@@ -276,8 +281,19 @@ export class AcpRuntime {
     void done
       .then((result) => {
         // Of the messages one turn answered, only one has its error or text.
-        if (result.error !== undefined)
-          return this.report(agent, channel, event, result.error, topLevel);
+        if (result.error !== undefined) {
+          const login =
+            first && result.code === AUTH_REQUIRED
+              ? preset(entry.config.preset)?.login
+              : undefined;
+          return this.report(
+            agent,
+            channel,
+            event,
+            login ? `${result.error}. ${login}` : result.error,
+            topLevel,
+          );
+        }
         // An answer the harness wrote without `send` is posted for it, so the
         // thread is not left waiting.
         if (result.text)
