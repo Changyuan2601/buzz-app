@@ -86,10 +86,24 @@ function spoilerDelimiters(content: string): readonly number[] {
   return Object.freeze(positions);
 }
 
+/** scanMarkdown parses CommonMark without extensions, where every literal
+ * context, container and emphasis needs one of these characters or a line
+ * starting with indentation or a list marker. micromark drops a leading BOM,
+ * which would hide the first line's start. Without them a scan finds no literal
+ * ranges, nothing to normalize, and no nesting below paragraphs. */
+const scannedSyntax = /[`~[<>*_\uFEFF]|^[ \t+\-\d]/m;
+
 /** Pure, immutable Markdown work whose lifetime is owned by the mounted body. */
 export function prepareMarkdown(content: string): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
+  if (!scannedSyntax.test(content))
+    return Object.freeze({
+      kind: "markdown",
+      content,
+      literalRanges: Object.freeze([]),
+      spoilerDelimiters: spoilerDelimiters(content),
+    });
 
   let scan = scanMarkdown(content);
   if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
