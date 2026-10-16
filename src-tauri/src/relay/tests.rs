@@ -606,16 +606,18 @@ fn isolated_agent_ipc_probe() {
         }
         let stored = archive(serde_json::json!({"action":"read","kind":24200})).unwrap();
         let event_id = stored["records"][0]["id"].as_str().unwrap().as_bytes();
-        let mut found_event = false;
+        let has = |raw: &[u8], needle: &[u8]| raw.windows(needle.len()).any(|s| s == needle);
+        let (mut found_event, mut found_metrics) = (false, false);
         for file in std::fs::read_dir(path.parent().unwrap()).unwrap() {
             let raw = std::fs::read(file.unwrap().path()).unwrap();
-            found_event |= raw.windows(event_id.len()).any(|bytes| bytes == event_id);
-            assert!(!raw
-                .windows(b"archive-secret-marker".len())
-                .any(|s| s == b"archive-secret-marker"));
-            assert!(!raw.windows(b"channelId".len()).any(|s| s == b"channelId"));
+            found_event |= has(&raw, event_id);
+            // Metrics are plaintext at rest by design; activity never is.
+            found_metrics |= has(&raw, b"archive-secret-marker-44200");
+            assert!(!has(&raw, b"archive-secret-marker-24200"));
+            assert!(!has(&raw, b"private-channel-24200"));
         }
         assert!(found_event, "ciphertext scan must include a saved envelope");
+        assert!(found_metrics, "saved metrics keep their plaintext on disk");
         let isolated = invoke("relay_archive",serde_json::json!({"community":"https://other.test","viewer":public,"request":{"action":"read","kind":24200}})).unwrap();
         assert!(isolated["records"].as_array().unwrap().is_empty());
         if std::env::var("BUZZ_ARCHIVE_RESTART").as_deref() == Ok("1") {

@@ -16,7 +16,7 @@ pub(super) struct CaptureSettings {
 type StoredRow = (i64, i64, String);
 /// Metrics kept for a year of a busy agent; see docs/agents.md for the sizing.
 const METRICS_BUDGET: i64 = 1024 * 1024 * 1024;
-const BACKFILL_BATCH: i64 = 64;
+pub(super) const BACKFILL_BATCH: i64 = 64;
 fn database<T>(result: rusqlite::Result<T>) -> Result<T> {
     result.map_err(|_| "Local archive storage failed; retry without deleting the archive".into())
 }

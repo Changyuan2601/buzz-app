@@ -37,8 +37,7 @@ function event(serial = 0, kind = 24200, patch = {}, key = agent) {
   const plaintext = JSON.stringify({
     kind: "turn_started",
     channelId: "private-channel",
-    payload:
-      kind === 44200 ? "metrics-plaintext-marker" : "archive-secret-marker",
+    payload: "archive-secret-marker",
     serial,
   });
   return finalizeEvent(
@@ -76,7 +75,7 @@ function harness(file = ":memory:") {
       store.ingest(viewer, community, row, revision, owner),
   };
 }
-test("real SQLite survives reopen with ciphertext activity, plaintext metrics, dedup, and account/community isolation", () => {
+test("real SQLite survives reopen with only ciphertext, dedup, and account/community isolation", () => {
   const file = path();
   let h = harness(file);
   const row = event();
@@ -91,12 +90,12 @@ test("real SQLite survives reopen with ciphertext activity, plaintext metrics, d
   expect(
     h.request({ action: "read", kind: 24200 }, "b".repeat(64)).records,
   ).toEqual([]);
-  const disk = (marker) =>
-    readdirSync(dirs.at(-1)).some((name) =>
-      readFileSync(join(dirs.at(-1), name)).includes(Buffer.from(marker)),
-    );
-  expect(disk("archive-secret-marker")).toBe(false);
-  expect(disk("metrics-plaintext-marker")).toBe(true);
+  for (const name of readdirSync(dirs.at(-1)))
+    expect(
+      readFileSync(join(dirs.at(-1), name)).includes(
+        Buffer.from("archive-secret-marker"),
+      ),
+    ).toBe(false);
   h.store.close();
   h = harness(file);
   expect(h.read().records[0]).toMatchObject({ id: row.id, agent: sender });
@@ -343,7 +342,7 @@ test("v1 migration preserves encrypted rows, policy settings and CAS revisions",
   h.store.close();
   db.close();
 });
-test("v2 migration backfills only the unlocked account's metrics, once, and retention is configurable", () => {
+test("v2 migration keeps metrics ciphertext-only and retention is configurable", () => {
   const file = path(),
     db = new DatabaseSync(file);
   db.exec(
@@ -380,40 +379,31 @@ test("v2 migration backfills only the unlocked account's metrics, once, and rete
       );
   const mine = Array.from({ length: 70 }, (_, i) => event(i, 44200));
   for (const row of mine) insert(viewer, row);
-  const broken = event(99, 44200),
-    foreign = event(100, 44200);
-  insert(viewer, broken, "broken");
-  insert(other, foreign);
-  const content = (id) =>
-    db
-      .prepare("SELECT content,undecryptable FROM archive_events WHERE id=?")
-      .get(id);
-  const pending = () =>
-    db
-      .prepare(
-        "SELECT COUNT(*) AS n FROM archive_events WHERE content IS NULL AND undecryptable=0",
-      )
-      .get().n;
+  insert(other, event(100, 44200));
   const h = harness(file);
+  h.ingest(event(200, 44200));
   expect(db.prepare("PRAGMA user_version").get().user_version).toBe(3);
   expect(h.settings().metricsDays).toBe(365);
-  // harness() and settings() are two requests: two bounded batches.
-  expect(pending()).toBe(1);
-  expect(content(foreign.id).content).toBeNull();
-  expect(content(broken.id)).toMatchObject({ content: null, undecryptable: 1 });
-  expect(content(mine[0].id).content).toContain("metrics-plaintext-marker");
+  // Plaintext metrics are native-only: the broker never fills content.
+  expect(
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM archive_events WHERE content IS NOT NULL",
+      )
+      .get().n,
+  ).toBe(0);
   expect(h.settings().bytes).toBe(
     db
       .prepare("SELECT SUM(bytes) AS n FROM archive_events WHERE viewer=?")
       .get(viewer).n,
   );
-  expect(h.read({ kind: 44200 }).records).toHaveLength(70);
+  expect(h.read({ kind: 44200 }).records).toHaveLength(71);
   const configure = (metricsDays) =>
     h.request({ action: "configure", ...h.settings(), metricsDays });
   expect(() => configure(30)).toThrow("Invalid archive settings");
   expect(configure(0).metricsDays).toBe(0);
   vi.spyOn(Date, "now").mockReturnValue(Date.now() + 200 * 86400 * 1000);
-  expect(h.read({ kind: 44200 }).records).toHaveLength(70);
+  expect(h.read({ kind: 44200 }).records).toHaveLength(71);
   configure(90);
   expect(h.read({ kind: 44200 }).records).toEqual([]);
   expect(

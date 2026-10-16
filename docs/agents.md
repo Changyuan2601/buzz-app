@@ -613,10 +613,16 @@ archive file above. The contract is schema version 3 (`PRAGMA user_version`):
 - Table `archive_events`, rows where `kind = 44200`.
 - `content` (TEXT) holds the NIP-AM event content exactly as decrypted, byte for
   byte, before any parsing ([NIP-AM](https://github.com/block/buzz/blob/main/docs/nips/NIP-AM.md)
-  defines its fields). `NULL` means not yet decrypted: rows saved before v3 are
-  decrypted in batches of 64 while their account is signed in, so other accounts'
-  rows stay `NULL` until those accounts sign in. `undecryptable = 1` marks a row
-  that failed decoding and will not be retried.
+  defines its fields). Only the native desktop archive fills `content`; in
+  browser dev mode the broker stores metrics encrypted only and `content` stays
+  `NULL`. In the native archive, `NULL` means not yet decrypted: the first
+  archive call after an account signs in decrypts all of that account's rows
+  saved before v3, in bounded batches until none remain. Other accounts' rows
+  stay `NULL` until those accounts sign in, and a key or storage failure leaves
+  the rest for the next archive call. `undecryptable = 1` marks a row whose
+  envelope, signature, tags, decryption or payload is invalid; it is not
+  retried. Saved metrics are not checked against the current clock, so a clock
+  rollback never marks a row undecryptable.
 - `envelope` holds the original signed event JSON, so `content` can be verified
   against it. `id` is the event ID, `agent` the agent public key, `created` the
   event `created_at` (seconds), `received` the local save time (seconds), `viewer`
@@ -625,7 +631,11 @@ archive file above. The contract is schema version 3 (`PRAGMA user_version`):
   rows; readers must not assume history is complete.
 
 A change to these names or meanings increments `user_version`; readers should
-reject versions they do not know. Ingest trusts envelopes supplied by the trusted
+reject versions they do not know.
+
+Rollback warning: once a build with schema version 3 opens the archive, the file
+is migrated in place, and older builds refuse to open it ("created by a newer
+app") rather than downgrade it. Test new builds against a copy of the archive. Ingest trusts envelopes supplied by the trusted
 main renderer, so trusted plugin code could plant validly signed rows addressed to
 the owner. Those rows now feed local usage reports as well as display.
 
@@ -641,7 +651,8 @@ Newer schema versions are rejected without downgrade.
 
 Reopening/reloading reads 100-row keyset pages through the key-owning host.
 Historical decode revalidates signatures, exact tags, recipient and, for
-activity, the 90-day maximum age (metrics age is bounded by their retention),
+activity, the 90-day maximum age and five-minute future-skew limit (saved
+metrics passed the live gate at ingest and are bounded by their retention),
 without weakening the live five-minute freshness gate. Bad rows are counted and
 skipped without trapping pagination. Live records win event-ID deduplication.
 Restored rows are display-only: they never create working turns or typing evidence.

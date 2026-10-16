@@ -179,7 +179,7 @@ async fn execute(
     })
     .await
     .map_err(|_| "Archive task failed")??;
-    // Best effort: a failed batch leaves rows pending for the next host call.
+    // Best effort: a failure leaves the remaining rows pending for the next host call.
     let _ = backfill(identity, backfill_host, viewer.clone()).await;
     match reply {
         Reply::Complete(value) => {
@@ -209,46 +209,53 @@ async fn execute(
     }
 }
 
-/// Decrypts one batch of this account's metrics saved before v3 stored plaintext.
+/// Decrypts this account's metrics saved before v3 stored plaintext, one
+/// bounded batch at a time so neither the archive lock nor the key is held
+/// across the run. A failure stops early; the remaining rows stay pending.
 /// Other accounts' rows wait until their own key is unlocked.
 async fn backfill(identity: &IdentityHost, archive: ArchiveHost, viewer: String) -> Result<()> {
-    let host = archive.clone();
-    let target = viewer.clone();
-    let rows = tauri::async_runtime::spawn_blocking(move || {
-        let guard = host.0.lock().map_err(|_| "Archive unavailable")?;
-        guard
-            .as_ref()
-            .ok_or("Archive unavailable")?
-            .pending(&target)
-    })
-    .await
-    .map_err(|_| "Archive task failed")??;
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let filled = identity
-        .with_key(move |secret, current| {
-            if current != viewer {
-                return Err("Archive viewer changed".into());
-            }
-            Ok(rows
-                .into_iter()
-                .map(|(seq, raw)| {
-                    let content = serde_json::from_str(&raw)
-                        .ok()
-                        .and_then(|event| decode_archive(secret, current, &event, true).ok())
-                        .and_then(|frame| frame["plaintext"].as_str().map(str::to_owned));
-                    (seq, content)
-                })
-                .collect::<Vec<_>>())
+    loop {
+        let host = archive.clone();
+        let target = viewer.clone();
+        let rows = tauri::async_runtime::spawn_blocking(move || {
+            let guard = host.0.lock().map_err(|_| "Archive unavailable")?;
+            guard
+                .as_ref()
+                .ok_or("Archive unavailable")?
+                .pending(&target)
         })
-        .await?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = archive.0.lock().map_err(|_| "Archive unavailable")?;
-        guard.as_mut().ok_or("Archive unavailable")?.fill(filled)
-    })
-    .await
-    .map_err(|_| "Archive task failed")?
+        .await
+        .map_err(|_| "Archive task failed")??;
+        let done = rows.len() < store::BACKFILL_BATCH as usize;
+        let expected = viewer.clone();
+        let filled = identity
+            .with_key(move |secret, current| {
+                if current != expected {
+                    return Err("Archive viewer changed".into());
+                }
+                Ok(rows
+                    .into_iter()
+                    .map(|(seq, raw)| {
+                        let content = serde_json::from_str(&raw)
+                            .ok()
+                            .and_then(|event| decode_archive(secret, current, &event, true).ok())
+                            .and_then(|frame| frame["plaintext"].as_str().map(str::to_owned));
+                        (seq, content)
+                    })
+                    .collect::<Vec<_>>())
+            })
+            .await?;
+        let host = archive.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut guard = host.0.lock().map_err(|_| "Archive unavailable")?;
+            guard.as_mut().ok_or("Archive unavailable")?.fill(filled)
+        })
+        .await
+        .map_err(|_| "Archive task failed")??;
+        if done {
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,10 +1,9 @@
-// The dev broker owns this database, not the browser. Only NIP-AM metrics
-// (44200) keep decrypted content; observer frames stay ciphertext.
+// The dev broker owns this database, not the browser. Never store decrypted
+// content: plaintext metrics are a native-archive feature only.
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { getPublicKey } from "nostr-tools";
 import { decodeAgentArchive } from "./agent-observer.mjs";
 
 export const archivePath = () =>
@@ -122,40 +121,6 @@ export function openArchive(path = archivePath()) {
       bytes: row.bytes,
     };
   };
-  // Decrypts one batch of this account's metrics saved before v3 stored
-  // plaintext. Undecodable rows are marked and never retried.
-  const backfill = (viewer, secret) => {
-    // A key for another account must not mark this account's rows undecodable.
-    if (getPublicKey(secret) !== viewer) return;
-    const rows = db
-      .prepare(
-        "SELECT seq,envelope FROM archive_events WHERE viewer=? AND kind=44200 AND content IS NULL AND undecryptable=0 ORDER BY seq LIMIT 64",
-      )
-      .all(viewer);
-    if (!rows.length) return;
-    transaction(() => {
-      for (const row of rows) {
-        let content = null;
-        try {
-          content = decodeAgentArchive(
-            JSON.parse(row.envelope),
-            secret,
-            viewer,
-            true,
-          ).plaintext;
-        } catch {
-          /* marked undecryptable below */
-        }
-        run(
-          "UPDATE archive_events SET content=?, undecryptable=(? IS NULL), bytes=bytes+? WHERE seq=? AND content IS NULL AND undecryptable=0",
-          content,
-          content,
-          content === null ? 0 : Buffer.byteLength(content),
-          row.seq,
-        );
-      }
-    });
-  };
   const kindCheck = (kind) => {
     if (![24200, 44200].includes(kind))
       throw new Error("Unsupported archive kind");
@@ -164,11 +129,6 @@ export function openArchive(path = archivePath()) {
     request(viewer, community, input, secret) {
       seed(viewer, community);
       prune();
-      try {
-        backfill(viewer, secret);
-      } catch {
-        /* Best effort: rows stay pending for the next request. */
-      }
       switch (input.action) {
         case "settings":
           return settings(viewer, community);
@@ -297,7 +257,7 @@ export function openArchive(path = archivePath()) {
       }
     },
     ingest(viewer, community, event, expectedRevision, secret) {
-      const frame = decodeAgentArchive(event, secret, viewer);
+      decodeAgentArchive(event, secret, viewer);
       seed(viewer, community);
       transaction(() => {
         if (revision(viewer, community) !== expectedRevision)
@@ -311,9 +271,8 @@ export function openArchive(path = archivePath()) {
         );
         if (!rule.enabled) return;
         const raw = JSON.stringify(event);
-        const content = event.kind === 44200 ? frame.plaintext : null;
         run(
-          "INSERT OR IGNORE INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope,content) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+          "INSERT OR IGNORE INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?,?,?,?,?,?,?,?,?,?)",
           viewer,
           community,
           subscription,
@@ -322,10 +281,8 @@ export function openArchive(path = archivePath()) {
           event.kind,
           event.created_at,
           Math.floor(Date.now() / 1000),
-          Buffer.byteLength(raw) +
-            (content === null ? 0 : Buffer.byteLength(content)),
+          Buffer.byteLength(raw),
           raw,
-          content,
         );
         for (const [agent, cap] of [
           [event.pubkey, rule.budget / 4],

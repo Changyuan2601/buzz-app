@@ -27,7 +27,8 @@ pub(crate) fn envelope_at(viewer: &str, kind: u16, serial: u64, created: u64) ->
     )
     .unwrap();
     let plaintext = format!(
-        r#"{{"channelId":"private-channel","kind":"turn_started","payload":"archive-secret-marker","serial":{serial}}}"#
+        // Kind-specific values let disk scans tell metrics from activity.
+        r#"{{"channelId":"private-channel-{kind}","kind":"turn_started","payload":"archive-secret-marker-{kind}","serial":{serial}}}"#
     );
     let content = STANDARD.encode(
         nip44::v2::encrypt_to_bytes_with_nonce(&conversation, plaintext.as_bytes(), [7; 32])
@@ -580,7 +581,7 @@ async fn host_ingest_keeps_plaintext_only_for_metrics() {
 }
 
 #[tokio::test]
-async fn v2_archive_migrates_and_backfills_only_the_unlocked_account() {
+async fn v2_archive_backfills_every_unlocked_row_in_one_call_including_future_dated() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("v2.sqlite3");
     let viewer = viewer();
@@ -589,9 +590,15 @@ async fn v2_archive_migrates_and_backfills_only_the_unlocked_account() {
     db.execute_batch(include_str!("../../../src/features/archive/schema.sql"))
         .unwrap();
     db.execute_batch("PRAGMA user_version=2").unwrap();
-    let mine: Vec<AgentEvent> = (0..70).map(|i| envelope(&viewer, 44200, i)).collect();
-    let broken = envelope(&viewer, 44200, 99);
-    let foreign = envelope(&viewer, 44200, 100);
+    // Over three batches, plus one dated past the live clock gate (clock rollback).
+    let mut mine: Vec<AgentEvent> = (0..200).map(|i| envelope(&viewer, 44200, i)).collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    mine.push(envelope_at(&viewer, 44200, 200, now + 3600));
+    let broken = envelope(&viewer, 44200, 900);
+    let foreign = envelope(&viewer, 44200, 901);
     let insert = |owner: &str, event: &AgentEvent, raw: String| {
         db.execute("INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?1,'https://a.test','metrics',?2,?3,44200,?4,?4,?5,?6)",rusqlite::params![owner,event.id,event.pubkey,event.created_at as i64,raw.len() as i64,raw]).unwrap();
     };
@@ -635,7 +642,7 @@ async fn v2_archive_migrates_and_backfills_only_the_unlocked_account() {
             .unwrap(),
         3
     );
-    // One bounded batch per host call; the second call resumes where it stopped.
+    // One startup call with no later traffic finishes every batch.
     let pending = |db: &rusqlite::Connection| -> i64 {
         db.query_row(
             "SELECT COUNT(*) FROM archive_events WHERE content IS NULL AND undecryptable=0",
@@ -644,9 +651,6 @@ async fn v2_archive_migrates_and_backfills_only_the_unlocked_account() {
         )
         .unwrap()
     };
-    assert_eq!(pending(&db), 71 - 64 + 1);
-    settings().await.unwrap();
-    settings().await.unwrap();
     assert_eq!(pending(&db), 1, "the other account's row waits for its key");
     assert_eq!(content_of(&path, &foreign.id).0, None);
     assert_eq!(content_of(&path, &broken.id), (None, 1));
@@ -695,7 +699,7 @@ async fn v2_archive_migrates_and_backfills_only_the_unlocked_account() {
     )
     .await
     .unwrap();
-    assert_eq!(page["records"].as_array().unwrap().len(), 70);
+    assert_eq!(page["records"].as_array().unwrap().len(), 99);
     assert_eq!(page["skipped"], 1);
 }
 
