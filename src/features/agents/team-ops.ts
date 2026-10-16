@@ -1,7 +1,7 @@
-// Team changes through the relay: one saved record per change. Steps are not
-// queued: each re-reads its record after every await and persists command
-// uncertainty before dispatch, so the team fence orders them. A record holds at most one signed revision whose outcome is
-// unknown, and member and lifecycle commands persisted before they are sent.
+// Team changes through the relay: one saved record per change, run by one
+// queue per team. Each dispatch also re-reads its record, since Discard,
+// Dismiss and revise act outside a step. A record holds at most one signed
+// revision whose outcome is unknown, and member and lifecycle commands persisted before they are sent.
 // Nothing whose outcome is unknown is sent again automatically; only a fresh
 // read resolves it. Dormant until config sync ships.
 import { PublishRejected } from "../relay/outbox";
@@ -233,6 +233,7 @@ const LIFECYCLE: Partial<Record<OpKind, "archive" | "unarchive">> = {
 
 export function teamRunner(deps: RunnerDeps) {
   const { ops, channels, signal } = deps;
+  const tails = new Map<string, Promise<unknown>>();
 
   const mine = () => ops.all(deps.owner, deps.community);
   const onTeam = (teamId: string) =>
@@ -240,6 +241,19 @@ export function teamRunner(deps: RunnerDeps) {
   /** An unknown outcome on the team, in a record other than `except`. */
   const fenced = (teamId: string, except: string) =>
     onTeam(teamId).some((op) => op.id !== except && unresolved(op));
+
+  /** Runs `work` after the team's earlier steps settle: one step per team
+   * at a time, so no two overlap across signing, delivery or a command. */
+  function queue<T>(teamId: string, work: () => Promise<T>): Promise<T> {
+    const tail = tails.get(teamId) ?? Promise.resolve();
+    const run = tail.then(work);
+    const settled = run.catch(() => {});
+    tails.set(teamId, settled);
+    void settled.then(() => {
+      if (tails.get(teamId) === settled) tails.delete(teamId);
+    });
+    return run;
+  }
 
   /** Persists `changes` and reports them. */
   function put(changes: Readonly<Record<string, TeamOp | undefined>>) {
@@ -289,10 +303,12 @@ export function teamRunner(deps: RunnerDeps) {
     return op;
   }
 
-  /** One step of record `id`. Resolves with the record
+  /** One step of record `id`, queued on its team. Resolves with the record
    * as it stands after, or undefined once it is done. */
   function run(id: string) {
-    return step(id);
+    const op = ops.get(id);
+    if (!op) return Promise.resolve(undefined);
+    return queue(op.teamId, () => step(id));
   }
 
   async function step(id: string): Promise<TeamOp | undefined> {
@@ -317,7 +333,8 @@ export function teamRunner(deps: RunnerDeps) {
       return now?.mode === "may-send" ? now : undefined;
     };
     const finish = () => {
-      const last = ops.get(id) as TeamOp;
+      const last = ops.get(id);
+      if (!last) return undefined;
       deps.done(last);
       put({ [id]: undefined });
       return undefined;
@@ -419,8 +436,16 @@ export function teamRunner(deps: RunnerDeps) {
       const { accepted: _, error: __, ...rest } = op;
       save({ ...rest, confirmedHead: head.id });
     }
-    // Import and move adopt a team that already exists, pinning its head.
-    if (op.base === undefined && head && !op.candidate)
+    // Import and move adopt a team that already exists, pinning its head:
+    // only while they may still send, never an archived team's, so a
+    // stopped move is never established by a check.
+    if (
+      op.base === undefined &&
+      head &&
+      !op.candidate &&
+      op.mode === "may-send" &&
+      !found.archived
+    )
       save({ ...op, base: head.id, confirmedHead: head.id });
     if (op.base === undefined && !head) save({ ...op, base: null });
 
@@ -432,7 +457,7 @@ export function teamRunner(deps: RunnerDeps) {
 
     if (op.candidate) {
       if (op.candidate.accepted) return op;
-      return send(op, save, live);
+      return send(op, save, live, op.candidate.event.id);
     }
     const body = head && teamBody(head.content);
     const adopted =
@@ -471,11 +496,12 @@ export function teamRunner(deps: RunnerDeps) {
         }),
         signal,
       );
+      // A revision another step installed while this one signed wins.
       const now = live();
-      if (!now) return ops.get(id);
+      if (!now || now.candidate) return ops.get(id);
       // Persisted, within budget, before it is sent; else nothing is sent.
       save({ ...now, candidate: { event, sends: 0 } });
-      return send(op, save, live);
+      return send(op, save, live, event.id);
     }
     if (head && op.confirmedHead !== head.id)
       save({ ...op, confirmedHead: head.id });
@@ -489,7 +515,9 @@ export function teamRunner(deps: RunnerDeps) {
     channel: string,
     save: (next: TeamOp) => TeamOp,
   ) {
-    const now = (await settleProof(op, channel, save)) ?? op;
+    // A record removed or replaced meanwhile ends here.
+    const now = await settleProof(op, channel, save);
+    if (!now) return undefined;
     return save({
       ...now,
       mode: "reconcile-only",
@@ -539,10 +567,13 @@ export function teamRunner(deps: RunnerDeps) {
     op: TeamOp,
     save: (next: TeamOp) => TeamOp,
     live: () => TeamOp | undefined,
+    eventId: string,
   ): Promise<TeamOp | undefined> {
+    // Only this step's held revision, and only while the team is unfenced.
     const now = live();
     const held = now?.candidate;
-    if (!now || !held) return ops.get(op.id);
+    if (!now || held?.event.id !== eventId || fenced(now.teamId, now.id))
+      return ops.get(op.id);
     const sends = held.sends + 1;
     save({ ...now, candidate: { ...held, sends } });
     const sent = await deliver(
@@ -551,7 +582,9 @@ export function teamRunner(deps: RunnerDeps) {
       signal,
       deps.maxEventBytes,
     );
-    const after = ops.get(op.id) as TeamOp;
+    // A late reply for a record removed or re-signed meanwhile is dropped.
+    const after = ops.get(op.id);
+    if (after?.candidate?.event.id !== eventId) return after;
     if (sent.status === "accepted") {
       // Proof it was stored, kept before any read can fail.
       save({ ...after, candidate: { ...held, sends, accepted: true } });
@@ -605,21 +638,30 @@ export function teamRunner(deps: RunnerDeps) {
           (await channels.owns(pubkey, signal).catch(() => false))
         )
           wanted.push({ action: "remove", pubkey, state: "planned" });
-    const now = live();
+    // A plan holds only for the intent it was built from: a revise while
+    // this step waited ends it, and the next step plans afresh.
+    const planned = JSON.stringify(start.intent.members);
+    const current = () => {
+      const now = live();
+      return now && JSON.stringify(now.intent.members) === planned
+        ? now
+        : undefined;
+    };
+    const now = current();
     if (!now) return ops.get(start.id);
-    const prior = (c: Command) =>
-      now.commands.find((p) => p.action === c.action && p.pubkey === c.pubkey);
+    const same = (a: Command) => (b: Command) =>
+      a.action === b.action && a.pubkey === b.pubkey;
     const commands = [
       ...now.commands.filter((c) => c.state === "maybe-sent"),
       ...wanted.flatMap((c) => {
-        const was = prior(c);
+        const was = now.commands.find(same(c));
         if (was?.state === "maybe-sent") return [];
         return [was?.state === "refused" ? was : c];
       }),
     ];
-    let op = save({ ...now, commands });
-    if (op.commands.some((c) => c.state === "maybe-sent")) return op;
-    for (const [index, command] of op.commands.entries()) {
+    const plan = save({ ...now, commands });
+    if (plan.commands.some((c) => c.state === "maybe-sent")) return plan;
+    for (const command of plan.commands) {
       if (command.state === "confirmed" || !command.pubkey) continue;
       const pubkey = command.pubkey;
       if (command.action === "add") {
@@ -629,17 +671,29 @@ export function teamRunner(deps: RunnerDeps) {
           .catch(() => undefined);
         if (!own || own.archived) continue;
       }
-      const now = live();
-      if (!now) return ops.get(op.id);
+      // Re-read at dispatch: still this intent, this command still unsent,
+      // and no other record on the team left an unknown outcome.
+      const now = current();
+      const was = now?.commands.find(same(command));
+      if (
+        !now ||
+        !was ||
+        was.state === "confirmed" ||
+        was.state === "maybe-sent" ||
+        fenced(now.teamId, now.id)
+      )
+        return ops.get(start.id);
       const at = (state: CommandState, error?: string) => {
-        const base = ops.get(op.id) as TeamOp;
-        const commands = base.commands.map((c, i) =>
-          i === index
-            ? { action: c.action, pubkey, state, ...(error ? { error } : {}) }
-            : c,
-        );
-        op = save({ ...base, commands });
-        return op;
+        const base = ops.get(start.id);
+        if (!base) return undefined;
+        return save({
+          ...base,
+          commands: base.commands.map((c) =>
+            same(command)(c)
+              ? { action: c.action, pubkey, state, ...(error ? { error } : {}) }
+              : c,
+          ),
+        });
       };
       at("maybe-sent");
       const result = await (command.action === "add"
@@ -652,11 +706,10 @@ export function teamRunner(deps: RunnerDeps) {
       if (result.status === "uncertain") return at("maybe-sent", result.error);
       at(result.status === "confirmed" ? "confirmed" : "refused", result.error);
     }
-    const last = ops.get(op.id) as TeamOp;
-    return last.commands.every((c) => c.state === "confirmed") &&
-      last.mode === "may-send"
+    const last = current();
+    return last?.commands.every((c) => c.state === "confirmed")
       ? finish()
-      : last;
+      : ops.get(start.id);
   }
 
   /** Delete and Recover, decided from fresh channel metadata and the team's
@@ -687,18 +740,22 @@ export function teamRunner(deps: RunnerDeps) {
     // complete nor dispatch until it resolves.
     if (fenced(op.teamId, op.id)) return ops.get(op.id);
     if (reached) return finish();
-    const [command] = op.commands;
-    if (!command || command.state === "maybe-sent") return op;
+    // The command as the durable record holds it now, not as read before.
     const now = live();
-    if (!now) return op;
-    const state = (s: CommandState, error?: string) =>
-      save({
-        ...(ops.get(op.id) as TeamOp),
+    const [command] = now?.commands ?? [];
+    if (!now || !command || command.state === "maybe-sent")
+      return ops.get(op.id);
+    const state = (s: CommandState, error?: string) => {
+      const base = ops.get(op.id);
+      if (!base) return undefined;
+      return save({
+        ...base,
         commands: [
           { action: command.action, state: s, ...(error ? { error } : {}) },
         ],
         ...(error ? { error } : {}),
       });
+    };
     state("maybe-sent");
     try {
       await channels[archive ? "archive" : "unarchive"](channel, signal);

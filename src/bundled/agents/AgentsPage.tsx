@@ -1555,6 +1555,7 @@ function TeamEditor({
       agents.saveTeam({
         ...(team ? { id: team.id } : {}),
         creation,
+        ...(submission ? { operation: submission.id } : {}),
         ...(base ? { base } : {}),
         name: name.trim(),
         instructions,

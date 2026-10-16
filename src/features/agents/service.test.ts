@@ -7052,6 +7052,56 @@ describe("Delete as a recoverable archive", () => {
     return f.run.mock.calls[0]?.[0].team ?? "";
   };
 
+  it("revises a reopened pending Create's stored change after a restart, never adding a second", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    relay.noTeams.value = true;
+    const storage = memoryStorage();
+    const id = crypto.randomUUID(),
+      teamId = crypto.randomUUID();
+    new TeamOps(storage).write({
+      [id]: {
+        id,
+        teamId,
+        owner: viewer,
+        community: "https://relay.example.test",
+        kind: "create",
+        base: null,
+        intent: {
+          name: "Pending",
+          instructions: "SAVED RULE",
+          members: [alder],
+        },
+        commands: [],
+        mode: "may-send",
+        seq: 1,
+      },
+    });
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      // Exactly the Save submitted by the reopened no-card TeamEditor.
+      await f.service
+        .saveTeam({
+          creation: teamId,
+          operation: id,
+          name: "Revised",
+          instructions: "NEW RULE",
+          members: [alder],
+        })
+        .catch(() => {});
+      const records = new TeamOps(storage)
+        .every()
+        .filter((op) => op.teamId === teamId);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.intent.instructions).toBe("NEW RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("with config sync on, keeps one relay copy after an established move's change is resubmitted", async () => {
     const { f, storage, establish } = await heldMove();
     try {
@@ -7078,6 +7128,10 @@ describe("Delete as a recoverable archive", () => {
       };
       await stopThen(f, "dismiss");
       expect(f.service.snapshot().teamChanges).toHaveLength(1);
+      expect(new TeamOps(storage).every()).toHaveLength(1);
+      expect(readTeams(storage)).toEqual([
+        expect.objectContaining({ instructions: "LOCAL MOVING RULE" }),
+      ]);
       const prompt = await promptOf(f, "unretired-move");
       expect(count(prompt, "TEAM RULE")).toBe(1);
       expect(prompt).not.toContain("LOCAL MOVING RULE");
@@ -7086,21 +7140,29 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
-  it.each(["archived", "unreadable"] as const)(
-    "with config sync on, never brings back a move's local copy when its %s relay team's change is dismissed",
-    async (state) => {
+  it.each([
+    ["archived", "dismiss"],
+    ["archived", "resubmit"],
+    ["unreadable", "dismiss"],
+    ["unreadable", "resubmit"],
+  ] as const)(
+    "with config sync on, keeps an unestablished move's local row and record when its %s relay team's change is %sed",
+    async (state, action) => {
       const { f, relay, storage, config } = await heldMove();
       try {
+        expect(new TeamOps(storage).every()[0]?.confirmedHead).toBeUndefined();
         if (state === "archived")
           for (const channel of relay.channels.values())
             channel.archived = true;
         else relay.heads.clear();
         await config.refreshTeams();
-        await stopThen(f, "dismiss");
-        expect(f.service.snapshot().teamChanges ?? []).toEqual([]);
-        expect(readTeams(storage)).toEqual([]);
+        await stopThen(f, action);
+        expect(new TeamOps(storage).every()).toHaveLength(1);
+        expect(readTeams(storage)).toEqual([
+          expect.objectContaining({ instructions: "LOCAL MOVING RULE" }),
+        ]);
         if (state === "unreadable") return; // An unreadable team blocks runs.
-        const prompt = await promptOf(f, `${state}-move`);
+        const prompt = await promptOf(f, `${state}-${action}-move`);
         expect(prompt).not.toContain("LOCAL MOVING RULE");
         expect(prompt).not.toContain("TEAM RULE");
       } finally {

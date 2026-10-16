@@ -337,14 +337,19 @@ export function agentConfigs(
     owner,
     community,
     done(op) {
-      // A move whose relay team holds the prompt retires its local row
-      // first: if that can't be saved, the record and its handover stay.
-      const target = teams?.find((team) => team.id === op.teamId);
-      if (
-        op.local &&
-        (established(op) || target?.archived || target?.unreadable)
-      )
-        input.retire(op.local);
+      // A move retires its local row only once its relay team is
+      // established, first: if that can't be saved, the record and its
+      // handover stay. Unestablished, an archived or unreadable target
+      // keeps the record too, as the row's only link to it: the prompt
+      // falls back to neither, and the row is never lost.
+      if (op.local && established(op)) input.retire(op.local);
+      else if (op.local) {
+        const target = teams?.find((team) => team.id === op.teamId);
+        if (target?.archived || target?.unreadable)
+          throw new Error(
+            "This team's relay copy is deleted or can't be read, so its local instructions stay. Recover the team or check again later.",
+          );
+      }
       if (op.confirmedHead) finishedAt.set(op.id, op.confirmedHead);
     },
     changed: () => input.changed(),
@@ -365,7 +370,16 @@ export function agentConfigs(
     form: string,
     intent: TeamIntent,
     input: Parameters<typeof runner.start>[0],
+    operation?: string,
   ) {
+    // A reopened change names its stored record: Save revises exactly that
+    // one, even after a restart; a stopped one waits for Resubmit or Dismiss.
+    if (operation) {
+      forms.set(form, operation);
+      if (runner.revise(operation, intent)) return runner.run(operation);
+      if (runner.records().some((op) => op.id === operation))
+        throw new Error("This change stopped. Resubmit or dismiss it.");
+    }
     const prior = forms.get(form);
     if (prior && runner.revise(prior, intent)) return runner.run(prior);
     const { op, done } = runner.start(input);
@@ -727,16 +741,16 @@ export function agentConfigs(
     },
     /** Creates the team the open form `form` stands for, at that id: Save
      * again from the same form revises that one change, never a second. */
-    createTeam(team: TeamIntent, form: string) {
+    createTeam(team: TeamIntent, form: string, operation?: string) {
       const done = finishedAt.get(forms.get(form) ?? "");
       if (done) return this.editTeam(form, team, done, form).then(() => form);
       return finished(
-        submitted(form, team, {
-          kind: "create",
-          teamId: form,
-          intent: team,
-          base: null,
-        }),
+        submitted(
+          form,
+          team,
+          { kind: "create", teamId: form, intent: team, base: null },
+          operation,
+        ),
       ).then(() => form);
     },
     /** Deletes synced team `id` by archiving its config channel. */

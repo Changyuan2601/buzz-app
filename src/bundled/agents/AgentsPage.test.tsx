@@ -2121,6 +2121,36 @@ it("reopens a change whose team has no card on what it saved, keeping edits apar
   expect(agents.saveTeam).not.toHaveBeenCalled();
 });
 
+it("saves a reopened no-card change onto its stored operation", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-gone",
+        kind: "create",
+        name: "Lost",
+        instructions: "SAVED RULE",
+        members: [],
+        problem: "Waiting",
+        stopped: false,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Create: Lost" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenCalledWith(
+    expect.objectContaining({ creation: "team-gone", operation: "op-1" }),
+  );
+});
+
 it("shows a team's unfinished marker beside its note", async () => {
   const user = userEvent.setup();
   setup([], {

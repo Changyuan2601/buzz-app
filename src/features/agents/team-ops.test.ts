@@ -208,8 +208,9 @@ const edit = (
   w: ReturnType<typeof world>,
   teamId: string,
   intent: Partial<typeof team> = {},
+  runner = w.runner,
 ) =>
-  w.runner.start({
+  runner.start({
     kind: "edit",
     teamId,
     channel: CH,
@@ -869,5 +870,280 @@ describe("team operations: transitions", () => {
     expect(record(w, old.op.id).candidate).toBeUndefined();
     expect(record(w, old.op.id).accepted).toBeDefined();
     expect(record(w, old.op.id).confirmedHead).toBeUndefined();
+  });
+});
+
+describe("team operations: overlapping steps", () => {
+  // `w.make(w.ops)` is a second runner over the same records, outside the
+  // first one's queue: what each dispatch re-checks, apart from the queue.
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("runs a team's steps one at a time: a second waits for the first's delivery", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const entered = gate();
+    const release = gate();
+    let publishes = 0;
+    w.hooks.publish = async () => {
+      if (++publishes === 1) {
+        entered.open();
+        await release.promise;
+      }
+      throw new Error("timeout");
+    };
+    const first = edit(w, teamId, { instructions: "new" });
+    await entered.promise;
+    let ran = false;
+    const second = w.runner.run(first.op.id).then(() => {
+      ran = true;
+    });
+    await flush();
+    expect(ran).toBe(false);
+    expect(w.writer.publish).toHaveBeenCalledTimes(1);
+    release.open();
+    await Promise.all([first.done, second]);
+  });
+
+  it("never replaces a held revision another step installed while it signed", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const signing = gate();
+    const releaseSign = gate();
+    const publishing = gate();
+    const releasePublish = gate();
+    let signs = 0;
+    w.writer.sign.mockImplementation(async (template) => {
+      const n = ++signs;
+      if (n === 1) {
+        signing.open();
+        await releaseSign.promise;
+      }
+      return signed(owner, {
+        ...template,
+        created_at: (template.created_at ?? 100) + n,
+      });
+    });
+    w.hooks.publish = async () => {
+      publishing.open();
+      await releasePublish.promise;
+      throw new Error("timeout");
+    };
+    const first = edit(w, teamId, { instructions: "new" });
+    await signing.promise;
+    const second = w.make(w.ops).run(first.op.id);
+    await publishing.promise;
+    const held = record(w, first.op.id).candidate?.event.id;
+    releaseSign.open();
+    await first.done;
+    expect(record(w, first.op.id).candidate?.event.id).toBe(held);
+    expect(w.writer.publish).toHaveBeenCalledTimes(1);
+    releasePublish.open();
+    await second;
+  });
+
+  it("re-checks the team fence before sending a first Create signed meanwhile", async () => {
+    const w = world();
+    const teamId = crypto.randomUUID();
+    const signing = gate();
+    const release = gate();
+    w.writer.sign.mockImplementationOnce(async (template) => {
+      signing.open();
+      await release.promise;
+      return signed(owner, template);
+    });
+    const first = w.runner.start({
+      kind: "create",
+      teamId,
+      base: null,
+      intent: team,
+    });
+    await signing.promise;
+    w.hooks.publish = async () => {
+      throw new Error("timeout");
+    };
+    const other = w.make(w.ops).start({
+      kind: "create",
+      teamId,
+      base: null,
+      intent: team,
+    });
+    await other.done;
+    expect(record(w, other.op.id).candidate?.sends).toBe(1);
+    release.open();
+    await first.done;
+    expect(w.writer.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends an archive once when another step sent it during the metadata read", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const read = gate();
+    const release = gate();
+    let reads = 0;
+    w.channels.archived.mockImplementation(async () => {
+      if (++reads === 1) {
+        read.open();
+        await release.promise;
+      }
+      return false;
+    });
+    w.hooks.archive = async () => {
+      throw new Error("timeout");
+    };
+    const first = w.runner.start({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: team,
+    });
+    await read.promise;
+    await w.make(w.ops).run(first.op.id);
+    release.open();
+    await first.done;
+    expect(w.channels.archive).toHaveBeenCalledTimes(1);
+  });
+
+  /** Holds the first agent-channel lookup until the returned gate opens. */
+  const holdLookup = (w: ReturnType<typeof world>) => {
+    const entered = gate();
+    const release = gate();
+    let lookups = 0;
+    const original = w.channels.find.getMockImplementation();
+    w.channels.find.mockImplementation(async (family, subject) => {
+      if (family === "agent-config" && ++lookups === 1) {
+        entered.open();
+        await release.promise;
+      }
+      return original?.(family, subject);
+    });
+    return { entered, release };
+  };
+
+  it("sends a member command once when another step sent it during the agent lookup", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const lookup = holdLookup(w);
+    const first = edit(w, teamId, { members: [a] });
+    await lookup.entered.promise;
+    w.hooks.add = async () => ({ status: "uncertain" });
+    await w.make(w.ops).run(first.op.id);
+    lookup.release.open();
+    await first.done;
+    expect(w.channels.addMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends no member command through another record's fence raised during the agent lookup", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const lookup = holdLookup(w);
+    const first = edit(w, teamId, { members: [a] });
+    await lookup.entered.promise;
+    w.hooks.add = async () => ({ status: "uncertain" });
+    await edit(w, teamId, { members: [b] }, w.make(w.ops)).done;
+    lookup.release.open();
+    await first.done;
+    expect(w.channels.addMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a member plan made before a revise and plans the new intent afresh", async () => {
+    const w = world({ agents: [a] });
+    const teamId = await existing(w, [a]);
+    const lookup = gate();
+    const release = gate();
+    w.channels.owns.mockImplementationOnce(async () => {
+      lookup.open();
+      await release.promise;
+      return true;
+    });
+    const first = edit(w, teamId, { members: [] });
+    await lookup.promise;
+    w.runner.revise(first.op.id, { ...team, members: [a, b] });
+    const next = w.runner.run(first.op.id);
+    release.open();
+    expect(await first.done).toBeDefined();
+    await next;
+    expect(w.channels.removeMember).not.toHaveBeenCalled();
+    expect(w.relay.roster.has(a)).toBe(true);
+    // b has no agent channel yet: its add waits, so the change stays open.
+    expect(record(w, first.op.id).commands).toEqual([
+      { action: "add", pubkey: b, state: "planned" },
+    ]);
+  });
+
+  it("does not bring back a record dismissed while its conflict lookup waited", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    w.hooks.publish = async (event) => {
+      w.accept(event);
+      throw new Error("timeout");
+    };
+    const first = edit(w, teamId, { instructions: "new" });
+    await first.done;
+    w.accept(await revision(w, teamId, { ...team, instructions: "other" }));
+    w.runner.discard(first.op.id);
+    const lookup = gate();
+    const release = gate();
+    let byId = 0;
+    const original = w.read.getMockImplementation();
+    w.read.mockImplementation(async (filters) => {
+      if (filters[0]?.ids && ++byId === 1) {
+        lookup.open();
+        await release.promise;
+      }
+      return original?.(filters) ?? [];
+    });
+    const paused = w.runner.run(first.op.id);
+    await lookup.promise;
+    await w.make(w.ops).run(first.op.id);
+    w.runner.dismiss(first.op.id);
+    release.open();
+    await paused;
+    expect(w.ops.get(first.op.id)).toBeUndefined();
+  });
+
+  it("keeps a Delete's cancellation of a first Create that was signing", async () => {
+    const w = world();
+    const teamId = crypto.randomUUID();
+    const entered = gate();
+    const release = gate();
+    w.writer.sign.mockImplementationOnce(async (template) => {
+      entered.open();
+      await release.promise;
+      return signed(owner, template);
+    });
+    const first = w.runner.start({
+      kind: "create",
+      teamId,
+      base: null,
+      intent: team,
+    });
+    await entered.promise;
+    w.runner.submit({ kind: "delete", teamId, channel: CH, intent: team });
+    release.open();
+    await first.done;
+    expect(w.writer.publish).not.toHaveBeenCalled();
+    expect(record(w, first.op.id)).toMatchObject({
+      mode: "reconcile-only",
+      stop: "deleted",
+    });
+  });
+
+  it("saves nothing from a late accepted reply once its record finished", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const accepted = gate();
+    const reply = gate();
+    w.hooks.publish = async (event) => {
+      w.accept(event);
+      accepted.open();
+      await reply.promise;
+    };
+    const first = edit(w, teamId, { instructions: "new" });
+    await accepted.promise;
+    await w.make(w.ops).run(first.op.id);
+    expect(w.ops.get(first.op.id)).toBeUndefined();
+    reply.open();
+    await first.done;
+    expect(w.ops.every()).toEqual([]);
   });
 });
