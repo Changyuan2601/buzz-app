@@ -1009,13 +1009,16 @@ message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
 
 `conversation.ui.Channel({ session, scope, channelId, channelName, messageId?,
-onOpenThread? })` renders the Channels message list (`ChannelTimeline`) and
-composer of one channel, with the same host-owned behavior as `.Thread`. With
-`messageId`, it focuses that top-level message in place. As in Channels and
-Inbox, a reply, or a message outside the loaded window once it settles, opens
-as its thread instead. The view never reads or writes the Channels saved
-scroll position, so it does not move the reader's place there. Reading it marks
-messages read as in Channels: visible rows while the view has focus.
+onOpenThread?, markRead? })` renders the Channels message list (`ChannelTimeline`)
+and composer of one channel, with the same host-owned behavior as `.Thread`. With
+`messageId`, it focuses that top-level message in place. If the message is not
+in the loaded messages, the view reads older pages (at most 25, 500 top-level
+messages) until it loads, and shows the list only then. A reply, or a message
+not found that way, opens as its thread instead. The choice is made once; later
+arrivals do not switch it. The view never reads or writes the Channels saved
+scroll position, so it does not move the reader's place there. By default it
+marks messages read as in Channels: visible rows while the view has focus. With
+`markRead: false` it marks nothing read, so the page decides what was read.
 Messages offer reply and thread controls only when the page passes
 `onOpenThread(messageId, threadRootId)`; the page decides where the thread
 opens, for example with `.Thread`.

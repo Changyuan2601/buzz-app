@@ -30,6 +30,9 @@ export type EmbeddedChannelProps = Pick<
   messageId?: string | undefined;
   /** Without it, messages show no reply or thread controls. */
   onOpenThread?(messageId: string, threadRootId: string): void;
+  /** False: seeing messages here marks none read; the page marks what it
+   * shows. Default true, as in Channels: visible rows while it has focus. */
+  markRead?: boolean | undefined;
 };
 type Props = EmbeddedChannelProps & {
   host: ConversationHostServices;
@@ -47,6 +50,7 @@ export function EmbeddedChannel({
   channelName,
   messageId,
   onOpenThread,
+  markRead,
   host,
   extensions,
 }: Props) {
@@ -73,16 +77,21 @@ export function EmbeddedChannel({
         host={host}
         messageId={messageId}
         onOpenThread={onOpenThread}
+        markRead={markRead}
       />
     </ConversationChannel>
   );
 }
 
+/** Older pages read, at most, to find the message: 20 top-level rows each. */
+const SEEK_PAGES = 25;
+
 function ChannelView({
   host,
   messageId,
   onOpenThread,
-}: Pick<EmbeddedChannelProps, "messageId"> & {
+  markRead = true,
+}: Pick<EmbeddedChannelProps, "messageId" | "markRead"> & {
   onOpenThread: EmbeddedChannelProps["onOpenThread"] | undefined;
   host: ConversationHostServices;
 }) {
@@ -119,33 +128,53 @@ function ChannelView({
       connection.scope === scope
     );
   };
-  // As in Channels and Inbox, decide once the head settles: a message outside
-  // the loaded window opens as its thread, and later arrivals do not switch it.
+  // Decide once: a top-level message opens in place, reading older pages until
+  // it loads; a reply, or one not found, opens as its thread. Later arrivals
+  // do not switch the choice.
   const [inTimeline, setInTimeline] = useState<boolean>();
-  if (
-    messageId &&
+  const pages = useRef(0);
+  const deciding =
+    !!messageId &&
     inTimeline === undefined &&
     window.status !== "idle" &&
-    window.status !== "loading"
-  )
-    setInTimeline(
-      window.status === "ready" &&
-        window.freshness !== "cached" &&
-        window.rows.some((row) => row.id === messageId && !row.threadRootId),
-    );
+    window.status !== "loading";
+  const verified = window.status === "ready" && window.freshness !== "cached";
+  const row = verified
+    ? window.rows.find((row) => row.id === messageId)
+    : undefined;
+  const found = !!row && !row.threadRootId;
+  const seekable =
+    verified &&
+    !row &&
+    !window.error &&
+    window.hasMore &&
+    !window.historyLimited &&
+    pages.current < SEEK_PAGES;
+  if (deciding && (found || (!window.loadingOlder && !seekable)))
+    setInTimeline(found);
+  useEffect(() => {
+    if (!deciding || found || !seekable || window.loadingOlder) return;
+    pages.current += 1;
+    session.channels.loadOlder(channelId);
+    // The store declined the read, so no page will come.
+    if (!session.channels.window(channelId).loadingOlder) setInTimeline(false);
+  }, [deciding, found, seekable, window, session, channelId]);
   const [sent, setSent] = useState<string>();
   if (messageId && inTimeline === false)
     return <ConversationThread messageId={messageId} revealSelected />;
+  // Mount the list once, at the message, not while older pages arrive.
+  const seeking = !!messageId && inTimeline === undefined;
   return (
     <section
       className={styles.channel}
       aria-label={`Messages in ${channelName}`}
     >
-      {window.rows.length > 0 ? (
+      {window.rows.length > 0 && !seeking ? (
         <ConversationTimeline
           window={window}
           // Channels keeps its own saved place in this channel.
           transient
+          marksRead={markRead}
           revealMessageId={sent}
           inlineTarget={
             messageId && target && !target.aborted
@@ -162,7 +191,9 @@ function ChannelView({
         />
       ) : window.status === "error" ? null : (
         <p className={styles.notice} role="status">
-          {window.status === "ready" ? "No messages yet." : "Loading messages…"}
+          {window.status === "ready" && !seeking
+            ? "No messages yet."
+            : "Loading messages…"}
         </p>
       )}
       {(window.status === "error" || window.error) && (

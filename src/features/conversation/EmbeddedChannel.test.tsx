@@ -81,6 +81,7 @@ function fixture(channelType: "stream" | "session" = "stream") {
     error: undefined,
   };
   const listeners = new Set<() => void>();
+  let decline = false;
   // External-store snapshots keep their identity.
   const none: readonly never[] = [];
   const list = {
@@ -101,6 +102,11 @@ function fixture(channelType: "stream" | "session" = "stream") {
       list: () => list,
       ensure: vi.fn(),
       refresh: vi.fn(),
+      // As the store: a read starts only from a settled window with more.
+      loadOlder: vi.fn(() => {
+        if (!decline && window.hasMore && !window.loadingOlder)
+          window = { ...window, loadingOlder: true };
+      }),
       window: () => window,
       subscribeWindow: (_: string, fn: () => void) => {
         listeners.add(fn);
@@ -151,6 +157,9 @@ function fixture(channelType: "stream" | "session" = "stream") {
     disconnect() {
       connection = { status: "connecting" };
     },
+    decline() {
+      decline = true;
+    },
   };
 }
 
@@ -179,6 +188,75 @@ it.each([
   h.load({ rows });
   expect(screen.getByLabelText("Thread")).toHaveAttribute("data-message", id);
   expect(screen.queryByLabelText("Timeline")).not.toBeInTheDocument();
+});
+
+it("reads older pages until a top-level message loads, then shows it in place", () => {
+  const h = fixture();
+  const newer = message("3".repeat(64));
+  const middle = message("4".repeat(64));
+  render(<EmbeddedChannel {...h.props} messageId={top.id} />);
+  h.load({ rows: [newer], hasMore: true });
+  expect(h.session.channels.loadOlder).toHaveBeenCalledExactlyOnceWith("c");
+  // The list waits for the message rather than mounting at the head.
+  expect(screen.getByRole("status")).toHaveTextContent("Loading messages…");
+  expect(screen.queryByLabelText("Timeline")).not.toBeInTheDocument();
+  h.load({ rows: [middle, newer], loadingOlder: false });
+  expect(h.session.channels.loadOlder).toHaveBeenCalledTimes(2);
+  h.load({ rows: [top, middle, newer], loadingOlder: false });
+  expect(screen.getByLabelText("Timeline")).toHaveTextContent("message 1");
+  expect(timeline?.inlineTarget?.messageId).toBe(top.id);
+  expect(screen.queryByLabelText("Thread")).not.toBeInTheDocument();
+  expect(h.session.channels.loadOlder).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  ["the start of the channel", { hasMore: false }],
+  ["a failed page", { error: "Relay unavailable." }],
+  ["the history limit", { historyLimited: true }],
+])("opens a message not found before %s as its thread", (_, end) => {
+  const h = fixture();
+  render(<EmbeddedChannel {...h.props} messageId={top.id} />);
+  h.load({ rows: [message("3".repeat(64))], hasMore: true });
+  expect(h.session.channels.loadOlder).toHaveBeenCalledOnce();
+  h.load({ loadingOlder: false, ...end });
+  expect(screen.getByLabelText("Thread")).toHaveAttribute(
+    "data-message",
+    top.id,
+  );
+  expect(h.session.channels.loadOlder).toHaveBeenCalledOnce();
+});
+
+it("opens the thread when the store declines an older read", () => {
+  const h = fixture();
+  h.decline();
+  render(<EmbeddedChannel {...h.props} messageId={top.id} />);
+  h.load({ rows: [message("3".repeat(64))], hasMore: true });
+  expect(screen.getByLabelText("Thread")).toHaveAttribute(
+    "data-message",
+    top.id,
+  );
+});
+
+it("stops reading older pages after its bound and opens the thread", () => {
+  const h = fixture();
+  render(<EmbeddedChannel {...h.props} messageId={top.id} />);
+  h.load({ rows: [message("3".repeat(64))], hasMore: true });
+  for (let page = 0; page < 30; page++) h.load({ loadingOlder: false });
+  expect(h.session.channels.loadOlder).toHaveBeenCalledTimes(25);
+  expect(screen.getByLabelText("Thread")).toHaveAttribute(
+    "data-message",
+    top.id,
+  );
+});
+
+it.each([
+  [undefined, true],
+  [false, false],
+])("markRead=%s lets the list mark seen rows read: %s", (markRead, marks) => {
+  const h = fixture();
+  render(<EmbeddedChannel {...h.props} markRead={markRead} />);
+  h.load({ rows: [top] });
+  expect(timeline?.marksRead).toBe(marks);
 });
 
 it("shows the latest messages when no message is given", () => {
