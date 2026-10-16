@@ -17,7 +17,20 @@ test("a short conversation paints its restored rows on the first frame", async (
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await expect(history.locator("ol > li")).toHaveCount(3);
+  // Mounted rows can retain estimated offsets until the next measurement frame.
+  await expect
+    .poll(() =>
+      history.locator("ol > li").evaluateAll((rows) => {
+        const bounds = rows.map((row) => row.getBoundingClientRect());
+        return (
+          bounds.length === 3 &&
+          bounds.every(
+            (row, index) => index === 0 || row.top === bounds[index - 1].bottom,
+          )
+        );
+      }),
+    )
+    .toBe(true);
   await settle(page);
   expect(
     await history.evaluate(
@@ -58,8 +71,10 @@ test("a short conversation paints its restored rows on the first frame", async (
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
     await settle(page);
+    await expect
+      .poll(() => capture.evaluate(({ frames }) => frames.length))
+      .toBeGreaterThan(0);
     const frames = await capture.evaluate(({ frames }) => frames);
-    expect(frames.length).toBeGreaterThan(0);
     expect(frames[0].map((row) => row.top)).toEqual(positions);
     expect(
       frames.every((rows) => rows.every((row) => row.visibility === "visible")),
