@@ -412,6 +412,39 @@ describe("Mesh agent runtime", () => {
     },
   );
 
+  it("routes an owner's Me chat like a DM, deciding once per delivery", async () => {
+    const meChat = vi.fn(async () => true);
+    const { runtime, delivery, inline, publish } = setup({ meChat });
+    inline.run.mockImplementation(async ({ context }) => {
+      expect(context).toEqual({ channel: "chan" });
+      return { text: "done" };
+    });
+    await runtime.run(delivery());
+    await runtime.run(delivery());
+    expect(meChat).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenLastCalledWith({
+      kind: 9,
+      content: "done",
+      tags: [
+        ["h", "chan"],
+        ["p", OWNER],
+      ],
+    });
+  });
+
+  it("does not answer when the Me placement can't be read", async () => {
+    const { runtime, delivery, inline, publish } = setup({
+      meChat: async () => {
+        throw new Error("placement unreadable");
+      },
+    });
+    await expect(runtime.run(delivery())).rejects.toThrow(
+      "placement unreadable",
+    );
+    expect(inline.run).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("reports missing final prose without replacing it with optional sends", async () => {
     const { runtime, delivery, inline, publish } = setup();
     inline.run.mockResolvedValueOnce({ text: "" });

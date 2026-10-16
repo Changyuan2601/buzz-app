@@ -20,6 +20,7 @@ import styles from "./Compute.module.css";
 
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
+import { meChat } from "../../features/agents/me-chat";
 import { MeshHelpers } from "./MeshHelpers";
 import { MeshCreateSetup } from "./MeshCreateSetup";
 import {
@@ -207,6 +208,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
           model: inference.model,
           messages,
         }),
+      meChat: (agent, channelId, signal) =>
+        meChat(
+          () => agents.relay(agent.pubkey),
+          agent.owner,
+          channelId,
+          signal,
+        ),
       dm: (agent, channelId) => {
         const snapshot = agents.relay(agent)?.snapshot();
         return (

@@ -87,6 +87,12 @@ export type MeshAgentDeps = Readonly<{
   origin(agent: string): string | undefined;
   /** Whether the channel is a DM, so the whole DM is one conversation. */
   dm?(agent: string, channelId: string): boolean;
+  /** Whether this mention continues the owner's Me chat (`meChat()`). */
+  meChat?(
+    agent: Delivery<MeshAgentConfig>["agent"],
+    channelId: string,
+    signal: AbortSignal,
+  ): Promise<boolean>;
   /** The agent's memory listing, with `partial` when some may be missing. */
   memories?(agent: string, signal: AbortSignal): Promise<Memories>;
   coreMemory?(
@@ -189,6 +195,8 @@ async function conversationMessages(
 /** Turns in each agent conversation run in order; follow-ups queue, not steer. */
 export class MeshAgentRuntime {
   private readonly lanes = new Map<string, Promise<void>>();
+  /** Per agent and channel, so routing decisions enqueue in arrival order. */
+  private readonly admissions = new Map<string, Promise<unknown>>();
   private disposed = false;
 
   constructor(private readonly deps: MeshAgentDeps) {}
@@ -205,17 +213,40 @@ export class MeshAgentRuntime {
     if (event.pubkey === agent.pubkey || event.pubkey !== agent.owner)
       return Promise.resolve();
     const dm = this.deps.dm?.(agent.pubkey, channelId) ?? false;
-    const conversation = conversationKey(channelId, event, dm, config.scope);
-    const lane = `${agent.pubkey}\n${conversation}`;
-    return this.enqueue(
-      lane,
-      delivery,
-      event,
-      channelId,
-      config,
-      dm,
-      conversation,
-    );
+    // A Me chat routes like a DM: one channel conversation, top-level posts.
+    // Frozen at admission so key, history, tool context and posts agree.
+    const key = `${agent.pubkey}\n${channelId}`;
+    const flat = (this.admissions.get(key) ?? Promise.resolve())
+      .catch(() => {})
+      .then(
+        async () =>
+          dm ||
+          ((await this.deps.meChat?.(agent, channelId, delivery.signal)) ??
+            false),
+      );
+    this.admissions.set(key, flat);
+    void flat
+      .catch(() => {})
+      .then(() => {
+        if (this.admissions.get(key) === flat) this.admissions.delete(key);
+      });
+    return flat.then((flat) => {
+      const conversation = conversationKey(
+        channelId,
+        event,
+        flat,
+        config.scope,
+      );
+      return this.enqueue(
+        `${agent.pubkey}\n${conversation}`,
+        delivery,
+        event,
+        channelId,
+        config,
+        flat,
+        conversation,
+      );
+    });
   }
 
   private enqueue(
