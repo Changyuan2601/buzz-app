@@ -31,3 +31,10 @@ ed25519-dalek = { version = "2", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
+
+[[test]]
+name = "cross_node_worker"
+path = "tests/cross_node/worker.rs"
+harness = false
+test = false
+required-features = ["mesh"]
