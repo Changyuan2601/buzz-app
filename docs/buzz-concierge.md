@@ -69,6 +69,9 @@ The Agents service checks the live owner and exact two-member, writable DM befor
 using the existing native signing/publishing API. The fixed greeting is from the
 new agent's identity: “Hi, I'm [name]. Your agent is set up. What would you like
 help with first?” **Open DM** takes the user there for a real inference test.
+In that exact owner/agent DM, a normal message wakes the local agent without an
+@mention and ordinary responses stay at the top level. Group DMs and channels
+retain their existing rules.
 
 A durable receipt is saved before creation and before sending. An uncertain
 identity creation pauses for recovery in Agents instead of creating another.

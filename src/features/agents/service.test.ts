@@ -32,7 +32,7 @@ import {
   CONCIERGE_PRESET,
   MESH_TYPE,
 } from "../../bundled/mesh-compute/Concierge";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
 
@@ -4039,4 +4039,130 @@ it("confirms a previous welcome without publishing again and rejects a mismatche
     f.service.welcome(bot, channel, "e".repeat(64), true),
   ).rejects.toThrow("could not be confirmed");
   expect(f.native.publish).not.toHaveBeenCalled();
+});
+
+it("wakes on an unmentioned owner message in its exact DM and ignores own messages and duplicates", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [
+      { id: channel, name: "DM", channelType: "dm", members: [viewer, bot] },
+    ],
+  });
+  const plain = event("direct", { pubkey: viewer, tags: [["h", channel]] });
+  f.emit({
+    events: [event("welcome", { pubkey: bot }), plain],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  f.emit({
+    events: [plain, event("next", { pubkey: viewer })],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+  expect(
+    f.run.mock.calls.map(
+      ([delivery]) =>
+        delivery.trigger.type === "mention" && delivery.trigger.event.id,
+    ),
+  ).toEqual([plain.id, event("next").id]);
+});
+it("does not turn groups, outsiders, archived/cached rosters or ambiguous channels into implicit agent requests", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const base = {
+    id: channel,
+    name: "DM",
+    channelType: "dm" as const,
+    members: [viewer, bot],
+  };
+  const listing = vi.spyOn(f.session.channels, "list");
+  const invalid: readonly Partial<ChannelSummary>[] = [
+    { members: [viewer, bot, sibling] },
+    { members: [other, bot] },
+    { members: [] },
+    { cached: true },
+    { archived: true },
+    { readOnly: true },
+    { channelType: "stream" as const },
+  ];
+  for (const [i, change] of invalid.entries()) {
+    listing.mockReturnValue({
+      status: "ready",
+      channels: [{ ...base, ...change }],
+    });
+    f.emit({
+      events: [event(`invalid${i}`, { pubkey: viewer })],
+      channelId: channel,
+    });
+  }
+  listing.mockReturnValue({ status: "ready", channels: [base] });
+  f.emit({
+    events: [
+      event("outsider", { pubkey: other }),
+      event("sibling", { pubkey: sibling }),
+      event("ambiguous", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["h", "other"],
+        ],
+      }),
+      event("kind", { pubkey: viewer, kind: 7 }),
+    ],
+    channelId: channel,
+  });
+  const barrier = event("valid", { pubkey: viewer });
+  f.emit({ events: [barrier], channelId: channel });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({
+    event: { id: barrier.id },
+  });
+});
+it("rechecks an implicit DM request's membership after it waits in the queue", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const listing = vi.spyOn(f.session.channels, "list");
+  const base = {
+    id: channel,
+    name: "DM",
+    channelType: "dm" as const,
+    members: [viewer, bot],
+  };
+  listing.mockReturnValue({ status: "ready", channels: [base] });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.run.mockImplementationOnce(() => gate);
+  f.emit({
+    events: [event("firstdm", { pubkey: viewer })],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  try {
+    f.emit({
+      events: [event("queuedDm", { pubkey: viewer })],
+      channelId: channel,
+    });
+    listing.mockReturnValue({
+      status: "ready",
+      channels: [{ ...base, members: [viewer, bot, sibling] }],
+    });
+  } finally {
+    release();
+  }
+  const barrier = event("explicit", {
+    pubkey: viewer,
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  f.emit({ events: [barrier], channelId: channel });
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+  expect(f.run.mock.calls[1]?.[0].trigger).toMatchObject({
+    event: { id: barrier.id },
+  });
 });

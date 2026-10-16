@@ -185,6 +185,22 @@ Regression source: `features/agents/choices.test.ts`, plus the chooser, composer
 and session-admission tests. They exercise shared selection and session admission,
 not native execution.
 
+## One-to-one conversations with local agents
+
+An owner's new message in a relay-confirmed two-member DM with their own local
+agent is addressed to that agent without an explicit mention. The runner uses the
+current roster, excludes cached, archived or read-only channels, and checks again
+before queued implicit requests start. Only the owner's messages get this implicit
+addressing: other agents' posts cannot start a DM reply loop. The existing live
+stream, deduplication, run claim, deadline and rate limit remain authoritative.
+
+The same existing top-level conversation policy used for Solo applies to that
+owner/agent DM. Native harnesses keep one continuing conversation, read its history,
+and post ordinary replies to the DM itself, including error responses and typing.
+Unknown rosters and group DMs keep their prior mention and threading policy. This
+does not add channel access, a watch, an alternate subscription or native signing
+API. Notification-recipient and channel-member mention rules below are unchanged.
+
 ## Exact channel-member mentions
 
 The shared channel summary now exposes exact members from its existing verified

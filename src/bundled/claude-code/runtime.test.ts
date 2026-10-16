@@ -72,7 +72,12 @@ function setup(
     channels: {
       list: () => ({
         channels: [
-          { id: channel, name: "general", channelType: "stream", members: [] },
+          {
+            id: channel,
+            name: "general",
+            channelType: "stream",
+            members: [] as string[],
+          },
         ],
       }),
     },
@@ -1468,4 +1473,33 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
     ],
   ]);
   runtime.dispose();
+});
+
+it("answers an owner DM without a mention at the top level using its existing owner reads", async () => {
+  const first = message("1", "Hello without a mention");
+  const f = setup([first], { hold: true });
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    channels: [
+      { id: channel, name: "DM", channelType: "dm", members: [alice, self] },
+    ],
+  });
+  f.agent.query.mockResolvedValue([first]);
+  await f.deliver({ type: "mention", event: first });
+  await flush(10);
+  const claude = f.claudes().find((process) => process.prompts.length);
+  expect(claude?.prompts[0]).toContain(`IMPORTANT: ${TOP_LEVEL_PROMPT}`);
+  expect(claude?.prompts[0]).toContain("Scope: dm");
+  await send(claude, "dm-answer", { text: "Hello Alice" });
+  expect(f.published.at(-1)).toMatchObject({
+    kind: 9,
+    content: "Hello Alice",
+    tags: [["h", channel]],
+  });
+  expect(
+    await send(claude, "dm-thread", {
+      text: "wrong destination",
+      reply: first.id,
+    }),
+  ).toMatchObject({ isError: true });
+  f.runtime.dispose();
 });

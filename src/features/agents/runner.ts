@@ -100,6 +100,8 @@ async function pickFor(
 
 type Job = {
   work?: ReturnType<LocalAgentActivity["begin"]>;
+  /** An unmentioned owner message admitted by exact one-to-one DM membership. */
+  direct?: true;
   trigger: Trigger;
   channelId?: string;
   /** For a watch or timer: the object and attention epoch it was matched or
@@ -171,6 +173,8 @@ export type RunnerHost = {
   find(pubkey: string): Agent | undefined;
   /** Whether the agent is in the event's channel. */
   member(agent: Agent, event: RelayEvent): boolean;
+  /** An owner message in its confirmed one-to-one DM with this agent. */
+  direct(agent: Agent, event: RelayEvent): boolean;
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
@@ -386,6 +390,11 @@ export class AgentRunners {
         for (const trigger of this.heard(runner, agent, event))
           this.enqueue(runner, {
             trigger,
+            ...(trigger.type === "mention" &&
+            this.host.direct(agent, event) &&
+            !addressedTo(event, agent.pubkey, (id) => runner.wrote.has(id))
+              ? { direct: true as const }
+              : {}),
             ...(batch.channelId ? { channelId: batch.channelId } : {}),
             ...(trigger.type === "watch"
               ? {
@@ -411,7 +420,10 @@ export class AgentRunners {
     }
     // Addressed events never reach a watch. Only conversation starts a run: not a
     // DM it cannot read yet, nor a reaction to its message.
-    else if (addressedTo(event, agent.pubkey, wrote))
+    else if (
+      addressedTo(event, agent.pubkey, wrote) ||
+      this.host.direct(agent, event)
+    )
       return CHAT_KINDS.includes(event.kind)
         ? [{ type: "mention", event }]
         : [];
@@ -432,6 +444,12 @@ export class AgentRunners {
    * queued wakes nothing, even if it now matches again. */
   private current(runner: Runner, agent: Agent, job: Job): Job | undefined {
     const { trigger } = job;
+    if (
+      job.direct &&
+      trigger.type === "mention" &&
+      !this.host.direct(agent, trigger.event)
+    )
+      return;
     if (trigger.type !== "watch") return job;
     if (!agent.attentionEnabled) return undefined;
     if (
@@ -457,7 +475,8 @@ export class AgentRunners {
     const agent = this.host.find(runner.pubkey);
     if (!agent) return false;
     const { trigger } = job;
-    if (trigger.type === "mention") return true;
+    if (trigger.type === "mention")
+      return !job.direct || this.host.direct(agent, trigger.event);
     if (trigger.type === "watch") return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:
     // attention off and on again, or a disable and rearm, voids it.

@@ -226,6 +226,7 @@ export class GooseRuntime {
       agent.owner,
       channel,
       signal,
+      agent.pubkey,
     );
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {

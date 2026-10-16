@@ -268,7 +268,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         );
       },
       solo: (agent, owner, channel, signal) =>
-        meChat(() => agents.relay(agent), owner, channel, signal),
+        meChat(() => agents.relay(agent), owner, channel, signal, agent),
       harnesses: () => conciergeHarnesses(agents),
       memories: async (agent, signal) =>
         (await readMemory(agent, signal)).entries,

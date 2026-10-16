@@ -84,7 +84,7 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-import { meChat } from "./me-chat";
+import { meChat, ownerDm } from "./me-chat";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -810,6 +810,7 @@ export class AgentsService extends Service implements Agents {
       agent: (pubkey) => this.agent(pubkey),
       find: (pubkey) => this.find(pubkey),
       member: (agent, event) => this.member(agent, event),
+      direct: (agent, event) => this.direct(agent, event),
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],
       record: (pubkey) => {
@@ -846,7 +847,13 @@ export class AgentsService extends Service implements Agents {
       custody: native,
       activity: localActivity,
       meChat: (agent, channel, signal) =>
-        meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+        meChat(
+          () => this.relay(agent.pubkey),
+          agent.owner,
+          channel,
+          signal,
+          agent.pubkey,
+        ),
     });
     ctx.effect(() => {
       const stops = [
@@ -2330,6 +2337,18 @@ export class AgentsService extends Service implements Agents {
    * The stream is the owner's, so a watch, even of "all", sees only what the
    * agent itself could read; an event with no channel, or whose roster is
    * unknown, wakes no watch. */
+  private direct(agent: Agent, event: RelayEvent) {
+    if (event.pubkey !== agent.owner) return false;
+    const channels = event.tags.filter((tag) => tag[0] === "h");
+    if (channels.length !== 1) return false;
+    const id = channels[0]?.[1];
+    if (!id) return false;
+    const listing = this.bindingOf(agent)?.session.channels;
+    const channel =
+      listing?.list().channels.find((item) => item.id === id) ??
+      listing?.get?.(id);
+    return ownerDm(channel, agent.owner, agent.pubkey);
+  }
   private member(agent: Agent, event: RelayEvent) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     const channels = this.bindingOf(agent)?.session.channels;

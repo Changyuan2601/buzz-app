@@ -49,7 +49,8 @@ export type AgentReads = Readonly<{
   /** The agent's memory; `partial` when the entries may be incomplete.
    * `signal` stops the read. */
   memoryListing(signal: AbortSignal): Promise<MemoryListing>;
-  /** Whether a mention in this channel continues `owner`'s Me chat. Only the
+  /** Whether a turn answers at the top level of the owner's Solo chat or
+   * exact owner/agent DM. Only the
    * owner's own connection can tell; other readers answer false. */
   meChat(
     owner: string,
@@ -97,7 +98,7 @@ export function ownerReads(
       session.channels.list().channels.find((item) => item.id === id)?.name,
     workflowAuthority: () => session.workflowAuthority,
     meChat: (owner: string, channelId: string, signal: AbortSignal) =>
-      meChat(() => relay, owner, channelId, signal),
+      meChat(() => relay, owner, channelId, signal, pubkey),
     memoryListing: (signal: AbortSignal) =>
       session.agentMemories.read(pubkey, signal),
   });

@@ -1,8 +1,9 @@
 import { expect, it, vi } from "vitest";
 import type { RelayData } from "../relay/service";
-import { meChat } from "./me-chat";
+import { meChat, ownerDm } from "./me-chat";
 
-const owner = "a".repeat(64);
+const owner = "a".repeat(64),
+  self = "c".repeat(64);
 type Status = "idle" | "loading" | "ready" | "error" | "unavailable";
 
 function community({
@@ -33,7 +34,7 @@ function community({
       list: () => ({
         channels: [
           { id: "chat", channelType: "stream" },
-          { id: "dm", channelType: "dm" },
+          { id: "dm", channelType: "dm", members: [owner, self] },
         ],
       }),
     },
@@ -95,3 +96,31 @@ it("fails when the community changes while the placement is read", async () => {
     "The community changed",
   );
 });
+
+it("uses the exact owner/agent DM at top level without consulting Solo placement", async () => {
+  const f = community({ status: "unavailable" });
+  expect(await meChat(f.relay, owner, "dm", signal, self)).toBe(true);
+  expect(f.placement.refresh).not.toHaveBeenCalled();
+});
+it.each([
+  { channelType: "stream" },
+  { members: [owner, self, "b".repeat(64)] },
+  { members: [owner] },
+  { members: [self, "b".repeat(64)] },
+  { archived: true },
+  { cached: true },
+  { readOnly: true },
+  { parentChannelId: "parent" },
+])(
+  "keeps non-direct or unavailable conversations outside the owner DM policy: %j",
+  (change) => {
+    const channel = {
+      id: "dm",
+      name: "DM",
+      channelType: "dm" as const,
+      members: [owner, self],
+      ...change,
+    };
+    expect(ownerDm(channel as never, owner, self)).toBe(false);
+  },
+);

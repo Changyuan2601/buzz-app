@@ -1,26 +1,44 @@
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelayData } from "../relay/service";
 
-/** Whether a native agent's mention continues its owner's Me chat: one
- * channel-scoped conversation that posts at channel top level. Only the
- * owner's own placement in the agent's community counts; another member's
- * filing never does, and DMs keep their own routing. An unreadable placement
- * is unknown, not Messages, so the turn fails rather than guess, in Messages
- * channels too: its activity says why, and the next mention reads it again.
- * Callers freeze the answer for the turn it admits. */
+/** Exact owner/agent DM evidence from the current relay-signed roster.
+ * Group DMs, cached/unknown membership and unwritable channels do not count. */
+export function ownerDm(
+  channel: ChannelSummary | undefined,
+  owner: string,
+  self: string | undefined,
+) {
+  return (
+    !!self &&
+    self !== owner &&
+    channel?.channelType === "dm" &&
+    !channel.archived &&
+    !channel.cached &&
+    !channel.readOnly &&
+    !channel.parentChannelId &&
+    channel.members?.length === 2 &&
+    channel.members.includes(owner) &&
+    channel.members.includes(self)
+  );
+}
+
+/** Whether an agent answers at the top level of its owner's Solo chat or exact
+ * one-to-one DM. Group DMs retain their existing routing. Unreadable Solo
+ * placement is unknown, not Messages; callers freeze the policy per turn. */
 export async function meChat(
   relay: () => RelayData | undefined,
   owner: string,
   channelId: string,
   signal: AbortSignal,
+  self?: string,
 ) {
   const snapshot = relay()?.snapshot();
   if (snapshot?.status !== "ready" || snapshot.viewer !== owner) return false;
   const { session, scope } = snapshot;
-  if (
-    session.channels.list().channels.find((row) => row.id === channelId)
-      ?.channelType === "dm"
-  )
-    return false;
+  const channel =
+    session.channels.list().channels.find((row) => row.id === channelId) ??
+    session.channels.get?.(channelId);
+  if (channel?.channelType === "dm") return ownerDm(channel, owner, self);
   const placement = session.mePlacement;
   const status = () => placement.snapshot().status;
   if (status() === "unavailable") return false;
