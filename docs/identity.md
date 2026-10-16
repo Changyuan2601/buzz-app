@@ -34,9 +34,11 @@ Nostr key bound to the signed-in Builderlab account
 (`POST /api/goose/v1/buzz/nostr-identities/current` at the portal that signed
 the user in, authenticated with the first-run session credential and sent
 through the bundled plugin's native grant; `src/features/identity/builderlab-account.ts`,
-sharing the hosted-communities card's routes and reply parsers). A `400`
-`MISSING_MAPPING` / `setup_needed` answer means no key is linked; any other
-failure is **Couldn’t finish setup**. Binding is 1:1 and enforced, so the answer
+sharing the hosted-communities card's routes and reply parsers). A `200` with
+no `identity` means no key is linked (kgoose sends `MISSING_MAPPING` only from
+the community list); any other failure is **Couldn’t finish setup**, naming the
+step and HTTP status (never the response body), for example "Builderlab account
+check failed (HTTP 403: not JSON)". Binding is 1:1 and enforced, so the answer
 picks the lane: a linked account is never given a second key.
 
 **Not linked** continues with *Checking for a backed-up key*, a placeholder
@@ -104,7 +106,9 @@ linked.
 Every lane ends the same way. A linked account runs **Finding communities**
 (the same real read) once its key is on the device; the old key's list is not
 read after starting over. A failed step shows **Couldn’t finish setup** with the
-error and **Back** to the welcome screen. Setup then lands on
+error and **Back**: to the welcome screen while no key exists, or, once a key is
+on the device, to the Join page below, so the app never opens without a
+community. Setup then lands on
 **Join Community** for the address given on the welcome screen, looked up again
 (the policy may have changed meanwhile), or otherwise on **Join a community**:
 when the account owns communities, rows under *Communities you own* — icon

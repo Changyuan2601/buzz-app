@@ -70,11 +70,22 @@ describe("linkedKey", () => {
     expect(sent[0]?.headers?.Origin).toBe("https://builderlab.example");
   });
 
+  // kgoose's `current` answers 200 with `identity` null or absent for an
+  // account with no mapping; MISSING_MAPPING is the list route's shape, kept
+  // for symmetry.
   it.each([
-    ["MISSING_MAPPING", { code: "MISSING_MAPPING" }],
-    ["setup_needed", { code: "other", setup_needed: true }],
-  ])("reads a 400 %s as not linked", async (_label, error) => {
-    const { request } = kgoose(answer(400, { error }));
+    ["a 200 with identity null", answer(200, { identity: null })],
+    ["a 200 with no identity", answer(200, {})],
+    [
+      "a 400 MISSING_MAPPING",
+      answer(400, { error: { code: "MISSING_MAPPING" } }),
+    ],
+    [
+      "a 400 setup_needed",
+      answer(400, { error: { code: "other", setup_needed: true } }),
+    ],
+  ])("reads %s as not linked", async (_label, reply) => {
+    const { request } = kgoose(reply);
     const account = builderlabAccount(credential, "https://t.example", request);
     expect(await account.linkedKey()).toBeNull();
   });
@@ -88,23 +99,32 @@ describe("linkedKey", () => {
     [
       "a bound identity without a usable key",
       answer(200, { identity: { npub: "npub1x" } }),
-      /invalid response/,
+      "Builderlab account check failed (HTTP 200: unusable linked key).",
     ],
-    ["a 200 with no identity", answer(200, {}), /invalid response/],
+    [
+      "a bound identity with a malformed key",
+      answer(200, { identity: { pubkey_hex: "not-hex" } }),
+      "Builderlab account check failed (HTTP 200: unusable linked key).",
+    ],
     [
       "a non-JSON failure",
-      answer(502, "<html>bad gateway</html>"),
-      /invalid response/,
+      answer(403, "Forbidden"),
+      "Builderlab account check failed (HTTP 403: not JSON).",
     ],
     [
       "an unstructured failure",
       answer(500, { message: "boom" }),
-      /failed \(HTTP 500\)/,
+      "Builderlab account check failed (HTTP 500).",
+    ],
+    [
+      "a malformed error code",
+      answer(400, { error: { code: 42 } }),
+      "Could not check this Builderlab account.",
     ],
     [
       "an oversize body",
       answer(200, `{"identity":{"pubkey_hex":"${"a".repeat(70_000)}"}}`),
-      /too large/,
+      "Builderlab account check failed (HTTP 200: response too large).",
     ],
     ["a native refusal string", "host request denied", /host request denied/],
     ["a transport error", new Error("offline"), /offline/],
@@ -112,6 +132,18 @@ describe("linkedKey", () => {
     const { request } = kgoose(reply);
     const account = builderlabAccount(credential, "https://t.example", request);
     await expect(account.linkedKey()).rejects.toThrow(message);
+  });
+
+  it("warns in development with the route and status, never the body", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { request } = kgoose(answer(403, "secret body"));
+    const account = builderlabAccount(credential, "https://t.example", request);
+    await expect(account.linkedKey()).rejects.toThrow(/HTTP 403/);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.join(" ")).toBe(
+      "Builderlab account check: POST /v1/buzz/nostr-identities/current answered HTTP 403 Builderlab account check failed (HTTP 403: not JSON).",
+    );
+    expect(warn.mock.calls[0]?.join(" ")).not.toContain("secret body");
   });
 });
 
@@ -157,6 +189,14 @@ describe("ownedCommunities", () => {
     );
     await expect(failing.ownedCommunities()).rejects.toThrow(
       /temporarily unavailable/,
+    );
+    const unparseable = builderlabAccount(
+      credential,
+      "https://t.example",
+      kgoose(answer(502, "<html>bad gateway</html>")).request,
+    );
+    await expect(unparseable.ownedCommunities()).rejects.toThrow(
+      "Builderlab community list failed (HTTP 502: not JSON).",
     );
   });
 });

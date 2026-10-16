@@ -163,7 +163,8 @@ export function firstRunSteps(identity: Identity, delay = wait) {
  * Runs steps in order, stopping at the first failure, then rests at `then` —
  * done, or a pause the caller resumes with another `start` — unless a step
  * picked another resting state. No steps means "nothing more to do" and
- * rests at once.
+ * rests at once. A failed setup may also be resumed: once a key exists, Back
+ * from the failed page rests on the Join page rather than the landing.
  */
 export function createSetup() {
   let state: SetupSnapshot = { status: "idle" };
@@ -184,7 +185,7 @@ export function createSetup() {
       steps: readonly SetupStep[],
       then: Resting = { status: "done" },
     ) {
-      if (state.status !== "idle" && state.status !== "paused") return;
+      if (state.status === "running" || state.status === "done") return;
       let rest = then;
       for (const step of steps) {
         publish({ status: "running", label: step.label });

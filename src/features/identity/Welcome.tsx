@@ -366,10 +366,17 @@ export function Welcome({
         ) : progress.status === "paused" ? (
           paused(progress.at)
         ) : progress.status === "failed" ? (
+          // Once a key is saved, Back rests on the Join page: `backToLanding`
+          // would reset to idle, and with identity ready the gate would lift
+          // into the app with no community.
           <Failure
             title="Couldn’t finish setup"
             error={progress.error}
-            onBack={backToLanding}
+            onBack={
+              state.status === "ready"
+                ? () => void setup.start([])
+                : backToLanding
+            }
           />
         ) : auth.error ? (
           <Failure

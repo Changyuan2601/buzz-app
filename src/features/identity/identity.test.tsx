@@ -64,10 +64,12 @@ function titleBar() {
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 /** Welcome reads the Communities service only to join; these screens never get there. */
 const noJoin: ComponentProps<typeof Welcome>["communities"] = {
@@ -1074,13 +1076,16 @@ function gatedDelay() {
     gates.push(gate);
     return gate.promise;
   });
-  const release = (index: number) =>
-    act(async () => {
-      const gate = gates[index];
-      if (!gate) throw new Error(`Step ${index} never started waiting`);
-      gate.resolve();
-    });
-  return { delay, release };
+  const gate = (index: number) => {
+    const found = gates[index];
+    if (!found) throw new Error(`Step ${index} never started waiting`);
+    return found;
+  };
+  const release = (index: number) => act(async () => gate(index).resolve());
+  /** The placeholder's real call failed. */
+  const fail = (index: number, error: Error) =>
+    act(async () => gate(index).reject(error));
+  return { delay, release, fail };
 }
 
 it("Connect with Builderlab runs sign-in, creates the key mid-setup, and lands on Join a community", async () => {
@@ -2312,14 +2317,14 @@ async function welcomeBackPage(
   identity: Identity,
   account: ComponentProps<typeof Welcome>["account"],
 ) {
-  const { delay, release } = gatedDelay();
+  const gated = gatedDelay();
   render(
     <Welcome
       identity={identity}
       communities={noJoin}
       connect={vi.fn().mockResolvedValue(credential)}
       account={account}
-      delay={delay}
+      delay={gated.delay}
     >
       <p>Signed in</p>
     </Welcome>,
@@ -2332,11 +2337,11 @@ async function welcomeBackPage(
       "Checking for a backed-up key… [TODO]",
     ),
   );
-  await release(0);
+  await gated.release(0);
   expect(
     await screen.findByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
-  return { delay, release };
+  return gated;
 }
 /** Enter your private key with the linked key, through to the backup offer. */
 async function importLinkedKey(user: ReturnType<typeof userEvent.setup>) {
@@ -2462,6 +2467,82 @@ it("Back it up on the backup offer runs the backup step before Join a community"
     await screen.findByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
   expect(delay.mock.calls).toEqual([[2000], [2000]]);
+  identity.dispose();
+});
+
+it("a backup that fails after the key is imported shows Couldn’t finish setup, and Back rests on Join a community without entering the app", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  const { delay, fail } = await welcomeBackPage(
+    user,
+    identity,
+    linkedTo(owned.pubkey),
+  );
+  await importLinkedKey(user);
+  await user.click(screen.getByRole("button", { name: "Back it up" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Backing up your key… [TODO]",
+  );
+  await fail(1, new Error("Builderlab key backup failed (HTTP 500)."));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab key backup failed (HTTP 500).",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  // The key is on the device, so the gate must not lift into an app with no
+  // community: Back rests on the Join page, not the landing.
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
+  expect(delay.mock.calls).toEqual([[2000], [2000]]);
+  identity.dispose();
+});
+
+it("an unlink that fails before any key exists still returns to the first-launch screen from Back", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  const { fail } = await welcomeBackPage(
+    user,
+    identity,
+    linkedTo(owned.pubkey),
+  );
+  await user.click(screen.getByRole("button", { name: "I lost this key" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Start over with a new key" }),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Unlinking your old key… [TODO]",
+  );
+  await fail(1, new Error("Builderlab unlink failed (HTTP 503)."));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab unlink failed (HTTP 503).",
+  );
+  expect(identity.snapshot().status).toBe("missing");
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(connectButton()).toBeEnabled();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "identity_restore",
+  ]);
   identity.dispose();
 });
 
@@ -2648,7 +2729,9 @@ it("an account check that fails stops setup, and Back returns to the first-launc
       connect={vi.fn().mockResolvedValue(credential)}
       account={() => ({
         linkedKey: () =>
-          Promise.reject(new Error("Builderlab request failed (HTTP 503).")),
+          Promise.reject(
+            new Error("Builderlab account check failed (HTTP 503: not JSON)."),
+          ),
         ownedCommunities: () => Promise.resolve([]),
       })}
       delay={delay}
@@ -2660,7 +2743,7 @@ it("an account check that fails stops setup, and Back returns to the first-launc
     await screen.findByRole("button", { name: "Connect with Builderlab" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Builderlab request failed (HTTP 503).",
+    "Builderlab account check failed (HTTP 503: not JSON).",
   );
   expect(
     screen.getByRole("heading", { name: "Couldn’t finish setup" }),
