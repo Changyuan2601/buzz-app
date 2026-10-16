@@ -303,15 +303,30 @@ export function AgentCreateHeader({
           inert={view !== "selected" || (editing && !name.trim())}
           aria-hidden={view !== "selected" || (editing && !name.trim())}
         >
-          <Field label="Name" labelVisibility="hidden">
-            <Input
-              ref={nameRef}
-              appearance="title"
-              disabled={disabled}
-              placeholder="Agent name"
-              value={name}
-              onChange={(event) => onChange({ name: event.target.value })}
-            />
+          <Field
+            label="Name"
+            labelVisibility="hidden"
+            description={!name.trim() && "Required"}
+          >
+            <div className={styles.name}>
+              <Input
+                ref={nameRef}
+                appearance="title"
+                disabled={disabled}
+                placeholder="Agent name"
+                aria-required
+                value={name}
+                onChange={(event) => onChange({ name: event.target.value })}
+              />
+              {!name && (
+                <span className={styles.required} aria-hidden="true">
+                  <span className="relative text-title text-transparent">
+                    Agent name
+                    <span className="absolute left-full text-danger">*</span>
+                  </span>
+                </span>
+              )}
+            </div>
           </Field>
         </motion.div>
         <div className={styles.details} hidden={view !== "selected"}>

@@ -12,6 +12,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import styles from "./AgentCreate.module.css";
 
@@ -129,16 +130,24 @@ export function AgentCreateDialog({
         <>
           <div ref={setAvatarAction} hidden={!avatarActive} />
           {!avatarActive && (
-            <Button
-              variant="primary"
-              // The footer is outside the form; Enter in any field submits it.
-              type="submit"
-              form={form}
-              loading={pending}
-              disabled={avatarBusy || !type || !name.trim() || pending}
+            // Stays mounted while the name changes so the button keeps its node.
+            <Tooltip
+              content="Add a name first"
+              disableHoverablePopup
+              {...(name.trim() ? { open: false } : {})}
             >
-              Create agent
-            </Button>
+              <Button
+                variant="primary"
+                // The footer is outside the form; Enter in any field submits it.
+                type="submit"
+                form={form}
+                loading={pending}
+                disabled={avatarBusy || !type || !name.trim() || pending}
+                focusableWhenDisabled={!name.trim()}
+              >
+                Create agent
+              </Button>
+            </Tooltip>
           )}
         </>
       }

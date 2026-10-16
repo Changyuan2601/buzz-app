@@ -175,15 +175,28 @@ it("shows the sole harness as a disabled choice", () => {
   expect(screen.getByRole("combobox", { name: "Harness" })).toBeDisabled();
 });
 
-it("disables Create agent with an empty name", async () => {
+it("disables Create agent with an empty name and says the name is required", async () => {
   const { agents, dialog, user } = setup([echo]);
-  expect(createButton()).toBeDisabled();
-  await user.type(within(dialog).getByLabelText("Name"), "   ");
-  expect(createButton()).toBeDisabled();
-  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  const name = within(dialog).getByLabelText("Name");
+  const disabled = () =>
+    expect(createButton()).toHaveAttribute("aria-disabled", "true");
+  expect(name).toHaveAttribute("aria-required", "true");
+  expect(name).toHaveAccessibleDescription("Required");
+  disabled();
+  await user.hover(createButton());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Add a name first",
+  );
+  await user.click(createButton());
+  expect(agents.create).not.toHaveBeenCalled();
+  await user.type(name, "   ");
+  disabled();
+  expect(name).toHaveAccessibleDescription("Required");
+  await user.type(name, "Nova");
   expect(createButton()).toBeEnabled();
-  await user.clear(within(dialog).getByLabelText("Name"));
-  expect(createButton()).toBeDisabled();
+  expect(name).not.toHaveAccessibleDescription();
+  await user.clear(name);
+  disabled();
   await user.type(within(dialog).getByLabelText("Reply"), "x{Enter}");
   expect(agents.create).not.toHaveBeenCalled();
 });
