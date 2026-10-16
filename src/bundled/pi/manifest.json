@@ -2,6 +2,8 @@
   "id": "buzz.pi",
   "name": "Pi",
   "apiVersion": 1,
+  "description": "Run local Pi agents in Buzz.",
+  "discovery": { "category": "agents" },
   "host": {
     "processes": [
       {
